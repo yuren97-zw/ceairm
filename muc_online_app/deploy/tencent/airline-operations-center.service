@@ -1,0 +1,21 @@
+[Unit]
+Description=Airline Operations Center
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/airline-operations-center/app
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+Environment=DB_PATH=/opt/airline-operations-center/data/muc.sqlite
+Environment=UPLOAD_DIR=/opt/airline-operations-center/uploads
+Environment=COOKIE_SECURE=false
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/airline-operations-center/app.log
+StandardError=append:/var/log/airline-operations-center/error.log
+
+[Install]
+WantedBy=multi-user.target

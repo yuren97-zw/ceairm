@@ -1,0 +1,8 @@
+[build]
+  publish = "muc_online_app/public"
+  command = "printf 'window.MUC_API_BASE_URL = \"%s\";\n' \"$MUC_API_BASE_URL\" > muc_online_app/public/config.js"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

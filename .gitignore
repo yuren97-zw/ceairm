@@ -1,0 +1,24 @@
+.DS_Store
+*.log
+
+# Local runtime data. These contain business data or uploaded files and must not be
+# committed to GitHub. Use the migration script and Render/Neon storage instead.
+muc_online_app/data/
+muc_online_app/uploads/
+
+# Dependencies and build caches.
+node_modules/
+muc_online_app/node_modules/
+.netlify/
+
+# Local environment files.
+.env
+.env.*
+!.env.example
+!.env.*.example
+muc_online_app/.env
+muc_online_app/.env.*
+!muc_online_app/.env.example
+
+# Temporary local copies.
+backups/
