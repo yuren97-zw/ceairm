@@ -105,6 +105,8 @@ const state = {
   statsTeam: "全部",
   statsStartDate: "",
   statsEndDate: "",
+  statsSearchTimer: null,
+  statsSearchComposing: false,
   activeMonth: "全部",
   page: 1,
   pageSize: 15,
@@ -1472,6 +1474,29 @@ function renderStats() {
     <div class="data-panel"><div class="stats-section-title">班组统计</div><div class="stats-table"><div class="stats-table-row stats-team-row head"><span>班组</span><span class="stats-num">人数</span><span class="stats-num">应读</span><span class="stats-num">已读</span><span class="stats-num">总未读</span><span class="stats-num">未读</span><span class="stats-num">超期未读</span><span class="stats-num">超期已读</span><span class="stats-num">已读率</span><span class="stats-num">超期率</span></div>${data.teams.map(teamRow).join("") || '<div class="status-line" style="padding:12px">暂无班组统计。</div>'}</div></div>
     <div class="data-panel"><div class="stats-section-title">个人统计</div><div class="stats-table"><div class="stats-table-row stats-person-row head"><span>姓名</span><span>班组</span><span class="stats-num">应读</span><span class="stats-num">已读</span><span class="stats-num">总未读</span><span class="stats-num">未读</span><span class="stats-num">超期未读</span><span class="stats-num">超期已读</span><span class="stats-num">已读率</span><span class="stats-num">超期率</span></div>${data.people.map(personRow).join("") || '<div class="status-line" style="padding:12px">暂无个人统计。</div>'}</div></div>
   </section>`;
+}
+
+function renderStatsAndRestoreSearchFocus(selectionStart, selectionEnd) {
+  renderStats();
+  const input = $("#statsSearch");
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const end = input.value.length;
+  const startPos = Math.min(selectionStart ?? end, end);
+  const endPos = Math.min(selectionEnd ?? startPos, end);
+  if (typeof input.setSelectionRange === "function") {
+    input.setSelectionRange(startPos, endPos);
+  }
+}
+
+function scheduleStatsSearchRender(input) {
+  const selectionStart = input.selectionStart;
+  const selectionEnd = input.selectionEnd;
+  if (state.statsSearchTimer) clearTimeout(state.statsSearchTimer);
+  state.statsSearchTimer = setTimeout(() => {
+    state.statsSearchTimer = null;
+    renderStatsAndRestoreSearchFocus(selectionStart, selectionEnd);
+  }, 300);
 }
 
 function roleDefaults(role) {
@@ -3120,8 +3145,25 @@ document.addEventListener("click", async event => {
 document.addEventListener("input", event => {
   if (event.target.id === "statsSearch") {
     state.statsSearch = event.target.value;
-    renderStats();
+    if (event.isComposing || state.statsSearchComposing) return;
+    scheduleStatsSearchRender(event.target);
   }
+});
+
+document.addEventListener("compositionstart", event => {
+  if (event.target.id !== "statsSearch") return;
+  state.statsSearchComposing = true;
+  if (state.statsSearchTimer) {
+    clearTimeout(state.statsSearchTimer);
+    state.statsSearchTimer = null;
+  }
+});
+
+document.addEventListener("compositionend", event => {
+  if (event.target.id !== "statsSearch") return;
+  state.statsSearchComposing = false;
+  state.statsSearch = event.target.value;
+  scheduleStatsSearchRender(event.target);
 });
 
 document.addEventListener("submit", event => {

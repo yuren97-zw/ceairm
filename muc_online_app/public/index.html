@@ -551,6 +551,32 @@
       .pager-inner{padding:7px 10px}
       .page-btn{min-width:30px;height:30px}
     }
+    #statsPanel,
+    #statsPanel .stats-layout,
+    #statsPanel .stats-layout>.data-panel{
+      min-width:0;
+      max-width:100%;
+      overflow:hidden;
+    }
+    #statsPanel .stats-table{
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      overflow-x:auto;
+      overflow-y:hidden;
+      overscroll-behavior-x:contain;
+      -webkit-overflow-scrolling:touch;
+    }
+    @media(max-width:520px){
+      #statsPanel .stats-table-row{
+        min-width:720px;
+      }
+    }
+    @media(max-width:390px){
+      #statsPanel .stats-table-row{
+        min-width:680px;
+      }
+    }
   </style>
 </head>
 <body class="app-booting">
