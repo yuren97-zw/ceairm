@@ -166,10 +166,13 @@ server {
     server_name _;
 
     client_max_body_size 120m;
+    client_body_timeout 300s;
 
     location / {
         proxy_pass http://127.0.0.1:8787;
         proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -201,12 +204,19 @@ sudo systemctl reload nginx
 
 ## 数据备份
 
-建议每天备份：
+建议每天备份数据库和附件。可复制仓库中的脚本：
 
 ```bash
 sudo mkdir -p /opt/airline-operations-center/backups
-sqlite3 /opt/airline-operations-center/data/muc.sqlite ".backup '/opt/airline-operations-center/backups/muc-$(date +%F).sqlite'"
-tar -czf /opt/airline-operations-center/backups/uploads-$(date +%F).tar.gz -C /opt/airline-operations-center uploads
+sudo cp /opt/airline-operations-center/app/deploy/tencent/backup-airline-operations-center.sh /opt/airline-operations-center/backup.sh
+sudo chmod +x /opt/airline-operations-center/backup.sh
+sudo /opt/airline-operations-center/backup.sh
+```
+
+如需每天凌晨 2 点自动备份，可加入 crontab：
+
+```bash
+0 2 * * * /opt/airline-operations-center/backup.sh >> /var/log/airline-operations-center/backup.log 2>&1
 ```
 
 ## 验收清单

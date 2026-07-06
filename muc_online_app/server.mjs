@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { once } from "node:events";
 import { createDatabase } from "./db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,15 +24,12 @@ const ALLOWED_ATTACHMENT_EXTS = new Set(["pdf", "png", "jpg", "jpeg", "gif", "we
 const BLOCKED_ATTACHMENT_EXTS = new Set(["html", "htm", "svg", "js", "mjs"]);
 
 const roles = {
-  readonly: { permissions: ["view"], allowedTabs: ["homePage", "infoPage"] },
-  receiver: { permissions: ["view", "favorite"], allowedTabs: ["homePage", "infoPage", "maintenancePage"] },
-  publisher: { permissions: ["view", "favorite", "create", "edit", "feedback", "remind", "export", "attachments"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
-  admin: { permissions: ["view", "favorite", "create", "edit", "delete", "feedback", "remind", "export", "attachments", "admin", "fixedManage"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"] },
-  user: { permissions: ["view", "favorite"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage"] },
-  editor: { permissions: ["view", "favorite", "create", "edit", "attachments"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] }
+  receiver: { permissions: ["view"], allowedTabs: ["homePage", "infoPage", "maintenancePage"] },
+  publisher: { permissions: ["view", "create", "remind"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
+  admin: { permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"] }
 };
-const allowedTabKeys = ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"];
-const allowedPermissionKeys = ["view", "favorite", "create", "edit", "delete", "feedback", "remind", "export", "attachments", "admin", "fixedManage"];
+const allowedTabKeys = ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"];
+const allowedPermissionKeys = ["view", "create", "edit", "delete", "remind", "fixedManage"];
 
 const defaultPeople = [
   { id: "00000001", name: "接收者", department: "未设置", team: "一班" },
@@ -117,18 +115,19 @@ function allLoginPeople() {
 }
 
 function toUser(row) {
-  if (!row) return { id: "guest", username: "guest", name: "访客", role: "readonly", permissions: ["view"], allowedTabs: ["homePage", "infoPage"] };
-  const preset = roles[row.role] || roles.user;
+  if (!row) return { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] };
+  const role = normalizeRole(row.role);
+  const preset = roles[role] || roles.receiver;
   return {
     id: row.id,
     username: row.username,
     name: row.name,
-    role: row.role,
+    role,
     department: row.department || "未设置",
     team: row.team || "未设置",
     status: row.status || "active",
-    permissions: json(row.permissions, preset.permissions),
-    allowedTabs: json(row.allowed_tabs, preset.allowedTabs)
+    permissions: normalizeKeys(row.permissions, preset.permissions, allowedPermissionKeys),
+    allowedTabs: normalizeKeys(row.allowed_tabs, preset.allowedTabs, allowedTabKeys.concat("settingsPage"))
   };
 }
 
@@ -146,7 +145,7 @@ function roleDefaults(role) {
 }
 
 function normalizeRole(value) {
-  const normalized = { 接收者: "receiver", 发布者: "publisher", 管理员: "admin" }[String(value || "").trim()] || value;
+  const normalized = { 接收者: "receiver", 发布者: "publisher", 管理员: "admin", 访客: "receiver", readonly: "receiver", guest: "receiver", user: "receiver", editor: "publisher" }[String(value || "").trim()] || value;
   return ["receiver", "publisher", "admin"].includes(normalized) ? normalized : "receiver";
 }
 
@@ -157,17 +156,32 @@ function normalizeStatus(value) {
 }
 
 function normalizeKeys(value, fallback, allowed) {
-  const input = Array.isArray(value) ? value : String(value || "").split("|");
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map(item => String(item).trim()).filter(item => allowed.includes(item))));
+  }
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return normalizeKeys(parsed, fallback, allowed);
+    } catch {}
+  }
+  const input = text.split("|");
   const set = new Set(input.map(item => String(item).trim()).filter(item => allowed.includes(item)));
   return set.size ? Array.from(set) : fallback;
 }
 
 function publicRolePermissions() {
-  return Object.fromEntries(Object.entries(roles).filter(([key]) => ["receiver", "publisher", "admin"].includes(key)).map(([key, value]) => [key, value]));
+  return Object.fromEntries(Object.entries(roles).map(([key, value]) => [key, value]));
 }
 
 function has(user, permission) {
   return user.permissions.includes(permission);
+}
+
+function isAdmin(user) {
+  return user?.role === "admin";
 }
 
 function routeParam(value) {
@@ -190,7 +204,7 @@ function parseCookies(req) {
 }
 
 function sessionCookie(value, maxAge = 604800) {
-  const secure = process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
+  const secure = process.env.COOKIE_SECURE === "true";
   const sameSite = secure ? "None" : "Lax";
   const parts = [`muc_sid=${encodeURIComponent(value || "")}`, "HttpOnly", `SameSite=${sameSite}`, "Path=/", `Max-Age=${maxAge}`];
   if (secure) parts.splice(2, 0, "Secure");
@@ -217,7 +231,7 @@ function createLoginSession(row) {
 
 function requireLogin(req, res) {
   const user = currentUser(req);
-  if (user.id === "guest") {
+  if (!user.id) {
     send(res, 401, { error: "请先登录" });
     return null;
   }
@@ -229,6 +243,16 @@ function requirePermission(req, res, permission) {
   if (!user) return null;
   if (!has(user, permission)) {
     send(res, 403, { error: "当前账号没有权限" });
+    return null;
+  }
+  return user;
+}
+
+function requireAdmin(req, res) {
+  const user = requireLogin(req, res);
+  if (!user) return null;
+  if (!isAdmin(user)) {
+    send(res, 403, { error: "当前账号没有管理员权限" });
     return null;
   }
   return user;
@@ -343,6 +367,7 @@ async function seedInitialRecords() {
   const count = db.prepare("select count(*) as count from records").get().count;
   if (count) return;
   const htmlPath = path.join(rootDir, "outputs/muc_apr_may_rules_full/index.html");
+  if (!fss.existsSync(htmlPath)) return;
   const records = parseSeedRecords(await fs.readFile(htmlPath, "utf8"));
   const insertRecord = db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const insertRecipient = db.prepare("insert or ignore into record_recipients(record_id,user_id,name,department,team) values(?,?,?,?,?)");
@@ -493,9 +518,22 @@ async function initDb() {
   if (!db.prepare("select key from settings where key='overdueDays'").get()) setSetting("overdueDays", 3);
   if (!db.prepare("select key from settings where key='reminderDays'").get()) setSetting("reminderDays", 1);
   await seedInitialRecords();
+  migrateLegacyRolesAndPermissions();
   migrateCategories();
   backfillRecordRecipients();
   cleanupOrphanUserData();
+}
+
+function migrateLegacyRolesAndPermissions() {
+  const rows = db.prepare("select id,role,permissions,allowed_tabs from users").all();
+  const update = db.prepare("update users set role=?,permissions=?,allowed_tabs=?,updated_at=? where id=?");
+  for (const row of rows) {
+    const role = normalizeRole(row.role);
+    const defaults = roleDefaults(role);
+    const permissions = normalizeKeys(row.permissions, defaults.permissions, allowedPermissionKeys);
+    const allowedTabs = normalizeKeys(row.allowed_tabs, defaults.allowedTabs, allowedTabKeys.concat("settingsPage"));
+    update.run(role, JSON.stringify(permissions), JSON.stringify(allowedTabs), now(), row.id);
+  }
 }
 
 function cleanupOrphanUserData() {
@@ -569,34 +607,6 @@ function migrateCategories() {
 function attachments(ownerType, ownerId) {
   return db.prepare("select id,name,type,size,storage,path,created_at as createdAt from attachments where owner_type=? and owner_id=? order by created_at").all(ownerType, ownerId)
     .map(row => ({ ...row, attachmentId: row.id, ownerType, ownerId, url: `/api/attachments/${encodeURIComponent(row.id)}` }));
-}
-
-function fileStem(name = "") {
-  return path.basename(String(name || "")).replace(/\.[^.]+$/, "");
-}
-
-function isPdfAttachmentRow(row) {
-  const name = String(row?.name || row?.path || "").toLowerCase();
-  const type = String(row?.type || "").toLowerCase();
-  return type.includes("pdf") || name.endsWith(".pdf");
-}
-
-async function htmlPreviewPathForAttachment(row) {
-  if (!row || !isPdfAttachmentRow(row)) return "";
-  const candidates = [];
-  if (row.path) candidates.push(path.join(uploadDir, `${fileStem(row.path)}.html`));
-  if (row.name) candidates.push(path.join(uploadDir, `${fileStem(row.name)}.html`));
-  for (const candidate of candidates) {
-    if (fss.existsSync(candidate)) return candidate;
-  }
-  const sourceStem = fileStem(row.name || row.path).toLowerCase();
-  if (!sourceStem) return "";
-  const files = await fs.readdir(uploadDir).catch(() => []);
-  const match = files.find(file => {
-    const lower = file.toLowerCase();
-    return lower.endsWith(".html") && (lower.endsWith(`${sourceStem}.html`) || fileStem(lower).endsWith(sourceStem));
-  });
-  return match ? path.join(uploadDir, match) : "";
 }
 
 function recipients(recordId) {
@@ -730,7 +740,7 @@ function sanitizeRichHtml(value) {
 }
 
 function canViewRecord(user, record) {
-  if (!user || user.id === "guest" || !record) return false;
+  if (!user || !user.id || !record) return false;
   if ((record.publish_status || "已发布") === "作废") return user.role === "admin";
   if (user.role === "admin") return true;
   if (user.role === "publisher") return isRecordRecipient(user, record) || isRecordOwner(user, record);
@@ -738,7 +748,7 @@ function canViewRecord(user, record) {
 }
 
 function canViewFixedProject(user) {
-  return !!user && user.id !== "guest" && Array.isArray(user.allowedTabs) && user.allowedTabs.includes("fixedPage");
+  return !!user?.id && Array.isArray(user.allowedTabs) && user.allowedTabs.includes("fixedPage");
 }
 
 function publicReceiptsFor(user, recordIds) {
@@ -778,15 +788,32 @@ function canViewAttachment(user, row) {
   return false;
 }
 
-function canManageAttachment(user, row) {
-  if (!row || !user || user.id === "guest") return false;
+function canManageAttachmentCheck(user, row) {
+  if (!row || !user || !user.id) return { ok: false, error: "请先登录" };
   if (row.owner_type === "record") {
     const record = ownerRecord(row);
-    if (!record) return false;
-    return user.role === "admin" || (user.role === "publisher" && has(user, "attachments") && isRecordOwner(user, record));
+    if (!record) return { ok: false, error: "未找到信息" };
+    if ((record.publish_status || "已发布") === "作废") {
+      return user.role === "admin"
+        ? { ok: true }
+        : { ok: false, error: "作废信息仅管理员可管理附件" };
+    }
+    if (user.role === "admin") return { ok: true };
+    if (has(user, "edit") && canViewRecord(user, record)) return { ok: true };
+    if (!has(user, "create")) return { ok: false, error: "当前账号没有发布权限" };
+    if (!isRecordOwner(user, record)) return { ok: false, error: "只能给自己发布的信息上传附件" };
+    return { ok: true };
   }
-  if (row.owner_type === "fixedProject") return has(user, "fixedManage");
-  return false;
+  if (row.owner_type === "fixedProject") {
+    return has(user, "fixedManage")
+      ? { ok: true }
+      : { ok: false, error: "当前账号没有固化项目维护权限" };
+  }
+  return { ok: false, error: "附件归属无效" };
+}
+
+function canManageAttachment(user, row) {
+  return canManageAttachmentCheck(user, row).ok;
 }
 
 function safeUploadPath(name) {
@@ -797,7 +824,7 @@ function safeUploadPath(name) {
 }
 
 function isRecordOwner(user, record) {
-  if (!user || user.id === "guest" || !record) return false;
+  if (!user || !user.id || !record) return false;
   const publisherName = String(record.publisher || "").trim();
   if (publisherName && publisherName === user.name && publisherName !== "发布者") return true;
   if (publisherName && publisherName !== user.name) return false;
@@ -805,22 +832,26 @@ function isRecordOwner(user, record) {
 }
 
 function isRecordRecipient(user, record) {
-  if (!user || user.id === "guest" || !record) return false;
+  if (!user || !user.id || !record) return false;
   return !!db.prepare("select 1 from record_recipients where record_id=? and user_id=?").get(record.id, user.id);
 }
 
 function canEditRecord(user, record) {
-  return user.role === "admin";
+  return has(user, "edit") && canViewRecord(user, record);
 }
 
 function canDeleteRecord(user, record) {
-  return user.role === "admin";
+  return has(user, "delete") && canViewRecord(user, record);
 }
 
 function canVoidRecord(user, record) {
   if (!user || !record || (record.publish_status || "已发布") === "作废") return false;
   if (user.role === "admin") return true;
   return user.role === "publisher" && isRecordOwner(user, record);
+}
+
+function canUseStats(user) {
+  return user?.role === "admin" || user?.role === "publisher";
 }
 
 function saveRecipients(recordId, people) {
@@ -899,28 +930,192 @@ function parseMultipart(buffer, contentType) {
   return parts;
 }
 
+function multipartBoundary(contentType) {
+  const match = String(contentType || "").match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  return match ? match[1] || match[2] : "";
+}
+
+function multipartPartInfo(headerText) {
+  const lines = String(headerText || "").split("\r\n");
+  const disposition = lines.find(line => /^content-disposition:/i.test(line)) || "";
+  const typeLine = lines.find(line => /^content-type:/i.test(line)) || "";
+  return {
+    field: disposition.match(/name="([^"]+)"/i)?.[1] || "",
+    name: fileNameFromDisposition(disposition),
+    type: typeLine.replace(/^content-type:\s*/i, "") || "application/octet-stream"
+  };
+}
+
+async function writeUploadChunk(stream, chunk) {
+  if (!chunk?.length) return;
+  if (!stream.write(chunk)) await once(stream, "drain");
+}
+
+async function closeUploadStream(stream) {
+  if (!stream) return;
+  stream.end();
+  await once(stream, "finish");
+}
+
+async function cleanupUploadedFiles(files = []) {
+  await Promise.all(files.map(file => file?.fullPath ? fs.unlink(file.fullPath).catch(() => null) : null));
+}
+
+async function receiveMultipartUploads(req) {
+  const boundaryText = multipartBoundary(req.headers["content-type"]);
+  if (!boundaryText) throw uploadHttpError(400, "上传请求格式无效");
+  const firstBoundary = Buffer.from(`--${boundaryText}`);
+  const boundary = Buffer.from(`\r\n--${boundaryText}`);
+  const headerBreak = Buffer.from("\r\n\r\n");
+  const requestLimit = MAX_UPLOAD_BYTES * MAX_FILES_PER_REQUEST + 1024 * 1024;
+  const saved = [];
+  let total = 0;
+  let buffer = Buffer.alloc(0);
+  let state = "preamble";
+  let current = null;
+  let finished = false;
+
+  const beginFile = info => {
+    if (info.field !== "file" || !info.name || info.name === "附件") {
+      current = null;
+      return;
+    }
+    if (saved.length >= MAX_FILES_PER_REQUEST) throw uploadHttpError(413, `单次最多上传 ${MAX_FILES_PER_REQUEST} 个附件`);
+    const safeName = path.basename(info.name || "附件");
+    validateUploadName(safeName);
+    const attId = randomId("att");
+    const storedName = `${attId}-${safeName}`;
+    const targetPath = safeUploadPath(storedName);
+    if (!targetPath) throw uploadHttpError(400, "附件路径无效");
+    current = {
+      id: attId,
+      attachmentId: attId,
+      name: safeName,
+      type: info.type,
+      size: 0,
+      storage: "server",
+      path: storedName,
+      fullPath: targetPath,
+      url: `/api/attachments/${encodeURIComponent(attId)}`,
+      stream: fss.createWriteStream(targetPath, { flags: "wx" })
+    };
+  };
+
+  const writeCurrent = async chunk => {
+    if (!current || !chunk.length) return;
+    current.size += chunk.length;
+    if (current.size > MAX_UPLOAD_BYTES) throw uploadHttpError(413, "单个附件不能超过100MB");
+    await writeUploadChunk(current.stream, chunk);
+  };
+
+  const finishCurrent = async () => {
+    if (!current) return;
+    await closeUploadStream(current.stream);
+    delete current.stream;
+    if (!current.size) throw uploadHttpError(400, "空文件不能上传");
+    saved.push(current);
+    current = null;
+  };
+
+  try {
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > requestLimit) throw uploadHttpError(413, "请求内容过大");
+      buffer = Buffer.concat([buffer, chunk]);
+      let progressed = true;
+      while (progressed && !finished) {
+        progressed = false;
+        if (state === "preamble") {
+          const index = buffer.indexOf(firstBoundary);
+          if (index < 0) {
+            buffer = buffer.slice(Math.max(0, buffer.length - firstBoundary.length));
+            break;
+          }
+          buffer = buffer.slice(index + firstBoundary.length);
+          state = "afterBoundary";
+          progressed = true;
+        }
+        if (state === "afterBoundary") {
+          if (buffer.length < 2) break;
+          if (buffer[0] === 45 && buffer[1] === 45) {
+            finished = true;
+            progressed = true;
+          } else if (buffer[0] === 13 && buffer[1] === 10) {
+            buffer = buffer.slice(2);
+            state = "headers";
+            progressed = true;
+          } else {
+            throw uploadHttpError(400, "上传分隔符格式无效");
+          }
+        }
+        if (state === "headers") {
+          const headerEnd = buffer.indexOf(headerBreak);
+          if (headerEnd < 0) {
+            if (buffer.length > 16 * 1024) throw uploadHttpError(400, "附件头部过大");
+            break;
+          }
+          const headerText = buffer.slice(0, headerEnd).toString("utf8");
+          beginFile(multipartPartInfo(headerText));
+          buffer = buffer.slice(headerEnd + headerBreak.length);
+          state = "body";
+          progressed = true;
+        }
+        if (state === "body") {
+          const boundaryIndex = buffer.indexOf(boundary);
+          if (boundaryIndex >= 0) {
+            await writeCurrent(buffer.slice(0, boundaryIndex));
+            buffer = buffer.slice(boundaryIndex + boundary.length);
+            await finishCurrent();
+            state = "afterBoundary";
+            progressed = true;
+          } else {
+            const keep = boundary.length + 4;
+            const safeLength = buffer.length - keep;
+            if (safeLength > 0) {
+              await writeCurrent(buffer.slice(0, safeLength));
+              buffer = buffer.slice(safeLength);
+              progressed = true;
+            }
+          }
+        }
+      }
+    }
+    if (!finished) throw uploadHttpError(400, "上传内容不完整");
+    if (!saved.length) throw uploadHttpError(400, "未找到有效附件");
+    return saved;
+  } catch (error) {
+    if (current?.stream) current.stream.destroy();
+    await cleanupUploadedFiles([...saved, current]);
+    throw error;
+  }
+}
+
 function attachmentExt(name = "") {
   return (String(name || "").toLowerCase().match(/\.([a-z0-9]+)$/) || ["", ""])[1];
+}
+
+function uploadHttpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function validateUploadName(name) {
+  const ext = attachmentExt(name);
+  if (!ext || BLOCKED_ATTACHMENT_EXTS.has(ext) || !ALLOWED_ATTACHMENT_EXTS.has(ext)) {
+    throw uploadHttpError(415, "不允许上传该文件类型");
+  }
 }
 
 function validateUpload(file) {
   const size = file?.data?.length || 0;
   if (!size) {
-    const error = new Error("空文件不能上传");
-    error.status = 400;
-    throw error;
+    throw uploadHttpError(400, "空文件不能上传");
   }
   if (size > MAX_UPLOAD_BYTES) {
-    const error = new Error("单个附件不能超过100MB");
-    error.status = 413;
-    throw error;
+    throw uploadHttpError(413, "单个附件不能超过100MB");
   }
-  const ext = attachmentExt(file.name);
-  if (!ext || BLOCKED_ATTACHMENT_EXTS.has(ext) || !ALLOWED_ATTACHMENT_EXTS.has(ext)) {
-    const error = new Error("不允许上传该文件类型");
-    error.status = 415;
-    throw error;
-  }
+  validateUploadName(file.name);
 }
 
 function contentTypeForAttachment(row) {
@@ -942,30 +1137,38 @@ function isInlineSafeAttachment(row) {
 }
 
 async function addUploadedAttachments(req, res, ownerType, ownerId) {
-  const user = requirePermission(req, res, "attachments");
+  const user = requireLogin(req, res);
   if (!user) return;
   const table = ownerType === "record" ? "records" : "fixed_projects";
   const owner = db.prepare(`select * from ${table} where id=?`).get(ownerId);
   if (!owner) return send(res, 404, { error: "未找到项目" });
   const probeRow = { owner_type: ownerType, owner_id: ownerId };
-  if (!canManageAttachment(user, probeRow)) return send(res, 403, { error: "无权管理该项目附件" });
-  const files = parseMultipart(await bodyBuffer(req, MAX_UPLOAD_BYTES * MAX_FILES_PER_REQUEST + 1024 * 1024), req.headers["content-type"]).filter(part => part.field === "file");
-  if (files.length > MAX_FILES_PER_REQUEST) return send(res, 413, { error: `单次最多上传 ${MAX_FILES_PER_REQUEST} 个附件` });
-  const saved = [];
-  const insert = db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)");
-  for (const file of files) {
-    validateUpload(file);
-    const attId = randomId("att");
-    const safeName = path.basename(file.name || "附件");
-    const storedName = `${attId}-${safeName}`;
-    const targetPath = safeUploadPath(storedName);
-    if (!targetPath) return send(res, 400, { error: "附件路径无效" });
-    await fs.writeFile(targetPath, file.data);
-    insert.run(attId, ownerType, ownerId, safeName, file.type, file.data.length, "server", storedName, user.id, now());
-    saved.push({ id: attId, attachmentId: attId, name: safeName, type: file.type, size: file.data.length, storage: "server", path: storedName, url: `/api/attachments/${encodeURIComponent(attId)}` });
+  const permission = canManageAttachmentCheck(user, probeRow);
+  if (!permission.ok) return send(res, 403, { error: permission.error || "无权管理该项目附件" });
+  let files;
+  try {
+    files = await receiveMultipartUploads(req);
+  } catch (error) {
+    return send(res, error.status || 400, { error: error.message || "附件上传失败" });
   }
-  audit(user, "upload_attachment", ownerType, ownerId, `${saved.length} 个附件`);
-  send(res, 201, { attachments: saved });
+  const insert = db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)");
+  let inTransaction = false;
+  try {
+    db.exec("begin immediate");
+    inTransaction = true;
+    for (const file of files) {
+      insert.run(file.id, ownerType, ownerId, file.name, file.type, file.size, "server", file.path, user.id, now());
+    }
+    db.exec("commit");
+    inTransaction = false;
+  } catch (error) {
+    if (inTransaction) db.exec("rollback");
+    await cleanupUploadedFiles(files);
+    throw error;
+  }
+  const attachments = files.map(({ fullPath, ...file }) => file);
+  audit(user, "upload_attachment", ownerType, ownerId, attachments.map(file => `${file.name}(${file.size}B)`).join("; "));
+  send(res, 201, { attachments });
 }
 
 async function serveStatic(req, res) {
@@ -1181,7 +1384,7 @@ async function route(req, res) {
     }
     if (method === "GET" && url.pathname === "/api/me") {
       const user = currentUser(req);
-      if (user.id === "guest") return send(res, 401, { error: "请先登录" });
+      if (!user.id) return send(res, 401, { error: "请先登录" });
       return send(res, 200, { user });
     }
     if (method === "POST" && url.pathname === "/api/login") {
@@ -1224,19 +1427,22 @@ async function route(req, res) {
 
     const user = currentUser(req);
     if (method === "GET" && url.pathname === "/api/stats/reading") {
-      const login = requirePermission(req, res, "export");
+      const login = requireLogin(req, res);
       if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
       return send(res, 200, readingStats(Object.fromEntries(url.searchParams.entries())));
     }
     if (method === "GET" && url.pathname === "/api/stats/reading/export.csv") {
-      const login = requirePermission(req, res, "export");
+      const login = requireLogin(req, res);
       if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
       const csv = "\ufeff" + statsCsv(readingStats(Object.fromEntries(url.searchParams.entries())));
       return sendText(res, 200, csv, "text/csv; charset=utf-8", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("信息阅读统计.csv")}` });
     }
     if (method === "GET" && url.pathname === "/api/stats/reading/export.xlsx") {
-      const login = requirePermission(req, res, "export");
+      const login = requireLogin(req, res);
       if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
       const workbook = statsXlsx(readingStats(Object.fromEntries(url.searchParams.entries())));
       return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("信息阅读统计.xlsx")}` });
     }
@@ -1246,7 +1452,7 @@ async function route(req, res) {
       return send(res, 200, { settings: publicSettings() });
     }
     if (method === "PUT" && url.pathname === "/api/settings") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const p = await bodyJson(req);
       const categories = normalizeCategoryList(p.categories);
@@ -1283,7 +1489,7 @@ async function route(req, res) {
       const recordId = routeParam(rec[1]);
       const existing = db.prepare("select * from records where id=?").get(recordId);
       if (!existing) return send(res, 404, { error: "未找到信息" });
-      if (!canEditRecord(editor, existing)) return send(res, 403, { error: "只有管理员可以修改信息内容" });
+      if (!canEditRecord(editor, existing)) return send(res, 403, { error: "当前账号无权修改该信息" });
       db.prepare("update records set date=?,category=?,title=?,original=?,updated_by=?,updated_at=?,deadline=?,priority=?,publish_status=? where id=?")
         .run(p.date, p.category, p.title, p.original, editor.id, now(), p.deadline || existing.deadline || deadlineFor(p.date), p.priority || existing.priority || "普通", p.publishStatus || existing.publish_status || "已发布", recordId);
       if (Array.isArray(p.recipients)) saveRecipients(recordId, recipientsFromPayload(p));
@@ -1296,7 +1502,7 @@ async function route(req, res) {
       const recordId = routeParam(rec[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
       if (!row) return send(res, 404, { error: "未找到信息" });
-      if (!canDeleteRecord(login, row)) return send(res, 403, { error: "只能删除自己发布的信息" });
+      if (!canDeleteRecord(login, row)) return send(res, 403, { error: "当前账号无权删除该信息" });
       await removeOwnerAttachmentFiles("record", recordId);
       db.prepare("delete from records where id=?").run(recordId);
       db.prepare("delete from record_recipients where record_id=?").run(recordId);
@@ -1320,7 +1526,7 @@ async function route(req, res) {
     }
     const restoreRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/restore$/);
     if (restoreRecord && method === "POST") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const recordId = routeParam(restoreRecord[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
@@ -1355,7 +1561,7 @@ async function route(req, res) {
     }
     const receiptEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts\/([^/]+)$/);
     if (receiptEdit && method === "PUT") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const recordId = routeParam(receiptEdit[1]);
       const userId = routeParam(receiptEdit[2]);
@@ -1370,7 +1576,7 @@ async function route(req, res) {
     }
     const receiptBatchEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts$/);
     if (receiptBatchEdit && method === "PUT") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const recordId = routeParam(receiptBatchEdit[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
@@ -1414,7 +1620,7 @@ async function route(req, res) {
       return send(res, 200, { ok: true, favorite: method === "POST" });
     }
     if (method === "POST" && url.pathname === "/api/records/import") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rows) ? p.rows : [];
@@ -1489,34 +1695,6 @@ async function route(req, res) {
       await addUploadedAttachments(req, res, upload[1] === "records" ? "record" : "fixedProject", routeParam(upload[2]));
       return;
     }
-    const attPreview = url.pathname.match(/^\/api\/attachments\/([^/]+)\/preview$/);
-    if (attPreview && method === "GET") {
-      const login = requireLogin(req, res);
-      if (!login) return;
-      const attachmentId = routeParam(attPreview[1]);
-      const row = attachmentRow(attachmentId);
-      if (!row) return send(res, 404, { error: "未找到附件" });
-      if (!canViewAttachment(login, row)) return send(res, 403, { error: "无权访问该附件" });
-      const previewPath = await htmlPreviewPathForAttachment(row);
-      return send(res, 200, previewPath
-        ? { type: "html", url: `/api/attachments/${encodeURIComponent(attachmentId)}/preview-file` }
-        : { type: "fallback" });
-    }
-    const attPreviewFile = url.pathname.match(/^\/api\/attachments\/([^/]+)\/preview-file$/);
-    if (attPreviewFile && method === "GET") {
-      const login = requireLogin(req, res);
-      if (!login) return;
-      const attachmentId = routeParam(attPreviewFile[1]);
-      const row = attachmentRow(attachmentId);
-      if (!row) return sendText(res, 404, "未找到附件");
-      if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
-      const previewPath = await htmlPreviewPathForAttachment(row);
-      if (!previewPath) return sendText(res, 404, "未找到 PDF 页面预览");
-      const safePreviewPath = safeUploadPath(path.basename(previewPath));
-      if (!safePreviewPath || safePreviewPath !== path.resolve(previewPath)) return sendText(res, 403, "附件路径无效");
-      res.writeHead(200, { ...securityHeaders({ "Content-Security-Policy": "default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; font-src 'self' data:;" }), "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(`${fileStem(row.name || row.path)}.html`)}` });
-      return fss.createReadStream(previewPath).pipe(res);
-    }
     const att = url.pathname.match(/^\/api\/attachments\/([^/]+)$/);
     if (att && method === "GET") {
       const login = requireLogin(req, res);
@@ -1546,12 +1724,12 @@ async function route(req, res) {
     }
 
     if (method === "GET" && url.pathname === "/api/admin/users") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       return send(res, 200, { users: db.prepare("select * from users order by created_at").all().map(adminUser), rolePermissions: publicRolePermissions() });
     }
     if (method === "POST" && url.pathname === "/api/admin/users") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const p = await bodyJson(req);
       const username = String(p.username || "").trim();
@@ -1569,7 +1747,7 @@ async function route(req, res) {
       return send(res, 201, { user: adminUser(db.prepare("select * from users where id=?").get(uid)) });
     }
     if (method === "PUT" && url.pathname === "/api/admin/users/batch") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const p = await bodyJson(req);
       const userIds = Array.isArray(p.userIds) ? Array.from(new Set(p.userIds.map(item => String(item || "").trim()).filter(Boolean))) : [];
@@ -1615,12 +1793,10 @@ async function route(req, res) {
             else next.status = status;
           }
           if (hasField("allowedTabs")) {
-            if (isDefaultAdmin && !allowedTabs.includes("settingsPage")) protectedSkip = true;
-            else next.allowedTabs = allowedTabs;
+            next.allowedTabs = allowedTabs;
           }
           if (hasField("permissions")) {
-            if (isDefaultAdmin && !permissions.includes("admin")) protectedSkip = true;
-            else next.permissions = permissions;
+            next.permissions = permissions;
           }
           if (hasField("team")) next.team = team;
           if (protectedSkip) skippedProtected++;
@@ -1640,25 +1816,27 @@ async function route(req, res) {
     }
     const adminUserRoute = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (adminUserRoute && method === "PUT") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const userId = routeParam(adminUserRoute[1]);
       const existing = db.prepare("select * from users where id=?").get(userId);
       if (!existing) return send(res, 404, { error: "未找到账号" });
       const p = await bodyJson(req);
-      const role = normalizeRole(p.role || existing.role);
+      const isDefaultAdmin = userId === "54002010";
+      const role = isDefaultAdmin ? "admin" : normalizeRole(p.role || existing.role);
       const defaults = roleDefaults(role);
       const allowedTabs = normalizeKeys(p.allowedTabs, defaults.allowedTabs, allowedTabKeys);
       const permissions = normalizeKeys(p.permissions, defaults.permissions, allowedPermissionKeys);
+      const status = isDefaultAdmin ? "active" : normalizeStatus(p.status);
       db.prepare("update users set name=?,role=?,permissions=?,allowed_tabs=?,department=?,team=?,status=?,updated_at=? where id=?")
-        .run(p.name || existing.name, role, JSON.stringify(permissions), JSON.stringify(allowedTabs), p.department || existing.department || "未设置", p.team || existing.team || "未设置", normalizeStatus(p.status), now(), userId);
+        .run(p.name || existing.name, role, JSON.stringify(permissions), JSON.stringify(allowedTabs), p.department || existing.department || "未设置", p.team || existing.team || "未设置", status, now(), userId);
       db.prepare("update record_recipients set name=?,department=?,team=? where user_id=?")
         .run(p.name || existing.name, p.department || existing.department || "未设置", p.team || existing.team || "未设置", userId);
       audit(admin, "update_user", "user", userId, existing.username);
       return send(res, 200, { user: adminUser(db.prepare("select * from users where id=?").get(userId)) });
     }
     if (adminUserRoute && method === "DELETE") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const userId = routeParam(adminUserRoute[1]);
       if (userId === admin.id) return send(res, 400, { error: "不能删除当前登录账号" });
@@ -1686,7 +1864,7 @@ async function route(req, res) {
     }
     const resetPasswordRoute = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/reset-password$/);
     if (resetPasswordRoute && method === "POST") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const userId = routeParam(resetPasswordRoute[1]);
       const existing = db.prepare("select * from users where id=?").get(userId);
@@ -1701,7 +1879,7 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
     if (method === "POST" && url.pathname === "/api/admin/users/import") {
-      const admin = requirePermission(req, res, "admin");
+      const admin = requireAdmin(req, res);
       if (!admin) return;
       const p = await bodyJson(req);
       const inputRows = Array.isArray(p.rows) ? p.rows : String(p.csv || "").split(/\r?\n/).map(line => {
@@ -1716,14 +1894,15 @@ async function route(req, res) {
           skipped++;
           continue;
         }
-        const role = normalizeRole(raw.role || raw["角色"]);
+        const isDefaultAdmin = username === "54002010";
+        const role = isDefaultAdmin ? "admin" : normalizeRole(raw.role || raw["角色"]);
         const defaults = roleDefaults(role);
         const tabs = normalizeKeys(raw.allowedTabs || raw["页签权限"], defaults.allowedTabs, allowedTabKeys);
         const perms = normalizeKeys(raw.permissions || raw["功能权限"], defaults.permissions, allowedPermissionKeys);
         const name = String(raw.name || raw["姓名"] || username).trim();
         const team = String(raw.team || raw["班组"] || "未设置").trim() || "未设置";
         const department = String(raw.department || raw["部门"] || "未设置").trim() || "未设置";
-        const status = normalizeStatus(raw.status || raw["状态"]);
+        const status = isDefaultAdmin ? "active" : normalizeStatus(raw.status || raw["状态"]);
         const existing = db.prepare("select * from users where username=?").get(username);
         if (existing) {
           db.prepare("update users set name=?,role=?,permissions=?,allowed_tabs=?,department=?,team=?,status=?,updated_at=? where username=?")

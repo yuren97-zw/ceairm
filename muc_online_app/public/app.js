@@ -14,20 +14,14 @@ const tabOptions = [
   ["maintenancePage", "维修控制"],
   ["fixedPage", "固化项目"],
   ["hoursPage", "工时统计"],
-  ["attendancePage", "考勤管理"],
-  ["settingsPage", "系统设置"]
+  ["attendancePage", "考勤管理"]
 ];
 const permissionOptions = [
   ["view", "查看"],
-  ["favorite", "收藏"],
   ["create", "发布"],
   ["edit", "修改"],
   ["delete", "删除"],
-  ["feedback", "反馈"],
   ["remind", "催办"],
-  ["export", "导出"],
-  ["attachments", "附件"],
-  ["admin", "系统管理"],
   ["fixedManage", "固化项目维护"]
 ];
 const roleLabels = { receiver: "接收者", publisher: "发布者", admin: "管理员" };
@@ -35,8 +29,8 @@ const statusLabels = { active: "启用", disabled: "停用" };
 
 const demoUsers = [
   { id: "00000001", username: "receiver", password: "123456", name: "接收者", role: "receiver", department: "航线车间", team: "一班", permissions: ["view"], allowedTabs: ["homePage", "infoPage", "maintenancePage"] },
-  { id: "u-publisher", username: "publisher", password: "123456", name: "发布者", role: "publisher", department: "质量管理", team: "发布组", permissions: ["view", "create", "edit", "feedback", "remind", "export"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
-  { id: "54002010", username: "54002010", password: "muc2026", name: "系统管理员", role: "admin", department: "系统管理", team: "管理员", permissions: ["view", "favorite", "create", "edit", "delete", "feedback", "remind", "export", "admin", "fixedManage", "attachments"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"] }
+  { id: "u-publisher", username: "publisher", password: "123456", name: "发布者", role: "publisher", department: "质量管理", team: "发布组", permissions: ["view", "create", "remind"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
+  { id: "54002010", username: "54002010", password: "muc2026", name: "系统管理员", role: "admin", department: "系统管理", team: "管理员", permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] }
 ];
 
 const fallbackRecords = [
@@ -68,8 +62,8 @@ const defaultSettings = {
   ],
   rolePermissions: {
     receiver: { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] },
-    publisher: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "edit", "feedback", "remind", "export"] },
-    admin: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"], permissions: ["view", "create", "edit", "delete", "feedback", "remind", "export", "admin", "fixedManage", "attachments"] }
+    publisher: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "remind"] },
+    admin: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"] }
   },
   securityNotes: "当前为静态演示版。正式上线需改为后端登录认证、数据库权限校验、附件访问鉴权、操作日志、撤回和修改留痕。"
 };
@@ -84,12 +78,13 @@ const seedFixedProjects = [
 ];
 
 const state = {
-  user: { id: "guest", username: "guest", name: "访客", role: "guest", permissions: ["view"], allowedTabs: ["homePage", "infoPage"] },
+  user: { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] },
   records: [],
   receipts: [],
   fixedProjects: [],
   users: [],
   selectedUserIds: new Set(),
+  userRoleFilter: "全部",
   settings: clone(defaultSettings),
   favorites: {},
   recordFiles: [],
@@ -112,7 +107,6 @@ const state = {
   pageSize: 15,
   viewerZoom: 1,
   viewerMode: "",
-  viewerPdfSrc: "",
   viewerDownloadUrl: "",
   viewerDownloadName: ""
 };
@@ -125,11 +119,11 @@ const ROUTES = {
 };
 
 function emptyUser() {
-  return { id: "guest", username: "", name: "", role: "", permissions: [], allowedTabs: [] };
+  return { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] };
 }
 
 function isLoggedIn() {
-  return !!state.user?.id && state.user.id !== "guest";
+  return !!state.user?.id;
 }
 
 function savedLogin() {
@@ -491,11 +485,13 @@ const authService = {
   withSettings(user) {
     const settings = state.settings || defaultSettings;
     const roleConfig = settings.rolePermissions?.[user.role] || {};
-    const tabs = new Set(user.allowedTabs || roleConfig.allowedTabs || []);
+    const editableTabKeys = new Set(tabOptions.map(([value]) => value));
+    const permissionKeys = new Set(permissionOptions.map(([value]) => value));
+    const tabs = new Set((user.allowedTabs || roleConfig.allowedTabs || []).filter(tab => editableTabKeys.has(tab)));
     tabs.add("homePage");
-    if (["receiver", "publisher", "admin"].includes(user.role)) tabs.add("maintenancePage");
     if (user.role === "admin") tabs.add("settingsPage");
-    return { ...user, permissions: user.permissions || roleConfig.permissions || [], allowedTabs: Array.from(tabs) };
+    const permissions = (user.permissions || roleConfig.permissions || []).filter(permission => permissionKeys.has(permission));
+    return { ...user, permissions, allowedTabs: Array.from(tabs) };
   },
   async login(username, password) {
     const data = await apiRequest("/login", { method: "POST", body: { username, password } });
@@ -652,7 +648,7 @@ const receiptService = {
     return this.list().find(item => item.recordId === recordId && item.userId === userId);
   },
   async markRead(record) {
-    if (!state.user.id || state.user.id === "guest") return false;
+    if (!state.user.id) return false;
     const found = this.get(record.id);
     if (found?.readAt) return false;
     const data = await apiRequest(`/records/${encodeURIComponent(record.id)}/read`, { method: "POST" });
@@ -1033,7 +1029,7 @@ function has(permission) {
 }
 
 function isRecordOwner(record) {
-  if (!record || state.user.id === "guest") return false;
+  if (!record || !state.user.id) return false;
   const publisherName = (record.publisher || "").trim();
   if (publisherName === state.user.name && publisherName !== "发布者") return true;
   if (publisherName && publisherName !== state.user.name) return false;
@@ -1041,11 +1037,11 @@ function isRecordOwner(record) {
 }
 
 function canEditRecord(record) {
-  return state.user.role === "admin";
+  return has("edit") && canViewRecord(record);
 }
 
 function canDeleteRecord(record) {
-  return state.user.role === "admin";
+  return has("delete") && canViewRecord(record);
 }
 
 function canVoidRecord(record) {
@@ -1060,11 +1056,11 @@ function canRestoreRecord(record) {
 
 function canManageFeedbackRecord(record) {
   if (state.user.role === "admin") return true;
-  return state.user.role === "publisher" && has("feedback") && isRecordOwner(record);
+  return state.user.role === "publisher" && isRecordOwner(record);
 }
 
 function canViewRecord(record) {
-  if (state.user.id === "guest") return false;
+  if (!state.user.id) return false;
   if (record?.publishStatus === "作废") return state.user.role === "admin";
   if (state.user.role === "admin") return true;
   if (state.user.role === "publisher") return isRecipient(record) || isRecordOwner(record);
@@ -1072,7 +1068,7 @@ function canViewRecord(record) {
 }
 
 function canTrackPersonalRead(record) {
-  return state.user.id !== "guest" && record?.publishStatus !== "作废" && isRecipient(record);
+  return !!state.user.id && record?.publishStatus !== "作废" && isRecipient(record);
 }
 
 function canFilterReadState(record) {
@@ -1087,7 +1083,7 @@ function canView(tab) {
 }
 
 function canOpenSettings() {
-  return has("admin");
+  return state.user.role === "admin";
 }
 
 function canViewSubpage(subpage) {
@@ -1203,14 +1199,26 @@ function titleMeta(record) {
   return parts.length ? `<span class="title-meta">${parts.join("")}</span>` : "";
 }
 
+function canManageAttachmentUi(owner, ownerType) {
+  if (!isLoggedIn()) return false;
+  if (ownerType === "record") {
+    if (owner?.publishStatus === "作废") return state.user.role === "admin";
+    if (state.user.role === "admin") return true;
+    return canEditRecord(owner) || (has("create") && isRecordOwner(owner));
+  }
+  if (ownerType === "fixedProject") return has("fixedManage");
+  return false;
+}
+
 function renderAttachments(owner, ownerType) {
   const files = Array.isArray(owner.attachments) ? owner.attachments.filter(Boolean) : [];
   if (!files.length) return "";
+  const canRemove = canManageAttachmentUi(owner, ownerType);
   return `<div class="attachments"><strong>附件：</strong>${files.map((file, index) => {
     const id = file.id || file.attachmentId || `${owner.id}-attachment-${index}`;
     const name = file.name || `附件${index + 1}`;
     return `<a href="${escapeHtml(apiUrl(file.url || file.dataUrl || "#"))}" target="_blank" data-attachment="${escapeHtml(id)}" data-owner-type="${ownerType}" data-owner-id="${escapeHtml(owner.id)}" data-name="${escapeHtml(name)}">${escapeHtml(name)}</a>` +
-      (has("attachments") ? `<button class="remove-attach" type="button" data-remove-attachment="${escapeHtml(id)}" data-owner-type="${ownerType}" data-owner-id="${escapeHtml(owner.id)}">移除</button>` : "");
+      (canRemove ? `<button class="remove-attach" type="button" data-remove-attachment="${escapeHtml(id)}" data-owner-type="${ownerType}" data-owner-id="${escapeHtml(owner.id)}">移除</button>` : "");
   }).join("")}</div>`;
 }
 
@@ -1361,7 +1369,8 @@ function renderPager(total) {
   if (state.page > totalPages) state.page = totalPages;
   $("#pagerText").textContent = `第 ${state.page} / ${totalPages} 页`;
   $("#pageSizeSelect").innerHTML = pageSizes.map(size => `<option value="${size}" ${size === state.pageSize ? "selected" : ""}>${size} 条</option>`).join("");
-  const pages = Array.from(new Set([1, state.page - 1, state.page, state.page + 1, totalPages].filter(page => page >= 1 && page <= totalPages)));
+  const isCompactPager = window.matchMedia("(max-width: 520px)").matches;
+  const pages = isCompactPager ? [state.page] : Array.from(new Set([1, state.page - 1, state.page, state.page + 1, totalPages].filter(page => page >= 1 && page <= totalPages)));
   $("#pageButtons").innerHTML = `<button class="page-btn" data-page-action="prev" ${state.page <= 1 ? "disabled" : ""}>上一页</button>` + pages.map(page => `<button class="page-btn ${page === state.page ? "active" : ""}" data-page="${page}">${page}</button>`).join("") + `<button class="page-btn" data-page-action="next" ${state.page >= totalPages ? "disabled" : ""}>下一页</button>`;
 }
 
@@ -1385,7 +1394,7 @@ function renderRecords() {
     const metrics = recordMetrics(record);
     const canManageFeedback = record.publishStatus !== "作废" && canManageFeedbackRecord(record);
     const publisherLine = state.user.role === "admin" && canManageFeedback ? `<span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span>` : "";
-    const menu = state.user.id !== "guest" ? `<div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">
+    const menu = state.user.id ? `<div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">
       <button class="item-btn" type="button" data-favorite="${escapeHtml(record.id)}">${favoriteService.isFavorite(record.id) ? "取消收藏" : "收藏"}</button>
       ${canEditRecord(record) ? `<button class="item-btn" type="button" data-edit-record="${escapeHtml(record.id)}">修改</button>` : ""}
       ${canVoidRecord(record) ? `<button class="item-btn delete" type="button" data-void-record="${escapeHtml(record.id)}">作废</button>` : ""}
@@ -1503,6 +1512,11 @@ function roleDefaults(role) {
   return state.settings.rolePermissions?.[role] || state.settings.rolePermissions?.receiver || { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] };
 }
 
+function displayTabLabels(tabs = []) {
+  const labels = new Map(tabOptions);
+  return tabs.filter(tab => labels.has(tab)).map(tab => labels.get(tab)).join("、");
+}
+
 function checkedGroup(name, options, selected = []) {
   const set = new Set(selected);
   return `<div class="check-grid">${options.map(([value, label]) => `<label class="check-option"><input type="checkbox" name="${name}" value="${escapeHtml(value)}" ${set.has(value) ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`).join("")}</div>`;
@@ -1513,15 +1527,16 @@ function selectedChecks(name) {
 }
 
 function renderUserManagement() {
-  const rows = state.users || [];
+  const roleFilterOptions = [["全部", "全部"], ...Object.entries(roleLabels)];
+  const rows = (state.users || []).filter(user => state.userRoleFilter === "全部" || user.role === state.userRoleFilter);
   const rowIds = new Set(rows.map(user => user.id));
   state.selectedUserIds = new Set([...state.selectedUserIds].filter(id => rowIds.has(id)));
   const selectedCount = state.selectedUserIds.size;
   const allChecked = rows.length > 0 && rows.every(user => state.selectedUserIds.has(user.id));
   return `<div class="data-panel setting-list user-admin-card"><div class="module-head"><div><strong>登录用户管理</strong><div class="status-line">新增账号、配置角色权限、重置密码和启用/停用。</div></div><button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button></div>
     <div class="import-box"><label>Excel / CSV 批量导入用户<input id="userImportFile" type="file" accept=".xlsx,.xls,.csv"></label><button id="userImportBtn" class="btn secondary" type="button">导入用户</button><div id="userImportResult" class="status-line">列名：账号、姓名、班组、角色、初始密码、页签权限、功能权限、状态。</div></div>
-    <div class="user-batch-toolbar"><span id="userBatchCount" class="status-line">已选择 ${selectedCount} 个账号</span><button id="openUserBatchBtn" class="btn secondary" type="button" ${selectedCount ? "" : "disabled"}>批量修改</button></div>
-    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span><input id="userSelectAll" type="checkbox" ${allChecked ? "checked" : ""} aria-label="全选当前列表"></span><span>账号</span><span>姓名</span><span>角色</span><span>班组</span><span>状态</span><span>页签</span><span>操作</span></div>${rows.map(user => `<div class="user-row admin-user-row"><span><input type="checkbox" data-user-select="${escapeHtml(user.id)}" ${state.selectedUserIds.has(user.id) ? "checked" : ""} aria-label="选择 ${escapeHtml(user.username)}"></span><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}</span><span>${escapeHtml(roleLabels[user.role] || user.role)}</span><span>${escapeHtml(user.team || "未设置")}</span><span>${escapeHtml(statusLabels[user.status] || user.status || "启用")}</span><span>${escapeHtml((user.allowedTabs || []).map(tab => tabOptions.find(item => item[0] === tab)?.[1] || tab).join("、"))}</span><span class="user-actions"><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn" type="button" data-toggle-user="${escapeHtml(user.id)}">${user.status === "disabled" ? "启用" : "停用"}</button>${user.id !== state.user.id && user.id !== "54002010" ? `<button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">删除</button>` : ""}</span></div>`).join("") || '<div class="status-line">暂无账号。</div>'}</div></div>`;
+    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><div class="user-toolbar-right"><span id="userBatchCount" class="status-line">已选择 ${selectedCount} 个账号</span><button id="openUserBatchBtn" class="btn secondary" type="button" ${selectedCount ? "" : "disabled"}>批量修改</button></div></div>
+    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span><input id="userSelectAll" type="checkbox" ${allChecked ? "checked" : ""} aria-label="全选当前列表"></span><span>账号</span><span>姓名</span><span>角色</span><span>班组</span><span>状态</span><span>页签</span><span>操作</span></div>${rows.map(user => `<div class="user-row admin-user-row"><span><input type="checkbox" data-user-select="${escapeHtml(user.id)}" ${state.selectedUserIds.has(user.id) ? "checked" : ""} aria-label="选择 ${escapeHtml(user.username)}"></span><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}</span><span>${escapeHtml(roleLabels[user.role] || user.role)}</span><span>${escapeHtml(user.team || "未设置")}</span><span>${escapeHtml(statusLabels[user.status] || user.status || "启用")}</span><span>${escapeHtml(displayTabLabels(user.allowedTabs))}</span><span class="user-actions"><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn" type="button" data-toggle-user="${escapeHtml(user.id)}">${user.status === "disabled" ? "启用" : "停用"}</button>${user.id !== state.user.id && user.id !== "54002010" ? `<button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">删除</button>` : ""}</span></div>`).join("") || '<div class="status-line">当前角色下暂无账号。</div>'}</div></div>`;
 }
 
 function openUserDialog(user = null) {
@@ -1620,7 +1635,6 @@ function renderSettings() {
     <div class="data-panel setting-list"><strong>人员列表</strong><span class="status-line">人员信息由“登录用户管理”的启用账号自动同步，不再单独录入或导入。</span><div class="user-table people-table"><div class="user-row head"><span>账号</span><span>姓名</span><span>班组</span><span>状态</span><span></span><span></span><span></span></div>${peopleRows.map(person => `<div class="user-row"><span>${escapeHtml(person.username || person.id)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.team || "未设置")}</span><span>启用</span><span></span><span></span><span></span></div>`).join("") || '<div class="status-line">暂无启用账号。</div>'}</div></div>
     <div class="data-panel setting-list"><strong>信息批量导入</strong><div class="import-box"><label>Excel / CSV 导入信息<input id="settingsBatchImportFile" type="file" accept=".xlsx,.xls,.csv,.txt"></label><button id="settingsBatchImportBtn" class="btn secondary" type="button">批量导入信息</button><div id="settingsBatchImportResult" class="status-line">列名：日期、类别、标题、原文、发布者。导入后默认推送全员并标记已读。</div></div></div>
     ${renderUserManagement()}
-    <div class="data-panel setting-list"><strong>权限说明</strong><div class="setting-item">接收者：只读信息传达，展开原文自动形成阅读回执。</div><div class="setting-item">发布者：发布、催办、反馈明细和导出。</div><div class="setting-item">管理员：系统设置、删除、附件管理和固化项目维护。</div><div class="setting-item">${escapeHtml(settings.securityNotes)}</div></div>
   </section><div class="form-actions"><button id="saveSettingsBtn" class="btn" type="button">保存设置</button></div>`;
 }
 
@@ -1828,13 +1842,22 @@ async function attachmentsFrom(files, ownerType, ownerId) {
   return Promise.all(files.map(file => fileToAttachment(file, ownerType, ownerId)));
 }
 
-async function uploadFiles(ownerType, ownerId, files) {
+async function uploadFiles(ownerType, ownerId, files, onProgress = null) {
   if (!files.length) return [];
   const apiType = ownerType === "fixedProject" ? "fixed-projects" : "records";
-  const form = new FormData();
-  files.forEach(file => form.append("file", file, file.name));
-  const data = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments`, { method: "POST", body: form });
-  return data.attachments || [];
+  const uploaded = [];
+  for (const [index, file] of files.entries()) {
+    onProgress?.(`正在上传附件 ${index + 1}/${files.length}`);
+    const form = new FormData();
+    form.append("file", file, file.name);
+    try {
+      const data = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments`, { method: "POST", body: form });
+      uploaded.push(...(data.attachments || []));
+    } catch (error) {
+      throw new Error(`${file.name}：${error.message}`);
+    }
+  }
+  return uploaded;
 }
 
 function collectQueuedFiles(queue, input) {
@@ -1860,8 +1883,6 @@ function findAttachment(id, ownerType = "", ownerId = "") {
 }
 
 async function attachmentSource(file) {
-  const blob = await attachmentBlob(file);
-  if (blob) return URL.createObjectURL(blob);
   return apiUrl(file?.url || file?.dataUrl || "");
 }
 
@@ -1877,7 +1898,9 @@ async function attachmentBlob(file) {
   }
   if (source) {
     try {
-      return await (await fetch(source, { credentials: "include" })).blob();
+      const response = await fetch(source, { credentials: "include" });
+      if (!response.ok) return null;
+      return await response.blob();
     } catch {
       return null;
     }
@@ -1964,78 +1987,42 @@ function setViewerDownload(src, name) {
 function applyViewerZoom() {
   const scale = $("#viewerScale");
   const label = $("#viewerZoomReset");
-  if (state.viewerMode === "pdf-html") {
+  const zoomButtons = [$("#viewerZoomOut"), $("#viewerZoomIn"), $("#viewerZoomReset")];
+  const isNativePdf = state.viewerMode === "pdf-native";
+  zoomButtons.forEach(button => {
+    if (button) button.hidden = isNativePdf;
+  });
+  if (isNativePdf) {
     if (scale) {
       scale.style.transform = "none";
       scale.style.width = "100%";
       scale.style.height = "100%";
     }
-    applyPdfHtmlZoom();
-    if (label) label.textContent = `${Math.round(state.viewerZoom * 100)}%`;
+    if (label) {
+      label.hidden = false;
+      label.disabled = true;
+      label.textContent = "PDF";
+    }
     return;
   }
+  if (label) label.disabled = false;
   if (scale) {
     scale.style.transform = `scale(${state.viewerZoom})`;
-    scale.style.width = `${100 / state.viewerZoom}%`;
-    scale.style.height = "";
+    if (state.viewerMode === "image-fit") {
+      scale.style.width = "100%";
+      scale.style.height = "100%";
+    } else {
+      scale.style.width = `${100 / state.viewerZoom}%`;
+      scale.style.height = "";
+    }
   }
   if (label) label.textContent = `${Math.round(state.viewerZoom * 100)}%`;
 }
 
-function applyPdfHtmlZoom() {
-  const frame = $(".pdf-html-frame");
-  if (!frame) return;
-  try {
-    const doc = frame.contentDocument;
-    if (!doc) return;
-    const html = doc.documentElement;
-    const body = doc.body;
-    if (!html || !body) return;
-    html.style.overflow = "auto";
-    body.style.zoom = "";
-    body.style.transform = "none";
-    body.style.width = "";
-    let wrapper = doc.querySelector(".muc-pdf-preview-shell");
-    let inner = doc.querySelector(".muc-pdf-preview-inner");
-    if (!wrapper || !inner) {
-      wrapper = doc.createElement("div");
-      inner = doc.createElement("div");
-      wrapper.className = "muc-pdf-preview-shell";
-      inner.className = "muc-pdf-preview-inner";
-      while (body.firstChild) inner.appendChild(body.firstChild);
-      wrapper.appendChild(inner);
-      body.appendChild(wrapper);
-    }
-    wrapper.style.position = "relative";
-    wrapper.style.overflow = "visible";
-    wrapper.style.minWidth = "100%";
-    inner.style.display = "inline-block";
-    inner.style.minWidth = "100%";
-    inner.style.transformOrigin = "top left";
-    inner.style.transform = "scale(1)";
-    const rect = inner.getBoundingClientRect();
-    const naturalWidth = rect.width || inner.scrollWidth || frame.clientWidth || 1;
-    const naturalHeight = rect.height || inner.scrollHeight || frame.clientHeight || 1;
-    inner.dataset.naturalWidth = inner.dataset.naturalWidth || String(naturalWidth);
-    inner.dataset.naturalHeight = inner.dataset.naturalHeight || String(naturalHeight);
-    const baseWidth = Number(inner.dataset.naturalWidth) || naturalWidth;
-    const baseHeight = Number(inner.dataset.naturalHeight) || naturalHeight;
-    inner.style.transform = `scale(${state.viewerZoom})`;
-    wrapper.style.width = `${baseWidth * state.viewerZoom}px`;
-    wrapper.style.height = `${baseHeight * state.viewerZoom}px`;
-  } catch {
-    // Same-origin HTML previews can be zoomed directly; fall back silently if a browser blocks access.
-  }
-}
-
 function setViewerPreview(html, options = {}) {
   state.viewerMode = options.mode || "";
-  state.viewerPdfSrc = options.pdfSrc || "";
-  $("#viewerContent").innerHTML = `<div id="viewerScale" class="preview-scale${state.viewerMode === "pdf-html" ? " pdf-html-scale" : ""}">${html}</div>`;
-  if (state.viewerMode === "pdf-html") {
-    const frame = $(".pdf-html-frame");
-    if (frame) frame.addEventListener("load", applyPdfHtmlZoom);
-  }
+  const modeClass = state.viewerMode === "pdf-native" ? " pdf-native-scale" : state.viewerMode === "image-fit" ? " image-fit-scale" : "";
+  $("#viewerContent").innerHTML = `<div id="viewerScale" class="preview-scale${modeClass}">${html}</div>`;
   applyViewerZoom();
 }
 
@@ -2049,18 +2036,21 @@ function resetViewerZoom() {
   applyViewerZoom();
 }
 
-function renderPreviewFallback(file, src, message = "该文件暂不支持页面内预览。") {
-  return `<div class="preview-fallback"><strong>${escapeHtml(file?.name || "附件")}</strong><p>${escapeHtml(message)}</p><p>类型：${escapeHtml(file?.type || "未知")} · 大小：${escapeHtml(fileSizeText(file?.size || 0))}</p>${downloadLink(src, file)}</div>`;
+function resetViewerDialog() {
+  $("#viewerContent").innerHTML = "";
+  state.viewerMode = "";
+  setViewerDownload("", "");
+  resetViewerZoom();
 }
 
-async function pdfPreviewInfo(file) {
-  const id = file?.id || file?.attachmentId;
-  if (!id) return { type: "fallback" };
-  try {
-    return await apiRequest(`/attachments/${encodeURIComponent(id)}/preview`);
-  } catch {
-    return { type: "fallback" };
-  }
+function closeDialog(dialog) {
+  if (!dialog?.open) return;
+  if (dialog.id === "viewerDialog") resetViewerDialog();
+  dialog.close();
+}
+
+function renderPreviewFallback(file, src, message = "该文件暂不支持页面内预览。") {
+  return `<div class="preview-fallback"><strong>${escapeHtml(file?.name || "附件")}</strong><p>${escapeHtml(message)}</p><p>类型：${escapeHtml(file?.type || "未知")} · 大小：${escapeHtml(fileSizeText(file?.size || 0))}</p>${downloadLink(src, file)}</div>`;
 }
 
 function renderSheetPreview(rows) {
@@ -2125,18 +2115,16 @@ async function renderDocxPreview(blob, file, src) {
 
 async function renderAttachmentPreview(file, src) {
   const name = file?.name || "附件";
-  const blob = await attachmentBlob(file);
   const hasSource = !!src && src !== "#";
-  if (isImageAttachment(file, name) && hasSource) return `<img src="${escapeHtml(src)}" alt="${escapeHtml(name)}">`;
+  if (isImageAttachment(file, name) && hasSource) return `<img class="image-fit-preview" src="${escapeHtml(src)}" alt="${escapeHtml(name)}">`;
   if (isPdfAttachment(file, name) && hasSource) {
-    const preview = await pdfPreviewInfo(file);
-    if (preview?.type === "html" && preview.url) {
-      return `<iframe class="pdf-html-frame" src="${escapeHtml(apiUrl(preview.url))}" title="${escapeHtml(name)}" sandbox="allow-same-origin"></iframe>`;
-    }
-    return renderPreviewFallback(file, src, "当前 PDF 暂无页面预览，请下载或外部打开。");
+    return `<div class="pdf-native-preview"><iframe class="pdf-native-frame" src="${escapeHtml(src)}" title="${escapeHtml(name)}"></iframe><div class="pdf-mobile-actions"><strong>PDF 附件</strong><p>如需放大查看细节，点击“打开查看”。</p><a class="btn secondary" href="${escapeHtml(src)}" target="_blank" rel="noopener">打开查看</a></div></div>`;
   }
   if (isVideoAttachment(file, name) && hasSource) return `<video src="${escapeHtml(src)}" controls></video>`;
   if (isAudioAttachment(file, name) && hasSource) return `<audio src="${escapeHtml(src)}" controls></audio>${downloadLink(src, file)}`;
+  if (attachmentExt(file, name) === "doc") return renderPreviewFallback(file, src, "doc 格式暂不支持页面内预览，请下载或另存为 docx 后预览。");
+  if (attachmentExt(file, name) === "xls") return renderPreviewFallback(file, src, "xls 格式暂不支持页面内预览，请下载或另存为 xlsx 后预览。");
+  const blob = await attachmentBlob(file);
   if (blob && isTextAttachment(file, name)) return `<pre class="preview-text">${escapeHtml(await blob.text())}</pre>`;
   if (blob && attachmentExt(file, name) === "xlsx") {
     try {
@@ -2585,15 +2573,171 @@ async function readZipEntries(buffer) {
   return files;
 }
 
-function parseSheetRows(sheetFile, shared, decoder, parser) {
+const builtinXlsxFormats = {
+  0: "General",
+  1: "0",
+  2: "0.00",
+  3: "#,##0",
+  4: "#,##0.00",
+  9: "0%",
+  10: "0.00%",
+  14: "m/d/yy",
+  15: "d-mmm-yy",
+  16: "d-mmm",
+  17: "mmm-yy",
+  18: "h:mm AM/PM",
+  19: "h:mm:ss AM/PM",
+  20: "h:mm",
+  21: "h:mm:ss",
+  22: "m/d/yy h:mm",
+  37: "#,##0 ;(#,##0)",
+  38: "#,##0 ;[Red](#,##0)",
+  39: "#,##0.00;(#,##0.00)",
+  40: "#,##0.00;[Red](#,##0.00)",
+  45: "mm:ss",
+  46: "[h]:mm:ss",
+  47: "mmss.0",
+  49: "@"
+};
+
+function parseXlsxStyles(files, decoder, parser) {
+  const result = { styleFormats: [] };
+  const file = files["xl/styles.xml"];
+  if (!file) return result;
+  const xml = parser.parseFromString(decoder.decode(file), "application/xml");
+  const customFormats = {};
+  Array.from(xml.getElementsByTagName("numFmt")).forEach(node => {
+    const id = Number(node.getAttribute("numFmtId"));
+    if (Number.isFinite(id)) customFormats[id] = node.getAttribute("formatCode") || "";
+  });
+  const cellXfs = xml.getElementsByTagName("cellXfs")[0];
+  if (!cellXfs) return result;
+  Array.from(cellXfs.getElementsByTagName("xf")).forEach(node => {
+    const id = Number(node.getAttribute("numFmtId"));
+    result.styleFormats.push(customFormats[id] || builtinXlsxFormats[id] || "");
+  });
+  return result;
+}
+
+function excelFormatSection(format) {
+  return String(format || "General").split(";")[0] || "General";
+}
+
+function stripExcelFormatLiterals(format) {
+  return excelFormatSection(format)
+    .replace(/"[^"]*"/g, "")
+    .replace(/\\./g, "")
+    .replace(/_.?/g, "")
+    .replace(/\*.?/g, "")
+    .replace(/\[[^\]]+\]/g, "")
+    .toLowerCase();
+}
+
+function isExcelTextFormat(format) {
+  return stripExcelFormatLiterals(format).trim() === "@";
+}
+
+function isExcelPercentFormat(format) {
+  return stripExcelFormatLiterals(format).includes("%");
+}
+
+function isExcelTimeFormat(format) {
+  const raw = excelFormatSection(format).toLowerCase();
+  const clean = stripExcelFormatLiterals(format);
+  return /\[[hms]+\]/.test(raw) || /h+/.test(clean) || /s+/.test(clean) || /m{1,2}:/.test(clean);
+}
+
+function isExcelDateFormat(format) {
+  const clean = stripExcelFormatLiterals(format);
+  return /y+/.test(clean) || /d+/.test(clean) || /m+[\/-]d+/.test(clean) || /d+[\/-]m+/.test(clean);
+}
+
+function excelDecimalPlaces(format) {
+  const clean = stripExcelFormatLiterals(format).replace(/%/g, "");
+  const match = clean.match(/\.([0#]+)/);
+  return match ? match[1].length : 0;
+}
+
+function xlsxSerialToDate(serial, date1904 = false) {
+  const number = Number(serial);
+  if (!Number.isFinite(number)) return null;
+  const whole = Math.floor(number);
+  const fraction = number - whole;
+  const base = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
+  return new Date(base + whole * 86400000 + Math.round(fraction * 86400000));
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatExcelDateTime(serial, format, date1904) {
+  const date = xlsxSerialToDate(serial, date1904);
+  if (!date) return String(serial ?? "");
+  const raw = excelFormatSection(format).toLowerCase();
+  const hasDate = isExcelDateFormat(format);
+  const hasTime = isExcelTimeFormat(format);
+  const year = date.getUTCFullYear();
+  const month = pad2(date.getUTCMonth() + 1);
+  const day = pad2(date.getUTCDate());
+  const hours = pad2(date.getUTCHours());
+  const minutes = pad2(date.getUTCMinutes());
+  const seconds = pad2(date.getUTCSeconds());
+  if (/\[h+\]/.test(raw)) {
+    const totalHours = Math.floor(Number(serial) * 24);
+    return raw.includes("ss") ? `${totalHours}:${minutes}:${seconds}` : `${totalHours}:${minutes}`;
+  }
+  if (hasDate && hasTime) return raw.includes("ss") ? `${year}-${month}-${day} ${hours}:${minutes}:${seconds}` : `${year}-${month}-${day} ${hours}:${minutes}`;
+  if (hasTime && !hasDate) return raw.includes("ss") ? `${hours}:${minutes}:${seconds}` : `${hours}:${minutes}`;
+  return `${year}-${month}-${day}`;
+}
+
+function formatExcelNumber(rawValue, format, date1904) {
+  const raw = String(rawValue ?? "");
+  const number = Number(raw);
+  if (!format || stripExcelFormatLiterals(format).toLowerCase() === "general" || !Number.isFinite(number)) return raw;
+  if (isExcelTextFormat(format)) return raw;
+  if (isExcelDateFormat(format) || isExcelTimeFormat(format)) return formatExcelDateTime(number, format, date1904);
+  if (isExcelPercentFormat(format)) return `${(number * 100).toFixed(excelDecimalPlaces(format))}%`;
+  const clean = stripExcelFormatLiterals(format);
+  if (/^0+$/.test(clean) && number >= 0 && Number.isInteger(number)) return String(number).padStart(clean.length, "0");
+  if (/[0#]/.test(clean)) {
+    const decimals = excelDecimalPlaces(format);
+    return number.toLocaleString("zh-CN", {
+      useGrouping: clean.includes(","),
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  }
+  return raw;
+}
+
+function inlineXlsxText(cell) {
+  const inline = cell.getElementsByTagName("is")[0];
+  return inline ? inline.textContent || "" : "";
+}
+
+function xlsxCellDisplayValue(cell, shared, styles, date1904) {
+  const type = cell.getAttribute("t");
+  const valueNode = cell.getElementsByTagName("v")[0];
+  const rawValue = valueNode ? valueNode.textContent || "" : inlineXlsxText(cell);
+  if (!rawValue && type !== "inlineStr") return "";
+  if (type === "s") return shared[Number(rawValue)] || "";
+  if (type === "inlineStr") return rawValue;
+  if (type === "b") return rawValue === "1" ? "TRUE" : "FALSE";
+  if (type === "str" || type === "e") return rawValue;
+  const styleIndex = Number(cell.getAttribute("s"));
+  const format = Number.isFinite(styleIndex) ? styles.styleFormats[styleIndex] || "" : "";
+  return formatExcelNumber(rawValue, format, date1904);
+}
+
+function parseSheetRows(sheetFile, shared, decoder, parser, styles = { styleFormats: [] }, date1904 = false) {
   const sheet = parser.parseFromString(decoder.decode(sheetFile), "application/xml"), rows = [];
   Array.from(sheet.getElementsByTagName("row")).forEach(rowNode => {
     const row = [];
     Array.from(rowNode.getElementsByTagName("c")).forEach(cell => {
-      const ref = cell.getAttribute("r") || "", column = (ref.match(/[A-Z]+/) || ["A"])[0].split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1, type = cell.getAttribute("t"), valueNode = cell.getElementsByTagName("v")[0];
-      let value = valueNode ? valueNode.textContent || "" : cell.textContent || "";
-      if (type === "s") value = shared[Number(value)] || "";
-      row[column] = value;
+      const ref = cell.getAttribute("r") || "", column = (ref.match(/[A-Z]+/) || ["A"])[0].split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
+      row[column] = xlsxCellDisplayValue(cell, shared, styles, date1904);
     });
     rows.push(row.map(value => value || ""));
   });
@@ -2602,6 +2746,7 @@ function parseSheetRows(sheetFile, shared, decoder, parser) {
 
 async function parseXlsxWorkbook(file) {
   const files = await readZipEntries(await file.arrayBuffer()), decoder = new TextDecoder(), parser = new DOMParser(), shared = [];
+  const styles = parseXlsxStyles(files, decoder, parser);
   if (files["xl/sharedStrings.xml"]) {
     const sharedXml = parser.parseFromString(decoder.decode(files["xl/sharedStrings.xml"]), "application/xml");
     Array.from(sharedXml.getElementsByTagName("si")).forEach(item => shared.push(item.textContent || ""));
@@ -2610,16 +2755,18 @@ async function parseXlsxWorkbook(file) {
   if (!workbookFile) {
     const fallback = files["xl/worksheets/sheet1.xml"];
     if (!fallback) throw new Error("未找到第一张工作表");
-    return [{ name: "Sheet1", rows: parseSheetRows(fallback, shared, decoder, parser) }];
+    return [{ name: "Sheet1", rows: parseSheetRows(fallback, shared, decoder, parser, styles, false) }];
   }
   const workbook = parser.parseFromString(decoder.decode(workbookFile), "application/xml");
+  const workbookPr = workbook.getElementsByTagName("workbookPr")[0];
+  const date1904 = ["1", "true"].includes(String(workbookPr?.getAttribute("date1904") || "").toLowerCase());
   const rels = relsMap(files["xl/_rels/workbook.xml.rels"] ? decoder.decode(files["xl/_rels/workbook.xml.rels"]) : "");
   const sheets = Array.from(workbook.getElementsByTagName("sheet")).map((sheet, index) => {
     const relId = sheet.getAttribute("r:id");
     const target = rels[relId] || `worksheets/sheet${index + 1}.xml`;
     const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`.replace("xl//", "xl/");
     const sheetFile = files[path];
-    return sheetFile ? { name: sheet.getAttribute("name") || `Sheet${index + 1}`, rows: parseSheetRows(sheetFile, shared, decoder, parser) } : null;
+    return sheetFile ? { name: sheet.getAttribute("name") || `Sheet${index + 1}`, rows: parseSheetRows(sheetFile, shared, decoder, parser, styles, date1904) } : null;
   }).filter(Boolean);
   if (!sheets.length) throw new Error("未找到可预览的工作表");
   return sheets;
@@ -2777,14 +2924,7 @@ document.addEventListener("click", event => {
   const close = event.target.closest("[data-close]");
   if (close) {
     const dialog = $("#" + close.dataset.close);
-    if (dialog.id === "viewerDialog") {
-      $("#viewerContent").innerHTML = "";
-      state.viewerMode = "";
-      state.viewerPdfSrc = "";
-      setViewerDownload("", "");
-      resetViewerZoom();
-    }
-    dialog.close();
+    closeDialog(dialog);
   }
   const more = event.target.closest("[data-more]");
   if (more) {
@@ -2799,6 +2939,12 @@ document.addEventListener("click", event => {
     closeOpenMenus();
   }
   if (!event.target.closest(".subpage-menu-wrap")) closeSubpageMenu();
+});
+
+$$("dialog").forEach(dialog => {
+  dialog.addEventListener("click", event => {
+    if (event.target === dialog) closeDialog(dialog);
+  });
 });
 
 $$(".top-tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
@@ -2860,8 +3006,12 @@ $("#loginForm").addEventListener("keydown", event => {
 $("#entryForm").addEventListener("submit", async event => {
   event.preventDefault();
   const submitButton = event.submitter || $("#entryForm .form-actions .btn:not(.secondary)");
+  const originalText = submitButton?.textContent || "保存";
   try {
-    if (submitButton) submitButton.disabled = true;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "正在保存...";
+    }
     const id = $("#entryId").value;
     const existing = state.records.find(record => record.id === id);
     const payload = entryPayload(existing);
@@ -2869,7 +3019,17 @@ $("#entryForm").addEventListener("submit", async event => {
     let saved;
     if (id) saved = await recordService.update(id, payload);
     else saved = await recordService.create(payload);
-    await uploadFiles("record", saved.id, queuedFiles);
+    try {
+      await uploadFiles("record", saved.id, queuedFiles, text => {
+        if (submitButton) submitButton.textContent = text;
+      });
+    } catch (uploadError) {
+      $("#entryDialog").close();
+      resetRecordForm();
+      await renderAll();
+      alert(`信息已保存，附件上传失败：${uploadError.message}`);
+      return;
+    }
     $("#entryDialog").close();
     resetRecordForm();
     await renderAll();
@@ -2877,21 +3037,41 @@ $("#entryForm").addEventListener("submit", async event => {
     if (isAuthExpired(error)) await handleAuthExpired("发布/保存失败：登录状态已失效。");
     else alert(`发布/保存失败：${error.message}`);
   } finally {
-    if (submitButton) submitButton.disabled = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalText;
+    }
   }
 });
 
 $("#fixedForm").addEventListener("submit", async event => {
   event.preventDefault();
-  const id = $("#fixedId").value;
-  const existing = state.fixedProjects.find(project => project.id === id);
-  const queuedFiles = collectQueuedFiles(state.fixedFiles, $("#fixedFiles"));
-  const payload = { ata: $("#fixedAta").value, title: $("#fixedTitle").value.trim(), contentHtml: sanitizeRichHtml($("#fixedContent").innerHTML), references: $("#fixedReferences").value.trim(), attachments: existing?.attachments || [] };
-  const saved = id ? await fixedProjectService.update(id, payload) : await fixedProjectService.create(payload);
-  await uploadFiles("fixedProject", saved.id, queuedFiles);
-  $("#fixedDialog").close();
-  resetFixedForm();
-  await renderAll();
+  const submitButton = event.submitter || $("#fixedForm .form-actions .btn:not(.secondary)");
+  const originalText = submitButton?.textContent || "保存";
+  try {
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "正在保存...";
+    }
+    const id = $("#fixedId").value;
+    const existing = state.fixedProjects.find(project => project.id === id);
+    const queuedFiles = collectQueuedFiles(state.fixedFiles, $("#fixedFiles"));
+    const payload = { ata: $("#fixedAta").value, title: $("#fixedTitle").value.trim(), contentHtml: sanitizeRichHtml($("#fixedContent").innerHTML), references: $("#fixedReferences").value.trim(), attachments: existing?.attachments || [] };
+    const saved = id ? await fixedProjectService.update(id, payload) : await fixedProjectService.create(payload);
+    await uploadFiles("fixedProject", saved.id, queuedFiles, text => {
+      if (submitButton) submitButton.textContent = text;
+    });
+    $("#fixedDialog").close();
+    resetFixedForm();
+    await renderAll();
+  } catch (error) {
+    alert(`保存固化项目失败：${error.message}`);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalText;
+    }
+  }
 });
 
 $("#monthSelect").addEventListener("change", () => {
@@ -3071,7 +3251,9 @@ document.addEventListener("click", async event => {
     setViewerDownload(src, file.name || attachment.dataset.name || "附件");
     $("#viewerContent").innerHTML = '<div class="status-line">正在生成预览...</div>';
     $("#viewerDialog").showModal();
-    setViewerPreview(await renderAttachmentPreview(file, src), isPdfAttachment(file, file?.name || attachment.dataset.name || "") ? { mode: "pdf-html", pdfSrc: src } : {});
+    const attachmentName = file?.name || attachment.dataset.name || "";
+    const viewerMode = isPdfAttachment(file, attachmentName) ? "pdf-native" : isImageAttachment(file, attachmentName) ? "image-fit" : "";
+    setViewerPreview(await renderAttachmentPreview(file, src), viewerMode ? { mode: viewerMode } : {});
   }
   const sheetTab = event.target.closest("[data-sheet-tab]");
   if (sheetTab) {
@@ -3205,6 +3387,11 @@ document.addEventListener("submit", event => {
 });
 
 document.addEventListener("change", event => {
+  if (event.target.id === "userRoleFilter") {
+    state.userRoleFilter = event.target.value;
+    renderSettings();
+    return;
+  }
   if (event.target.id === "userSelectAll") {
     $$("[data-user-select]").forEach(input => {
       input.checked = event.target.checked;
