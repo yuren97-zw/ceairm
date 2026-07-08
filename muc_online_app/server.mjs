@@ -1136,6 +1136,70 @@ function isInlineSafeAttachment(row) {
     || ["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "mp4", "mov", "m4v", "webm", "mp3", "wav", "m4a", "aac"].includes(ext);
 }
 
+function attachmentCacheHeaders(row, stat) {
+  const modified = stat.mtime.toUTCString();
+  const etag = `"${Buffer.from(`${row.id}:${stat.size}:${Number(stat.mtimeMs).toFixed(0)}`).toString("base64url")}"`;
+  return {
+    "Accept-Ranges": "bytes",
+    "Last-Modified": modified,
+    "ETag": etag,
+    "Cache-Control": "private, max-age=86400",
+    "X-Accel-Buffering": "no"
+  };
+}
+
+function parseRangeHeader(rangeHeader, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader || "").trim());
+  if (!match || size < 1) return null;
+  let start;
+  let end;
+  if (match[1] === "" && match[2] === "") return null;
+  if (match[1] === "") {
+    const suffixLength = Number(match[2]);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return null;
+    start = Math.max(size - suffixLength, 0);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] === "" ? size - 1 : Number(match[2]);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  }
+  if (start < 0 || end < start || start >= size) return null;
+  return { start, end: Math.min(end, size - 1) };
+}
+
+async function streamAttachment(req, res, row, filePath) {
+  const stat = await fs.stat(filePath);
+  const type = contentTypeForAttachment(row);
+  const disposition = isInlineSafeAttachment(row) ? "inline" : "attachment";
+  const baseHeaders = {
+    ...securityHeaders(),
+    ...attachmentCacheHeaders(row, stat),
+    "Content-Type": type,
+    "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(row.name)}`
+  };
+  if (req.headers["if-none-match"] === baseHeaders.ETag) {
+    res.writeHead(304, baseHeaders);
+    return res.end();
+  }
+  const range = parseRangeHeader(req.headers.range, stat.size);
+  if (req.headers.range && !range) {
+    res.writeHead(416, { ...baseHeaders, "Content-Range": `bytes */${stat.size}` });
+    return res.end();
+  }
+  if (range) {
+    const length = range.end - range.start + 1;
+    res.writeHead(206, {
+      ...baseHeaders,
+      "Content-Length": length,
+      "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`
+    });
+    return fss.createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
+  }
+  res.writeHead(200, { ...baseHeaders, "Content-Length": stat.size });
+  return fss.createReadStream(filePath).pipe(res);
+}
+
 async function addUploadedAttachments(req, res, ownerType, ownerId) {
   const user = requireLogin(req, res);
   if (!user) return;
@@ -1705,9 +1769,11 @@ async function route(req, res) {
       if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
       const filePath = safeUploadPath(row.path);
       if (!filePath) return sendText(res, 403, "附件路径无效");
-      const disposition = isInlineSafeAttachment(row) ? "inline" : "attachment";
-      res.writeHead(200, { ...securityHeaders(), "Content-Type": contentTypeForAttachment(row), "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(row.name)}` });
-      return fss.createReadStream(filePath).pipe(res);
+      try {
+        return await streamAttachment(req, res, row, filePath);
+      } catch {
+        return sendText(res, 404, "未找到附件文件");
+      }
     }
     if (att && method === "DELETE") {
       const login = requireLogin(req, res);
