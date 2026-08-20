@@ -56,7 +56,19 @@ try {
     if (!exists) continue;
     const rows = sqlite.prepare(`select * from ${table}`).all();
     if (!rows.length) continue;
-    const columns = Object.keys(rows[0]);
+    const targetResult = await client.query(
+      "select column_name from information_schema.columns where table_schema='public' and table_name=$1",
+      [table]
+    );
+    const targetColumns = new Set(targetResult.rows.map(row => row.column_name));
+    const sourceColumns = Object.keys(rows[0]);
+    const columns = sourceColumns.filter(column => targetColumns.has(column));
+    const skippedColumns = sourceColumns.filter(column => !targetColumns.has(column));
+    if (!columns.length) {
+      console.warn(`${table}: 未发现可迁移的共同字段，已跳过`);
+      continue;
+    }
+    if (skippedColumns.length) console.warn(`${table}: 跳过旧字段 ${skippedColumns.join(", ")}`);
     const quoted = columns.map(column => `"${column}"`).join(",");
     const conflict = table === "settings" ? " on conflict(key) do nothing" : " on conflict do nothing";
     const sql = `insert into ${table}(${quoted}) values(${placeholders(columns.length)})${conflict}`;

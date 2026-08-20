@@ -1,6 +1,6 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import COS from "cos-nodejs-sdk-v5";
 import pg from "pg";
 
 const { Client } = pg;
@@ -17,30 +17,15 @@ if (!databaseUrl || !uploadDir || Object.values(config).some(value => !value)) {
   throw new Error("DATABASE_URL, UPLOAD_DIR and all COS_* variables are required");
 }
 
-function encodePath(value) {
-  return `/${String(value).split("/").map(encodeURIComponent).join("/")}`;
-}
+const cos = new COS({ SecretId: config.secretId, SecretKey: config.secretKey });
 
-function signedUrl(method, objectKey) {
-  const start = Math.floor(Date.now() / 1000) - 30;
-  const end = start + 900;
-  const keyTime = `${start};${end}`;
-  const host = `${config.bucket}.cos.${config.region}.myqcloud.com`;
-  const pathname = encodePath(objectKey);
-  const httpString = `${method.toLowerCase()}\n${pathname}\n\nhost=${host}\n`;
-  const signKey = crypto.createHmac("sha1", config.secretKey).update(keyTime).digest("hex");
-  const stringToSign = `sha1\n${keyTime}\n${crypto.createHash("sha1").update(httpString).digest("hex")}\n`;
-  const signature = crypto.createHmac("sha1", signKey).update(stringToSign).digest("hex");
-  const query = new URLSearchParams({
-    "q-sign-algorithm": "sha1",
-    "q-ak": config.secretId,
-    "q-sign-time": keyTime,
-    "q-key-time": keyTime,
-    "q-header-list": "host",
-    "q-url-param-list": "",
-    "q-signature": signature
+function putObject(params) {
+  return new Promise((resolve, reject) => {
+    cos.putObject(params, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
   });
-  return `https://${host}${pathname}?${query}`;
 }
 
 const client = new Client({ connectionString: databaseUrl, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
@@ -52,12 +37,13 @@ try {
     if (!localPath.startsWith(`${path.resolve(uploadDir)}${path.sep}`)) throw new Error(`Unsafe attachment path: ${row.path}`);
     const data = await fs.readFile(localPath);
     const objectKey = `attachments/${row.owner_type}/${row.owner_id}/${row.id}-${path.basename(row.name || row.path)}`;
-    const response = await fetch(signedUrl("PUT", objectKey), {
-      method: "PUT",
-      headers: { "Content-Type": row.type || "application/octet-stream" },
-      body: data
+    await putObject({
+      Bucket: config.bucket,
+      Region: config.region,
+      Key: objectKey,
+      Body: data,
+      ContentType: row.type || "application/octet-stream"
     });
-    if (!response.ok) throw new Error(`COS upload failed for ${row.id}: ${response.status}`);
     await client.query("update attachments set storage='cos',path=$1 where id=$2", [objectKey, row.id]);
     console.log(`Migrated ${row.id}: ${row.name}`);
   }
