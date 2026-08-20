@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js",
-    "migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.mjs"
+    "migrate": "node scripts/run-postgres-migrations.mjs",
+    "migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.mjs",
+    "migrate:attachments-to-cos": "node scripts/migrate-attachments-to-cos.mjs"
   },
   "dependencies": {
     "pg": "^8.13.1"

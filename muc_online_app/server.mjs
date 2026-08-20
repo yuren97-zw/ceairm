@@ -17,6 +17,14 @@ const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 const port = Number(process.env.PORT || 8787);
 const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
 const serviceStartedAt = new Date().toISOString();
+const appVersion = process.env.APP_VERSION || "1.0.0";
+const isProduction = process.env.NODE_ENV === "production";
+const cosConfig = {
+  secretId: String(process.env.COS_SECRET_ID || "").trim(),
+  secretKey: String(process.env.COS_SECRET_KEY || "").trim(),
+  bucket: String(process.env.COS_BUCKET || "").trim(),
+  region: String(process.env.COS_REGION || "").trim()
+};
 const sessions = new Map();
 const maintenanceEventClients = new Set();
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -51,6 +59,43 @@ const db = await createDatabase({ dbPath });
 
 function randomId(prefix) {
   return `${prefix}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+}
+
+function cosEnabled() {
+  return Object.values(cosConfig).every(Boolean);
+}
+
+function encodeCosPath(objectKey) {
+  return `/${String(objectKey || "").split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function cosSignedUrl(method, objectKey, expiresSeconds = 600) {
+  if (!cosEnabled()) throw new Error("COS 尚未配置");
+  const start = Math.floor(Date.now() / 1000) - 30;
+  const end = start + Math.max(60, Number(expiresSeconds) || 600);
+  const keyTime = `${start};${end}`;
+  const host = `${cosConfig.bucket}.cos.${cosConfig.region}.myqcloud.com`;
+  const pathname = encodeCosPath(objectKey);
+  const httpString = `${String(method || "GET").toLowerCase()}\n${pathname}\n\nhost=${host}\n`;
+  const signKey = crypto.createHmac("sha1", cosConfig.secretKey).update(keyTime).digest("hex");
+  const stringToSign = `sha1\n${keyTime}\n${crypto.createHash("sha1").update(httpString).digest("hex")}\n`;
+  const signature = crypto.createHmac("sha1", signKey).update(stringToSign).digest("hex");
+  const authorization = new URLSearchParams({
+    "q-sign-algorithm": "sha1",
+    "q-ak": cosConfig.secretId,
+    "q-sign-time": keyTime,
+    "q-key-time": keyTime,
+    "q-header-list": "host",
+    "q-url-param-list": "",
+    "q-signature": signature
+  });
+  return `https://${host}${pathname}?${authorization.toString()}`;
+}
+
+async function deleteCosObject(objectKey) {
+  if (!cosEnabled() || !objectKey) return;
+  const response = await fetch(cosSignedUrl("DELETE", objectKey, 300), { method: "DELETE" });
+  if (!response.ok && response.status !== 404) throw new Error(`COS 删除失败（${response.status}）`);
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -723,7 +768,7 @@ async function initDb() {
   db.prepare("insert into maintenance_sync_state(id,version,updated_at) values(1,0,?) on conflict(id) do nothing").run(now());
   db.prepare("delete from sessions where expires_at<=?").run(now());
   db.prepare("delete from favorites where record_id not in (select id from records)").run();
-  const seeds = [
+  const seeds = isProduction ? [] : [
     { id: "00000001", username: "receiver", password: "123456", name: "接收者", role: "receiver", department: "未设置", team: "一班" },
     { id: "u-publisher", username: "publisher", password: "123456", name: "发布者", role: "publisher", department: "未设置", team: "发布组" },
     { id: "54002010", username: "54002010", password: "muc2026", name: "系统管理员", role: "admin", department: "系统管理", team: "管理员" }
@@ -735,21 +780,21 @@ async function initDb() {
     insertUser.run(seed.id, seed.username, seed.name, seed.role, pass.salt, pass.hash, JSON.stringify(roles[seed.role].permissions), JSON.stringify(roles[seed.role].allowedTabs), seed.department, seed.team, "active", now(), now());
   }
   ensureDefaultAdmin();
-  const legacyAdmin = db.prepare("select id from users where username=?").get("admin");
+  const legacyAdmin = isProduction ? null : db.prepare("select id from users where username=?").get("admin");
   if (legacyAdmin) {
     db.prepare("delete from sessions where user_id=?").run(legacyAdmin.id);
     db.prepare("delete from favorites where user_id=?").run(legacyAdmin.id);
     db.prepare("delete from users where username=?").run("admin");
   }
   const peopleCount = db.prepare("select count(*) as count from people").get().count;
-  if (!peopleCount) {
+  if (!peopleCount && !isProduction) {
     const insertPeople = db.prepare("insert into people(id,name,department,team,created_at,updated_at) values(?,?,?,?,?,?)");
     defaultPeople.forEach(person => insertPeople.run(person.id, person.name, person.department, person.team, now(), now()));
   }
   if (!db.prepare("select key from settings where key='categories'").get()) setSetting("categories", defaultCategories);
   if (!db.prepare("select key from settings where key='overdueDays'").get()) setSetting("overdueDays", 3);
   if (!db.prepare("select key from settings where key='reminderDays'").get()) setSetting("reminderDays", 1);
-  await seedInitialRecords();
+  if (!isProduction) await seedInitialRecords();
   backupMaintenanceThreeLineMigration();
   dropLegacyMaintenanceTables();
   seedMaintenanceRules();
@@ -1158,6 +1203,18 @@ function seedMaintenanceRules() {
 }
 
 function ensureDefaultAdmin() {
+  if (isProduction) {
+    const userCount = Number(db.prepare("select count(*) as count from users").get()?.count || 0);
+    if (userCount > 0) return;
+    const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || "");
+    if (!password) throw new Error("生产数据库没有账号，请设置 ADMIN_BOOTSTRAP_PASSWORD 完成首次管理员初始化");
+    const username = String(process.env.ADMIN_BOOTSTRAP_USERNAME || "admin").trim() || "admin";
+    const name = String(process.env.ADMIN_BOOTSTRAP_NAME || "系统管理员").trim() || "系统管理员";
+    const pass = hashPassword(password);
+    db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(randomId("u"), username, name, "admin", pass.salt, pass.hash, JSON.stringify(roles.admin.permissions), JSON.stringify(roles.admin.allowedTabs), "系统管理", "管理员", "active", now(), now());
+    return;
+  }
   const adminDefaults = {
     id: "54002010",
     username: "54002010",
@@ -1257,9 +1314,10 @@ function publicSettings() {
 }
 
 async function removeOwnerAttachmentFiles(ownerType, ownerId) {
-  const rows = db.prepare("select path from attachments where owner_type=? and owner_id=?").all(ownerType, ownerId);
+  const rows = db.prepare("select storage,path from attachments where owner_type=? and owner_id=?").all(ownerType, ownerId);
   for (const row of rows) {
-    if (row.path) await fs.rm(path.join(uploadDir, row.path), { force: true });
+    if (row.storage === "cos") await deleteCosObject(row.path);
+    else if (row.path) await fs.rm(path.join(uploadDir, row.path), { force: true });
   }
 }
 
@@ -4274,6 +4332,71 @@ async function addUploadedAttachments(req, res, ownerType, ownerId) {
   send(res, 201, { attachments });
 }
 
+function attachmentOwner(ownerType, ownerId) {
+  const table = ownerType === "record" ? "records" : "fixed_projects";
+  return db.prepare(`select * from ${table} where id=?`).get(ownerId);
+}
+
+function requireAttachmentOwnerAccess(req, res, ownerType, ownerId) {
+  const user = requireLogin(req, res);
+  if (!user) return null;
+  if (!attachmentOwner(ownerType, ownerId)) {
+    send(res, 404, { error: "未找到项目" });
+    return null;
+  }
+  const permission = canManageAttachmentCheck(user, { owner_type: ownerType, owner_id: ownerId });
+  if (!permission.ok) {
+    send(res, 403, { error: permission.error || "无权管理该项目附件" });
+    return null;
+  }
+  return user;
+}
+
+async function createCosUpload(req, res, ownerType, ownerId) {
+  if (!cosEnabled()) return send(res, 409, { error: "COS 直传未配置" });
+  const user = requireAttachmentOwnerAccess(req, res, ownerType, ownerId);
+  if (!user) return;
+  const payload = await bodyJson(req);
+  const name = path.basename(String(payload.name || "附件"));
+  const size = Number(payload.size || 0);
+  validateUploadName(name);
+  if (!Number.isFinite(size) || size <= 0) return send(res, 400, { error: "空文件不能上传" });
+  if (size > MAX_UPLOAD_BYTES) return send(res, 413, { error: "单个附件不能超过100MB" });
+  const attachmentId = randomId("att");
+  const objectKey = `attachments/${ownerType}/${ownerId}/${attachmentId}-${name}`;
+  return send(res, 200, {
+    attachmentId,
+    objectKey,
+    uploadUrl: cosSignedUrl("PUT", objectKey, 600),
+    expiresIn: 600,
+    headers: { "Content-Type": String(payload.type || "application/octet-stream") }
+  });
+}
+
+async function completeCosUpload(req, res, ownerType, ownerId) {
+  if (!cosEnabled()) return send(res, 409, { error: "COS 直传未配置" });
+  const user = requireAttachmentOwnerAccess(req, res, ownerType, ownerId);
+  if (!user) return;
+  const payload = await bodyJson(req);
+  const attachmentId = String(payload.attachmentId || "").trim();
+  const objectKey = String(payload.objectKey || "").trim();
+  const name = path.basename(String(payload.name || "附件"));
+  const size = Number(payload.size || 0);
+  const expectedPrefix = `attachments/${ownerType}/${ownerId}/${attachmentId}-`;
+  if (!attachmentId || !objectKey.startsWith(expectedPrefix)) return send(res, 400, { error: "附件上传凭据无效" });
+  validateUploadName(name);
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return send(res, 400, { error: "附件大小无效" });
+  const head = await fetch(cosSignedUrl("HEAD", objectKey, 300), { method: "HEAD" });
+  if (!head.ok) return send(res, 409, { error: "COS 中未找到已上传附件" });
+  const actualSize = Number(head.headers.get("content-length") || 0);
+  if (actualSize && actualSize !== size) return send(res, 409, { error: "附件大小校验失败" });
+  if (attachmentRow(attachmentId)) return send(res, 409, { error: "附件已登记" });
+  db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)")
+    .run(attachmentId, ownerType, ownerId, name, String(payload.type || "application/octet-stream"), size, "cos", objectKey, user.id, now());
+  audit(user, "upload_attachment", ownerType, ownerId, `${name}(${size}B):COS`);
+  return send(res, 201, { attachment: attachments(ownerType, ownerId).find(item => item.id === attachmentId) });
+}
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
   const requested = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
@@ -4507,9 +4630,18 @@ async function route(req, res) {
     if (!url.pathname.startsWith("/api/")) return serveStatic(req, res);
 
     if (method === "GET" && url.pathname === "/api/health") {
+      let database = "unavailable";
+      try {
+        db.prepare("select 1 as ok").get();
+        database = db.kind || "unknown";
+      } catch {}
       return send(res, 200, {
         ok: true,
+        status: database === "unavailable" ? "degraded" : "ok",
         service: "muc-online-app",
+        version: appVersion,
+        database,
+        cos: cosEnabled() ? "configured" : "disabled",
         startedAt: serviceStartedAt,
         time: new Date().toISOString()
       });
@@ -5221,6 +5353,16 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    const cosPresign = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments\/presign$/);
+    if (cosPresign && method === "POST") {
+      await createCosUpload(req, res, cosPresign[1] === "records" ? "record" : "fixedProject", routeParam(cosPresign[2]));
+      return;
+    }
+    const cosComplete = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments\/complete$/);
+    if (cosComplete && method === "POST") {
+      await completeCosUpload(req, res, cosComplete[1] === "records" ? "record" : "fixedProject", routeParam(cosComplete[2]));
+      return;
+    }
     const upload = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments$/);
     if (upload && method === "POST") {
       await addUploadedAttachments(req, res, upload[1] === "records" ? "record" : "fixedProject", routeParam(upload[2]));
@@ -5234,6 +5376,10 @@ async function route(req, res) {
       const row = attachmentRow(attachmentId);
       if (!row || !row.path) return sendText(res, 404, "未找到附件");
       if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
+      if (row.storage === "cos") {
+        res.writeHead(302, { ...securityHeaders(), "Location": cosSignedUrl("GET", row.path, 300), "Cache-Control": "private, no-store" });
+        return res.end();
+      }
       const filePath = safeUploadPath(row.path);
       if (!filePath) return sendText(res, 403, "附件路径无效");
       try {
@@ -5249,8 +5395,11 @@ async function route(req, res) {
       const row = attachmentRow(attachmentId);
       if (!row) return send(res, 404, { error: "未找到附件" });
       if (!canManageAttachment(login, row)) return send(res, 403, { error: "无权删除该附件" });
-      const filePath = row.path ? safeUploadPath(row.path) : "";
-      if (filePath) await fs.rm(filePath, { force: true });
+      if (row.storage === "cos") await deleteCosObject(row.path);
+      else {
+        const filePath = row.path ? safeUploadPath(row.path) : "";
+        if (filePath) await fs.rm(filePath, { force: true });
+      }
       db.prepare("delete from attachments where id=?").run(attachmentId);
       audit(login, "delete_attachment", row.owner_type, row.owner_id, row.name);
       return send(res, 200, { ok: true });

@@ -2887,11 +2887,40 @@ async function uploadFiles(ownerType, ownerId, files, onProgress = null) {
   const uploaded = [];
   for (const [index, file] of files.entries()) {
     onProgress?.(`正在上传附件 ${index + 1}/${files.length}`);
-    const form = new FormData();
-    form.append("file", file, file.name);
     try {
-      const data = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments`, { method: "POST", body: form });
-      uploaded.push(...(data.attachments || []));
+      let presigned = null;
+      try {
+        presigned = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments/presign`, {
+          method: "POST",
+          body: { name: file.name, type: file.type || "application/octet-stream", size: file.size }
+        });
+      } catch (error) {
+        if (error.status !== 409) throw error;
+      }
+      if (presigned?.uploadUrl) {
+        const put = await fetch(presigned.uploadUrl, {
+          method: "PUT",
+          headers: presigned.headers || { "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        });
+        if (!put.ok) throw new Error(`COS 上传失败（${put.status}）`);
+        const completed = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments/complete`, {
+          method: "POST",
+          body: {
+            attachmentId: presigned.attachmentId,
+            objectKey: presigned.objectKey,
+            name: file.name,
+            type: file.type || "application/octet-stream",
+            size: file.size
+          }
+        });
+        if (completed.attachment) uploaded.push(completed.attachment);
+      } else {
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const data = await apiRequest(`/${apiType}/${encodeURIComponent(ownerId)}/attachments`, { method: "POST", body: form });
+        uploaded.push(...(data.attachments || []));
+      }
     } catch (error) {
       throw new Error(`${file.name}：${error.message}`);
     }

@@ -29,7 +29,20 @@ const tables = [
   "settings",
   "audit_logs",
   "audit",
-  "sessions"
+  "maintenance_flights",
+  "maintenance_subtasks",
+  "maintenance_assignments",
+  "maintenance_feedback",
+  "maintenance_hour_rules",
+  "maintenance_hour_results",
+  "maintenance_sortie_results",
+  "maintenance_work_reports",
+  "maintenance_work_report_entries",
+  "maintenance_report_batches",
+  "maintenance_report_entries",
+  "maintenance_report_drafts",
+  "maintenance_sync_state",
+  "maintenance_logs"
 ];
 
 function placeholders(count) {
@@ -39,6 +52,8 @@ function placeholders(count) {
 await client.query("begin");
 try {
   for (const table of tables) {
+    const exists = sqlite.prepare("select 1 from sqlite_master where type='table' and name=?").get(table);
+    if (!exists) continue;
     const rows = sqlite.prepare(`select * from ${table}`).all();
     if (!rows.length) continue;
     const columns = Object.keys(rows[0]);
@@ -55,4 +70,4 @@ try {
 } finally {
   await client.end();
 }
-console.log("SQLite 数据已迁移到 PostgreSQL。附件文件请同步复制到 Render Persistent Disk 的 uploads 目录。");
+console.log("SQLite 业务数据已迁移到 PostgreSQL。请继续执行附件迁移脚本，将本地附件转存到私有 COS。");

@@ -1,0 +1,10 @@
+/var/log/airline-operations-center/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 airline airline
+}
