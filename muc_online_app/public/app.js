@@ -135,6 +135,7 @@ const state = {
   maintenanceFlightSearchTimer: null,
   maintenanceFlightSearchComposing: false,
   maintenanceFlights: [],
+  maintenanceNextCursor: "",
   maintenanceRules: [],
   maintenanceStats: null,
   maintenanceRuleGroupsOpen: loadMaintenanceRuleGroupsOpen(),
@@ -152,6 +153,8 @@ const state = {
   maintenanceSyncVersion: 0,
   maintenanceSyncTimer: null,
   maintenanceEventSource: null,
+  maintenanceReconnectTimer: null,
+  maintenanceSseConnected: false,
   maintenanceRefreshPending: false,
   maintenanceReleaseConfirmAssignmentId: "",
   maintenanceReleaseConfirmFlightId: "",
@@ -161,7 +164,8 @@ const state = {
   maintenanceDispatchClickTimer: null,
   maintenanceExecuteOpenFlightId: "",
   maintenanceFeedbackOpenId: "",
-  maintenanceFeedbackDrafts: {}
+  maintenanceFeedbackDrafts: {},
+  loadedData: new Set()
 };
 
 const LOCAL_APP_URL = "http://127.0.0.1:8787/";
@@ -402,6 +406,7 @@ async function performLogin() {
   try {
     const user = await authService.login(username, password);
     state.user = user;
+    state.loadedData = new Set();
     persistLoginPreference(username, password, rememberPassword, autoLogin);
     sessionStorage.removeItem(AUTO_LOGIN_SKIP_KEY);
     setLoginBusy(true, "登录成功，正在进入系统...");
@@ -480,6 +485,7 @@ function positionOpenMenu(wrap) {
 
 async function handleAuthExpired(message = "登录状态已失效，请重新登录。") {
   state.user = emptyUser();
+  state.loadedData = new Set();
   state.activeSubpage = "infoListSubpage";
   closeOpenMenus();
   ["entryDialog", "fixedDialog", "userDialog", "feedbackDialog", "changePasswordDialog"].forEach(id => {
@@ -796,9 +802,20 @@ const userService = {
 };
 
 const maintenanceService = {
+  taskListQuery(cursor = "") {
+    const scope = state.maintenanceTab === "execute" ? "execute" : "dispatch";
+    const query = new URLSearchParams({ scope, view: "summary", limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    if (state.maintenanceStartDate) query.set("dateFrom", state.maintenanceStartDate);
+    if (state.maintenanceEndDate) query.set("dateTo", state.maintenanceEndDate);
+    if (state.maintenanceFlightSearch.trim()) query.set("search", state.maintenanceFlightSearch.trim());
+    for (const opportunity of state.maintenanceOpportunityFilters || []) query.append("opportunity", opportunity);
+    return query;
+  },
   async load() {
     if (!canView("maintenancePage")) {
       state.maintenanceFlights = [];
+      state.maintenanceNextCursor = "";
       state.maintenanceRules = [];
       state.maintenanceStats = null;
       return;
@@ -806,22 +823,37 @@ const maintenanceService = {
     state.maintenanceStats = null;
     if (state.maintenanceTab === "hours") {
       state.maintenanceFlights = [];
+      state.maintenanceNextCursor = "";
       state.maintenancePersonalStats = null;
       const rulesData = await apiRequest("/maintenance/rules");
       state.maintenanceRules = rulesData.rules || [];
       return;
     }
-    const scope = state.maintenanceTab === "execute" || state.maintenanceTab === "data" ? "execute" : "dispatch";
-    const tasksData = await apiRequest(`/maintenance/flights?scope=${encodeURIComponent(scope)}`);
-    state.maintenanceFlights = tasksData.flights || [];
-    state.maintenanceRules = [];
     if (state.maintenanceTab === "data") {
+      state.maintenanceFlights = [];
+      state.maintenanceRules = [];
       const personalQuery = new URLSearchParams({
         month: state.maintenanceMonth || "",
         range: state.maintenanceDataRange || "half"
       }).toString();
       state.maintenancePersonalStats = await apiRequest(`/maintenance/stats/personal?${personalQuery}`);
+      return;
     }
+    const query = this.taskListQuery();
+    const tasksData = await apiRequest(`/maintenance/flights?${query.toString()}`);
+    state.maintenanceFlights = tasksData.flights || [];
+    state.maintenanceNextCursor = tasksData.nextCursor || "";
+    state.maintenanceSyncVersion = Number(tasksData.version || state.maintenanceSyncVersion || 0);
+    state.maintenanceRules = [];
+  },
+  async loadMore() {
+    if (!state.maintenanceNextCursor || !["dispatch", "execute"].includes(state.maintenanceTab)) return;
+    const query = this.taskListQuery(state.maintenanceNextCursor);
+    const tasksData = await apiRequest(`/maintenance/flights?${query.toString()}`);
+    const existing = new Set(state.maintenanceFlights.map(item => item.id));
+    state.maintenanceFlights.push(...(tasksData.flights || []).filter(item => !existing.has(item.id)));
+    state.maintenanceNextCursor = tasksData.nextCursor || "";
+    state.maintenanceSyncVersion = Number(tasksData.version || state.maintenanceSyncVersion || 0);
   },
   async importRows(rows) {
     return await apiRequest("/maintenance/flights/import", { method: "POST", body: { rows } });
@@ -831,6 +863,10 @@ const maintenanceService = {
   },
   async updateFlight(id, payload) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+  },
+  async getFlight(id, scope = "dispatch") {
+    const data = await apiRequest(`/maintenance/flights/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`);
+    return data.flight || null;
   },
   async removeFlight(id, reason = "") {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(id)}`, { method: "DELETE", body: { reason } });
@@ -901,6 +937,16 @@ const maintenanceService = {
     return `${API_BASE_URL}/maintenance/export.xlsx?${query}`;
   }
 };
+
+async function hydrateMaintenanceFlight(flightId) {
+  const scope = state.maintenanceTab === "execute" || state.maintenanceTab === "data" ? "execute" : "dispatch";
+  const flight = await maintenanceService.getFlight(flightId, scope);
+  if (!flight) return null;
+  const index = state.maintenanceFlights.findIndex(item => item.id === flightId);
+  if (index >= 0) state.maintenanceFlights.splice(index, 1, flight);
+  else state.maintenanceFlights.push(flight);
+  return flight;
+}
 
 const statsService = {
   rows(records, receipts) {
@@ -1684,9 +1730,14 @@ function scheduleMaintenanceFlightSearchRender(input) {
   const selectionStart = input.selectionStart;
   const selectionEnd = input.selectionEnd;
   if (state.maintenanceFlightSearchTimer) clearTimeout(state.maintenanceFlightSearchTimer);
-  state.maintenanceFlightSearchTimer = setTimeout(() => {
+  state.maintenanceFlightSearchTimer = setTimeout(async () => {
     state.maintenanceFlightSearchTimer = null;
-    renderMaintenanceAndRestoreSearchFocus(selectionStart, selectionEnd);
+    try {
+      await refreshMaintenance();
+      renderMaintenanceAndRestoreSearchFocus(selectionStart, selectionEnd);
+    } catch (error) {
+      alert(`搜索失败：${error.message}`);
+    }
   }, 300);
 }
 
@@ -2320,6 +2371,7 @@ function renderMaintenanceDispatch() {
       <div class="actions"><input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn" type="button" data-maint-create-flight>新建维修机会</button></div>
     </div>
     <div class="maintenance-dispatch-board">${renderColumn("left", state.maintenanceLeftStatuses)}${renderColumn("right", state.maintenanceRightStatuses)}</div>
+    ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
   </section>`;
 }
 
@@ -2431,6 +2483,7 @@ function renderMaintenanceExecute() {
       </button>
       ${expanded ? `<div class="execute-flight-body">${mainWorkHtml(group)}${subtaskCount || draftCount ? `<div class="execute-subtask-heading">非例行${draftCount ? ` · 草稿 ${draftCount} 项` : ""}</div><div class="execute-nonroutine-list">${nonroutineHtml(flight)}</div>` : ""}</div>` : ""}
     </article>`; }).join("") || '<section class="data-panel execute-empty"><div class="status-line">暂无派给你的维修任务。</div></section>'}</div>
+    ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
   </section>`;
 }
 
@@ -2635,27 +2688,59 @@ function syncPeopleScopedState() {
   if (!teams.has(state.statsTeam)) state.statsTeam = "全部";
 }
 
-async function renderAll() {
+async function loadActivePageData({ force = true } = {}) {
+  const loaded = state.loadedData instanceof Set ? state.loadedData : (state.loadedData = new Set());
+  const page = state.activePage;
+  const recordPage = ["homePage", "infoPage"].includes(page);
+  if (recordPage && (force || !loaded.has("records"))) {
+    state.records = await recordService.list();
+    state.user = authService.withSettings(state.user);
+    loaded.add("records");
+    loaded.add("settings");
+  } else if (force || !loaded.has("settings")) {
+    state.settings = await settingsService.get();
+    state.user = authService.withSettings(state.user);
+    loaded.add("settings");
+  }
+  if (page === "fixedPage" && (force || !loaded.has("fixedProjects"))) {
+    state.fixedProjects = await fixedProjectService.list();
+    loaded.add("fixedProjects");
+  }
+  if (page === "settingsPage" && (force || !loaded.has("users"))) {
+    state.users = await userService.list();
+    loaded.add("users");
+  }
+  if (page === "maintenancePage" && (force || !loaded.has(`maintenance:${state.maintenanceTab}`))) {
+    await maintenanceService.load();
+    loaded.add(`maintenance:${state.maintenanceTab}`);
+  }
+}
+
+function renderActivePage() {
+  renderShell();
+  renderEntryOptions();
+  if (["homePage", "infoPage"].includes(state.activePage)) {
+    renderHome();
+    renderRecords();
+    renderStats();
+  } else if (state.activePage === "settingsPage") {
+    renderSettings();
+  } else if (state.activePage === "fixedPage") {
+    renderFixedProjects();
+  } else if (state.activePage === "maintenancePage") {
+    renderMaintenance();
+  }
+}
+
+async function renderAll(options = {}) {
   if (!isLoggedIn()) {
     renderShell();
     return;
   }
   clearAllDeferredReclassify();
-  state.settings = await settingsService.get();
-  state.records = await recordService.list();
-  state.fixedProjects = await fixedProjectService.list();
-  state.users = await userService.list();
-  state.receipts = receiptService.list();
-  await maintenanceService.load();
+  await loadActivePageData(options);
   syncPeopleScopedState();
-  renderShell();
-  renderHome();
-  renderEntryOptions();
-  renderRecords();
-  renderStats();
-  renderSettings();
-  renderFixedProjects();
-  renderMaintenance();
+  renderActivePage();
   startMaintenanceSync();
 }
 
@@ -2715,7 +2800,7 @@ async function performPullRefresh() {
   document.body.classList.add("pull-refresh-refreshing");
   setPullRefreshVisual(PULL_REFRESH_HOLD_OFFSET, "正在刷新");
   try {
-    await renderAll();
+    await renderAll({ force: true });
     setPullRefreshVisual(PULL_REFRESH_HOLD_OFFSET, "刷新完成");
     settlePullRefresh(420);
   } catch (error) {
@@ -2766,15 +2851,15 @@ document.addEventListener("touchcancel", () => {
   if (pullRefreshGesture.tracking && !pullRefreshGesture.refreshing) settlePullRefresh();
 }, { passive: true });
 
-function showPage(page) {
+async function showPage(page) {
   state.activePage = canView(page) ? page : "homePage";
-  renderAll();
+  await renderAll({ force: false });
 }
 
-function showSubpage(subpage) {
+async function showSubpage(subpage) {
   if (!canViewSubpage(subpage)) subpage = "infoListSubpage";
   state.activeSubpage = subpage;
-  renderAll();
+  await renderAll({ force: false });
 }
 
 function openInfoFromHome(filter) {
@@ -2951,12 +3036,18 @@ function findAttachment(id, ownerType = "", ownerId = "") {
 }
 
 async function attachmentSource(file) {
-  return apiUrl(file?.url || file?.dataUrl || "");
+  if (!file) return "";
+  if (file.storage === "cos" && (file.id || file.attachmentId)) {
+    const attachmentId = file.id || file.attachmentId;
+    const access = await apiRequest(`/attachments/${encodeURIComponent(attachmentId)}/access`);
+    return apiUrl(access.url || "");
+  }
+  return apiUrl(file.url || file.dataUrl || "");
 }
 
-async function attachmentBlob(file) {
+async function attachmentBlob(file, sourceOverride = "") {
   if (!file) return "";
-  const source = apiUrl(file.url || file.dataUrl || "");
+  const source = sourceOverride || await attachmentSource(file);
   if (source && source.startsWith("data:")) {
     try {
       return await (await fetch(source)).blob();
@@ -2966,7 +3057,8 @@ async function attachmentBlob(file) {
   }
   if (source) {
     try {
-      const response = await fetch(source, { credentials: "include" });
+      const targetOrigin = new URL(source, location.href).origin;
+      const response = await fetch(source, { credentials: targetOrigin === location.origin ? "include" : "omit" });
       if (!response.ok) return null;
       return await response.blob();
     } catch {
@@ -2974,6 +3066,18 @@ async function attachmentBlob(file) {
     }
   }
   return null;
+}
+
+function decodeAttachmentText(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || 0);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {}
+  try {
+    return new TextDecoder("gb18030", { fatal: true }).decode(bytes);
+  } catch {
+    return "";
+  }
 }
 
 function isImageAttachment(file, name = "") {
@@ -3197,8 +3301,12 @@ async function renderAttachmentPreview(file, src) {
   if (isAudioAttachment(file, name) && hasSource) return `<audio src="${escapeHtml(src)}" controls></audio>${downloadLink(src, file)}`;
   if (attachmentExt(file, name) === "doc") return renderPreviewFallback(file, src, "doc 格式暂不支持页面内预览，请下载或另存为 docx 后预览。");
   if (attachmentExt(file, name) === "xls") return renderPreviewFallback(file, src, "xls 格式暂不支持页面内预览，请下载或另存为 xlsx 后预览。");
-  const blob = await attachmentBlob(file);
-  if (blob && isTextAttachment(file, name)) return `<pre class="preview-text">${escapeHtml(await blob.text())}</pre>`;
+  const blob = await attachmentBlob(file, src);
+  if (blob && isTextAttachment(file, name)) {
+    const text = decodeAttachmentText(await blob.arrayBuffer());
+    if (!text) return renderPreviewFallback(file, src, "无法识别附件文字编码，请下载原文件查看。");
+    return `<pre class="preview-text">${escapeHtml(text)}</pre>`;
+  }
   if (blob && attachmentExt(file, name) === "xlsx") {
     try {
       return renderWorkbookPreview(await parseXlsxWorkbook(blob));
@@ -3617,7 +3725,12 @@ async function refreshMaintenanceFromSync(version = 0) {
     state.maintenanceRefreshPending = true;
     return;
   }
-  if (state.activePage !== "maintenancePage") return;
+  if (state.activePage !== "maintenancePage") {
+    if (state.loadedData instanceof Set) {
+      for (const key of state.loadedData) if (key.startsWith("maintenance:")) state.loadedData.delete(key);
+    }
+    return;
+  }
   state.maintenanceRefreshPending = false;
   await refreshMaintenance();
 }
@@ -3631,8 +3744,26 @@ function flushMaintenancePendingRefresh() {
 function stopMaintenanceSync() {
   if (state.maintenanceSyncTimer) clearInterval(state.maintenanceSyncTimer);
   state.maintenanceSyncTimer = null;
+  if (state.maintenanceReconnectTimer) clearTimeout(state.maintenanceReconnectTimer);
+  state.maintenanceReconnectTimer = null;
   state.maintenanceEventSource?.close();
   state.maintenanceEventSource = null;
+  state.maintenanceSseConnected = false;
+}
+
+function startMaintenancePolling() {
+  if (state.maintenanceSyncTimer) return;
+  state.maintenanceSyncTimer = setInterval(async () => {
+    try {
+      const data = await maintenanceService.version();
+      await refreshMaintenanceFromSync(data.version);
+    } catch {}
+  }, 15000);
+}
+
+function stopMaintenancePolling() {
+  if (state.maintenanceSyncTimer) clearInterval(state.maintenanceSyncTimer);
+  state.maintenanceSyncTimer = null;
 }
 
 function startMaintenanceSync() {
@@ -3640,24 +3771,34 @@ function startMaintenanceSync() {
     stopMaintenanceSync();
     return;
   }
-  if (!state.maintenanceSyncTimer) state.maintenanceSyncTimer = setInterval(async () => {
-    try {
-      const data = await maintenanceService.version();
-      await refreshMaintenanceFromSync(data.version);
-    } catch {}
-  }, 15000);
-  if (state.maintenanceEventSource || typeof EventSource === "undefined") return;
+  if (typeof EventSource === "undefined") {
+    startMaintenancePolling();
+    return;
+  }
+  if (state.maintenanceEventSource) return;
   const source = new EventSource(`${API_BASE_URL}/maintenance/events`);
+  source.onopen = () => {
+    state.maintenanceSseConnected = true;
+    stopMaintenancePolling();
+  };
   source.addEventListener("maintenance", event => {
     try {
       const data = JSON.parse(event.data || "{}");
+      state.maintenanceSseConnected = true;
+      stopMaintenancePolling();
       refreshMaintenanceFromSync(data.version).catch(() => {});
     } catch {}
   });
   source.onerror = () => {
     source.close();
     if (state.maintenanceEventSource === source) state.maintenanceEventSource = null;
-    setTimeout(() => startMaintenanceSync(), 3000);
+    state.maintenanceSseConnected = false;
+    startMaintenancePolling();
+    if (state.maintenanceReconnectTimer) clearTimeout(state.maintenanceReconnectTimer);
+    state.maintenanceReconnectTimer = setTimeout(() => {
+      state.maintenanceReconnectTimer = null;
+      startMaintenanceSync();
+    }, 3000);
   };
   state.maintenanceEventSource = source;
 }
@@ -5047,7 +5188,7 @@ async function importBatchRecords() {
   if (nextResult) nextResult.textContent = `已导入 ${importResult.created} 条，跳过 ${parsed.skipped + importResult.skipped} 行，生成已读回执 ${importResult.receiptCount} 人次。`;
 }
 
-document.addEventListener("click", event => {
+document.addEventListener("click", async event => {
   const maintenanceDataMonthLabel = event.target.closest(".maintenance-data-month");
   if (maintenanceDataMonthLabel) {
     const input = maintenanceDataMonthLabel.querySelector("#maintenanceDataMonth");
@@ -5155,13 +5296,36 @@ document.addEventListener("click", event => {
   const executeFlightToggle = event.target.closest("[data-maint-execute-toggle]");
   if (executeFlightToggle) {
     const flightId = executeFlightToggle.dataset.maintExecuteToggle;
-    state.maintenanceExecuteOpenFlightId = state.maintenanceExecuteOpenFlightId === flightId ? "" : flightId;
+    const opening = state.maintenanceExecuteOpenFlightId !== flightId;
+    state.maintenanceExecuteOpenFlightId = opening ? flightId : "";
     state.maintenanceFeedbackOpenId = "";
     renderMaintenance();
+    if (opening) {
+      try {
+        await hydrateMaintenanceFlight(flightId);
+        renderMaintenance();
+      } catch (error) {
+        state.maintenanceExecuteOpenFlightId = "";
+        renderMaintenance();
+        alert(`读取维修机会失败：${error.message}`);
+      }
+    }
     return;
   }
   if (event.target.closest("[data-maint-import]")) {
     $("#maintenanceImportFile")?.click();
+    return;
+  }
+  const maintenanceLoadMore = event.target.closest("[data-maint-load-more]");
+  if (maintenanceLoadMore) {
+    maintenanceLoadMore.disabled = true;
+    try {
+      await maintenanceService.loadMore();
+      renderMaintenance();
+    } catch (error) {
+      maintenanceLoadMore.disabled = false;
+      alert(`继续加载失败：${error.message}`);
+    }
     return;
   }
   if (event.target.closest("[data-maint-create-flight]")) {
@@ -5546,13 +5710,24 @@ document.addEventListener("click", event => {
   if (dispatchCard && !event.target.closest("button,input,select,textarea,a,label")) {
     const flightId = dispatchCard.dataset.maintDispatchCard;
     clearTimeout(state.maintenanceDispatchClickTimer);
-    state.maintenanceDispatchClickTimer = setTimeout(() => {
+    state.maintenanceDispatchClickTimer = setTimeout(async () => {
       state.maintenanceDispatchClickTimer = null;
       const opening = state.maintenanceDispatchOpenFlightId !== flightId;
       state.maintenanceDispatchOpenFlightId = opening ? flightId : "";
       if (opening) state.maintenanceDispatchOpenNonroutineIds.add(flightId);
       else state.maintenanceDispatchOpenNonroutineIds.delete(flightId);
       renderMaintenance();
+      if (opening) {
+        try {
+          await hydrateMaintenanceFlight(flightId);
+          renderMaintenance();
+        } catch (error) {
+          state.maintenanceDispatchOpenFlightId = "";
+          state.maintenanceDispatchOpenNonroutineIds.delete(flightId);
+          renderMaintenance();
+          alert(`读取维修机会失败：${error.message}`);
+        }
+      }
     }, 220);
     return;
   }
@@ -5597,6 +5772,7 @@ $("#logoutBtn").addEventListener("click", async () => {
   stopMaintenanceSync();
   await authService.logout();
   state.user = emptyUser();
+  state.loadedData = new Set();
   await navigate(ROUTES.login, { replace: true });
 });
 $("#openEntryBtn").addEventListener("click", () => openRecordForm());
@@ -6200,7 +6376,7 @@ document.addEventListener("submit", event => {
   })();
 });
 
-document.addEventListener("change", event => {
+document.addEventListener("change", async event => {
   if (event.target.matches("[data-maint-temp-field]")) {
     const context = maintenanceWorkActiveContext();
     if (!context) return;
@@ -6299,7 +6475,7 @@ document.addEventListener("change", event => {
     if (state.maintenanceStartDate && state.maintenanceEndDate && state.maintenanceStartDate > state.maintenanceEndDate) {
       state.maintenanceEndDate = state.maintenanceStartDate;
     }
-    renderMaintenance();
+    await refreshMaintenance();
     return;
   }
   if (event.target.id === "maintenanceEndDateFilter") {
@@ -6307,7 +6483,7 @@ document.addEventListener("change", event => {
     if (state.maintenanceStartDate && state.maintenanceEndDate && state.maintenanceEndDate < state.maintenanceStartDate) {
       state.maintenanceStartDate = state.maintenanceEndDate;
     }
-    renderMaintenance();
+    await refreshMaintenance();
     return;
   }
   const maintenanceOpportunityOption = event.target.closest("[data-maint-opportunity-option]");
@@ -6320,7 +6496,7 @@ document.addEventListener("change", event => {
     else if (selected.size > 1) selected.delete(opportunity);
     else maintenanceOpportunityOption.checked = true;
     state.maintenanceOpportunityFilters = selected;
-    renderMaintenance();
+    await refreshMaintenance();
     requestAnimationFrame(() => {
       const menu = document.querySelector(".maintenance-opportunity-menu");
       if (menu) menu.open = true;

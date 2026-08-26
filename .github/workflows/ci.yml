@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: airline
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_DB: airline_operations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U airline -d airline_operations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: muc_online_app
+    env:
+      DATABASE_URL: postgresql://airline:test-password@127.0.0.1:5432/airline_operations
+      PGSSLMODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: muc_online_app/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run migrate
+      - run: npm run migrate
+      - run: node scripts/build-web-assets.mjs /tmp/ceairm-public
+      - run: test -f /tmp/ceairm-public/index.html && find /tmp/ceairm-public -maxdepth 1 -name 'app.*.js' | grep -q . && find /tmp/ceairm-public -maxdepth 1 -name 'styles.*.css' | grep -q .
+      - run: bash deploy/tencent/build-release.sh ci-${{ github.sha }} /tmp/airline-operations-center.tar.gz
+      - run: tar -tzf /tmp/airline-operations-center.tar.gz | grep -q './node_modules/'

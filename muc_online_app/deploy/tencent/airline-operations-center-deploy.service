@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy approved airline operations center release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/airline-operations-center/scripts/release-poller.sh
+User=root
+Group=root
+PrivateTmp=true
+NoNewPrivileges=true

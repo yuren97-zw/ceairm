@@ -6,7 +6,7 @@ APP_USER="${APP_USER:-airline}"
 : "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD before running bootstrap.sh}"
 
 apt-get update
-apt-get install -y ca-certificates curl gnupg nginx postgresql postgresql-contrib certbot python3-certbot-nginx logrotate
+apt-get install -y ca-certificates curl gnupg jq nginx postgresql postgresql-contrib certbot python3-certbot-nginx logrotate
 
 if ! command -v node >/dev/null || [[ "$(node -p 'Number(process.versions.node.split(`.`)[0])')" -lt 24 ]]; then
   install -d -m 0755 /etc/apt/keyrings
