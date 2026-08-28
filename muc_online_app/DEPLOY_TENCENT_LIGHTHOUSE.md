@@ -72,8 +72,10 @@ UPLOAD_DIR=/secure-import/uploads npm run migrate:attachments-to-cos
 1. 在 GitHub 保护`main`分支，禁止直接推送，要求 PR 审核并将`CI / verify`设为必需检查。
 2. 创建名为`production`的 GitHub Environment，并配置指定审核人。
 3. CI 成功后，生产发布工作流等待 Environment 审核；审核通过才生成不可变 GitHub Release。
-4. 为生产服务器创建仅有该私有仓库`Contents: Read`权限的细粒度令牌，不授予写权限。
+4. 为生产服务器创建仅有目标仓库`Contents: Read`权限的细粒度令牌，不授予写权限。即使仓库公开，也使用只读令牌，避免每分钟匿名请求很快耗尽 GitHub API 限额。
 5. 执行`install-deploy-agent.sh`，按提示把仓库名和令牌写入服务器的`/etc/airline-operations-center-deploy.env`。该文件权限必须为`0600 root:root`。
+
+若仓库包含不应公开的业务实现或部署信息，应在启用自动部署前将仓库改为私有；无论可见性如何，`main`都必须先启用分支保护，生产部署不得以公开仓库替代审核控制。
 
 服务器部署代理每分钟检查一次已审核的最新 Release，下载固定名称发布包，校验 SHA-256，再调用本机部署脚本。生产数据库密码、COS 密钥和运行环境变量始终只保存在服务器，不进入 GitHub。
 
@@ -83,8 +85,10 @@ UPLOAD_DIR=/secure-import/uploads npm run migrate:attachments-to-cos
 sudo bash deploy/tencent/install-deploy-agent.sh
 sudo editor /etc/airline-operations-center-deploy.env
 sudo chmod 0600 /etc/airline-operations-center-deploy.env
-sudo systemctl enable --now airline-operations-center-deploy.timer
+sudo bash deploy/tencent/install-deploy-agent.sh
 ```
+
+首次运行负责安装完整脚本集并创建占位配置，但保持定时器关闭；写入有效只读令牌后再次运行，安装器才会启用定时器。不要绕过安装器直接启用定时器。
 
 Nginx 属于独立基础设施变更，不随普通应用包自动覆盖：
 
