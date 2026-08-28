@@ -65,6 +65,9 @@ function instrumentDatabase(database) {
     },
     queryStats() {
       return { ...stats };
+    },
+    close() {
+      return database.close?.();
     }
   };
 }
@@ -74,6 +77,7 @@ class PostgresSyncDatabase {
     this.kind = "postgres";
     this.worker = new Worker(__filename, { workerData: { databaseUrl } });
     this.worker.on("error", error => { throw error; });
+    this.worker.unref();
   }
 
   prepare(sql) {
@@ -82,6 +86,10 @@ class PostgresSyncDatabase {
 
   exec(sql) {
     return this._request("exec", sql, []);
+  }
+
+  close() {
+    return this.worker.terminate();
   }
 
   _request(mode, sql, params) {

@@ -15,7 +15,7 @@ process.env.COS_SECRET_KEY = "test-secret-key";
 process.env.COS_BUCKET = "test-bucket-1234567890";
 process.env.COS_REGION = "ap-shanghai";
 
-const { measuredRoute, parseRangeHeader, cosSignedUrl, attachmentDisposition } = await import("../server.mjs");
+const { measuredRoute, parseRangeHeader, cosSignedUrl, attachmentDisposition, db } = await import("../server.mjs");
 
 class MockResponse extends EventEmitter {
   headers = {};
@@ -44,6 +44,7 @@ async function request(url, { method = "GET", body, cookie = "" } = {}) {
 }
 
 test.after(async () => {
+  await db.close?.();
   await fs.rm(tempDir, { recursive: true, force: true });
 });
 
