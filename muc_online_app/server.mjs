@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
+import COS from "cos-nodejs-sdk-v5";
 import { createDatabase } from "./db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,7 @@ const cosConfig = {
   bucket: String(process.env.COS_BUCKET || "").trim(),
   region: String(process.env.COS_REGION || "").trim()
 };
+let cosClient = null;
 const sessions = new Map();
 const maintenanceEventClients = new Set();
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -65,31 +67,18 @@ function cosEnabled() {
   return Object.values(cosConfig).every(Boolean);
 }
 
-function encodeCosPath(objectKey) {
-  return `/${String(objectKey || "").split("/").map(encodeURIComponent).join("/")}`;
-}
-
-function cosSignedUrl(method, objectKey, expiresSeconds = 600) {
+function cosSignedUrl(method, objectKey, expiresSeconds = 600, query = {}) {
   if (!cosEnabled()) throw new Error("COS 尚未配置");
-  const start = Math.floor(Date.now() / 1000) - 30;
-  const end = start + Math.max(60, Number(expiresSeconds) || 600);
-  const keyTime = `${start};${end}`;
-  const host = `${cosConfig.bucket}.cos.${cosConfig.region}.myqcloud.com`;
-  const pathname = encodeCosPath(objectKey);
-  const httpString = `${String(method || "GET").toLowerCase()}\n${pathname}\n\nhost=${host}\n`;
-  const signKey = crypto.createHmac("sha1", cosConfig.secretKey).update(keyTime).digest("hex");
-  const stringToSign = `sha1\n${keyTime}\n${crypto.createHash("sha1").update(httpString).digest("hex")}\n`;
-  const signature = crypto.createHmac("sha1", signKey).update(stringToSign).digest("hex");
-  const authorization = new URLSearchParams({
-    "q-sign-algorithm": "sha1",
-    "q-ak": cosConfig.secretId,
-    "q-sign-time": keyTime,
-    "q-key-time": keyTime,
-    "q-header-list": "host",
-    "q-url-param-list": "",
-    "q-signature": signature
+  cosClient ||= new COS({ SecretId: cosConfig.secretId, SecretKey: cosConfig.secretKey });
+  return cosClient.getObjectUrl({
+    Bucket: cosConfig.bucket,
+    Region: cosConfig.region,
+    Key: String(objectKey || ""),
+    Method: String(method || "GET").toUpperCase(),
+    Sign: true,
+    Expires: Math.max(60, Number(expiresSeconds) || 600),
+    Query: query
   });
-  return `https://${host}${pathname}?${authorization.toString()}`;
 }
 
 async function deleteCosObject(objectKey) {
@@ -334,17 +323,18 @@ function audit(user, action, targetType, targetId, detail = "") {
 }
 
 function send(res, status, data, headers = {}) {
-  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
-  res.end(JSON.stringify(data));
+  const body = JSON.stringify(data);
+  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", ...headers });
+  res.end(body);
 }
 
 function sendText(res, status, body, type = "text/plain; charset=utf-8", headers = {}) {
-  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, ...headers });
+  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, "Content-Length": Buffer.byteLength(body), ...headers });
   res.end(body);
 }
 
 function sendBinary(res, status, body, type, headers = {}) {
-  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, ...headers });
+  res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, "Content-Length": body.length, ...headers });
   res.end(body);
 }
 
@@ -1273,7 +1263,23 @@ function migrateCategories() {
 
 function attachments(ownerType, ownerId) {
   return db.prepare("select id,name,type,size,storage,path,created_at as createdAt from attachments where owner_type=? and owner_id=? order by created_at").all(ownerType, ownerId)
-    .map(row => ({ ...row, attachmentId: row.id, ownerType, ownerId, url: `/api/attachments/${encodeURIComponent(row.id)}` }));
+    .map(row => publicAttachment(row, ownerType, ownerId));
+}
+
+function publicAttachment(row, ownerType = row.owner_type, ownerId = row.owner_id) {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type || "application/octet-stream",
+    size: Number(row.size || 0),
+    storage: row.storage || "server",
+    path: row.path || "",
+    createdAt: row.createdAt || row.created_at || "",
+    attachmentId: row.id,
+    ownerType,
+    ownerId,
+    url: `/api/attachments/${encodeURIComponent(row.id)}`
+  };
 }
 
 function recipients(recordId) {
@@ -1350,6 +1356,60 @@ function publicRecord(row, user) {
   };
 }
 
+function publicRecords(rows, user) {
+  if (!rows.length) return { records: [], receipts: [] };
+  const ids = rows.map(row => row.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const recipientRows = db.prepare(`select rr.record_id,rr.user_id as id,
+      coalesce(u.name,rr.name) as name,coalesce(u.department,rr.department,'未设置') as department,
+      coalesce(u.team,rr.team,'未设置') as team
+    from record_recipients rr join users u on u.id=rr.user_id and (u.status is null or u.status<>'disabled')
+    where rr.record_id in (${placeholders}) order by rr.record_id,rr.user_id`).all(...ids);
+  const receiptRows = db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,
+      r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
+    from read_receipts r join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
+    join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')
+    where r.record_id in (${placeholders})`).all(...ids).map(item => ({ ...item, isOverdue: !!item.isOverdue }));
+  const attachmentRows = db.prepare(`select * from attachments where owner_type='record' and owner_id in (${placeholders}) order by created_at`).all(...ids);
+  const favoriteRows = db.prepare(`select record_id from favorites where user_id=? and record_id in (${placeholders})`).all(user.id, ...ids);
+  const recipientsByRecord = groupedRows(recipientRows, "record_id");
+  const receiptsByRecord = groupedRows(receiptRows, "recordId");
+  const attachmentsByRecord = groupedRows(attachmentRows, "owner_id");
+  const favorites = new Set(favoriteRows.map(item => item.record_id));
+  const canSeeFullFeedback = user.role === "admin" || user.role === "publisher";
+  const visibleReceipts = canSeeFullFeedback ? receiptRows : receiptRows.filter(item => item.userId === user.id);
+  return {
+    receipts: visibleReceipts,
+    records: rows.map(row => {
+      const recordRecipients = recipientsByRecord.get(row.id) || [];
+      const recordReceipts = receiptsByRecord.get(row.id) || [];
+      return {
+        id: row.id,
+        date: row.date,
+        publisher: row.publisher,
+        publisherId: row.publisher_id || "",
+        category: row.category,
+        title: row.title,
+        summary: row.summary || "",
+        original: row.original,
+        sourceSet: row.source_set || "",
+        attachments: (attachmentsByRecord.get(row.id) || []).map(item => publicAttachment(item, "record", row.id)),
+        recipients: canSeeFullFeedback ? recordRecipients : recordRecipients.filter(person => person.id === user.id),
+        receipts: canSeeFullFeedback ? recordReceipts : recordReceipts.filter(receipt => receipt.userId === user.id),
+        deadline: row.deadline || deadlineFor(row.date),
+        priority: row.priority || "普通",
+        publishStatus: row.publish_status || "已发布",
+        importedRead: !!row.imported_read,
+        favorite: favorites.has(row.id),
+        createdBy: row.created_by || "",
+        updatedBy: row.updated_by || "",
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    })
+  };
+}
+
 function publicProject(row) {
   return {
     id: row.id,
@@ -1361,6 +1421,24 @@ function publicProject(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function publicProjects(rows) {
+  if (!rows.length) return [];
+  const ids = rows.map(row => row.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const attachmentRows = db.prepare(`select * from attachments where owner_type='fixedProject' and owner_id in (${placeholders}) order by created_at`).all(...ids);
+  const attachmentsByProject = groupedRows(attachmentRows, "owner_id");
+  return rows.map(row => ({
+    id: row.id,
+    ata: row.ata,
+    title: row.title,
+    contentHtml: sanitizeRichHtml(row.content_html || ""),
+    references: row.references_text || "",
+    attachments: (attachmentsByProject.get(row.id) || []).map(item => publicAttachment(item, "fixedProject", row.id)),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }));
 }
 
 function maintenanceHasAccess(user) {
@@ -1496,6 +1574,13 @@ function publicMaintenanceAssignment(row) {
     submittedAt: row.submitted_at || "",
     modifiedAt: row.modified_at || "",
     confirmedAt: row.confirmed_at || ""
+  };
+}
+
+function publicSummaryAssignment(row) {
+  return {
+    ...publicMaintenanceAssignment(row),
+    feedback: ""
   };
 }
 
@@ -2034,8 +2119,7 @@ function publicMaintenanceFlight(row) {
   };
 }
 
-function publicMaintenanceFlightForExecution(row, user) {
-  const flight = publicMaintenanceFlight(row);
+function publicMaintenanceExecutionView(flight, user) {
   const mainMine = flight.assignments.filter(assignment => assignment.userId === user.id);
   const activeStatuses = new Set(["已派工", "已提报"]);
   const isActive = assignment => activeStatuses.has(assignment.status);
@@ -2069,15 +2153,197 @@ function publicMaintenanceFlightForExecution(row, user) {
   return mainVisible || hasSubtaskMine ? flight : null;
 }
 
-function maintenanceVisibleFlights(user, scope = "dispatch") {
-  const rows = db.prepare("select * from maintenance_flights order by date desc,planned_arrival desc,created_at desc").all();
-  if (maintenanceCanManage(user) && scope !== "execute" && scope !== "data") return rows;
-  const directFlights = scope === "execute"
-    ? db.prepare(`select distinct a.flight_id from maintenance_assignments a
-        join maintenance_flights f on f.id=a.flight_id
-        where a.user_id=? and a.flight_id<>'' and a.status in ('已派工','已提报') and f.status in ('已派工','已提报')`).all(user.id).map(row => row.flight_id)
-    : db.prepare("select distinct flight_id from maintenance_assignments where user_id=? and flight_id<>''").all(user.id).map(row => row.flight_id);
-  return rows.filter(row => directFlights.includes(row.id));
+function publicMaintenanceFlightForExecution(row, user) {
+  return publicMaintenanceExecutionView(publicMaintenanceFlight(row), user);
+}
+
+function groupedRows(rows, key) {
+  const groups = new Map();
+  for (const row of rows) {
+    const value = typeof key === "function" ? key(row) : row[key];
+    if (!groups.has(value)) groups.set(value, []);
+    groups.get(value).push(row);
+  }
+  return groups;
+}
+
+function publicMaintenanceBatch(rows, scope, user) {
+  if (!rows.length) return [];
+  const ids = rows.map(row => row.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const subtasks = db.prepare(`select * from maintenance_subtasks where flight_id in (${placeholders}) order by created_at`).all(...ids);
+  const assignments = db.prepare(`select * from maintenance_assignments where flight_id in (${placeholders}) order by user_name`).all(...ids);
+  const batches = db.prepare(`select * from maintenance_report_batches where flight_id in (${placeholders})`).all(...ids);
+  const reportEntries = db.prepare(`select * from maintenance_report_entries where flight_id in (${placeholders}) order by owner_type,owner_id,role,user_name`).all(...ids);
+  const drafts = db.prepare(`select * from maintenance_report_drafts where flight_id in (${placeholders}) and report_type='nonroutine'`).all(...ids);
+  const subtasksByFlight = groupedRows(subtasks, "flight_id");
+  const assignmentsByOwner = groupedRows(assignments, row => `${row.owner_type}:${row.owner_id}`);
+  const entriesByBatch = groupedRows(reportEntries, "batch_id");
+  const batchesByFlight = groupedRows(batches, "flight_id");
+  const draftsByFlight = new Map(drafts.map(row => [row.flight_id, row]));
+  const people = new Map(allPeople().map(person => [person.id, person]));
+
+  const publicBatch = row => ({
+    id: row.id,
+    flightId: row.flight_id,
+    reportType: row.report_type,
+    status: row.status,
+    feedback: row.feedback || "",
+    version: Number(row.version || 0),
+    submittedBy: row.submitted_by || "",
+    submittedByName: row.submitted_by_name || "",
+    submittedAt: row.submitted_at || "",
+    entries: (entriesByBatch.get(row.id) || []).map(item => ({
+      id: item.id,
+      ownerType: item.owner_type,
+      ownerId: item.owner_id,
+      role: item.role,
+      userId: item.user_id,
+      userName: item.user_name,
+      team: item.team || "未设置",
+      standardHours: Number(item.standard_hours || 0),
+      source: item.source || ""
+    }))
+  });
+
+  return rows.map(row => {
+    const flightSubtasks = subtasksByFlight.get(row.id) || [];
+    const flightBatches = (batchesByFlight.get(row.id) || []).map(publicBatch);
+    const batchMap = new Map(flightBatches.map(batch => [batch.reportType, batch]));
+    const draftRow = draftsByFlight.get(row.id);
+    let nonroutineDraft = null;
+    if (draftRow) {
+      let payload = {};
+      try { payload = JSON.parse(draftRow.payload_json || "{}"); } catch {}
+      nonroutineDraft = {
+        id: draftRow.id,
+        flightId: draftRow.flight_id,
+        reportType: draftRow.report_type,
+        items: (Array.isArray(payload.items) ? payload.items : []).map(item => ({
+          id: String(item?.id || ""),
+          chapter: String(item?.chapter || item?.cardNo || ""),
+          title: String(item?.title || ""),
+          category: maintenanceNonroutineCategories.includes(String(item?.category || "")) ? String(item.category) : "其他",
+          standardHours: Number(item?.standardHours || 0),
+          reportExplanation: "",
+          entries: (item?.entries || []).map(entry => ({
+            role: String(entry?.role || ""),
+            userId: String(entry?.userId || ""),
+            userName: people.get(entry.userId)?.name || "",
+            team: people.get(entry.userId)?.team || "未设置"
+          }))
+        })),
+        version: Number(draftRow.version || 1),
+        updatedBy: draftRow.updated_by || "",
+        updatedByName: draftRow.updated_by_name || "",
+        updatedAt: draftRow.updated_at || ""
+      };
+    }
+    const hasFormalNonroutine = flightSubtasks.length > 0;
+    const hasNonroutineDraft = Boolean(nonroutineDraft?.items?.length);
+    const hasNonroutine = hasFormalNonroutine || hasNonroutineDraft;
+    const hasRoutine = maintenanceRolesForOpportunity(row.work_kind || row.work_type || "其他").some(role => role !== "放行");
+    const submitted = type => ["已提报", "待复核", "已确认"].includes(batchMap.get(type)?.status || "");
+    const segments = [
+      { type: "release", label: "放行", status: submitted("release") ? "已提报" : "未提报", color: "#B9E6FF", required: true },
+      { type: "routine", label: "例行", status: hasRoutine ? (submitted("routine") ? "已提报" : "未提报") : "无需报工", color: "#C7EFCF", required: hasRoutine }
+    ];
+    if (hasNonroutine) segments.push({ type: "nonroutine", label: "非例行", status: submitted("nonroutine") && !hasNonroutineDraft ? "已提报" : "未提报", color: "#C7EFCF", required: true });
+    const reportProgress = {
+      hasNonroutine,
+      hasFormalNonroutine,
+      hasNonroutineDraft,
+      hasRoutine,
+      ready: segments.every(item => item.status === "已提报" || item.status === "无需报工"),
+      anySubmitted: segments.some(item => item.status === "已提报"),
+      segments,
+      batches: Object.fromEntries(maintenanceReportTypes.map(type => [type, batchMap.get(type) || null]))
+    };
+    const flight = {
+      id: row.id,
+      date: row.date || "",
+      flightNo: row.flight_no || "",
+      aircraftNo: row.aircraft_no || "",
+      aircraftType: row.aircraft_type || "",
+      stand: row.stand || "",
+      plannedArrival: row.planned_arrival || "",
+      plannedDeparture: row.planned_departure || "",
+      workType: row.work_type || "",
+      cardNo: row.card_no || "",
+      cardName: row.card_name || "",
+      workKind: row.work_kind || "",
+      standardHours: Number(row.standard_hours || 0),
+      status: row.status || "未派工",
+      remark: row.remark || "",
+      source: row.source || "",
+      assignments: (assignmentsByOwner.get(`flight:${row.id}`) || []).map(publicSummaryAssignment),
+      reportProgress,
+      nonroutineDraft,
+      reportFinalizedBy: row.report_finalized_by || "",
+      reportFinalizedByName: row.report_finalized_by_name || "",
+      reportFinalizedAt: row.report_finalized_at || "",
+      archivedAt: row.archived_at || "",
+      hours: [],
+      sorties: [],
+      subtasks: flightSubtasks.map(item => ({
+        id: item.id,
+        flightId: item.flight_id,
+        cardNo: item.card_no || "",
+        title: item.title || "",
+        content: "",
+        category: item.category || "",
+        standardHours: Number(item.standard_hours || 0),
+        priority: item.priority || "普通",
+        status: item.status || "未派工",
+        remark: "",
+        assignments: (assignmentsByOwner.get(`subtask:${item.id}`) || []).map(publicSummaryAssignment),
+        hours: [],
+        sorties: [],
+        createdBy: item.created_by || "",
+        updatedBy: item.updated_by || "",
+        createdAt: item.created_at,
+        updatedAt: item.updated_at
+      })),
+      createdBy: row.created_by || "",
+      updatedBy: row.updated_by || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      summary: true
+    };
+    return scope === "execute" ? publicMaintenanceExecutionView(flight, user) : flight;
+  }).filter(Boolean);
+}
+
+function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
+  const conditions = [];
+  const params = [];
+  if (!(maintenanceCanManage(user) && scope !== "execute" && scope !== "data")) {
+    conditions.push(`exists (select 1 from maintenance_assignments visible_assignment
+      where visible_assignment.flight_id=maintenance_flights.id and visible_assignment.user_id=?
+      ${scope === "execute" ? "and visible_assignment.status in ('已派工','已提报') and maintenance_flights.status in ('已派工','已提报')" : ""})`);
+    params.push(user.id);
+  }
+  if (filters.dateFrom) { conditions.push("date>=?"); params.push(filters.dateFrom); }
+  if (filters.dateTo) { conditions.push("date<=?"); params.push(filters.dateTo); }
+  if (filters.opportunities?.length) {
+    conditions.push(`coalesce(nullif(work_kind,''),work_type) in (${filters.opportunities.map(() => "?").join(",")})`);
+    params.push(...filters.opportunities);
+  }
+  if (filters.search) {
+    const term = `%${filters.search.toLowerCase()}%`;
+    conditions.push(`(lower(coalesce(flight_no,'')) like ? or lower(coalesce(aircraft_no,'')) like ?
+      or lower(coalesce(aircraft_type,'')) like ? or lower(coalesce(stand,'')) like ?
+      or lower(coalesce(work_kind,'')) like ? or exists (select 1 from maintenance_assignments search_assignment
+        where search_assignment.flight_id=maintenance_flights.id and lower(search_assignment.user_name) like ?))`);
+    params.push(term, term, term, term, term, term);
+  }
+  const limit = Number.isFinite(filters.limit) ? Math.max(1, Math.min(500, filters.limit)) : 0;
+  const offset = limit ? Math.max(0, Number(filters.cursor || 0)) : 0;
+  const where = conditions.length ? `where ${conditions.join(" and ")}` : "";
+  const sql = `select * from maintenance_flights ${where} order by date desc,planned_arrival desc,created_at desc${limit ? " limit ? offset ?" : ""}`;
+  const rows = limit ? db.prepare(sql).all(...params, limit + 1, offset) : db.prepare(sql).all(...params);
+  const hasMore = limit > 0 && rows.length > limit;
+  return { rows: hasMore ? rows.slice(0, limit) : rows, nextCursor: hasMore ? String(offset + limit) : "" };
 }
 
 function maintenanceOwner(ownerType, ownerId) {
@@ -4233,6 +4499,26 @@ function isInlineSafeAttachment(row) {
     || ["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "mp4", "mov", "m4v", "webm", "mp3", "wav", "m4a", "aac"].includes(ext);
 }
 
+function attachmentDisposition(row) {
+  const disposition = isInlineSafeAttachment(row) ? "inline" : "attachment";
+  return `${disposition}; filename*=UTF-8''${encodeURIComponent(row?.name || "附件")}`;
+}
+
+function signedCosAttachment(row, expiresSeconds = 300) {
+  const expiresIn = Math.max(60, Math.min(300, Number(expiresSeconds) || 300));
+  return {
+    url: cosSignedUrl("GET", row.path, expiresIn, {
+      "response-content-type": contentTypeForAttachment(row),
+      "response-content-disposition": attachmentDisposition(row)
+    }),
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    expiresIn,
+    fileName: row.name || "附件",
+    mimeType: contentTypeForAttachment(row),
+    size: Number(row.size || 0)
+  };
+}
+
 function attachmentCacheHeaders(row, stat) {
   const modified = stat.mtime.toUTCString();
   const etag = `"${Buffer.from(`${row.id}:${stat.size}:${Number(stat.mtimeMs).toFixed(0)}`).toString("base64url")}"`;
@@ -4273,7 +4559,7 @@ async function streamAttachment(req, res, row, filePath) {
     ...securityHeaders(),
     ...attachmentCacheHeaders(row, stat),
     "Content-Type": type,
-    "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(row.name)}`
+    "Content-Disposition": attachmentDisposition(row)
   };
   if (req.headers["if-none-match"] === baseHeaders.ETag) {
     res.writeHead(304, baseHeaders);
@@ -4404,6 +4690,15 @@ async function serveStatic(req, res) {
   const relative = path.relative(publicDir, filePath);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return sendText(res, 403, "Forbidden");
   try {
+    const stat = await fs.stat(filePath);
+    const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    const immutable = /\.[a-f0-9]{12,}\.(?:js|css)$/i.test(filePath);
+    const noCache = [".html", ".webmanifest"].includes(path.extname(filePath).toLowerCase()) || path.basename(filePath) === "sw.js";
+    const cacheControl = immutable ? "public, max-age=31536000, immutable" : noCache ? "no-cache" : "public, max-age=3600";
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { ...securityHeaders(), "ETag": etag, "Cache-Control": cacheControl });
+      return res.end();
+    }
     const data = await fs.readFile(filePath);
     const ext = path.extname(filePath).toLowerCase();
     const type = ext === ".html" ? "text/html; charset=utf-8"
@@ -4414,12 +4709,12 @@ async function serveStatic(req, res) {
       : ext === ".png" ? "image/png"
       : ext === ".ico" ? "image/x-icon"
       : "application/octet-stream";
-    res.writeHead(200, { ...securityHeaders(), "Content-Type": type, "Cache-Control": "no-store" });
+    res.writeHead(200, { ...securityHeaders(), "Content-Type": type, "Content-Length": data.length, "ETag": etag, "Cache-Control": cacheControl });
     res.end(data);
   } catch {
     if ((req.method || "GET") === "GET" && !path.extname(requested)) {
       const data = await fs.readFile(path.join(publicDir, "index.html"));
-      res.writeHead(200, { ...securityHeaders(), "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      res.writeHead(200, { ...securityHeaders(), "Content-Type": "text/html; charset=utf-8", "Content-Length": data.length, "Cache-Control": "no-cache" });
       res.end(data);
       return;
     }
@@ -4717,10 +5012,20 @@ async function route(req, res) {
       if (!login) return;
       if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
       const scope = url.searchParams.get("scope") || "dispatch";
-      const flights = maintenanceVisibleFlights(login, scope)
-        .map(row => scope === "execute" ? publicMaintenanceFlightForExecution(row, login) : publicMaintenanceFlight(row))
-        .filter(Boolean);
-      return send(res, 200, { flights });
+      const opportunities = url.searchParams.getAll("opportunity").flatMap(value => value.split(",")).map(value => value.trim()).filter(Boolean);
+      const requestedLimit = Number(url.searchParams.get("limit"));
+      const result = maintenanceVisibleFlights(login, scope, {
+        dateFrom: url.searchParams.get("dateFrom") || "",
+        dateTo: url.searchParams.get("dateTo") || "",
+        opportunities,
+        search: String(url.searchParams.get("search") || "").trim(),
+        limit: Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : undefined,
+        cursor: Number(url.searchParams.get("cursor") || 0)
+      });
+      const flights = url.searchParams.get("view") === "summary"
+        ? publicMaintenanceBatch(result.rows, scope, login)
+        : result.rows.map(row => scope === "execute" ? publicMaintenanceFlightForExecution(row, login) : publicMaintenanceFlight(row)).filter(Boolean);
+      return send(res, 200, { flights, nextCursor: result.nextCursor, version: maintenanceSyncVersion() });
     }
     const maintenanceReportDraftRoute = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/reports\/(routine|nonroutine)\/draft$/);
     if (maintenanceReportDraftRoute && method === "DELETE") {
@@ -4856,6 +5161,20 @@ async function route(req, res) {
       return send(res, 410, { error: "旧版整合报工接口已停用，请刷新页面后使用例行或非例行报工" });
     }
     const maintenanceFlight = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)$/);
+    if (maintenanceFlight && method === "GET") {
+      const viewer = requireLogin(req, res);
+      if (!viewer) return;
+      if (!maintenanceHasAccess(viewer)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      const flightId = routeParam(maintenanceFlight[1]);
+      const row = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+      if (!row) return send(res, 404, { error: "未找到航班任务" });
+      const scope = url.searchParams.get("scope") || "dispatch";
+      const full = scope === "execute" ? publicMaintenanceFlightForExecution(row, viewer) : publicMaintenanceFlight(row);
+      if (!full || (!maintenanceCanManage(viewer) && !maintenanceTaskTreeAssignments(flightId).some(item => item.user_id === viewer.id))) {
+        return send(res, 403, { error: "无权查看该维修机会" });
+      }
+      return send(res, 200, { flight: full, version: maintenanceSyncVersion() });
+    }
     if (maintenanceFlight && method === "PUT") {
       const manager = requireLogin(req, res);
       if (!manager) return;
@@ -5130,7 +5449,8 @@ async function route(req, res) {
       const login = requireLogin(req, res);
       if (!login) return;
       const rows = db.prepare("select * from records").all().filter(row => canViewRecord(login, row)).sort(compareRecordsDesc);
-      return send(res, 200, { records: rows.map(row => publicRecord(row, login)), receipts: publicReceiptsFor(login, rows.map(row => row.id)), settings: publicSettings() });
+      const result = publicRecords(rows, login);
+      return send(res, 200, { ...result, settings: publicSettings() });
     }
     if (method === "POST" && url.pathname === "/api/records") {
       const editor = requirePermission(req, res, "create");
@@ -5319,7 +5639,7 @@ async function route(req, res) {
     if (method === "GET" && url.pathname === "/api/fixed-projects") {
       if (!currentUser(req).allowedTabs.includes("fixedPage")) return send(res, 403, { error: "当前账号没有权限" });
       const rows = db.prepare("select * from fixed_projects order by ata asc,title asc").all();
-      return send(res, 200, { projects: rows.map(publicProject) });
+      return send(res, 200, { projects: publicProjects(rows) });
     }
     if (method === "POST" && url.pathname === "/api/fixed-projects") {
       const admin = requirePermission(req, res, "fixedManage");
@@ -5368,6 +5688,24 @@ async function route(req, res) {
       await addUploadedAttachments(req, res, upload[1] === "records" ? "record" : "fixedProject", routeParam(upload[2]));
       return;
     }
+    const attAccess = url.pathname.match(/^\/api\/attachments\/([^/]+)\/access$/);
+    if (attAccess && method === "GET") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const attachmentId = routeParam(attAccess[1]);
+      const row = attachmentRow(attachmentId);
+      if (!row || !row.path) return send(res, 404, { error: "未找到附件" });
+      if (!canViewAttachment(login, row)) return send(res, 403, { error: "无权访问该附件" });
+      if (row.storage === "cos") return send(res, 200, signedCosAttachment(row, 300));
+      return send(res, 200, {
+        url: `/api/attachments/${encodeURIComponent(row.id)}`,
+        expiresAt: "",
+        expiresIn: 0,
+        fileName: row.name || "附件",
+        mimeType: contentTypeForAttachment(row),
+        size: Number(row.size || 0)
+      });
+    }
     const att = url.pathname.match(/^\/api\/attachments\/([^/]+)$/);
     if (att && method === "GET") {
       const login = requireLogin(req, res);
@@ -5377,7 +5715,7 @@ async function route(req, res) {
       if (!row || !row.path) return sendText(res, 404, "未找到附件");
       if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
       if (row.storage === "cos") {
-        res.writeHead(302, { ...securityHeaders(), "Location": cosSignedUrl("GET", row.path, 300), "Cache-Control": "private, no-store" });
+        res.writeHead(302, { ...securityHeaders(), "Location": signedCosAttachment(row, 300).url, "Cache-Control": "private, no-store" });
         return res.end();
       }
       const filePath = safeUploadPath(row.path);
@@ -5619,9 +5957,45 @@ async function route(req, res) {
   }
 }
 
+async function measuredRoute(req, res) {
+  const requestId = crypto.randomBytes(8).toString("hex");
+  const started = performance.now();
+  const before = db.queryStats?.() || { count: 0, totalMs: 0, slowCount: 0 };
+  let statusCode = 200;
+  const originalWriteHead = res.writeHead.bind(res);
+  res.writeHead = (status, statusMessageOrHeaders, maybeHeaders) => {
+    statusCode = Number(status || 200);
+    const headers = typeof statusMessageOrHeaders === "object" ? { ...statusMessageOrHeaders } : { ...(maybeHeaders || {}) };
+    const current = db.queryStats?.() || before;
+    headers["X-Request-Id"] ||= requestId;
+    headers["Server-Timing"] ||= `db;dur=${Math.max(0, current.totalMs - before.totalMs).toFixed(1)}, app;dur=${Math.max(0, performance.now() - started).toFixed(1)}`;
+    return typeof statusMessageOrHeaders === "string"
+      ? originalWriteHead(status, statusMessageOrHeaders, headers)
+      : originalWriteHead(status, headers);
+  };
+  res.once("finish", () => {
+    const after = db.queryStats?.() || before;
+    const durationMs = performance.now() - started;
+    if (process.env.REQUEST_LOGS === "1" || durationMs >= 500 || statusCode >= 500) {
+      process.stdout.write(`${JSON.stringify({
+        type: "http_request",
+        requestId,
+        method: req.method || "GET",
+        path: new URL(req.url, "http://localhost").pathname,
+        status: statusCode,
+        durationMs: Number(durationMs.toFixed(1)),
+        queryCount: Math.max(0, after.count - before.count),
+        queryMs: Number(Math.max(0, after.totalMs - before.totalMs).toFixed(1)),
+        slowQueries: Math.max(0, after.slowCount - before.slowCount)
+      })}\n`);
+    }
+  });
+  return route(req, res);
+}
+
 await initDb();
 if (process.env.MUC_NO_LISTEN !== "1") {
-  http.createServer(route).listen(port, host, () => {
+  http.createServer(measuredRoute).listen(port, host, () => {
     console.log(`MUC online app: http://127.0.0.1:${port}`);
     console.log(`健康检查：http://127.0.0.1:${port}/api/health`);
     if (host === "0.0.0.0" || host === "::") {
@@ -5635,4 +6009,4 @@ if (process.env.MUC_NO_LISTEN !== "1") {
   });
 }
 
-export { route, db };
+export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, attachmentDisposition };

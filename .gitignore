@@ -5,10 +5,12 @@
 # committed to GitHub. Use the migration script and Render/Neon storage instead.
 muc_online_app/data/
 muc_online_app/uploads/
+muc_online_app/outputs/
 
 # Dependencies and build caches.
 node_modules/
 muc_online_app/node_modules/
+muc_online_app/dist-public/
 .netlify/
 
 # Local environment files.
@@ -19,6 +21,10 @@ muc_online_app/node_modules/
 muc_online_app/.env
 muc_online_app/.env.*
 !muc_online_app/.env.example
+*.local
 
 # Temporary local copies.
 backups/
+outputs/
+*.dump
+*.dump.sha256

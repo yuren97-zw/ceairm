@@ -34,11 +34,50 @@ function createPostgresDatabase(databaseUrl) {
   return new PostgresSyncDatabase(databaseUrl);
 }
 
+function instrumentDatabase(database) {
+  const stats = { count: 0, totalMs: 0, slowCount: 0 };
+  const measure = (mode, sql, action) => {
+    const started = performance.now();
+    try {
+      return action();
+    } finally {
+      const durationMs = performance.now() - started;
+      stats.count++;
+      stats.totalMs += durationMs;
+      if (durationMs >= 200) {
+        stats.slowCount++;
+        process.stderr.write(`${JSON.stringify({ type: "slow_query", mode, durationMs: Number(durationMs.toFixed(1)), sql: String(sql).replace(/\s+/g, " ").slice(0, 240) })}\n`);
+      }
+    }
+  };
+  return {
+    kind: database.kind,
+    prepare(sql) {
+      const statement = database.prepare(sql);
+      return {
+        get: (...params) => measure("get", sql, () => statement.get(...params)),
+        all: (...params) => measure("all", sql, () => statement.all(...params)),
+        run: (...params) => measure("run", sql, () => statement.run(...params))
+      };
+    },
+    exec(sql) {
+      return measure("exec", sql, () => database.exec(sql));
+    },
+    queryStats() {
+      return { ...stats };
+    },
+    close() {
+      return database.close?.();
+    }
+  };
+}
+
 class PostgresSyncDatabase {
   constructor(databaseUrl) {
     this.kind = "postgres";
     this.worker = new Worker(__filename, { workerData: { databaseUrl } });
     this.worker.on("error", error => { throw error; });
+    this.worker.unref();
   }
 
   prepare(sql) {
@@ -47,6 +86,10 @@ class PostgresSyncDatabase {
 
   exec(sql) {
     return this._request("exec", sql, []);
+  }
+
+  close() {
+    return this.worker.terminate();
   }
 
   _request(mode, sql, params) {
@@ -88,8 +131,8 @@ class PostgresStatement {
 }
 
 export async function createDatabase({ dbPath, databaseUrl = process.env.DATABASE_URL } = {}) {
-  if (databaseUrl) return createPostgresDatabase(databaseUrl);
-  return sqliteDatabase(dbPath);
+  if (databaseUrl) return instrumentDatabase(createPostgresDatabase(databaseUrl));
+  return instrumentDatabase(sqliteDatabase(dbPath));
 }
 
 if (!isMainThread) {

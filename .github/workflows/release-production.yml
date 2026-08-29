@@ -1,0 +1,59 @@
+name: Release production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: muc_online_app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: muc_online_app/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check && npm test
+      - run: bash deploy/tencent/build-release.sh production-${{ github.event.workflow_run.head_sha }} /tmp/airline-operations-center.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-release
+          path: |
+            /tmp/airline-operations-center.tar.gz
+            /tmp/airline-operations-center.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: production-release
+          path: release
+      - name: Publish immutable production release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: >-
+          gh release create "production-${RELEASE_SHA}"
+          release/airline-operations-center.tar.gz
+          release/airline-operations-center.tar.gz.sha256
+          --repo "${GITHUB_REPOSITORY}"
+          --title "Production ${RELEASE_SHA::12}"
+          --notes "Approved production release for commit ${RELEASE_SHA}."
+          --latest
