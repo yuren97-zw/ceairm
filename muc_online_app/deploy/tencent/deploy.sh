@@ -8,8 +8,18 @@ RELEASE_DIR="$APP_ROOT/releases/$VERSION"
 STAGE_DIR="$APP_ROOT/releases/.${VERSION}.staging.$$"
 CURRENT="$APP_ROOT/app/current"
 PREVIOUS="$(readlink -f "$CURRENT" 2>/dev/null || true)"
+ENV_FILE="$APP_ROOT/shared/.env"
 cleanup() { [[ ! -d "$STAGE_DIR" ]] || rm -rf "$STAGE_DIR"; }
 trap cleanup EXIT
+
+set_app_version() {
+  local version="$1"
+  if grep -q '^APP_VERSION=' "$ENV_FILE"; then
+    sed -i "s/^APP_VERSION=.*/APP_VERSION=$version/" "$ENV_FILE"
+  else
+    printf '\nAPP_VERSION=%s\n' "$version" >> "$ENV_FILE"
+  fi
+}
 
 [[ -f "$ARCHIVE" ]] || { echo "Release archive not found: $ARCHIVE" >&2; exit 1; }
 [[ -f "$ARCHIVE.sha256" ]] || { echo "Release checksum not found: $ARCHIVE.sha256" >&2; exit 1; }
@@ -32,17 +42,19 @@ else
 fi
 
 ln -sfn "$RELEASE_DIR" "$CURRENT"
-if grep -q '^APP_VERSION=' "$APP_ROOT/shared/.env"; then
-  sed -i "s/^APP_VERSION=.*/APP_VERSION=$VERSION/" "$APP_ROOT/shared/.env"
-else
-  printf '\nAPP_VERSION=%s\n' "$VERSION" >> "$APP_ROOT/shared/.env"
-fi
+set_app_version "$VERSION"
 
 systemctl restart airline-operations-center
 if ! "$APP_ROOT/scripts/health-check.sh" "$VERSION"; then
   if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
+    rollback_version="$(basename "$PREVIOUS")"
     ln -sfn "$PREVIOUS" "$CURRENT"
+    set_app_version "$rollback_version"
     systemctl restart airline-operations-center
+    if ! "$APP_ROOT/scripts/health-check.sh" "$rollback_version"; then
+      echo "Deployment failed and the restored release did not pass its health check" >&2
+      exit 1
+    fi
   fi
   echo "Deployment failed; previous release restored" >&2
   exit 1
