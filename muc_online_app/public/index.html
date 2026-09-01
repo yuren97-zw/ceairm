@@ -693,11 +693,12 @@
     .maintenance-card-head strong{display:block;font-size:16px;color:var(--ink);line-height:1.25}
     .maintenance-card-head span{display:block;margin-top:2px;color:var(--muted);font-size:12px}
     .maintenance-flight-identity{display:grid;gap:4px;min-width:0}
-    .maintenance-flight-identity strong{display:flex;align-items:baseline;min-width:0;overflow:hidden}
+    .maintenance-flight-identity strong{display:flex;align-items:baseline;flex-wrap:wrap;row-gap:1px;min-width:0}
     .maintenance-flight-identity strong span{display:inline;margin:0}
     .maintenance-aircraft-no{font-size:18px!important;font-weight:800;color:#111827!important;white-space:nowrap}
     .maintenance-flight-no{font-size:15px!important;font-weight:750;color:#1F4D63!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .maintenance-flight-identity strong .maintenance-aircraft-type{font-size:12px!important;font-weight:650;color:var(--muted)!important;white-space:nowrap;flex-shrink:0}
+    .maintenance-flight-identity strong .maintenance-flight-date{font-size:11px!important;font-weight:650;color:#94A3B8!important;white-space:nowrap;flex-shrink:0}
     .maintenance-flight-separator{padding:0 3px;color:#94A3B8!important}
     .maintenance-key-tags{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
     .maintenance-key-tags span{display:inline-flex;margin:0!important;padding:3px 7px;border-radius:8px;font-size:11px!important;font-weight:750;line-height:1.2;white-space:nowrap}
@@ -1180,11 +1181,11 @@
     .maintenance-composition-legend span,.maintenance-composition-legend small{font-size:10px;text-align:right;white-space:nowrap}
     .maintenance-data-placeholder{display:grid;place-items:center;align-content:center;gap:7px;min-height:340px;border:1px dashed #CDD8E1;border-radius:8px;background:#F8FAFC;color:#71808E;text-align:center}
     .maintenance-data-placeholder strong{color:#314555;font-size:17px}
-    .maintenance-data-detail-dialog{width:min(720px,94vw);max-width:94vw;padding:0;overflow:hidden}
-    .maintenance-data-detail-dialog>.dialog-body{display:flex;flex-direction:column;width:100%;max-height:min(86vh,760px);padding:17px;overflow:hidden}
+    .maintenance-data-detail-dialog{width:min(720px,94vw);max-width:94vw;padding:0;overflow:hidden;overscroll-behavior:contain}
+    .maintenance-data-detail-dialog>.dialog-body{display:flex;flex-direction:column;width:100%;max-height:min(86vh,760px);padding:17px;overflow:hidden;overscroll-behavior:contain}
     .maintenance-detail-summary{margin-bottom:8px;padding:9px 11px;border-radius:7px;background:#EDF6F7;color:#52657A;font-size:11px}
     .maintenance-detail-summary strong{margin-left:4px;color:#0F6B7D;font-size:14px}
-    .maintenance-personal-detail-list{display:grid;gap:0;min-height:0;overflow:auto;overscroll-behavior:contain}
+    .maintenance-personal-detail-list{display:grid;flex:1 1 auto;gap:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}
     .maintenance-personal-detail-list article{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(120px,1fr);gap:10px;min-width:0;padding:10px 3px;border-bottom:1px solid #E7EDF2}
     .maintenance-personal-detail-list article>div{display:grid;gap:3px;min-width:0}
     .maintenance-personal-detail-list article>div:last-child{text-align:right}
@@ -1349,7 +1350,7 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260811-routine-rules-by-opportunity-1"></script>
+  <script src="app.js?v=20260830-data-detail-interactions-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
