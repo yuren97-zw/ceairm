@@ -188,7 +188,7 @@ test("release-only report confirmation always waits for task-tree review", async
   assert.equal(db.prepare("select status from maintenance_assignments where id=?").get(assignmentId).status, "待复核");
   assert.equal(db.prepare("select status from maintenance_sortie_results where assignment_id=?").get(assignmentId).status, "待复核");
   assert.equal(db.prepare("select status from maintenance_report_batches where id=?").get(batchId).status, "待复核");
-  assert.equal(db.prepare("select count(*) as total from maintenance_sortie_results where flight_id=?").get(flightId).total, 1);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_sortie_results where flight_id=?").get(flightId).total), 1);
 
   const reviewView = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/review`, { cookie });
   assert.equal(reviewView.res.statusCode, 200);
