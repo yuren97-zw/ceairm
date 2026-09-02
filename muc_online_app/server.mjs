@@ -3767,43 +3767,6 @@ function deleteMaintenanceSubtaskForReport(subtask, user) {
   maintenanceLog(user, "delete_subtask_during_report_confirmation", "subtask", subtask.id, subtask.flight_id, subtask.title || "");
 }
 
-function maintenanceDirectConfirmBlockers(flightId, flight) {
-  const blockers = [];
-  const progress = maintenanceReportProgress(flightId);
-  if (progress?.hasFormalNonroutine) blockers.push("仍存在正式非例行");
-  if (progress?.hasNonroutineDraft) blockers.push("仍存在未提交的非例行草稿");
-  if (!progress?.batches.release || !["已提报", "待复核", "已确认"].includes(progress.batches.release.status || "")) {
-    blockers.push("放行尚未提报");
-  }
-  if (progress?.hasRoutine && (!progress.batches.routine || !["已提报", "待复核", "已确认"].includes(progress.batches.routine.status || ""))) {
-    blockers.push("例行尚未提报");
-  }
-
-  const assignments = db.prepare("select * from maintenance_assignments where flight_id=?").all(flightId);
-  const releaseAssignments = assignments.filter(row => row.owner_type === "flight" && row.owner_id === flightId && row.role === "放行");
-  if (releaseAssignments.length !== 1) blockers.push("放行人员配置无效");
-  for (const assignment of releaseAssignments) {
-    if (!["已提报", "待复核", "已确认"].includes(assignment.status || "")) blockers.push(`${assignment.user_name || "放行人员"}尚未提报放行`);
-    const result = db.prepare("select sorties,status from maintenance_sortie_results where assignment_id=?").get(assignment.id);
-    if (Number(result?.sorties || 0) !== 1) blockers.push(`${assignment.user_name || "放行人员"}缺少有效放行架次`);
-    if (result && !["已提报", "待复核", "已确认"].includes(result.status || "")) blockers.push(`${assignment.user_name || "放行人员"}的放行架次尚未提报`);
-  }
-
-  const routineAssignments = assignments.filter(row => row.owner_type === "flight" && row.owner_id === flightId && row.role !== "放行");
-  if (routineAssignments.length && maintenanceBaseHours("flight", flight) <= 0) blockers.push("维修机会标准工时无效");
-  for (const assignment of routineAssignments) {
-    if (!["已提报", "待复核", "已确认"].includes(assignment.status || "")) blockers.push(`${assignment.user_name}/${assignment.role}尚未提报`);
-    if (maintenanceRatioRuleForOwner("flight", flight, assignment.role) === null) blockers.push(`${assignment.role}缺少当前维修机会的有效工时比例`);
-    const result = db.prepare("select id,hours,status from maintenance_hour_results where assignment_id=?").get(assignment.id);
-    if (!result) blockers.push(`${assignment.user_name}/${assignment.role}缺少工时结果`);
-    else {
-      if (!(Number(result.hours) > 0)) blockers.push(`${assignment.user_name}/${assignment.role}工时结果无效`);
-      if (!["已提报", "待复核", "已确认"].includes(result.status || "")) blockers.push(`${assignment.user_name}/${assignment.role}工时结果尚未提报`);
-    }
-  }
-  return Array.from(new Set(blockers));
-}
-
 function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize = false } = {}) {
   const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
   if (!flight) throw maintenanceDispatchError("未找到维修机会");
@@ -3869,41 +3832,26 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
     if (!releasePerson) throw maintenanceDispatchError("最终放行人员不存在或已停用");
     const releaseAssignment = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
     if (!releaseAssignment) throw maintenanceDispatchError("未找到放行派工记录");
-    const directConfirm = finalize && remainingNonroutine === 0;
-    const targetStatus = finalize ? (directConfirm ? "已提报" : "待复核") : "已提报";
+    const targetStatus = finalize ? "待复核" : "已提报";
     db.prepare("update maintenance_assignments set user_id=?,user_name=?,team=?,status=?,modified_at=? where id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
     db.prepare("update maintenance_sortie_results set user_id=?,user_name=?,team=?,sorties=1,status=?,updated_at=? where assignment_id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
     db.prepare("update maintenance_report_entries set user_id=?,user_name=?,team=?,updated_at=? where batch_id=? and role='放行'").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", now(), releaseBatch.id);
 
     if (finalize) {
       const stamp = now();
-      if (directConfirm) {
-        const blockers = maintenanceDirectConfirmBlockers(flightId, flight);
-        if (blockers.length) throw maintenanceReviewError("当前维修机会暂不能直接确认", 409, blockers);
-        db.prepare("update maintenance_assignments set status='已确认',modified_at=?,confirmed_at=? where flight_id=? and status in ('已提报','待复核')").run(stamp, stamp, flightId);
-        db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where flight_id=? and status in ('已提报','待复核')").run(user.id, stamp, stamp, flightId);
-        db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where flight_id=? and status in ('已提报','待复核')").run(user.id, stamp, stamp, flightId);
-        db.prepare("update maintenance_report_batches set status='已确认',updated_at=? where flight_id=? and status in ('已提报','待复核')").run(stamp, flightId);
-      } else {
-        db.prepare("update maintenance_assignments set status='待复核',modified_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
-        db.prepare("update maintenance_hour_results set status='待复核',updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
-        db.prepare("update maintenance_sortie_results set status='待复核',sorties=1,updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
-        db.prepare("update maintenance_report_batches set status='待复核',updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
-        db.prepare("update maintenance_subtasks set status='待复核',updated_by=?,updated_at=? where flight_id=? and status='已提报'").run(user.id, stamp, flightId);
-      }
+      db.prepare("update maintenance_assignments set status='待复核',modified_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
+      db.prepare("update maintenance_hour_results set status='待复核',updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
+      db.prepare("update maintenance_sortie_results set status='待复核',sorties=1,updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
+      db.prepare("update maintenance_report_batches set status='待复核',updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
+      db.prepare("update maintenance_subtasks set status='待复核',updated_by=?,updated_at=? where flight_id=? and status='已提报'").run(user.id, stamp, flightId);
       db.prepare("delete from maintenance_report_drafts where flight_id=?").run(flightId);
-      if (directConfirm) {
-        db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=?,status='已确认',archived_at=coalesce(nullif(archived_at,''),?),updated_by=?,updated_at=? where id=?")
-          .run(user.id, user.name, stamp, stamp, user.id, stamp, flightId);
-      } else {
-        db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=?,status='待复核',updated_by=?,updated_at=? where id=?")
-          .run(user.id, user.name, stamp, user.id, stamp, flightId);
-      }
+      db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=?,status='待复核',updated_by=?,updated_at=? where id=?")
+        .run(user.id, user.name, stamp, user.id, stamp, flightId);
     } else {
       reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     }
     const after = { review: maintenanceReviewSnapshot(flightId), progress: maintenanceReportProgress(flightId), releaseOwner: releasePerson.id };
-    maintenanceLog(user, finalize ? (directConfirm ? "report_finalize_direct_confirm" : "report_finalize") : "report_confirmation_save", "flight", flightId, flightId, JSON.stringify({ before, after, originalReleaseReporter: releaseBatch.submittedBy, releaseOwner: releasePerson.id, deletedSubtaskIds: deletedIds, directConfirm }));
+    maintenanceLog(user, finalize ? "report_finalize" : "report_confirmation_save", "flight", flightId, flightId, JSON.stringify({ before, after, originalReleaseReporter: releaseBatch.submittedBy, releaseOwner: releasePerson.id, deletedSubtaskIds: deletedIds }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
   });
 }
@@ -5097,16 +5045,21 @@ async function route(req, res) {
       if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有派工管理权限" });
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rows) ? p.rows : [];
+      // Validate the entire file before any writes: mismatched columns must not become hidden flights.
+      const importRows = rows.map((raw, index) => {
+        const payload = { ...maintenanceFlightPayload(raw), source: "Excel导入", status: "未派工" };
+        payload.date = normalizeMaintenanceStatsDate(payload.date);
+        const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(payload.date) ? new Date(`${payload.date}T00:00:00Z`) : null;
+        if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== payload.date || !payload.flightNo || !payload.aircraftNo) {
+          throw maintenanceReviewError(`第 ${index + 1} 条航班日期、航班号或机号无效，请核对导入列。未导入任何数据。`);
+        }
+        return { raw, payload };
+      });
       let created = 0;
       let subCreated = 0;
       let skipped = 0;
       const imported = new Map();
-      for (const raw of rows) {
-        const payload = { ...maintenanceFlightPayload(raw), source: "Excel导入", status: "未派工" };
-        if (!payload.date || !payload.flightNo || !payload.aircraftNo) {
-          skipped++;
-          continue;
-        }
+      for (const { raw, payload } of importRows) {
         const matchKey = [payload.date, payload.aircraftNo, payload.workKind].join("|");
         let flight = imported.get(matchKey);
         if (!flight) {

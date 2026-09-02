@@ -806,10 +806,12 @@ const maintenanceService = {
     const scope = state.maintenanceTab === "execute" ? "execute" : "dispatch";
     const query = new URLSearchParams({ scope, view: "summary", limit: "100" });
     if (cursor) query.set("cursor", cursor);
-    if (state.maintenanceStartDate) query.set("dateFrom", state.maintenanceStartDate);
-    if (state.maintenanceEndDate) query.set("dateTo", state.maintenanceEndDate);
-    if (state.maintenanceFlightSearch.trim()) query.set("search", state.maintenanceFlightSearch.trim());
-    for (const opportunity of state.maintenanceOpportunityFilters || []) query.append("opportunity", opportunity);
+    if (scope !== "execute") {
+      if (state.maintenanceStartDate) query.set("dateFrom", state.maintenanceStartDate);
+      if (state.maintenanceEndDate) query.set("dateTo", state.maintenanceEndDate);
+      if (state.maintenanceFlightSearch.trim()) query.set("search", state.maintenanceFlightSearch.trim());
+      for (const opportunity of state.maintenanceOpportunityFilters || []) query.append("opportunity", opportunity);
+    }
     return query;
   },
   async load() {
@@ -1208,6 +1210,12 @@ function inputDateValue(value = new Date()) {
   const date = parseDate(value) || new Date(value || Date.now());
   const pad = number => String(number).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function maintenanceFlightMonthDay(value) {
+  const match = String(value || "").trim().match(/^\d{4}[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!match) return "";
+  return `${match[1].padStart(2, "0")}.${match[2].padStart(2, "0")}`;
 }
 
 function monthLabel(value) {
@@ -2197,7 +2205,7 @@ function maintenanceFlightCard(flight) {
   return `<article class="maintenance-card maintenance-flight-card ${expanded ? "expanded" : "collapsed"}" data-maint-dispatch-card="${escapeHtml(flight.id)}" ${canManageMaintenance() ? `data-maint-edit-target="flight:${escapeHtml(flight.id)}" title="单击展开，双击修改"` : ""}>
     <div class="maintenance-card-head">
       <div class="maintenance-flight-identity">
-        <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span></strong>
+        <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${maintenanceFlightMonthDay(flight.date) ? `<span class="maintenance-flight-date"> · ${escapeHtml(maintenanceFlightMonthDay(flight.date))}</span>` : ""}</strong>
         <div class="maintenance-key-tags"><span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span>${maintenanceOpportunityTag(flight)}<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span><span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span></div>
       </div>
       <div class="actions">${maintenanceStatusBadge(flight.status, `flight:${flight.id}`, flight.id, `flight:${flight.id}`, flight)}${canDelete ? `<button class="link-btn danger-text" type="button" data-maint-delete-flight="${escapeHtml(flight.id)}" data-maint-delete-protected="${protectedDelete ? "true" : "false"}">删除</button>` : ""}</div>
@@ -2476,7 +2484,7 @@ function renderMaintenanceExecute() {
     <div class="maintenance-list execute-list">${groups.map(group => { const { flight } = group; const subtaskCount = (flight.subtasks || []).length; const draftCount = flight.nonroutineDraft?.items?.length || 0; const expanded = state.maintenanceExecuteOpenFlightId === flight.id; return `<article class="maintenance-card execute-flight-card ${expanded ? "expanded" : "collapsed"}">
       <button class="execute-flight-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}">
         <span class="maintenance-flight-identity">
-          <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span></strong>
+          <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${maintenanceFlightMonthDay(flight.date) ? `<span class="maintenance-flight-date"> · ${escapeHtml(maintenanceFlightMonthDay(flight.date))}</span>` : ""}</strong>
           <div class="maintenance-key-tags"><span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span>${maintenanceOpportunityTag(flight)}<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span><span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span></div>
         </span>
         <span class="execute-flight-head-meta">${personalCompleteHtml(flight)}${statusHtml(flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
@@ -2620,7 +2628,7 @@ function renderMaintenanceData() {
   const metrics = personal.metrics || {};
   const compositionPeriod = state.maintenanceCompositionPeriod === "month" ? "month" : "day";
   const chartView = state.maintenanceDataChartView === "trend" ? "trend" : "composition";
-  const pendingHours = value => Number(value || 0) ? `<span class="personal-metric-pending">+ ${maintenanceHoursLabel(value)} 小时待复核</span>` : "";
+  const pendingHours = (value, detail = {}) => Number(value || 0) ? `<button class="personal-metric-pending actionable" type="button" data-maint-personal-detail data-detail-status="pending" data-detail-type="all"${detail.date ? ` data-detail-date="${escapeHtml(detail.date)}"` : ""}${detail.period ? ` data-detail-period="${escapeHtml(detail.period)}"` : ""}>+ ${maintenanceHoursLabel(value)} 小时待复核</button>` : "";
   const pendingSorties = value => Number(value || 0) ? `<button class="personal-metric-pending actionable" type="button" data-maint-personal-detail data-detail-status="pending" data-detail-type="sortie">+ ${maintenanceHoursLabel(value)} 架次待复核</button>` : "";
   const chartTabs = `<div class="maintenance-insight-tabs" role="tablist">${[["composition", "工时构成"], ["trend", "工时趋势"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${chartView === key}" class="${chartView === key ? "active" : ""}" data-maint-data-chart="${key}">${label}</button>`).join("")}</div>`;
   const chartBody = chartView === "composition"
@@ -2628,13 +2636,49 @@ function renderMaintenanceData() {
     : `<div class="maintenance-chart-head"><div><span class="maintenance-chart-legend"><i class="total"></i>已确认总工时<i class="routine"></i>例行<i class="nonroutine"></i>非例行<i class="pending"></i>待复核附加</span></div><div class="maintenance-segmented">${[["half", "半个月"], ["month", "整月"]].map(([key, label]) => `<button type="button" class="${state.maintenanceDataRange === key ? "active" : ""}" data-maint-data-range="${key}">${label}</button>`).join("")}</div></div>${maintenanceTrendSvg(personal.trend || [])}`;
   return `<section class="maintenance-data-dashboard">${toolbar}
     <section class="maintenance-personal-metrics">
-      <article class="personal-metric-card"><span>今日工时</span><strong>${maintenanceHoursLabel(metrics.todayHours)}<small>小时</small></strong><em>${escapeHtml(personal.period?.today || "")}</em>${pendingHours(metrics.pendingTodayHours)}</article>
-      <article class="personal-metric-card"><span>本月工时</span><strong>${maintenanceHoursLabel(metrics.monthHours)}<small>小时</small></strong><em>${escapeHtml(monthText)}</em>${pendingHours(metrics.pendingMonthHours)}</article>
-      <article class="personal-metric-card"><span>月度放行架次</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="sortie"><strong>${escapeHtml(metrics.monthSorties || 0)}<small>架次</small></strong><em>${escapeHtml(monthText)} · 点击查看</em></button>${pendingSorties(metrics.pendingMonthSorties)}</article>
+      <article class="personal-metric-card"><span>今日工时</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="all" data-detail-date="${escapeHtml(personal.period?.today || "")}"><strong>${maintenanceHoursLabel(metrics.todayHours)}<small>小时</small></strong><em>${escapeHtml(personal.period?.today || "")}</em></button>${pendingHours(metrics.pendingTodayHours, { date: personal.period?.today || "" })}</article>
+      <article class="personal-metric-card"><span>本月工时</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="all" data-detail-period="month"><strong>${maintenanceHoursLabel(metrics.monthHours)}<small>小时</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingHours(metrics.pendingMonthHours, { period: "month" })}</article>
+      <article class="personal-metric-card"><span>月度放行架次</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="sortie"><strong>${escapeHtml(metrics.monthSorties || 0)}<small>架次</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingSorties(metrics.pendingMonthSorties)}</article>
     </section>
     <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("workshop", personal.workshopComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
     <section class="maintenance-chart-card maintenance-insights-card">${chartTabs}${chartBody}</section>
   </section>`;
+}
+
+let maintenanceDataDetailScrollLock = null;
+
+function lockMaintenanceDataDetailBackground() {
+  if (maintenanceDataDetailScrollLock) return;
+  const body = document.body;
+  const root = document.documentElement;
+  const scrollY = window.scrollY;
+  maintenanceDataDetailScrollLock = {
+    scrollY,
+    bodyPosition: body.style.position,
+    bodyTop: body.style.top,
+    bodyWidth: body.style.width,
+    bodyOverflow: body.style.overflow,
+    rootOverflow: root.style.overflow
+  };
+  root.style.overflow = "hidden";
+  body.style.position = "fixed";
+  body.style.top = `-${scrollY}px`;
+  body.style.width = "100%";
+  body.style.overflow = "hidden";
+}
+
+function unlockMaintenanceDataDetailBackground() {
+  const lock = maintenanceDataDetailScrollLock;
+  if (!lock) return;
+  const body = document.body;
+  const root = document.documentElement;
+  body.style.position = lock.bodyPosition;
+  body.style.top = lock.bodyTop;
+  body.style.width = lock.bodyWidth;
+  body.style.overflow = lock.bodyOverflow;
+  root.style.overflow = lock.rootOverflow;
+  maintenanceDataDetailScrollLock = null;
+  window.scrollTo(0, lock.scrollY);
 }
 
 function ensureMaintenanceDataDetailDialog() {
@@ -2642,6 +2686,7 @@ function ensureMaintenanceDataDetailDialog() {
   if (!dialog) {
     document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceDataDetailDialog" class="maintenance-data-detail-dialog"><div class="dialog-body" id="maintenanceDataDetailDialogBody"></div></dialog>`);
     dialog = $("#maintenanceDataDetailDialog");
+    dialog.addEventListener("close", unlockMaintenanceDataDetailBackground);
   }
   return dialog;
 }
@@ -2658,6 +2703,7 @@ async function openMaintenanceDataDetails(trigger) {
   if (trigger.dataset.detailCategory) params.category = trigger.dataset.detailCategory;
   if (trigger.dataset.detailPeriod) params.period = trigger.dataset.detailPeriod;
   body.innerHTML = `<div class="dialog-head"><h2>数据明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="maintenance-detail-loading">正在读取...</div>`;
+  lockMaintenanceDataDetailBackground();
   dialog.showModal();
   try {
     const result = await maintenanceService.getPersonalDetails(params);
@@ -3669,7 +3715,7 @@ function maintenanceRowsFromRows(rows) {
   const headers = filtered[0].map(normalizeHeader);
   const indexOf = names => headers.findIndex(header => names.includes(header));
   const map = {
-    date: indexOf(["日期"]),
+    date: indexOf(["日期", "航班日期", "计划日期"]),
     flightNo: indexOf(["航班号"]),
     aircraftNo: indexOf(["机号"]),
     aircraftType: indexOf(["机型"]),
@@ -3684,21 +3730,38 @@ function maintenanceRowsFromRows(rows) {
     remark: indexOf(["备注"])
   };
   const hasHeader = map.date >= 0 || map.flightNo >= 0 || map.cardName >= 0;
+  const missingHeaders = [["date", "日期"], ["flightNo", "航班号"], ["aircraftNo", "机号"]]
+    .filter(([key]) => map[key] < 0).map(([, label]) => label);
+  if (hasHeader && missingHeaders.length) {
+    throw new Error(`航班计划缺少列：${missingHeaders.join("、")}。请核对表头，未导入任何数据。`);
+  }
+  if (!hasHeader && !maintenanceImportDate(filtered[0][0])) {
+    throw new Error("未识别到航班计划表头或有效日期。请使用包含日期、航班号、机号的导入格式，不能按固定列顺序导入此文件。");
+  }
   let skipped = 0;
   const sourceRows = hasHeader ? filtered.slice(1) : filtered;
-  const parsed = sourceRows.map(row => {
+  const parsed = sourceRows.map((row, index) => {
     const item = hasHeader ? Object.fromEntries(Object.entries(map).map(([key, index]) => [key, index >= 0 ? row[index] : ""])) : {
       date: row[0], flightNo: row[1], aircraftNo: row[2], aircraftType: row[3], stand: row[4],
       plannedArrival: row[5], plannedDeparture: row[6], workKind: row[7], cardNo: row[8],
       cardName: row[9], standardHours: row[10], status: row[11], remark: row[12]
     };
-    if (!item.date || !item.flightNo || !item.aircraftNo) {
-      skipped++;
-      return null;
+    const date = maintenanceImportDate(item.date);
+    if (!date || !item.flightNo || !item.aircraftNo) {
+      throw new Error(`第 ${index + (hasHeader ? 2 : 1)} 行日期、航班号或机号无效，请核对列对应关系。未导入任何数据。`);
     }
-    return { ...item, standardHours: Number(item.standardHours || 0) || 0 };
+    return { ...item, date, standardHours: Number(item.standardHours || 0) || 0 };
   }).filter(Boolean);
   return { rows: parsed, skipped };
+}
+
+function maintenanceImportDate(value) {
+  const raw = excelSerialToDate(value) || String(value || "").trim();
+  const match = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (!match) return "";
+  const date = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : "";
 }
 
 async function maintenanceRowsFromFile(file) {
