@@ -269,3 +269,32 @@ test("routine report without nonroutine work also waits for review", async () =>
   assert.equal(Number(db.prepare("select count(*) as total from maintenance_hour_results where flight_id=?").get(flightId).total), 1);
   assert.equal(Number(db.prepare("select count(*) as total from maintenance_sortie_results where flight_id=?").get(flightId).total), 1);
 });
+
+test("personal hour details expose a stable flight id for display grouping", async () => {
+  const login = await request("/api/login", {
+    method: "POST",
+    body: { username: "54002010", password: "muc2026" }
+  });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const user = login.payload.user;
+  const created = await request("/api/maintenance/flights", {
+    method: "POST",
+    cookie,
+    body: { date: "2026-09-02", flightNo: "MUGROUP", aircraftNo: "BGROUP", aircraftType: "A320", workKind: "短停", standardHours: 2 }
+  });
+  assert.equal(created.res.statusCode, 201);
+  const flightId = created.payload.flight.id;
+  const stamp = new Date().toISOString();
+  const insertHour = db.prepare(`insert into maintenance_hour_results(
+      id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,status,created_at,updated_at
+    ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insertHour.run(`group-receive-${flightId}`, "flight", flightId, flightId, `group-receive-assignment-${flightId}`, user.id, user.name, user.team || "管理员", "接机", "维修机会", 0.7, "已提报", stamp, stamp);
+  insertHour.run(`group-check-${flightId}`, "flight", flightId, flightId, `group-check-assignment-${flightId}`, user.id, user.name, user.team || "管理员", "例行检查", "维修机会", 0.6, "已提报", stamp, stamp);
+
+  const details = await request("/api/maintenance/stats/personal/details?month=2026-09&period=month&type=all&status=pending", { cookie });
+  assert.equal(details.res.statusCode, 200);
+  const groupedRows = details.payload.rows.filter(row => row.flightId === flightId);
+  assert.equal(groupedRows.length, 2);
+  assert.deepEqual(groupedRows.map(row => row.role).sort(), ["例行检查", "接机"].sort());
+  assert.equal(Number(groupedRows.reduce((sum, row) => sum + row.hours, 0).toFixed(2)), 1.3);
+});

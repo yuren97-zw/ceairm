@@ -163,6 +163,8 @@ const state = {
   maintenanceDispatchOpenNonroutineIds: new Set(),
   maintenanceDispatchClickTimer: null,
   maintenanceExecuteOpenFlightId: "",
+  maintenanceExecuteOpenDate: "",
+  maintenanceExecuteTimeSort: "desc",
   maintenanceFeedbackOpenId: "",
   maintenanceFeedbackDrafts: {},
   loadedData: new Set()
@@ -1991,6 +1993,12 @@ function maintenanceOperationalTimeValue(value) {
   return hours * 60 + minutes + (match[2] ? 24 * 60 : 0);
 }
 
+function maintenanceLocalDateValue(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
 function compareMaintenanceOptionalTime(left, right, direction = "asc") {
   if (left === null && right === null) return 0;
   if (left === null) return 1;
@@ -2248,13 +2256,18 @@ function maintenanceAssignmentsForMe() {
     return 2;
   };
   return groups.sort((left, right) => {
-    const priority = groupPriority(left.flight) - groupPriority(right.flight);
-    if (priority) return priority;
     const date = String(right.flight.date || "").localeCompare(String(left.flight.date || ""), "zh-CN", { numeric: true });
     if (date) return date;
-    const arrival = compareMaintenanceOptionalTime(maintenanceOperationalTimeValue(left.flight.plannedArrival), maintenanceOperationalTimeValue(right.flight.plannedArrival), "desc");
-    if (arrival) return arrival;
-    const departure = compareMaintenanceOptionalTime(maintenanceOperationalTimeValue(left.flight.plannedDeparture), maintenanceOperationalTimeValue(right.flight.plannedDeparture), "desc");
+    const priority = groupPriority(left.flight) - groupPriority(right.flight);
+    if (priority) return priority;
+    const direction = state.maintenanceExecuteTimeSort === "asc" ? "asc" : "desc";
+    const leftArrival = maintenanceOperationalTimeValue(left.flight.plannedArrival);
+    const rightArrival = maintenanceOperationalTimeValue(right.flight.plannedArrival);
+    const leftDeparture = maintenanceOperationalTimeValue(left.flight.plannedDeparture);
+    const rightDeparture = maintenanceOperationalTimeValue(right.flight.plannedDeparture);
+    const time = compareMaintenanceOptionalTime(leftArrival ?? leftDeparture, rightArrival ?? rightDeparture, direction);
+    if (time) return time;
+    const departure = compareMaintenanceOptionalTime(leftDeparture, rightDeparture, direction);
     if (departure) return departure;
     const updated = String(right.flight.updatedAt || right.flight.createdAt || "")
       .localeCompare(String(left.flight.updatedAt || left.flight.createdAt || ""), "zh-CN", { numeric: true });
@@ -2387,6 +2400,9 @@ function renderMaintenanceExecute() {
   const groups = maintenanceAssignmentsForMe();
   const visibleFlightIds = new Set(groups.map(group => group.flight.id));
   if (!visibleFlightIds.has(state.maintenanceExecuteOpenFlightId)) state.maintenanceExecuteOpenFlightId = "";
+  const executeDateKey = date => date || "__undated__";
+  const visibleDates = new Set(groups.map(group => executeDateKey(group.flight.date)));
+  if (!visibleDates.has(state.maintenanceExecuteOpenDate)) state.maintenanceExecuteOpenDate = "";
   const personNamesHtml = (entries, highlightSelf = true) => {
     const seen = new Set();
     const people = (entries || []).reduce((result, entry) => {
@@ -2480,8 +2496,7 @@ function renderMaintenanceExecute() {
       </div>
     </section>`;
   };
-  return `<section class="maintenance-panel maintenance-execute-panel">
-    <div class="maintenance-list execute-list">${groups.map(group => { const { flight } = group; const subtaskCount = (flight.subtasks || []).length; const draftCount = flight.nonroutineDraft?.items?.length || 0; const expanded = state.maintenanceExecuteOpenFlightId === flight.id; return `<article class="maintenance-card execute-flight-card ${expanded ? "expanded" : "collapsed"}">
+  const flightCardHtml = group => { const { flight } = group; const subtaskCount = (flight.subtasks || []).length; const draftCount = flight.nonroutineDraft?.items?.length || 0; const expanded = state.maintenanceExecuteOpenFlightId === flight.id; return `<article class="maintenance-card execute-flight-card ${expanded ? "expanded" : "collapsed"}">
       <button class="execute-flight-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}">
         <span class="maintenance-flight-identity">
           <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${maintenanceFlightMonthDay(flight.date) ? `<span class="maintenance-flight-date"> · ${escapeHtml(maintenanceFlightMonthDay(flight.date))}</span>` : ""}</strong>
@@ -2490,7 +2505,31 @@ function renderMaintenanceExecute() {
         <span class="execute-flight-head-meta">${personalCompleteHtml(flight)}${statusHtml(flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
       </button>
       ${expanded ? `<div class="execute-flight-body">${mainWorkHtml(group)}${subtaskCount || draftCount ? `<div class="execute-subtask-heading">非例行${draftCount ? ` · 草稿 ${draftCount} 项` : ""}</div><div class="execute-nonroutine-list">${nonroutineHtml(flight)}</div>` : ""}</div>` : ""}
-    </article>`; }).join("") || '<section class="data-panel execute-empty"><div class="status-line">暂无派给你的维修任务。</div></section>'}</div>
+    </article>`; };
+  const today = maintenanceLocalDateValue();
+  const dateGroups = [];
+  groups.forEach(group => {
+    const date = group.flight.date || "";
+    const current = dateGroups[dateGroups.length - 1];
+    if (current?.date === date) current.items.push(group);
+    else dateGroups.push({ date, items: [group] });
+  });
+  const listHtml = dateGroups.map(dateGroup => {
+    if (dateGroup.date === today) return dateGroup.items.map(flightCardHtml).join("");
+    const dateKey = executeDateKey(dateGroup.date);
+    const open = state.maintenanceExecuteOpenDate === dateKey;
+    const label = dateGroup.date || "未设置日期";
+    return `<section class="execute-date-group ${open ? "open" : "collapsed"}">
+      <button class="execute-date-toggle" type="button" data-maint-execute-date="${escapeHtml(dateKey)}" aria-expanded="${open ? "true" : "false"}">
+        <span><strong>${escapeHtml(label)}</strong><small>${dateGroup.items.length} 项</small></span><span class="execute-date-toggle-icon" aria-hidden="true">${open ? "−" : "＋"}</span>
+      </button>
+      ${open ? `<div class="execute-date-items">${dateGroup.items.map(flightCardHtml).join("")}</div>` : ""}
+    </section>`;
+  }).join("");
+  const timeAscending = state.maintenanceExecuteTimeSort === "asc";
+  return `<section class="maintenance-panel maintenance-execute-panel">
+    <div class="execute-list-tools"><button class="execute-time-sort" type="button" data-maint-execute-time-sort title="切换计划时间排序" aria-label="计划时间${timeAscending ? "正序" : "倒序"}">时间 <span aria-hidden="true">${timeAscending ? "↑" : "↓"}</span></button></div>
+    <div class="maintenance-list execute-list">${listHtml || '<section class="data-panel execute-empty"><div class="status-line">暂无派给你的维修任务。</div></section>'}</div>
     ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
   </section>`;
 }
@@ -2691,6 +2730,51 @@ function ensureMaintenanceDataDetailDialog() {
   return dialog;
 }
 
+function maintenancePersonalHourGroups(rows = []) {
+  const groups = new Map();
+  rows.forEach((row, index) => {
+    const key = row.flightId ? `flight:${row.flightId}` : `row:${row.id || index}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        date: row.date || "",
+        flightNo: row.flightNo || "-",
+        aircraftNo: row.aircraftNo || "-",
+        opportunity: row.opportunity || "其他",
+        hours: 0,
+        types: new Set(),
+        items: []
+      };
+      groups.set(key, group);
+    }
+    group.hours += Number(row.hours || 0);
+    group.types.add(row.type === "nonroutine" ? "nonroutine" : "routine");
+    group.items.push(row);
+  });
+  return Array.from(groups.values()).map(group => ({ ...group, hours: Number(group.hours.toFixed(2)) }));
+}
+
+function maintenancePersonalHourItemHtml(row) {
+  const type = row.type === "nonroutine" ? "nonroutine" : "routine";
+  const primary = type === "nonroutine" ? (row.taskName || "非例行") : (row.role || row.category || "例行");
+  const metadata = type === "nonroutine"
+    ? [row.role, row.category].filter((value, index, values) => value && value !== primary && values.indexOf(value) === index)
+    : [row.category].filter(value => value && value !== primary);
+  return `<div class="maintenance-detail-work-item">
+    <div><strong>${escapeHtml(primary)}</strong>${metadata.length ? `<span>${metadata.map(escapeHtml).join(" · ")}</span>` : ""}</div>
+    <div><b>${maintenanceHoursLabel(row.hours)} 小时</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div>
+  </div>`;
+}
+
+function maintenancePersonalHourGroupHtml(group) {
+  const kindBadges = Array.from(group.types).map(type => `<i class="maintenance-detail-kind ${type}">${type === "nonroutine" ? "非例行" : "例行"}</i>`).join("");
+  return `<article class="maintenance-hour-detail-group">
+    <div><strong>${escapeHtml(group.date)} · ${escapeHtml(group.flightNo)} · ${escapeHtml(group.aircraftNo)}</strong><span class="maintenance-detail-task-line">${kindBadges}<span>${escapeHtml(group.opportunity)}</span></span></div>
+    <div class="maintenance-detail-group-total"><span>合计</span><b>${maintenanceHoursLabel(group.hours)} 小时</b></div>
+    <div class="maintenance-detail-work-items">${group.items.map(maintenancePersonalHourItemHtml).join("")}</div>
+  </article>`;
+}
+
 async function openMaintenanceDataDetails(trigger) {
   const dialog = ensureMaintenanceDataDetailDialog();
   const body = $("#maintenanceDataDetailDialogBody");
@@ -2708,9 +2792,12 @@ async function openMaintenanceDataDetails(trigger) {
   try {
     const result = await maintenanceService.getPersonalDetails(params);
     const rows = result.rows || [];
+    const detailRowsHtml = result.unit === "架次"
+      ? rows.map(row => `<article><div><strong>${escapeHtml(row.date)}</strong><span>${escapeHtml(row.flightNo)} · ${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType || "-")}</span></div><div><span>${escapeHtml(row.opportunity)}</span><b>1 架次</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div></article>`).join("")
+      : maintenancePersonalHourGroups(rows).map(maintenancePersonalHourGroupHtml).join("");
     body.innerHTML = `<div class="dialog-head"><h2>${escapeHtml(result.title || "数据明细")}</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div>
       ${result.unit === "小时" ? `<div class="maintenance-detail-summary">合计 <strong>${maintenanceHoursLabel(result.total)} 小时</strong></div>` : `<div class="maintenance-detail-summary">合计 <strong>${rows.length} 架次</strong></div>`}
-      <div class="maintenance-personal-detail-list">${rows.map(row => result.unit === "架次" ? `<article><div><strong>${escapeHtml(row.date)}</strong><span>${escapeHtml(row.flightNo)} · ${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType || "-")}</span></div><div><span>${escapeHtml(row.opportunity)}</span><b>1 架次</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div></article>` : `<article><div><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flightNo)} · ${escapeHtml(row.aircraftNo)}</strong><span class="maintenance-detail-task-line"><i class="maintenance-detail-kind ${row.type === "nonroutine" ? "nonroutine" : "routine"}">${row.type === "nonroutine" ? "非例行" : "例行"}</i><span>${escapeHtml(row.taskName)}</span></span></div><div><span>${escapeHtml(row.role)} · ${escapeHtml(row.category)}</span><b>${maintenanceHoursLabel(row.hours)} 小时</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div></article>`).join("") || '<div class="maintenance-chart-empty">没有对应记录。</div>'}</div>`;
+      <div class="maintenance-personal-detail-list">${detailRowsHtml || '<div class="maintenance-chart-empty">没有对应记录。</div>'}</div>`;
   } catch (error) {
     body.innerHTML = `<div class="dialog-head"><h2>数据明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="status-line error">${escapeHtml(error.message)}</div>`;
   }
@@ -5321,6 +5408,7 @@ document.addEventListener("click", async event => {
       state.maintenanceDispatchOpenFlightId = "";
       state.maintenanceDispatchOpenNonroutineIds.clear();
       state.maintenanceExecuteOpenFlightId = "";
+      state.maintenanceExecuteOpenDate = "";
       state.maintenanceFeedbackOpenId = "";
     }
     state.maintenanceTab = maintenanceTab.dataset.maintTab;
@@ -5373,6 +5461,20 @@ document.addEventListener("click", async event => {
         alert(`读取维修机会失败：${error.message}`);
       }
     }
+    return;
+  }
+  const executeDateToggle = event.target.closest("[data-maint-execute-date]");
+  if (executeDateToggle) {
+    const date = executeDateToggle.dataset.maintExecuteDate || "";
+    state.maintenanceExecuteOpenDate = state.maintenanceExecuteOpenDate === date ? "" : date;
+    state.maintenanceExecuteOpenFlightId = "";
+    state.maintenanceFeedbackOpenId = "";
+    renderMaintenance();
+    return;
+  }
+  if (event.target.closest("[data-maint-execute-time-sort]")) {
+    state.maintenanceExecuteTimeSort = state.maintenanceExecuteTimeSort === "asc" ? "desc" : "asc";
+    renderMaintenance();
     return;
   }
   if (event.target.closest("[data-maint-import]")) {
