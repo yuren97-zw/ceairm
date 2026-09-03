@@ -3072,6 +3072,7 @@ function maintenancePersonalCategory(row) {
 function maintenancePersonalHourDetail(row) {
   return {
     id: row.id,
+    flightId: row.flight_id || "",
     date: row.date || "",
     flightNo: row.flight_no || "-",
     aircraftNo: row.aircraft_no || "-",

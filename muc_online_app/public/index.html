@@ -729,7 +729,18 @@
     .maintenance-child-collapsed>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .maintenance-child-collapsed>.link-btn{flex-shrink:0}
     .maintenance-execute-panel{width:min(100%,820px);margin:0 auto;overflow:visible}
+    .execute-list-tools{display:flex;justify-content:flex-end;margin:0 0 7px}
+    .execute-time-sort{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:28px;padding:4px 9px;border:1px solid #D8E2EA;border-radius:8px;background:#fff;color:#52657A;font:inherit;font-size:11px;font-weight:700;cursor:pointer;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+    .execute-time-sort:hover{border-color:#9ECAD6;color:#0F6B7D}
+    .execute-time-sort:focus-visible,.execute-date-toggle:focus-visible{outline:2px solid rgba(15,107,125,.3);outline-offset:2px}
     .execute-list{width:100%;gap:10px}
+    .execute-date-group{display:grid;gap:8px;min-width:0}
+    .execute-date-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-width:0;padding:9px 11px;border:1px solid #DCE5EC;border-radius:10px;background:#F8FAFC;color:#334155;text-align:left;font:inherit;cursor:pointer}
+    .execute-date-toggle>span:first-child{display:flex;align-items:center;gap:8px;min-width:0}
+    .execute-date-toggle strong{font-size:12px;color:#334155}
+    .execute-date-toggle small{font-size:11px;color:#64748B}
+    .execute-date-toggle-icon{flex:0 0 auto;color:#0F6B7D;font-size:15px;font-weight:700;line-height:1}
+    .execute-date-items{display:grid;gap:10px;min-width:0}
     .execute-flight-card{padding:11px 12px}
     .execute-flight-toggle{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:10px;width:100%;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
     .execute-flight-toggle:focus-visible{outline:2px solid rgba(15,107,125,.32);outline-offset:5px;border-radius:8px}
@@ -878,7 +889,7 @@
     .maintenance-role-group>[data-maint-role-group]>span{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
     .maintenance-role-group strong{color:var(--ink);font-size:12px;white-space:nowrap}
     .maintenance-role-group small{color:#0F6B7D;font-size:10px;font-weight:750;white-space:nowrap}
-    .maintenance-role-group em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:10px;font-style:normal}
+    .maintenance-role-group em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#075E70;font-size:10px;font-style:normal;font-weight:650}
     .maintenance-role-clear{align-self:stretch;padding:0 8px;border:0;border-left:1px solid var(--line);background:transparent;color:#B42318;font:inherit;font-size:10px;cursor:pointer}
     .maintenance-picker-tools{display:grid;grid-template-columns:minmax(130px,170px) minmax(180px,1fr) auto;gap:8px;align-items:center;min-width:0}
     .maintenance-dispatch-head h2{display:flex;align-items:baseline;gap:10px;min-width:0;margin:0}
@@ -923,7 +934,7 @@
     .maintenance-work-role>span{display:flex;align-items:center;justify-content:space-between;gap:7px}
     .maintenance-work-role strong{font-size:12px;color:var(--ink)}
     .maintenance-work-role small{font-size:10px;color:#0F6B7D;font-weight:750;white-space:nowrap}
-    .maintenance-work-role em{min-width:0;min-height:1.3em;overflow-wrap:anywhere;word-break:break-word;color:var(--muted);font-size:10px;font-style:normal;line-height:1.3}
+    .maintenance-work-role em{min-width:0;min-height:1.3em;overflow-wrap:anywhere;word-break:break-word;color:#075E70;font-size:10px;font-style:normal;font-weight:650;line-height:1.3}
     .maintenance-work-report-dialog .maintenance-people-picker{min-height:100px;max-height:min(42vh,390px)}
     .maintenance-work-feedback{display:grid;gap:5px;color:var(--muted);font-size:11px}
     .maintenance-work-feedback textarea{width:100%;min-width:0;min-height:70px;box-sizing:border-box}
@@ -1026,6 +1037,8 @@
       .maintenance-flight-card>.maintenance-card-head>.actions{align-self:start;flex-wrap:nowrap}
       .maintenance-flight-card .maintenance-flight-identity strong{flex-wrap:wrap;overflow:visible}
       .execute-flight-card{padding:9px 10px}
+      .execute-list-tools{margin-bottom:6px}
+      .execute-date-toggle{padding:8px 9px}
       .execute-flight-toggle{gap:6px}
       .execute-flight-card .maintenance-aircraft-no{font-size:16px!important}
       .execute-flight-card .maintenance-flight-no{font-size:14px!important}
@@ -1193,6 +1206,17 @@
     .maintenance-personal-detail-list strong{color:#243746;font-size:12px}
     .maintenance-personal-detail-list span{color:#71808E;font-size:11px}
     .maintenance-personal-detail-list b{color:#0F6B7D;font-size:12px;white-space:nowrap}
+    .maintenance-personal-detail-list article.maintenance-hour-detail-group{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding:12px 3px}
+    .maintenance-detail-group-total{align-content:start;text-align:right}
+    .maintenance-detail-group-total span{font-size:10px}
+    .maintenance-detail-work-items{grid-column:1/-1;display:grid!important;gap:0!important;min-width:0;border-top:1px dashed #DDE7ED;text-align:left!important}
+    .maintenance-detail-work-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;padding:7px 0;border-bottom:1px dashed #E7EDF2}
+    .maintenance-detail-work-item:last-child{border-bottom:0;padding-bottom:0}
+    .maintenance-detail-work-items .maintenance-detail-work-item>div{display:flex;align-items:center;gap:6px;min-width:0}
+    .maintenance-detail-work-items .maintenance-detail-work-item>div:last-child{justify-content:flex-end;flex-wrap:wrap;text-align:right}
+    .maintenance-detail-work-item strong{font-size:11px;color:#52657A}
+    .maintenance-detail-work-item span{font-size:10px}
+    .maintenance-detail-work-item b{font-size:11px}
     .maintenance-detail-status{justify-self:end;width:max-content;padding:2px 5px;border-radius:4px;font-size:9px!important;font-style:normal;font-weight:800}
     .maintenance-detail-status.confirmed{background:#E7F6EB;color:#277344!important}
     .maintenance-detail-status.pending{background:#FFF2D8;color:#9A5B00!important}
@@ -1350,7 +1374,7 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260830-data-detail-interactions-1"></script>
+  <script src="app.js?v=20260902-personal-detail-groups-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
