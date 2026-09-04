@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check db.mjs && node --check public/app.js && node --check scripts/build-web-assets.mjs && node --check scripts/run-postgres-migrations.mjs && node --check scripts/migrate-sqlite-to-postgres.mjs && node --check scripts/migrate-attachments-to-cos.mjs && bash -n deploy/tencent/*.sh",
+    "check": "node --check server.mjs && node --check db.mjs && node --check public/app.js && node --check scripts/build-web-assets.mjs && node --check scripts/run-postgres-migrations.mjs && node --check scripts/migrate-sqlite-to-postgres.mjs && node --check scripts/migrate-attachments-to-cos.mjs && node --check scripts/reset-production-data.mjs && bash -n deploy/tencent/*.sh",
     "test": "node --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs",
     "build:web": "node scripts/build-web-assets.mjs",
     "package:release": "bash deploy/tencent/build-release.sh",
