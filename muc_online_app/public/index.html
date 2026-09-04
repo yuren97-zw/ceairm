@@ -645,6 +645,28 @@
       }
     }
     .maintenance-tabs{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+    .maintenance-child-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;white-space:nowrap}
+    .maintenance-child-actions .maintenance-remark-action{color:#64748B;font-weight:400}
+    .maintenance-child-actions .maintenance-remark-action.has-remark{color:#B86E00;font-weight:750}
+    .maintenance-remark-text{white-space:pre-wrap;overflow-wrap:anywhere}
+    .execute-flight-info-row{position:relative;display:flex;align-items:center;min-width:0;padding-right:44px}
+    .execute-flight-info-toggle{flex:1;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
+    .maintenance-remark-indicator{position:absolute;right:0;top:0;display:flex;align-items:center;justify-content:center;width:40px;height:100%;min-height:0;padding:0;border:0;background:transparent;color:#D97706;font:inherit;font-size:16px;font-weight:900;cursor:pointer}
+    .maintenance-remark-symbol{position:relative;display:block;width:16px;height:16px}
+    .maintenance-remark-symbol::before,.maintenance-remark-symbol::after{content:"";position:absolute;left:6px;width:4px;background:currentColor;border-radius:999px}
+    .maintenance-remark-symbol::before{top:0;height:10px}
+    .maintenance-remark-symbol::after{bottom:0;height:4px}
+    .maintenance-remark-indicator:focus-visible,.execute-flight-info-toggle:focus-visible{outline:2px solid #D97706;outline-offset:1px;border-radius:6px}
+    .maintenance-remark-dialog{width:min(560px,94vw);max-width:94vw;padding:0;overflow:hidden;overscroll-behavior:contain}
+    .maintenance-remark-dialog .dialog-body{display:flex;flex-direction:column;gap:12px;min-width:0;max-height:85dvh;padding:18px;box-sizing:border-box;overflow:hidden}
+    .maintenance-remark-dialog .dialog-head{flex-shrink:0;margin:0}
+    .maintenance-remark-dialog h2{font-size:18px;min-width:0}
+    .maintenance-remark-identity{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+    .maintenance-remark-label{display:flex;flex-direction:column;gap:6px;min-height:0;font-size:13px}
+    .maintenance-remark-label textarea{box-sizing:border-box;width:100%;min-width:0;min-height:90px;max-height:45dvh;resize:vertical;border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;overflow:auto;overscroll-behavior:contain}
+    .maintenance-remark-content{min-height:0;overflow:auto;overscroll-behavior:contain;line-height:1.65}
+    .maintenance-remark-dialog .actions{justify-content:flex-end;flex-shrink:0}
+    .maintenance-remark-dialog .status-line:empty{display:none}
     .maintenance-panel{display:grid;gap:14px;min-width:0;max-width:100%;overflow:visible}
     .maintenance-dispatch-actions{position:relative;z-index:4;display:grid;grid-template-columns:minmax(238px,268px) minmax(112px,138px) minmax(120px,1fr) auto auto;align-items:center;gap:6px;min-width:0;padding:2px 0 4px;overflow:visible}
     .maintenance-dispatch-actions:has(.maintenance-opportunity-menu[open]){z-index:100}
@@ -962,6 +984,17 @@
     .maintenance-review-reason textarea{width:100%;min-width:0;max-height:86px;box-sizing:border-box;resize:vertical}
     .maintenance-review-tree{display:grid;grid-auto-rows:max-content;align-content:start;flex:1 1 0;width:100%;height:0;max-width:100%;gap:10px;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;padding:2px 6px 14px 3px;overscroll-behavior:contain;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;touch-action:pan-y}
     .maintenance-review-tree::-webkit-scrollbar,.maintenance-review-candidates::-webkit-scrollbar{width:7px}
+    .maintenance-review-signatures{display:flex;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end;gap:2px 20px;padding:4px 0;min-width:0;max-width:100%}
+    .maintenance-review-signatures fieldset{flex:0 0 auto;min-width:0;max-width:100%;margin:0;padding:0;border:0}
+    .maintenance-review-signatures legend{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+    .maintenance-signature-row{display:flex;align-items:center;gap:8px;white-space:nowrap}
+    .maintenance-signature-title{font-size:13px;font-weight:500}
+    .maintenance-signature-options{display:flex;gap:4px}
+    .maintenance-signature-options label{display:flex;align-items:center;gap:4px;min-height:32px;padding:0 4px;font-size:13px;cursor:pointer}
+    .maintenance-signature-options label:has(input:checked){color:#0F6B7D}
+    .maintenance-signature-options label:has(input:disabled){cursor:default;color:var(--muted)}
+    .maintenance-signature-options input{width:14px;height:14px;margin:0;accent-color:#0F6B7D}
+    .maintenance-review-signatures small{color:var(--muted);font-size:12px}
     .maintenance-review-tree::-webkit-scrollbar-thumb,.maintenance-review-candidates::-webkit-scrollbar-thumb{border-radius:999px;background:#CBD5E1}
     .maintenance-review-tree::-webkit-scrollbar-track,.maintenance-review-candidates::-webkit-scrollbar-track{background:transparent}
     .maintenance-review-task{align-self:start;width:100%;max-width:100%;min-width:0;min-height:max-content;padding:12px;border:1px solid var(--line);border-radius:14px;background:#F8FAFC;overflow:visible}
@@ -1013,13 +1046,29 @@
       .maintenance-dispatch-actions .btn{padding-inline:9px;font-size:11px}
     }
     @media(max-width:680px){
-      .maintenance-dispatch-actions{display:grid;grid-template-columns:1fr;gap:7px;padding-top:0}
-      .maintenance-dispatch-filters{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:7px;width:100%}
-      .maintenance-date-filter{grid-column:1/-1;justify-content:space-between}
+      .maintenance-tabs{gap:6px;padding-bottom:2px}
+      .maintenance-panel{gap:10px}
+      .maintenance-dispatch-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;padding-top:0}
+      .maintenance-dispatch-filters,.maintenance-dispatch-actions>.actions{display:contents}
+      .maintenance-date-filter{grid-column:1/3;grid-row:1;justify-content:space-between}
       .maintenance-date-inputs{flex:1}
+      .maintenance-opportunity-menu{grid-column:3;grid-row:1;min-width:122px}
       .maintenance-dispatch-filters>select,.maintenance-dispatch-filters>.search,.maintenance-opportunity-menu{width:100%}
-      .maintenance-dispatch-actions>.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;width:100%}
+      .maintenance-dispatch-filters>.search{grid-column:1;grid-row:2}
       .maintenance-dispatch-actions .btn{min-width:0;padding-inline:9px}
+      .maintenance-dispatch-actions [data-maint-import]{grid-column:2;grid-row:2}
+      .maintenance-dispatch-actions [data-maint-create-flight]{grid-column:3;grid-row:2}
+      .maintenance-opportunity-options{left:auto;right:0}
+      .maintenance-opportunity-menu>summary{overflow:visible;text-overflow:clip}
+    }
+    @media(max-width:479px){
+      .maintenance-dispatch-actions{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+      .maintenance-date-filter{grid-column:1/-1;grid-row:1}
+      .maintenance-opportunity-menu{grid-column:1;grid-row:2;min-width:0}
+      .maintenance-dispatch-filters>.search{grid-column:2;grid-row:2}
+      .maintenance-dispatch-actions [data-maint-import]{grid-column:1;grid-row:3}
+      .maintenance-dispatch-actions [data-maint-create-flight]{grid-column:2;grid-row:3}
+      .maintenance-opportunity-options{left:0;right:auto}
     }
     @media(max-width:760px){
       .maintenance-review-roles{grid-template-columns:1fr}
@@ -1274,7 +1323,6 @@
       <form id="loginForm" class="entry-grid">
         <h1>航线运行中心</h1>
         <p>统一登录、权限管理、组织架构和业务系统入口。</p>
-        <div id="demoLoginActions" class="actions" hidden><button class="btn secondary demo-login" type="button" data-demo-user="receiver">接收者登录</button><button class="btn secondary demo-login" type="button" data-demo-user="publisher">发布者登录</button><button class="btn secondary demo-login" type="button" data-demo-user="54002010">管理员登录</button></div>
         <label>账号<input id="loginUser" name="username" autocomplete="username" required></label>
         <label>密码<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
         <div class="login-options">
@@ -1374,7 +1422,7 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260902-personal-detail-groups-1"></script>
+  <script src="app.js?v=20260904-production-login-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

@@ -160,7 +160,7 @@ function allPeople() {
     department: row.department || "未设置",
     team: row.team || "未设置",
     functionCategory: normalizeFunctionCategory(row.function_category)
-  })) : defaultPeople;
+  })) : [];
 }
 
 function allLoginPeople() {
@@ -755,6 +755,8 @@ async function initDb() {
   ensureColumn("maintenance_flights", "report_finalized_by_name", "text");
   ensureColumn("maintenance_flights", "report_finalized_at", "text");
   ensureColumn("maintenance_flights", "archived_at", "text");
+  ensureColumn("maintenance_flights", "routine_electronic_signed", "integer");
+  ensureColumn("maintenance_flights", "nonroutine_electronic_signed", "integer");
   db.prepare("insert into maintenance_sync_state(id,version,updated_at) values(1,0,?) on conflict(id) do nothing").run(now());
   db.prepare("delete from sessions where expires_at<=?").run(now());
   db.prepare("delete from favorites where record_id not in (select id from records)").run();
@@ -2510,7 +2512,9 @@ function maintenanceReviewSnapshot(flightId) {
         aircraftType: owner?.aircraft_type || "",
         stand: owner?.stand || "",
         opportunity: owner?.work_kind || owner?.work_type || "",
-        archivedAt: owner?.archived_at || ""
+        archivedAt: owner?.archived_at || "",
+        routineElectronicSigned: owner?.routine_electronic_signed == null ? null : Boolean(owner.routine_electronic_signed),
+        nonroutineElectronicSigned: owner?.nonroutine_electronic_signed == null ? null : Boolean(owner.nonroutine_electronic_signed)
       } : {
         chapter: owner?.card_no || "",
         title: owner?.title || "",
@@ -2574,7 +2578,9 @@ function maintenanceReviewTree(flightId) {
       opportunity: flight.work_kind || flight.work_type || "其他",
       status: flight.status || "未派工",
       archivedAt: flight.archived_at || "",
-      requiresChangeReason: flight.status === "已确认" || Boolean(flight.archived_at)
+      requiresChangeReason: flight.status === "已确认" || Boolean(flight.archived_at),
+      routineElectronicSigned: flight.routine_electronic_signed == null ? null : Boolean(flight.routine_electronic_signed),
+      nonroutineElectronicSigned: flight.nonroutine_electronic_signed == null ? null : Boolean(flight.nonroutine_electronic_signed)
     },
     people: allPeople(),
     tasks: [maintenanceReviewTask("flight", flight, flight), ...subtasks.map(row => maintenanceReviewTask("subtask", row, flight))]
@@ -2621,11 +2627,12 @@ function maintenanceReviewTaskPayloads(flightId, tasks, { archiveMode = false } 
   });
 }
 
-function maintenanceArchivedNewSubtasks(flightId, input) {
+function maintenanceArchivedNewSubtasks(flightId, input, status = "已确认") {
   return (Array.isArray(input) ? input : []).map((raw, index) => {
     const payload = maintenanceSubtaskPayload(raw);
     if (!payload.title) throw maintenanceReviewError(`新增非例行 ${index + 1}：请填写标题`);
-    if (!(payload.standardHours > 0)) throw maintenanceReviewError(`新增非例行 ${index + 1}：工时必须大于0`);
+    if (!Number.isFinite(payload.standardHours) || !(payload.standardHours > 0) || Math.abs(payload.standardHours * 10 - Math.round(payload.standardHours * 10)) > 1e-8) throw maintenanceReviewError(`新增非例行 ${index + 1}：工时必须大于0且以0.1小时为单位`);
+    if (!maintenanceNonroutineCategories.includes(raw?.category)) throw maintenanceReviewError(`新增非例行 ${index + 1}：类别无效`);
     const owner = {
       id: String(raw?.clientId || randomId("mtns")),
       flight_id: flightId,
@@ -2635,11 +2642,14 @@ function maintenanceArchivedNewSubtasks(flightId, input) {
       category: payload.category,
       standard_hours: payload.standardHours,
       priority: payload.priority,
-      status: "已确认",
+      status,
       remark: payload.remark
     };
     const normalized = normalizeMaintenanceAssignments("subtask", owner, Array.isArray(raw?.assignments) ? raw.assignments : []);
     if (!normalized.length) throw maintenanceReviewError(`新增非例行 ${index + 1}：请至少选择一名人员`);
+    for (const item of normalized) {
+      if (maintenanceRoleRatioRule(item.role) === null) throw maintenanceReviewError(`新增非例行 ${index + 1}：${item.role}缺少有效工时比例`);
+    }
     return { owner, payload, normalized };
   });
 }
@@ -2757,13 +2767,29 @@ function saveMaintenanceReview(flightId, payload, manager) {
   const reason = String(payload?.reason || "").trim();
   if (editingConfirmed && !reason) throw maintenanceReviewError("修改已确认数据必须填写修改原因");
   if (editingConfirmed && mode === "confirm") throw maintenanceReviewError("已确认数据请使用保存归档修改");
-  const newSubtasks = editingConfirmed ? maintenanceArchivedNewSubtasks(flightId, payload?.newSubtasks) : [];
-  if (!editingConfirmed && newSubtasks.length) throw maintenanceReviewError("只有已确认数据可以在复核页补录非例行");
   db.exec("begin immediate");
   try {
+    const current = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+    if (current.status !== flight.status || current.archived_at !== flight.archived_at) throw maintenanceReviewError("维修机会状态已变化，请刷新后重试", 409);
+    const newSubtasks = maintenanceArchivedNewSubtasks(flightId, payload?.newSubtasks, editingConfirmed ? "已确认" : "待复核");
+    if (!editingConfirmed && newSubtasks.length && current.status !== "待复核") throw maintenanceReviewError("只有待复核或已确认的维修机会可以补录非例行", 409);
+    if (newSubtasks.length && !reason) throw maintenanceReviewError("补录非例行必须填写补录原因");
     const before = maintenanceReviewSnapshot(flightId);
     const rows = maintenanceReviewTaskPayloads(flightId, payload?.tasks, { archiveMode: editingConfirmed });
+    const currentFlight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+    const signatureValue = (key, column) => {
+      const value = payload[key];
+      if (value === undefined) return currentFlight[column] == null ? null : Boolean(currentFlight[column]);
+      if (value !== null && typeof value !== "boolean") throw maintenanceReviewError("电签选择只能为是、否或未选择");
+      return value;
+    };
+    const routineSigned = signatureValue("routineElectronicSigned", "routine_electronic_signed");
+    let nonroutineSigned = signatureValue("nonroutineElectronicSigned", "nonroutine_electronic_signed");
+    const hasNonroutine = rows.some(row => row.ownerType === "subtask") || newSubtasks.length > 0;
+    if (!hasNonroutine) nonroutineSigned = null;
     if (mode === "confirm") {
+      if (routineSigned === null) throw maintenanceReviewError("请选择例行电签");
+      if (hasNonroutine && nonroutineSigned === null) throw maintenanceReviewError("请选择非例行电签");
       const blockers = maintenanceReviewConfirmBlockers(rows);
       if (blockers.length) throw maintenanceReviewError("整棵任务树暂不能确认", 409, blockers);
     }
@@ -2773,20 +2799,33 @@ function saveMaintenanceReview(flightId, payload, manager) {
       item.owner.id = id;
       db.prepare(`insert into maintenance_subtasks(id,flight_id,card_no,title,content,category,standard_hours,priority,status,remark,created_by,updated_by,created_at,updated_at)
         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, flightId, item.payload.cardNo, item.payload.title, item.payload.content, item.payload.category, item.payload.standardHours, item.payload.priority, "已确认", item.payload.remark, manager.id, manager.id, stamp, stamp);
+        .run(id, flightId, item.payload.cardNo, item.payload.title, item.payload.content, item.payload.category, item.payload.standardHours, item.payload.priority, item.owner.status, item.payload.remark, manager.id, manager.id, stamp, stamp);
       rows.push({
         ownerType: "subtask",
         ownerId: id,
-        owner: { ...item.owner, id, status: "已确认" },
+        owner: { ...item.owner, id },
         current: [],
         normalized: item.normalized,
         changed: true,
-        archiveMode: true,
-        resultSource: "归档补录"
+        archiveMode: editingConfirmed,
+        resultSource: editingConfirmed ? "归档补录" : "复核补录"
       });
     }
     rows.forEach(row => reconcileMaintenanceReviewAssignments(row, manager));
     rows.forEach(row => rebuildMaintenanceReviewResults(row, manager, mode));
+    if (newSubtasks.length) {
+      // Rebuild the category entries from the final tree, including newly recorded work.
+      const entries = rows.filter(row => row.ownerType === "subtask").flatMap(row => row.normalized.map(item => ({
+        ownerType: "subtask", ownerId: row.ownerId, role: item.role, person: item.person,
+        standardHours: maintenanceBaseHours("subtask", row.owner), source: row.resultSource || "非例行报工"
+      })));
+      const batch = maintenanceReportBatch(flightId, "nonroutine");
+      const batchStatus = editingConfirmed || mode === "confirm" ? "已确认" : "待复核";
+      if (batch) {
+        replaceMaintenanceReportEntries(batch.id, flightId, entries);
+        db.prepare("update maintenance_report_batches set status=? where id=?").run(batchStatus, batch.id);
+      } else upsertMaintenanceReportBatch(flightId, "nonroutine", { status: batchStatus, user: manager, entries });
+    }
     reconcileMaintenanceTreeStatus(flightId, manager.id, { preserveConfirmed: mode !== "confirm" });
     if (mode === "confirm") {
       db.prepare("update maintenance_report_batches set status='已确认',updated_at=? where flight_id=?").run(stamp, flightId);
@@ -2794,6 +2833,8 @@ function saveMaintenanceReview(flightId, payload, manager) {
     } else if (editingConfirmed) {
       db.prepare("update maintenance_flights set status='已确认',updated_by=?,updated_at=? where id=?").run(manager.id, stamp, flightId);
     }
+    db.prepare("update maintenance_flights set routine_electronic_signed=?,nonroutine_electronic_signed=? where id=?")
+      .run(routineSigned === null ? null : Number(routineSigned), nonroutineSigned === null ? null : Number(nonroutineSigned), flightId);
     const after = maintenanceReviewSnapshot(flightId);
     maintenanceLog(manager, editingConfirmed ? "confirmed_data_correct" : mode === "confirm" ? "review_confirm" : "review_save", "flight", flightId, flightId, JSON.stringify({ reason, before, after }));
     db.exec("commit");
@@ -2907,6 +2948,7 @@ function deleteMaintenanceSubtask(subtaskId, manager, reason = "") {
     db.prepare("delete from maintenance_feedback where owner_type='subtask' and owner_id=?").run(subtaskId);
     db.prepare("delete from maintenance_assignments where owner_type='subtask' and owner_id=?").run(subtaskId);
     db.prepare("delete from maintenance_subtasks where id=?").run(subtaskId);
+    db.prepare("update maintenance_flights set nonroutine_electronic_signed=null where id=? and not exists(select 1 from maintenance_subtasks where flight_id=?)").run(flight.id, flight.id);
 
     const remaining = db.prepare("select count(*) as count from maintenance_subtasks where flight_id=?").get(flight.id);
     if (!Number(remaining?.count || 0)) {
@@ -3765,6 +3807,7 @@ function deleteMaintenanceSubtaskForReport(subtask, user) {
   db.prepare("delete from maintenance_feedback where owner_type='subtask' and owner_id=?").run(subtask.id);
   db.prepare("delete from maintenance_assignments where owner_type='subtask' and owner_id=?").run(subtask.id);
   db.prepare("delete from maintenance_subtasks where id=?").run(subtask.id);
+  db.prepare("update maintenance_flights set nonroutine_electronic_signed=null where id=? and not exists(select 1 from maintenance_subtasks where flight_id=?)").run(subtask.flight_id, subtask.flight_id);
   maintenanceLog(user, "delete_subtask_during_report_confirmation", "subtask", subtask.id, subtask.flight_id, subtask.title || "");
 }
 
@@ -3809,8 +3852,8 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
 
     const nonroutineBatch = currentProgress.batches.nonroutine;
     const remainingNonroutine = db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId)?.total || 0;
-    if (remainingNonroutine > 0) {
-      if (!nonroutineBatch) throw maintenanceDispatchError("非例行报工数据已变化，请刷新后重试");
+    if (remainingNonroutine > 0 || (Array.isArray(payload?.nonroutineItems) && payload.nonroutineItems.length > 0)) {
+      if (remainingNonroutine > 0 && !nonroutineBatch) throw maintenanceDispatchError("非例行报工数据已变化，请刷新后重试");
       const { items } = normalizeNonroutineReportItems(flightId, payload?.nonroutineItems, user, { createTemporary: true });
       const nonroutineEntries = items.flatMap(item => item.entries);
       for (const item of items) {
@@ -3819,7 +3862,8 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
         replaceMaintenanceAssignmentsFromEntries("subtask", item.row.id, flightId, item.entries, user, "已提报", item.reportExplanation);
         regenerateMaintenanceHours("subtask", item.row.id, "已提报");
       }
-      replaceMaintenanceReportEntries(nonroutineBatch.id, flightId, nonroutineEntries);
+      if (nonroutineBatch) replaceMaintenanceReportEntries(nonroutineBatch.id, flightId, nonroutineEntries);
+      else upsertMaintenanceReportBatch(flightId, "nonroutine", { user, entries: nonroutineEntries });
     } else if (nonroutineBatch) {
       db.prepare("delete from maintenance_report_entries where batch_id=?").run(nonroutineBatch.id);
       db.prepare("delete from maintenance_report_batches where id=?").run(nonroutineBatch.id);
@@ -5089,6 +5133,34 @@ async function route(req, res) {
       const flight = insertMaintenanceFlight(payload, manager);
       bumpMaintenanceVersion(flight.id, "maintenance.flight.created");
       return send(res, 201, { flight });
+    }
+    const maintenanceRemark = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/remark$/);
+    if (maintenanceRemark && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有编辑备注权限" });
+      const flightId = routeParam(maintenanceRemark[1]);
+      const payload = await bodyJson(req);
+      if (typeof payload.remark !== "string" || typeof payload.originalRemark !== "string" || payload.remark.length > 2000) {
+        return send(res, 400, { error: "备注必须为文本，且不超过2000字" });
+      }
+      const remark = payload.remark.trim();
+      db.exec("begin immediate");
+      try {
+        const row = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+        if (!row) throw maintenanceReviewError("未找到维修机会", 404);
+        if (row.archived_at || !["未派工", "已派工", "已提报"].includes(row.status)) throw maintenanceReviewError("当前状态不允许修改备注", 409);
+        if ((row.remark || "") !== payload.originalRemark) throw maintenanceReviewError("备注已被其他人员修改，请关闭后重新打开并核对内容", 409);
+        const updated = db.prepare("update maintenance_flights set remark=?,updated_by=?,updated_at=? where id=? and coalesce(remark,'')=? and status=? and coalesce(archived_at,'')=''").run(remark, manager.id, now(), flightId, payload.originalRemark, row.status);
+        if (!updated.changes) throw maintenanceReviewError("维修机会已发生变化，请关闭后重新打开并核对内容", 409);
+        audit(manager, "maintenance_update_remark", "maintenanceFlight", flightId, JSON.stringify({ before: row.remark || "", after: remark }));
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      bumpMaintenanceVersion(flightId, "maintenance.remark.updated");
+      return send(res, 200, { remark });
     }
     const maintenanceReview = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/review$/);
     if (maintenanceReview && method === "GET") {

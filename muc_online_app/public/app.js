@@ -29,46 +29,19 @@ const roleLabels = { receiver: "接收者", publisher: "发布者", admin: "管�
 const statusLabels = { active: "启用", disabled: "停用" };
 const defaultPersonnelFunctionCategories = ["维修", "放行"];
 
-const demoUsers = [
-  { id: "00000001", username: "receiver", password: "123456", name: "接收者", role: "receiver", department: "航线车间", team: "一班", permissions: ["view"], allowedTabs: ["homePage", "infoPage", "maintenancePage"] },
-  { id: "u-publisher", username: "publisher", password: "123456", name: "发布者", role: "publisher", department: "质量管理", team: "发布组", permissions: ["view", "create", "remind"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
-  { id: "54002010", username: "54002010", password: "muc2026", name: "系统管理员", role: "admin", department: "系统管理", team: "管理员", permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] }
-];
-
-const fallbackRecords = [
-  { date: "2026-05-31 10:05", category: "规定要求", title: "安全生产月与安全大整治活动", original: "请各班组结合安全生产月要求，组织开展风险识别、问题排查和整改闭环，确保宣贯到每名维修人员。", publisher: "赵威", attachments: [{ id: "demo-att-001", name: "安全生产月宣贯材料.txt", type: "text/plain", size: 180, storage: "demo", url: "data:text/plain;charset=utf-8,%E5%AE%89%E5%85%A8%E7%94%9F%E4%BA%A7%E6%9C%88%E5%AE%A3%E8%B4%AF%E6%9D%90%E6%96%99", ownerType: "record", ownerId: "demo-record" }] },
-  { date: "2026-05-28 09:30", category: "质量问题", title: "国籍证夹安装方式检查问题", original: "航后检查发现B8648飞机国籍证夹开胶，进一步检查发现该机国籍证夹安装位置不符合EO的要求，现场要求维修人员重新粘贴。", publisher: "黄磊" },
-  { date: "2026-05-24 15:10", category: "规定要求", title: "班组考核方案调整", original: "本月班组考核方案调整三方感谢信奖励分配和优秀经验总结报送规则，请各班组按新要求执行。", publisher: "王大伟" },
-  { date: "2026-05-21 08:45", category: "质量问题", title: "大翼金属胶带破损连续未处理", original: "6636飞机19/20连续两日在青航后，右大翼金属胶带破损均未处理，后续工作中类似问题要积极处理。", publisher: "黄金山" },
-  { date: "2026-05-18 11:20", category: "规定要求", title: "撤锥桶信息及时传递", original: "5月16日有一起机坪违章，125机位撤锥桶时间晚，后续关于风速变化撤摆锥桶请班组长及时通过对讲机通知。", publisher: "盖光启" },
-  { date: "2026-05-15 16:40", category: "质量问题", title: "飞机记录本填写要求", original: "CCAR121.701(a)条规定应记录运行中发现的缺陷和维修工作，请大家正确填写记录本，不要漏签。", publisher: "李雪" },
-  { date: "2026-05-11 09:00", category: "规定要求", title: "机场督查5月重点检查项", original: "重点检查特殊天气管控、车辆倒车速度及指挥、工作梯等无动力设备状态、接送机保障流程及状态。", publisher: "赵威" },
-  { date: "2026-05-01 07:50", category: "规定要求", title: "航前短停更换机轮起落架销提示牌要求", original: "航前短停更换机轮，使用起落架销时必须借用提示牌摆放在机头前。提示牌在外场工具间。", publisher: "王舰艇" },
-  { date: "2026-04-24 19:35", category: "规定要求", title: "ARJ送机停止边推边启动", original: "ARJ飞机须立即暂停边推边启动程序，需要推到位停稳后方能启动。务必确保所有C909授权人员知晓。", publisher: "田元鹏" },
-  { date: "2026-04-20 13:25", category: "质量问题", title: "工具清点记录不全", original: "检查近期航线工具间回收的工具清单，发现多份工具清单上工具清点记录不全，提醒维修人员规范落实工具三清点。", publisher: "黄金山" },
-  { date: "2026-04-17 17:05", category: "规定要求", title: "机坪发动机冷转申请要求", original: "各位班组长，现在机坪发动机冷转也需要申请，请大家知晓。", publisher: "赵威" },
-  { date: "2026-04-14 10:18", category: "质量问题", title: "定期水洗发动机反推失效提醒", original: "检查B323C飞机执行定期水洗发动机工作时，发现维修人员打开左发反推包皮后，未及时失效反推。", publisher: "黄磊" }
-];
 
 const defaultSettings = {
   categories: ["质量问题", "规定要求", "周例会", "日例会", "其他"],
   personnelFunctionCategories: ["维修", "放行"],
   reminderDays: 1,
   overdueDays: 3,
-  people: [
-    { id: "00000001", name: "接收者", department: "未设置", team: "一班" },
-    { id: "10000001", name: "王大伟", department: "未设置", team: "一班" },
-    { id: "10000002", name: "赵威", department: "未设置", team: "管理组" },
-    { id: "10000003", name: "黄金山", department: "未设置", team: "二班" },
-    { id: "10000004", name: "黄磊", department: "未设置", team: "检查组" },
-    { id: "10000005", name: "田元鹏", department: "未设置", team: "运行组" }
-  ],
+  people: [],
   rolePermissions: {
     receiver: { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] },
     publisher: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "remind"] },
     admin: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"] }
   },
-  securityNotes: "当前为静态演示版。正式上线需改为后端登录认证、数据库权限校验、附件访问鉴权、操作日志、撤回和修改留痕。"
+  securityNotes: "由后端认证、数据库权限校验、附件访问鉴权和操作日志保障。"
 };
 
 function clone(value) {
@@ -86,10 +59,6 @@ function loadMaintenanceRuleGroupsOpen() {
   }
 }
 
-const seedFixedProjects = [
-  { id: "fp-001", ata: "32", title: "航前短停更换机轮固定提醒", contentHtml: "<p><b>步骤：</b>确认构型、借用起落架销、摆放提示牌、复核工具三清点。</p><p><b>风险：</b>提示牌遗漏、工具清点记录不完整、维护构型未复核。</p>", references: "AMM 32章；现场工具管理要求", attachments: [], createdAt: "2026-06-01T08:00:00", updatedAt: "2026-06-01T08:00:00" },
-  { id: "fp-002", ata: "71", title: "发动机区域航后防护固定提醒", contentHtml: "<p><b>步骤：</b>确认发动机区域工作结束，检查天气条件，雨水天气按要求安装防雨罩。</p><p><b>风险：</b>工作结束后未及时加装防雨罩，造成质量检查问题。</p>", references: "EB-2016-V250-77-202-R5", attachments: [], createdAt: "2026-06-01T08:00:00", updatedAt: "2026-06-01T08:00:00" }
-];
 
 const state = {
   user: { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] },
@@ -294,7 +263,6 @@ function showLoginPage(message = "") {
   state.user = emptyUser();
   setAppMode("locked");
   $("#loginPage").hidden = false;
-  renderDemoLoginActions();
   $("#pager").hidden = true;
   $("#openEntryBtn").hidden = true;
   $("#openFixedBtn").hidden = true;
@@ -529,7 +497,7 @@ const settingsService = {
   async get() {
     const data = await apiRequest("/settings");
     const settings = data.settings || clone(defaultSettings);
-    return { ...settings, people: normalizePeople(settings.people || defaultSettings.people) };
+    return { ...settings, people: normalizePeople(settings.people || []) };
   },
   async save(settings) {
     const data = await apiRequest("/settings", { method: "PUT", body: settings });
@@ -568,11 +536,6 @@ const authService = {
 
 function normalizeRecipients(recipients) {
   const people = [...(state.settings.people || [])];
-  demoUsers.forEach(user => {
-    if (!people.some(person => person.id === user.id)) {
-      people.push({ id: user.id, name: user.name, department: user.department || "未设置", team: user.team || "未设置" });
-    }
-  });
   const ids = (recipients?.length ? recipients : people.map(person => person.id)).map((id, index) => legacyWorkNo(id, index));
   return ids.map(id => people.find(person => person.id === id)).filter(Boolean);
 }
@@ -891,8 +854,8 @@ const maintenanceService = {
   async getReview(flightId) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`);
   },
-  async saveReview(flightId, mode, tasks, reason = "", newSubtasks = []) {
-    return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`, { method: "PUT", body: { mode, tasks, reason, newSubtasks } });
+  async saveReview(flightId, mode, tasks, reason = "", newSubtasks = [], signatures = {}) {
+    return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`, { method: "PUT", body: { mode, tasks, reason, newSubtasks, ...signatures } });
   },
   async getReports(flightId) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/reports`);
@@ -1480,15 +1443,6 @@ function renderShell() {
   $("#infoFilters").hidden = state.activeSubpage !== "infoListSubpage";
   $("#resultStatus").hidden = state.activeSubpage !== "infoListSubpage";
   closeSubpageMenu();
-}
-
-function isDemoMode() {
-  return location.protocol === "file:" || ["127.0.0.1", "localhost", ""].includes(location.hostname);
-}
-
-function renderDemoLoginActions() {
-  const actions = $("#demoLoginActions");
-  if (actions) actions.hidden = !isDemoMode();
 }
 
 function closeSubpageMenu() {
@@ -2225,12 +2179,12 @@ function maintenanceFlightCard(flight) {
         const submitted = normalizedRole === "放行" ? releaseSubmitted && Boolean(releaseBatch) : submittedRoutineRoles.has(normalizedRole);
         return `<div class="execute-role-row ${submitted ? `submitted ${normalizedRole === "放行" ? "release" : "routine"}` : ""}"><strong>${escapeHtml(role)}</strong><span>${escapeHtml(names.join("、"))}</span></div>`;
       }).join("")}</div>` : ""}
-      ${flight.remark ? `<div class="original compact">${escapeHtml(flight.remark)}</div>` : ""}
+      ${flight.remark ? `<div class="original compact maintenance-remark-text">${escapeHtml(flight.remark)}</div>` : ""}
     </div>` : ""}
     <div class="maintenance-children ${nonroutineExpanded ? "open" : ""}">
       <div class="maintenance-child-head">
         <button class="maintenance-child-toggle" type="button" data-maint-toggle-subtasks="${escapeHtml(flight.id)}" aria-expanded="${nonroutineExpanded ? "true" : "false"}"><span>＋ 非例行 <b class="maintenance-child-count ${subtaskCount ? "has-items" : ""}">${subtaskCount}</b> 项${draftCount ? ` · 草稿 <b class="maintenance-child-count draft-count">${draftCount}</b> 项` : ""}</span></button>
-        ${canManageMaintenance() ? `<button class="link-btn" type="button" data-maint-add-subtask="${escapeHtml(flight.id)}">新增</button>` : ""}
+        ${canManageMaintenance() ? `<div class="maintenance-child-actions"><button class="link-btn" type="button" data-maint-add-subtask="${escapeHtml(flight.id)}">新增</button>${!flight.archivedAt && ["未派工", "已派工", "已提报"].includes(flight.status) ? `<button class="link-btn maintenance-remark-action ${String(flight.remark || "").trim() ? "has-remark" : ""}" type="button" data-maint-remark-edit="${escapeHtml(flight.id)}" aria-label="备注，${String(flight.remark || "").trim() ? "已有内容" : "暂无内容"}">备注</button>` : ""}</div>` : ""}
       </div>
       ${nonroutineExpanded ? `<div class="maintenance-subtask-list">${(flight.subtasks || []).map(item => maintenanceSubtaskCard(flight, item)).join("")}${draftItems.map(maintenanceDraftSubtaskCard).join("")}${!subtaskCount && !draftCount ? '<div class="status-line">暂无非例行。</div>' : ""}</div>` : ""}
     </div>
@@ -2324,17 +2278,16 @@ function maintenanceOpportunityMenuHtml() {
   const selected = state.maintenanceOpportunityFilters instanceof Set
     ? state.maintenanceOpportunityFilters
     : new Set(maintenanceOpportunityOptions);
-  if (!selected.size) maintenanceOpportunityOptions.forEach(item => selected.add(item));
   const selectedLabels = maintenanceOpportunityOptions.filter(item => selected.has(item));
   const summary = selectedLabels.length === maintenanceOpportunityOptions.length
     ? "全部维修机会"
     : selectedLabels.length === 1
       ? selectedLabels[0]
-      : `已选 ${selectedLabels.length} 项`;
+      : selectedLabels.length ? `已选 ${selectedLabels.length} 项` : "未选择维修机会";
   return `<details class="maintenance-opportunity-menu">
     <summary class="maintenance-opportunity-filter" aria-label="维修机会筛选" title="${escapeHtml(selectedLabels.join("、"))}">${escapeHtml(summary)}</summary>
     <div class="maintenance-opportunity-options" role="group" aria-label="维修机会筛选选项">
-      <button class="maintenance-opportunity-select-all" type="button" data-maint-opportunity-all>全部选择</button>
+      <button class="maintenance-opportunity-select-all" type="button" data-maint-opportunity-all>${selectedLabels.length === maintenanceOpportunityOptions.length ? "全部取消" : "全部选择"}</button>
       ${maintenanceOpportunityOptions.map(item => `<label><input type="checkbox" data-maint-opportunity-option value="${escapeHtml(item)}" ${selected.has(item) ? "checked" : ""}><span>${escapeHtml(item)}</span></label>`).join("")}
     </div>
   </details>`;
@@ -2387,7 +2340,7 @@ function renderMaintenanceDispatch() {
           </div>
         </div>
         ${maintenanceOpportunityMenuHtml()}
-        <input id="maintenanceFlightSearch" class="search" type="search" placeholder="航班 / 机号 / 机位 / 机型 / 人员" value="${escapeHtml(state.maintenanceFlightSearch)}" aria-label="搜索航班或被派工人员">
+        <input id="maintenanceFlightSearch" class="search" type="search" placeholder="航班 / 机号 / 人员" value="${escapeHtml(state.maintenanceFlightSearch)}" aria-label="搜索航班、机号、机位、机型或人员">
       </div>
       <div class="actions"><input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn" type="button" data-maint-create-flight>新建维修机会</button></div>
     </div>
@@ -2500,10 +2453,15 @@ function renderMaintenanceExecute() {
       <button class="execute-flight-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}">
         <span class="maintenance-flight-identity">
           <strong><span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${maintenanceFlightMonthDay(flight.date) ? `<span class="maintenance-flight-date"> · ${escapeHtml(maintenanceFlightMonthDay(flight.date))}</span>` : ""}</strong>
-          <div class="maintenance-key-tags"><span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span>${maintenanceOpportunityTag(flight)}<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span><span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span></div>
         </span>
         <span class="execute-flight-head-meta">${personalCompleteHtml(flight)}${statusHtml(flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
       </button>
+      <div class="execute-flight-info-row">
+        <button class="execute-flight-info-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起" : "展开"}维修机会">
+          <span class="maintenance-key-tags"><span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span>${maintenanceOpportunityTag(flight)}<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span><span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span></span>
+        </button>
+        ${String(flight.remark || "").trim() ? `<button class="maintenance-remark-indicator" type="button" data-maint-remark-view="${escapeHtml(flight.id)}" aria-label="查看维修机会备注" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>` : ""}
+      </div>
       ${expanded ? `<div class="execute-flight-body">${mainWorkHtml(group)}${subtaskCount || draftCount ? `<div class="execute-subtask-heading">非例行${draftCount ? ` · 草稿 ${draftCount} 项` : ""}</div><div class="execute-nonroutine-list">${nonroutineHtml(flight)}</div>` : ""}</div>` : ""}
     </article>`; };
   const today = maintenanceLocalDateValue();
@@ -2718,6 +2676,60 @@ function unlockMaintenanceDataDetailBackground() {
   root.style.overflow = lock.rootOverflow;
   maintenanceDataDetailScrollLock = null;
   window.scrollTo(0, lock.scrollY);
+}
+
+function openMaintenanceRemark(flightId, editing = false) {
+  const flight = state.maintenanceFlights.find(item => item.id === flightId);
+  if (!flight || document.querySelector("dialog[open]")) return;
+  if (editing && (!canManageMaintenance() || flight.archivedAt || !["未派工", "已派工", "已提报"].includes(flight.status))) return;
+  const originalRemark = flight.remark || "";
+  const dialog = document.createElement("dialog");
+  dialog.id = "maintenanceRemarkDialog";
+  dialog.className = "maintenance-remark-dialog";
+  dialog.setAttribute("aria-labelledby", "maintenanceRemarkTitle");
+  dialog.innerHTML = `<form class="dialog-body"><div class="dialog-head"><h2 id="maintenanceRemarkTitle">维修机会备注</h2><button type="button" class="icon-btn" data-close="maintenanceRemarkDialog" aria-label="关闭">×</button></div><div class="maintenance-remark-identity">${escapeHtml([flight.date, flight.flightNo, flight.aircraftNo].filter(Boolean).join(" · "))}</div>${editing ? `<label class="maintenance-remark-label">备注<textarea name="remark" maxlength="2000" rows="6">${escapeHtml(originalRemark)}</textarea></label>` : `<div class="maintenance-remark-content maintenance-remark-text">${escapeHtml(originalRemark)}</div>`}<div class="status-line error" role="alert"></div>${editing ? '<div class="actions"><button type="button" class="btn secondary" data-close="maintenanceRemarkDialog">取消</button><button type="submit" class="btn">保存</button></div>' : ""}</form>`;
+  document.body.append(dialog);
+  let saving = false;
+  dialog.addEventListener("close", () => { unlockMaintenanceDataDetailBackground(); dialog.remove(); });
+  dialog.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
+  dialog.addEventListener("click", event => {
+    if (event.target === dialog) event.stopPropagation();
+    if (event.target !== dialog || saving) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeDialog(dialog);
+  });
+  let touchY = 0;
+  dialog.addEventListener("touchstart", event => { touchY = event.touches[0]?.clientY || 0; }, { passive: true });
+  dialog.addEventListener("touchmove", event => {
+    const scroller = event.target.closest("textarea, .maintenance-remark-content");
+    const y = event.touches[0]?.clientY || touchY;
+    if (!scroller || (y > touchY && scroller.scrollTop <= 0) || (y < touchY && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1)) event.preventDefault();
+    touchY = y;
+  }, { passive: false });
+  dialog.querySelector("form").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!editing || saving) return;
+    saving = true;
+    const buttons = dialog.querySelectorAll("button");
+    buttons.forEach(button => { button.disabled = true; });
+    const errorLine = dialog.querySelector('[role="alert"]');
+    errorLine.textContent = "";
+    try {
+      const result = await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/remark`, { method: "PUT", body: { remark: dialog.querySelector("textarea").value, originalRemark } });
+      const current = state.maintenanceFlights.find(item => item.id === flightId);
+      if (current) current.remark = result.remark;
+      closeDialog(dialog);
+      renderMaintenance();
+      await refreshMaintenance();
+    } catch (error) {
+      errorLine.textContent = error.message;
+    } finally {
+      saving = false;
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  });
+  lockMaintenanceDataDetailBackground();
+  dialog.showModal();
 }
 
 function ensureMaintenanceDataDetailDialog() {
@@ -4668,6 +4680,8 @@ async function openMaintenanceReviewDialog(flightId, focusKey = "") {
   state.maintenanceReviewDraft = {
     review,
     tasks: review.tasks.map(maintenanceReviewTaskDraft),
+    routineElectronicSigned: review.flight.routineElectronicSigned ?? null,
+    nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned ?? null,
     newSubtasks: [],
     canEdit: !review.flight.requiresChangeReason || state.user.role === "admin",
     activeTaskKey: "",
@@ -4738,7 +4752,7 @@ function maintenanceReviewPickerHtml(task, role, peopleById) {
 
 function maintenanceArchivedNewSubtaskHtml(task, peopleById, index) {
   return `<article class="maintenance-review-task maintenance-review-new-task" data-maint-review-task="${escapeHtml(maintenanceReviewTaskKey(task))}">
-    <div class="maintenance-review-task-head"><div><strong>新增非例行 ${index + 1}</strong><span>归档补录 · 保存后直接计入已确认数据</span></div><button class="icon-btn maintenance-review-remove-new" type="button" data-maint-review-remove-new="${escapeHtml(task.ownerId)}" aria-label="删除该新增项目" title="删除">×</button></div>
+    <div class="maintenance-review-task-head"><div><strong>新增非例行 ${index + 1}</strong><span>${state.maintenanceReviewDraft?.review.flight.requiresChangeReason ? "归档补录" : "待复核补录"}</span></div><button class="icon-btn maintenance-review-remove-new" type="button" data-maint-review-remove-new="${escapeHtml(task.ownerId)}" aria-label="删除该新增项目" title="删除">×</button></div>
     <div class="maintenance-review-new-fields">
       <label>章节<input value="${escapeHtml(task.chapter || "")}" data-maint-review-new-field="chapter" data-maint-review-new-id="${escapeHtml(task.ownerId)}"></label>
       <label>标题<input value="${escapeHtml(task.title || "")}" data-maint-review-new-field="title" data-maint-review-new-id="${escapeHtml(task.ownerId)}" required></label>
@@ -4756,16 +4770,21 @@ function renderMaintenanceReviewDialog() {
   if (!draft || !body) return;
   const previousScrollTop = body.querySelector(".maintenance-review-tree")?.scrollTop || 0;
   const { flight } = draft.review;
+  const hasNonroutine = draft.tasks.some(task => task.ownerType === "subtask") || draft.newSubtasks.length > 0;
+  if (!hasNonroutine) draft.nonroutineElectronicSigned = null;
+  const signatureFields = [["routineElectronicSigned", "例行电签"], ...(hasNonroutine ? [["nonroutineElectronicSigned", "非例行电签"]] : [])];
+  const signaturesHtml = `<section class="maintenance-review-signatures">${signatureFields.map(([key, label]) => `<fieldset data-review-signature-group="${key}" ${!draft.canEdit || draft.busy ? "disabled" : ""}><legend>${label}${!flight.requiresChangeReason ? "（确认时必选）" : ""}</legend><div class="maintenance-signature-row"><span class="maintenance-signature-title" aria-hidden="true">${label}</span><div class="maintenance-signature-options">${[true, false].map(value => `<label><input type="radio" name="${key}" value="${value}" data-review-signature="${key}" ${draft[key] === value ? "checked" : ""}><span>${value ? "是" : "否"}</span></label>`).join("")}</div>${draft[key] == null && (flight.requiresChangeReason || !draft.canEdit) ? "<small>未记录</small>" : ""}</div></fieldset>`).join("")}</section>`;
   const peopleById = new Map(draft.review.people.map(person => [person.id, person]));
   body.innerHTML = `<div class="dialog-head maintenance-review-head"><h2>任务树复核 <small>${escapeHtml(flight.flightNo)} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.opportunity)}</small></h2><button class="icon-btn" data-close="maintenanceReviewDialog" type="button">×</button></div>
-    <div class="maintenance-review-summary"><span>机型 ${escapeHtml(flight.aircraftType || "-")}</span><span>机位 ${escapeHtml(flight.stand || "-")}</span><span>${escapeHtml(flight.date || "-")}</span>${flight.requiresChangeReason && draft.canEdit ? `<button class="btn secondary maintenance-review-add-new" type="button" data-maint-review-add-new>新增非例行</button>` : ""}</div>
+    <div class="maintenance-review-summary"><span>机型 ${escapeHtml(flight.aircraftType || "-")}</span><span>机位 ${escapeHtml(flight.stand || "-")}</span><span>${escapeHtml(flight.date || "-")}</span>${(flight.requiresChangeReason || flight.status === "待复核") && draft.canEdit ? `<button class="btn secondary maintenance-review-add-new" type="button" data-maint-review-add-new ${draft.busy ? "disabled" : ""}>新增非例行</button>` : ""}</div>
     <div class="maintenance-review-tree">${draft.tasks.map((task, index) => `<article class="maintenance-review-task" data-maint-review-task="${escapeHtml(maintenanceReviewTaskKey(task))}">
       <div class="maintenance-review-task-head"><div><strong>${index === 0 ? "主任务 · " : "非例行 · "}${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subtitle)} · ${escapeHtml(task.baseHoursSource)} · 基础 ${escapeHtml(task.baseHours)}h</span></div><div class="actions"><span class="status-badge ${task.status === "已确认" ? "ok" : task.status === "待复核" ? "warn" : task.status === "已提报" ? "submitted" : ""}">${escapeHtml(task.status)}</span>${index > 0 && draft.canEdit ? `<button class="link-btn danger-text" type="button" data-maint-review-delete-subtask="${escapeHtml(task.ownerId)}">删除</button>` : ""}</div></div>
       ${!task.editable ? `<div class="maintenance-review-blocked">当前任务尚未完成，仅展示派工与反馈数据。</div>` : ""}
       <div class="maintenance-review-roles">${task.roles.map(role => maintenanceReviewRoleHtml(task, role, peopleById)).join("")}</div>
     </article>`).join("")}${draft.newSubtasks.map((task, index) => maintenanceArchivedNewSubtaskHtml(task, peopleById, index)).join("")}</div>
-    ${flight.requiresChangeReason ? `<label class="maintenance-review-reason"><strong>修改原因</strong><textarea data-maint-review-reason rows="2" placeholder="请填写本次修改原因">${escapeHtml(draft.reason || "")}</textarea><span>已确认数据修改必须填写原因</span></label>` : ""}
+    ${flight.requiresChangeReason || draft.newSubtasks.length ? `<label class="maintenance-review-reason"><strong>${flight.requiresChangeReason ? "修改原因" : "补录原因（已完成工作漏报）"}</strong><textarea data-maint-review-reason rows="2" placeholder="请填写本次${flight.requiresChangeReason ? "修改" : "补录"}原因" ${!draft.canEdit || draft.busy ? "disabled" : ""}>${escapeHtml(draft.reason || "")}</textarea></label>` : ""}
     <div class="maintenance-review-message ${draft.message ? "show" : ""}">${escapeHtml(draft.message)}</div>
+    ${signaturesHtml}
     <div class="form-actions maintenance-review-actions ${flight.requiresChangeReason ? "archive-mode" : ""}"><button class="btn secondary" type="button" data-close="maintenanceReviewDialog">取消</button>${draft.canEdit ? `<button class="btn" type="button" data-maint-review-save ${draft.busy ? "disabled" : ""}>${flight.requiresChangeReason ? "保存归档修改" : "保存"}</button>${flight.requiresChangeReason ? "" : `<button class="btn" type="button" data-maint-review-confirm ${draft.busy ? "disabled" : ""}>确认整棵任务树</button>`}` : ""}</div>`;
   const tree = body.querySelector(".maintenance-review-tree");
   if (tree) tree.scrollTop = previousScrollTop;
@@ -4797,8 +4816,21 @@ async function submitMaintenanceReview(mode) {
   const draft = state.maintenanceReviewDraft;
   if (!draft || draft.busy) return;
   if (!draft.canEdit) return;
-  if (draft.review.flight.requiresChangeReason && !String(draft.reason || "").trim()) {
-    draft.message = "修改已确认数据必须填写修改原因";
+  if (mode === "confirm") {
+    const required = [["routineElectronicSigned", "例行电签"]];
+    if (draft.tasks.some(task => task.ownerType === "subtask") || draft.newSubtasks.length) required.push(["nonroutineElectronicSigned", "非例行电签"]);
+    const missing = required.find(([key]) => typeof draft[key] !== "boolean");
+    if (missing) {
+      draft.message = `请选择${missing[1]}`;
+      renderMaintenanceReviewDialog();
+      const group = document.querySelector(`[data-review-signature-group="${missing[0]}"]`);
+      group?.scrollIntoView({ block: "nearest" });
+      group?.querySelector("input")?.focus({ preventScroll: true });
+      return;
+    }
+  }
+  if ((draft.review.flight.requiresChangeReason || draft.newSubtasks.length) && !String(draft.reason || "").trim()) {
+    draft.message = draft.review.flight.requiresChangeReason ? "修改已确认数据必须填写修改原因" : "补录非例行必须填写补录原因";
     renderMaintenanceReviewDialog();
     requestAnimationFrame(() => {
       const input = $("#maintenanceReviewDialogBody")?.querySelector("[data-maint-review-reason]");
@@ -4820,7 +4852,7 @@ async function submitMaintenanceReview(mode) {
   draft.message = mode === "confirm" ? "正在校验并确认整棵任务树..." : "正在保存人员和工时...";
   renderMaintenanceReviewDialog();
   try {
-    const { review } = await maintenanceService.saveReview(draft.review.flight.id, mode, maintenanceReviewPayload(), draft.reason || "", maintenanceReviewNewSubtaskPayload());
+    const { review } = await maintenanceService.saveReview(draft.review.flight.id, mode, maintenanceReviewPayload(), draft.reason || "", maintenanceReviewNewSubtaskPayload(), { routineElectronicSigned: draft.routineElectronicSigned, nonroutineElectronicSigned: draft.nonroutineElectronicSigned });
     if (mode === "confirm") {
       closeDialog($("#maintenanceReviewDialog"));
       await refreshMaintenance();
@@ -4831,7 +4863,7 @@ async function submitMaintenanceReview(mode) {
       await refreshMaintenance();
       return;
     }
-    state.maintenanceReviewDraft = { ...draft, review, tasks: review.tasks.map(maintenanceReviewTaskDraft), newSubtasks: [], activeTaskKey: "", activeRole: "", team: "全部班组", search: "", reason: "", busy: false, message: "已保存，任务状态保持不变。" };
+    state.maintenanceReviewDraft = { ...draft, review, routineElectronicSigned: review.flight.routineElectronicSigned, nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned, tasks: review.tasks.map(maintenanceReviewTaskDraft), newSubtasks: [], activeTaskKey: "", activeRole: "", team: "全部班组", search: "", reason: "", busy: false, message: "已保存，任务状态保持不变。" };
     renderMaintenanceReviewDialog();
     await refreshMaintenance();
   } catch (error) {
@@ -4900,11 +4932,6 @@ async function submitMaintenanceArchiveDelete() {
 function importRecipientPeople() {
   const people = normalizePeople(state.settings.people || []);
   const byId = new Map(people.map(person => [person.id, person]));
-  demoUsers.forEach(user => {
-    if (!byId.has(user.id)) {
-      byId.set(user.id, { id: user.id, name: user.name, department: user.department || "未设置", team: user.team || "未设置" });
-    }
-  });
   return Array.from(byId.values());
 }
 
@@ -4918,9 +4945,9 @@ function isFullRecipientRecord(record, people) {
 
 function shouldRepairImportedRead(record, people) {
   if (record.importedRead || record.importedReadComplete || record.sourceSet === "batchImport") return true;
-  const admin = demoUsers.find(user => user.role === "admin");
-  return record.createdBy === admin?.id &&
-    record.publisherId === admin?.id &&
+  const admin = people.find(person => person.id === "54002010" || person.username === "54002010");
+  return Boolean(admin) && record.createdBy === admin.id &&
+    record.publisherId === admin.id &&
     isFullRecipientRecord(record, people);
 }
 
@@ -5339,6 +5366,14 @@ async function importBatchRecords() {
 }
 
 document.addEventListener("click", async event => {
+  const remarkAction = event.target.closest("[data-maint-remark-edit], [data-maint-remark-view]");
+  if (remarkAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearTimeout(state.maintenanceDispatchClickTimer);
+    openMaintenanceRemark(remarkAction.dataset.maintRemarkEdit || remarkAction.dataset.maintRemarkView, Boolean(remarkAction.dataset.maintRemarkEdit));
+    return;
+  }
   const maintenanceDataMonthLabel = event.target.closest(".maintenance-data-month");
   if (maintenanceDataMonthLabel) {
     const input = maintenanceDataMonthLabel.querySelector("#maintenanceDataMonth");
@@ -5375,8 +5410,10 @@ document.addEventListener("click", async event => {
   }
   const opportunitySelectAll = event.target.closest("[data-maint-opportunity-all]");
   if (opportunitySelectAll) {
-    state.maintenanceOpportunityFilters = new Set(maintenanceOpportunityOptions);
+    const allSelected = maintenanceOpportunityOptions.every(item => state.maintenanceOpportunityFilters?.has(item));
+    state.maintenanceOpportunityFilters = new Set(allSelected ? [] : maintenanceOpportunityOptions);
     renderMaintenance();
+    document.querySelector(".maintenance-opportunity-menu")?.setAttribute("open", "");
     return;
   }
   const activeStatusMenu = event.target.closest("[data-maint-status-menu]");
@@ -5945,13 +5982,6 @@ $("#openFixedBtn").addEventListener("click", () => openFixedForm());
 $("#viewerZoomOut").addEventListener("click", () => changeViewerZoom(-0.1));
 $("#viewerZoomIn").addEventListener("click", () => changeViewerZoom(0.1));
 $("#viewerZoomReset").addEventListener("click", resetViewerZoom);
-
-$$(".demo-login").forEach(button => button.addEventListener("click", () => {
-  const user = demoUsers.find(item => item.username === button.dataset.demoUser);
-  $("#loginUser").value = user.username;
-  $("#loginPass").value = user.password;
-  performLogin();
-}));
 
 $("#rememberPassword").addEventListener("change", () => {
   if (!$("#rememberPassword").checked) $("#autoLogin").checked = false;
@@ -6542,6 +6572,16 @@ document.addEventListener("submit", event => {
 });
 
 document.addEventListener("change", async event => {
+  const signature = event.target.closest("[data-review-signature]");
+  if (signature) {
+    const draft = state.maintenanceReviewDraft;
+    const key = signature.dataset.reviewSignature;
+    if (draft?.canEdit && !draft.busy && ["routineElectronicSigned", "nonroutineElectronicSigned"].includes(key)) {
+      draft[key] = signature.value === "true";
+      signature.closest("fieldset")?.querySelector("small")?.remove();
+    }
+    return;
+  }
   if (event.target.matches("[data-maint-temp-field]")) {
     const context = maintenanceWorkActiveContext();
     if (!context) return;
@@ -6658,8 +6698,7 @@ document.addEventListener("change", async event => {
       : new Set(maintenanceOpportunityOptions);
     const opportunity = maintenanceOpportunityOption.value;
     if (maintenanceOpportunityOption.checked) selected.add(opportunity);
-    else if (selected.size > 1) selected.delete(opportunity);
-    else maintenanceOpportunityOption.checked = true;
+    else selected.delete(opportunity);
     state.maintenanceOpportunityFilters = selected;
     await refreshMaintenance();
     requestAnimationFrame(() => {
