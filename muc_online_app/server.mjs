@@ -2780,7 +2780,7 @@ function saveMaintenanceReview(flightId, payload, manager) {
     const signatureValue = (key, column) => {
       const value = payload[key];
       if (value === undefined) return currentFlight[column] == null ? null : Boolean(currentFlight[column]);
-      if (value !== null && typeof value !== "boolean") throw maintenanceReviewError("电签选择只能为是、否或未选择");
+      if (value !== null && typeof value !== "boolean") throw maintenanceReviewError("签署方式只能为电签、纸签或未选择");
       return value;
     };
     const routineSigned = signatureValue("routineElectronicSigned", "routine_electronic_signed");
@@ -2788,8 +2788,8 @@ function saveMaintenanceReview(flightId, payload, manager) {
     const hasNonroutine = rows.some(row => row.ownerType === "subtask") || newSubtasks.length > 0;
     if (!hasNonroutine) nonroutineSigned = null;
     if (mode === "confirm") {
-      if (routineSigned === null) throw maintenanceReviewError("请选择例行电签");
-      if (hasNonroutine && nonroutineSigned === null) throw maintenanceReviewError("请选择非例行电签");
+      if (routineSigned === null) throw maintenanceReviewError("请选择例行签署方式");
+      if (hasNonroutine && nonroutineSigned === null) throw maintenanceReviewError("请选择非例行签署方式");
       const blockers = maintenanceReviewConfirmBlockers(rows);
       if (blockers.length) throw maintenanceReviewError("整棵任务树暂不能确认", 409, blockers);
     }
@@ -3037,6 +3037,234 @@ function maintenanceStats(params = {}, user = null) {
     sorties: visibleSorties.map(row => publicMaintenanceSortie(row)),
     people: Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties),
     teams: Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)
+  };
+}
+
+const maintenanceReportStatuses = ["已提报", "待复核", "已确认"];
+const maintenanceReportViews = ["dashboard", "people", "opportunities", "personDetails"];
+
+function maintenanceReportFilters(params = {}) {
+  const today = maintenanceDateKey();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const status = maintenanceReportStatuses.includes(String(params.status || "")) ? String(params.status) : "已确认";
+  const workType = ["all", "routine", "nonroutine"].includes(String(params.workType || "")) ? String(params.workType) : "all";
+  const signature = ["all", "routineElectronic", "routinePaper", "nonroutineElectronic", "nonroutinePaper"].includes(String(params.signature || "")) ? String(params.signature) : "all";
+  const view = maintenanceReportViews.includes(String(params.view || "")) ? String(params.view) : "dashboard";
+  const pageSize = Math.min(100, Math.max(10, Number(params.pageSize || 20) || 20));
+  return {
+    view,
+    dateFrom: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateFrom || "")) ? String(params.dateFrom) : monthStart,
+    dateTo: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateTo || "")) ? String(params.dateTo) : today,
+    team: String(params.team || "").trim(),
+    userId: String(params.userId || "").trim(),
+    opportunity: String(params.opportunity || "").trim(),
+    workType,
+    status,
+    signature,
+    search: String(params.search || "").trim().toLowerCase(),
+    page: Math.max(1, Number(params.page || 1) || 1),
+    pageSize,
+    sort: String(params.sort || "").trim()
+  };
+}
+
+function maintenanceReportSignatureLabel(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (value === true || Number(value) === 1) return "电签";
+  if (value === false || Number(value) === 0) return "纸签";
+  return "";
+}
+
+function maintenanceReportDataset(params = {}) {
+  const filters = maintenanceReportFilters(params);
+  if (filters.dateFrom > filters.dateTo) [filters.dateFrom, filters.dateTo] = [filters.dateTo, filters.dateFrom];
+  const flightRows = db.prepare(`select * from maintenance_flights
+    where date>=? and date<=? and status=? order by date desc,flight_no,aircraft_no`).all(filters.dateFrom, filters.dateTo, filters.status);
+  const subtaskRows = db.prepare(`select id,flight_id,title,category from maintenance_subtasks`).all();
+  const subtasksByFlight = new Map();
+  const subtaskById = new Map();
+  for (const row of subtaskRows) {
+    subtaskById.set(row.id, row);
+    subtasksByFlight.set(row.flight_id, [...(subtasksByFlight.get(row.flight_id) || []), row]);
+  }
+  const flightById = new Map(flightRows.map(row => [row.id, row]));
+  const signatureMatches = flight => {
+    if (filters.signature === "routineElectronic") return Number(flight.routine_electronic_signed) === 1;
+    if (filters.signature === "routinePaper") return Number(flight.routine_electronic_signed) === 0;
+    if (filters.signature === "nonroutineElectronic") return (subtasksByFlight.get(flight.id) || []).length > 0 && Number(flight.nonroutine_electronic_signed) === 1;
+    if (filters.signature === "nonroutinePaper") return (subtasksByFlight.get(flight.id) || []).length > 0 && Number(flight.nonroutine_electronic_signed) === 0;
+    return true;
+  };
+  for (const [id, flight] of flightById) {
+    const opportunity = flight.work_kind || flight.work_type || "其他";
+    if ((filters.opportunity && opportunity !== filters.opportunity) || !signatureMatches(flight)) flightById.delete(id);
+  }
+  const hourRows = db.prepare(`select h.* from maintenance_hour_results h
+    join maintenance_flights f on f.id=h.flight_id
+    where f.date>=? and f.date<=? and h.status=?`).all(filters.dateFrom, filters.dateTo, filters.status);
+  const sortieRows = db.prepare(`select s.* from maintenance_sortie_results s
+    join maintenance_flights f on f.id=s.flight_id
+    where f.date>=? and f.date<=? and s.status=?`).all(filters.dateFrom, filters.dateTo, filters.status);
+  const resultMatches = (row, includeWorkType = true) => {
+    if (!flightById.has(row.flight_id)) return false;
+    if (filters.team && row.team !== filters.team) return false;
+    if (filters.userId && row.user_id !== filters.userId) return false;
+    if (includeWorkType && filters.workType !== "all" && (row.owner_type === "subtask" ? "nonroutine" : "routine") !== filters.workType) return false;
+    const flight = flightById.get(row.flight_id);
+    const subtask = row.owner_type === "subtask" ? subtaskById.get(row.owner_id) : null;
+    const flightText = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
+    const rowText = [row.user_id, row.user_name, row.team, row.role, row.source, subtask?.title, subtask?.category].join(" ").toLowerCase();
+    return !filters.search || flightText.includes(filters.search) || rowText.includes(filters.search);
+  };
+  let hours = hourRows.filter(row => resultMatches(row, true));
+  let sorties = sortieRows.filter(row => resultMatches(row, false));
+  const needsParticipantMatch = Boolean(filters.team || filters.userId || filters.workType !== "all");
+  if (needsParticipantMatch || filters.search) {
+    const eligibilityRows = filters.workType === "all" ? [...hours, ...sorties] : hours;
+    const eligible = new Set(eligibilityRows.map(row => row.flight_id));
+    if (filters.search) {
+      for (const [id, flight] of flightById) {
+        const text = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
+        if (text.includes(filters.search) && !needsParticipantMatch) eligible.add(id);
+      }
+    }
+    for (const id of flightById.keys()) if (!eligible.has(id)) flightById.delete(id);
+    hours = hours.filter(row => flightById.has(row.flight_id));
+    sorties = sorties.filter(row => flightById.has(row.flight_id));
+  }
+  const finalHours = row => row.adjusted_hours == null ? Number(row.hours || 0) : Number(row.adjusted_hours || 0);
+  const people = new Map();
+  const teams = new Map();
+  const personFor = row => {
+    if (!people.has(row.user_id)) people.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置", routineHours: 0, nonroutineHours: 0, totalHours: 0, sorties: 0, opportunityIds: new Set(), hourTaskCount: 0 });
+    return people.get(row.user_id);
+  };
+  const teamFor = row => {
+    const key = row.team || "未设置";
+    if (!teams.has(key)) teams.set(key, { team: key, routineHours: 0, nonroutineHours: 0, totalHours: 0, sorties: 0, opportunityIds: new Set(), peopleIds: new Set() });
+    return teams.get(key);
+  };
+  for (const row of hours) {
+    const value = finalHours(row);
+    const kind = row.owner_type === "subtask" ? "nonroutineHours" : "routineHours";
+    const person = personFor(row);
+    person[kind] += value; person.totalHours += value; person.hourTaskCount++; person.opportunityIds.add(row.flight_id);
+    const team = teamFor(row);
+    team[kind] += value; team.totalHours += value; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.user_id);
+  }
+  for (const row of sorties) {
+    const count = Number(row.sorties || 1);
+    const person = personFor(row);
+    person.sorties += count; person.opportunityIds.add(row.flight_id);
+    const team = teamFor(row);
+    team.sorties += count; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.user_id);
+  }
+  const round = value => Number(Number(value || 0).toFixed(2));
+  const peopleRows = [...people.values()].map(row => ({ ...row, routineHours: round(row.routineHours), nonroutineHours: round(row.nonroutineHours), totalHours: round(row.totalHours), opportunityCount: row.opportunityIds.size, opportunityIds: undefined }));
+  const teamRows = [...teams.values()].map(row => ({ ...row, routineHours: round(row.routineHours), nonroutineHours: round(row.nonroutineHours), totalHours: round(row.totalHours), opportunityCount: row.opportunityIds.size, peopleCount: row.peopleIds.size, opportunityIds: undefined, peopleIds: undefined }));
+  const opportunityMap = new Map([...flightById.values()].map(flight => [flight.id, {
+    id: flight.id,
+    date: flight.date || "",
+    flightNo: flight.flight_no || "-",
+    aircraftNo: flight.aircraft_no || "-",
+    aircraftType: flight.aircraft_type || "-",
+    opportunity: flight.work_kind || flight.work_type || "其他",
+    status: flight.status,
+    routineHours: 0,
+    nonroutineHours: 0,
+    totalHours: 0,
+    sorties: 0,
+    participants: new Map(),
+    releasePeople: new Set(),
+    hasNonroutine: (subtasksByFlight.get(flight.id) || []).length > 0,
+    routineSignature: maintenanceReportSignatureLabel(flight.routine_electronic_signed),
+    nonroutineSignature: (subtasksByFlight.get(flight.id) || []).length ? maintenanceReportSignatureLabel(flight.nonroutine_electronic_signed) : "不适用"
+  }]));
+  for (const row of hours) {
+    const item = opportunityMap.get(row.flight_id);
+    if (!item) continue;
+    const value = finalHours(row);
+    if (row.owner_type === "subtask") item.nonroutineHours += value;
+    else item.routineHours += value;
+    item.totalHours += value;
+    item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
+  }
+  for (const row of sorties) {
+    const item = opportunityMap.get(row.flight_id);
+    if (!item) continue;
+    item.sorties += Number(row.sorties || 1);
+    item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
+    item.releasePeople.add(row.user_name);
+  }
+  const opportunities = [...opportunityMap.values()].map(item => ({
+    ...item,
+    routineHours: round(item.routineHours),
+    nonroutineHours: round(item.nonroutineHours),
+    totalHours: round(item.totalHours),
+    participants: [...item.participants.values()],
+    releasePeople: [...item.releasePeople]
+  }));
+  const signature = (field, applicable = () => true) => {
+    const rows = opportunities.filter(applicable);
+    const electronic = rows.filter(row => row[field] === "电签").length;
+    const paper = rows.filter(row => row[field] === "纸签").length;
+    const total = electronic + paper;
+    return { electronic, paper, total, electronicPercent: total ? round(electronic * 100 / total) : 0, paperPercent: total ? round(paper * 100 / total) : 0 };
+  };
+  const summary = {
+    status: filters.status,
+    routineHours: round(hours.filter(row => row.owner_type !== "subtask").reduce((sum, row) => sum + finalHours(row), 0)),
+    nonroutineHours: round(hours.filter(row => row.owner_type === "subtask").reduce((sum, row) => sum + finalHours(row), 0)),
+    totalHours: round(hours.reduce((sum, row) => sum + finalHours(row), 0)),
+    sorties: sorties.reduce((sum, row) => sum + Number(row.sorties || 1), 0),
+    opportunityCount: opportunities.length,
+    signaturesAvailable: filters.status === "已确认",
+    routineSignature: filters.status === "已确认" ? signature("routineSignature") : { electronic: 0, paper: 0, total: 0, electronicPercent: 0, paperPercent: 0 },
+    nonroutineSignature: filters.status === "已确认" ? signature("nonroutineSignature", row => row.hasNonroutine) : { electronic: 0, paper: 0, total: 0, electronicPercent: 0, paperPercent: 0 }
+  };
+  const hourDetails = hours.map(row => {
+    const flight = flightById.get(row.flight_id);
+    const subtask = row.owner_type === "subtask" ? subtaskById.get(row.owner_id) : null;
+    return { ...publicMaintenanceHour(row), date: flight?.date || "", flightNo: flight?.flight_no || "-", aircraftNo: flight?.aircraft_no || "-", opportunity: flight?.work_kind || flight?.work_type || "其他", type: row.owner_type === "subtask" ? "非例行" : "例行", taskName: subtask?.title || row.role || "" };
+  });
+  const sortieDetails = sorties.map(row => {
+    const flight = flightById.get(row.flight_id);
+    return { ...publicMaintenanceSortie(row), date: flight?.date || "", flightNo: flight?.flight_no || "-", aircraftNo: flight?.aircraft_no || "-", aircraftType: flight?.aircraft_type || "-", opportunity: flight?.work_kind || flight?.work_type || "其他" };
+  });
+  return { filters, summary, people: peopleRows, teams: teamRows, opportunities, hours: hourDetails, sorties: sortieDetails };
+}
+
+function maintenanceReportSort(rows, view, sort) {
+  const direction = String(sort).endsWith(":asc") ? 1 : -1;
+  const key = String(sort || "").split(":")[0];
+  const defaultKey = view === "people" ? "totalHours" : "date";
+  const field = key || defaultKey;
+  return [...rows].sort((left, right) => {
+    const a = left[field];
+    const b = right[field];
+    const compared = typeof a === "number" || typeof b === "number" ? Number(a || 0) - Number(b || 0) : String(a || "").localeCompare(String(b || ""), "zh-Hans-CN");
+    return compared * direction || String(left.name || left.flightNo || "").localeCompare(String(right.name || right.flightNo || ""), "zh-Hans-CN");
+  });
+}
+
+function maintenanceReport(params = {}) {
+  const data = maintenanceReportDataset(params);
+  if (data.filters.view === "personDetails") {
+    const byFlightDate = (left, right) => String(right.date || "").localeCompare(String(left.date || ""))
+      || String(left.flightNo || "").localeCompare(String(right.flightNo || ""), "zh-Hans-CN")
+      || String(left.aircraftNo || "").localeCompare(String(right.aircraftNo || ""), "zh-Hans-CN")
+      || String(left.flightId || "").localeCompare(String(right.flightId || ""));
+    return { filters: data.filters, summary: data.summary, hours: [...data.hours].sort(byFlightDate), sorties: [...data.sorties].sort(byFlightDate) };
+  }
+  const source = data.filters.view === "people" ? data.people : data.filters.view === "opportunities" ? data.opportunities : [];
+  const rows = maintenanceReportSort(source, data.filters.view, data.filters.sort);
+  const total = rows.length;
+  const start = (data.filters.page - 1) * data.filters.pageSize;
+  return {
+    filters: data.filters,
+    summary: data.summary,
+    rows: rows.slice(start, start + data.filters.pageSize),
+    pagination: { page: data.filters.page, pageSize: data.filters.pageSize, total, pages: Math.max(1, Math.ceil(total / data.filters.pageSize)) }
   };
 }
 
@@ -4889,6 +5117,43 @@ function maintenanceXlsx(data) {
   ]);
 }
 
+function maintenanceReportXlsx(data, selectedSections = []) {
+  const allowed = new Set(["people", "hours", "signatures", "sorties", "teams"]);
+  const selected = selectedSections.filter(section => allowed.has(section));
+  if (!selected.length) throw maintenanceDispatchError("请至少选择一项导出内容");
+  const tables = [];
+  if (selected.includes("people")) tables.push({
+    name: "人员汇总",
+    rows: [["姓名", "班组", "例行工时", "非例行工时", "总工时", "放行架次", "维修机会数"], ...maintenanceReportSort(data.people, "people", "totalHours:desc").map(row => [row.name, row.team, row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.opportunityCount])]
+  });
+  if (selected.includes("hours")) tables.push({
+    name: "工时明细",
+    rows: [["日期", "航班号", "机号", "维修机会", "姓名", "班组", "类型", "任务", "工种", "工时", "状态"], ...data.hours.map(row => [row.date, row.flightNo, row.aircraftNo, row.opportunity, row.userName, row.team, row.type, row.taskName, row.role, row.finalHours, row.status])]
+  });
+  if (selected.includes("signatures")) tables.push({
+    name: "签署明细",
+    rows: [["日期", "航班号", "机号", "机型", "维修机会", "例行签署", "非例行签署", "状态"], ...maintenanceReportSort(data.opportunities, "opportunities", "date:desc").map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.opportunity, row.routineSignature, row.nonroutineSignature, row.status])]
+  });
+  if (selected.includes("sorties")) tables.push({
+    name: "放行明细",
+    rows: [["日期", "航班号", "机号", "机型", "维修机会", "放行人", "班组", "架次", "状态"], ...data.sorties.map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.opportunity, row.userName, row.team, row.sorties, row.status])]
+  });
+  if (selected.includes("teams")) tables.push({
+    name: "班组汇总",
+    rows: [["班组", "人数", "例行工时", "非例行工时", "总工时", "放行架次", "维修机会数"], ...data.teams.sort((a, b) => b.totalHours - a.totalHours || a.team.localeCompare(b.team, "zh-Hans-CN")).map(row => [row.team, row.peopleCount, row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.opportunityCount])]
+  });
+  const workbook = `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${tables.map((table, index) => `<sheet name="${xmlEscape(table.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets></workbook>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${tables.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}</Relationships>`;
+  const content = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${tables.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`;
+  return zipStore([
+    { name: "[Content_Types].xml", content },
+    { name: "_rels/.rels", content: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", content: workbook },
+    { name: "xl/_rels/workbook.xml.rels", content: rels },
+    ...tables.map((table, index) => ({ name: `xl/worksheets/sheet${index + 1}.xml`, content: worksheetXml(table.rows) }))
+  ]);
+}
+
 async function route(req, res) {
   const url = new URL(req.url, "http://localhost");
   const method = req.method || "GET";
@@ -5353,6 +5618,23 @@ async function route(req, res) {
       if (!login) return;
       if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
       return send(res, 200, maintenancePersonalDetails(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/report") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
+      return send(res, 200, maintenanceReport(Object.fromEntries(url.searchParams.entries())));
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/report/export.xlsx") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有导出综合报表的权限" });
+      const params = Object.fromEntries(url.searchParams.entries());
+      const sections = String(params.sections || "").split(",").map(item => item.trim()).filter(Boolean);
+      const data = maintenanceReportDataset(params);
+      const workbook = maintenanceReportXlsx(data, sections);
+      const filename = `维修管控综合报表_${data.filters.dateFrom}_${data.filters.dateTo}.xlsx`;
+      return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}` });
     }
     const maintenanceHour = url.pathname.match(/^\/api\/maintenance\/hours\/([^/]+)$/);
     if (maintenanceHour && method === "PUT") {
