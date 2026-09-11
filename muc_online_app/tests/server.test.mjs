@@ -569,7 +569,7 @@ test("maintenance report separates data grains, signatures and selective export"
   assert.equal(opportunities.payload.rows.find(row => row.id === routineFlight).nonroutineSignature, "不适用");
   const personDetails = await request(`${base}&view=personDetails&userId=${encodeURIComponent(user.id)}`, { cookie });
   assert.deepEqual(personDetails.payload.hours.map(row => row.flightId), [routineFlight, routineFlight, mixedFlight]);
-  assert.equal(personDetails.payload.hours[0].finalHours, 1);
+  assert.equal(personDetails.payload.hours.find(row => row.id === `report-hour-1-${routineFlight}`).finalHours, 1);
   assert.equal(personDetails.payload.sorties[0].flightId, routineFlight);
   const olderCreated = await request("/api/maintenance/flights", { method: "POST", cookie, body: { date: "2026-09-07", flightNo: "MUREPORT0", aircraftNo: "BREPORT0", aircraftType: "A320", workKind: "短停" } });
   const olderFlight = olderCreated.payload.flight.id;
