@@ -43,6 +43,16 @@ async function request(url, { method = "GET", body, cookie = "" } = {}) {
   return { res, payload };
 }
 
+async function requestRaw(url, { method = "GET", body, cookie = "" } = {}) {
+  const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+  req.method = method;
+  req.url = url;
+  req.headers = cookie ? { cookie, "content-type": "application/json" } : { "content-type": "application/json" };
+  const res = new MockResponse();
+  await measuredRoute(req, res);
+  return res;
+}
+
 test.after(async () => {
   await db.close?.();
   await fs.rm(tempDir, { recursive: true, force: true });
@@ -243,7 +253,7 @@ test("release-only report confirmation always waits for task-tree review", async
   assert.equal((await putReview({})).res.statusCode, 200);
   const missingSignature = await putReview({ mode: "confirm" });
   assert.equal(missingSignature.res.statusCode, 400);
-  assert.match(missingSignature.payload.error, /请选择例行电签/);
+  assert.match(missingSignature.payload.error, /请选择例行签署方式/);
   for (const value of [0, 1, "false", "true", {}, []]) {
     assert.equal((await putReview({ routineElectronicSigned: value })).res.statusCode, 400);
   }
@@ -255,7 +265,7 @@ test("release-only report confirmation always waits for task-tree review", async
   db.prepare("insert into maintenance_subtasks(id,flight_id,title,category,standard_hours,status,created_at,updated_at) values(?,?,?,?,?,?,?,?)").run(subId, flightId, "电签测试", "其他", 1, "待复核", stamp, stamp);
   const subTasks = [...reviewTasks, { ownerType: "subtask", ownerId: subId, assignments: [{ userId: user.id, role: "主作" }] }];
   const missingNonroutine = await putReview({ mode: "confirm", tasks: subTasks });
-  assert.match(missingNonroutine.payload.error, /请选择非例行电签/);
+  assert.match(missingNonroutine.payload.error, /请选择非例行签署方式/);
   const selected = await putReview({ tasks: subTasks, nonroutineElectronicSigned: false });
   assert.equal(selected.res.statusCode, 200);
   assert.equal(selected.payload.review.flight.nonroutineElectronicSigned, false);
@@ -346,7 +356,7 @@ test("routine report without nonroutine work also waits for review", async () =>
   assert.equal(Number(db.prepare("select count(*) as total from maintenance_sortie_results where flight_id=?").get(flightId).total), 1);
 });
 
-test("both electronic signature choices may be false when confirming a complete tree", async () => {
+test("both signature groups may select paper signing when confirming a complete tree", async () => {
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
   const user = login.payload.user;
@@ -513,4 +523,65 @@ test("personal hour details expose a stable flight id for display grouping", asy
   assert.equal(groupedRows.length, 2);
   assert.deepEqual(groupedRows.map(row => row.role).sort(), ["例行检查", "接机"].sort());
   assert.equal(Number(groupedRows.reduce((sum, row) => sum + row.hours, 0).toFixed(2)), 1.3);
+});
+
+test("maintenance report separates data grains, signatures and selective export", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const user = login.payload.user;
+  const create = async (flightNo, aircraftNo, workKind) => {
+    const result = await request("/api/maintenance/flights", { method: "POST", cookie, body: { date: "2026-09-08", flightNo, aircraftNo, aircraftType: "A320", workKind } });
+    assert.equal(result.res.statusCode, 201);
+    return result.payload.flight.id;
+  };
+  const routineFlight = await create("MUREPORT1", "BREPORT1", "短停");
+  const mixedFlight = await create("MUREPORT2", "BREPORT2", "航后");
+  const stamp = new Date().toISOString();
+  db.prepare("update maintenance_flights set status='已确认',routine_electronic_signed=1 where id=?").run(routineFlight);
+  db.prepare("update maintenance_flights set status='已确认',routine_electronic_signed=0,nonroutine_electronic_signed=1 where id=?").run(mixedFlight);
+  const subtaskId = `report-subtask-${mixedFlight}`;
+  db.prepare(`insert into maintenance_subtasks(id,flight_id,title,category,status,created_at,updated_at) values(?,?,?,?,?,?,?)`)
+    .run(subtaskId, mixedFlight, "测试非例行", "其他", "已确认", stamp, stamp);
+  const hour = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  hour.run(`report-hour-1-${routineFlight}`, "flight", routineFlight, routineFlight, `report-assignment-1-${routineFlight}`, user.id, user.name, user.team || "管理员", "接机", "维修机会", 0.7, "已确认", stamp, stamp);
+  hour.run(`report-hour-2-${routineFlight}`, "flight", routineFlight, routineFlight, `report-assignment-2-${routineFlight}`, user.id, user.name, user.team || "管理员", "送机", "维修机会", 0.7, "已确认", stamp, stamp);
+  hour.run(`report-hour-3-${mixedFlight}`, "subtask", subtaskId, mixedFlight, `report-assignment-3-${mixedFlight}`, user.id, user.name, user.team || "管理员", "主作", "非例行", 1.5, "已确认", stamp, stamp);
+  db.prepare("update maintenance_hour_results set adjusted_hours=1 where id=?").run(`report-hour-1-${routineFlight}`);
+  db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,sorties,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(`report-sortie-${routineFlight}`, "flight", routineFlight, routineFlight, `report-release-${routineFlight}`, user.id, user.name, user.team || "管理员", "放行", "放行架次", 1, "已确认", stamp, stamp);
+
+  const base = "/api/maintenance/report?dateFrom=2026-09-08&dateTo=2026-09-08&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4";
+  const dashboard = await request(`${base}&view=dashboard`, { cookie });
+  assert.equal(dashboard.res.statusCode, 200, JSON.stringify(dashboard.payload));
+  assert.deepEqual({ routine: dashboard.payload.summary.routineHours, nonroutine: dashboard.payload.summary.nonroutineHours, total: dashboard.payload.summary.totalHours }, { routine: 1.7, nonroutine: 1.5, total: 3.2 });
+  assert.equal(dashboard.payload.summary.opportunityCount, 2);
+  assert.equal(dashboard.payload.summary.sorties, 1);
+  assert.deepEqual(dashboard.payload.summary.routineSignature, { electronic: 1, paper: 1, total: 2, electronicPercent: 50, paperPercent: 50 });
+  assert.equal(dashboard.payload.summary.nonroutineSignature.electronic, 1);
+  assert.equal(dashboard.payload.summary.nonroutineSignature.total, 1);
+
+  const people = await request(`${base}&view=people&page=1&pageSize=10`, { cookie });
+  assert.equal(people.payload.pagination.total, 1);
+  assert.equal(people.payload.rows[0].opportunityCount, 2);
+  assert.equal(people.payload.rows[0].totalHours, 3.2);
+  const opportunities = await request(`${base}&view=opportunities`, { cookie });
+  assert.equal(opportunities.payload.pagination.total, 2);
+  assert.equal(opportunities.payload.rows.find(row => row.id === routineFlight).nonroutineSignature, "不适用");
+  const personDetails = await request(`${base}&view=personDetails&userId=${encodeURIComponent(user.id)}`, { cookie });
+  assert.deepEqual(personDetails.payload.hours.map(row => row.flightId), [routineFlight, routineFlight, mixedFlight]);
+  assert.equal(personDetails.payload.hours[0].finalHours, 1);
+  assert.equal(personDetails.payload.sorties[0].flightId, routineFlight);
+  const olderCreated = await request("/api/maintenance/flights", { method: "POST", cookie, body: { date: "2026-09-07", flightNo: "MUREPORT0", aircraftNo: "BREPORT0", aircraftType: "A320", workKind: "短停" } });
+  const olderFlight = olderCreated.payload.flight.id;
+  db.prepare("update maintenance_flights set status='已确认',routine_electronic_signed=1 where id=?").run(olderFlight);
+  hour.run(`report-hour-old-${olderFlight}`, "flight", olderFlight, olderFlight, `report-assignment-old-${olderFlight}`, user.id, user.name, user.team || "管理员", "例行检查", "维修机会", 0.3, "已确认", stamp, stamp);
+  const chronological = await request(`/api/maintenance/report?dateFrom=2026-09-07&dateTo=2026-09-08&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&view=personDetails&userId=${encodeURIComponent(user.id)}`, { cookie });
+  assert.equal(chronological.payload.hours[0].date, "2026-09-08");
+  assert.equal(chronological.payload.hours.at(-1).date, "2026-09-07");
+
+  const emptyExport = await request(`${base.replace("/report?", "/report/export.xlsx?")}&sections=`, { cookie });
+  assert.equal(emptyExport.res.statusCode, 400);
+  const exportResponse = await requestRaw(`${base.replace("/report?", "/report/export.xlsx?")}&sections=people,signatures,sorties`, { cookie });
+  assert.equal(exportResponse.statusCode, 200);
+  assert.equal(exportResponse.body.subarray(0, 2).toString(), "PK");
 });

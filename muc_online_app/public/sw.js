@@ -1,10 +1,10 @@
-const CACHE_NAME = "airline-operations-center-shell-v19";
+const CACHE_NAME = "airline-operations-center-shell-v25";
 const APP_SHELL = [
   "/",
   "/login",
   "/dashboard",
   "/config.js",
-  "/app.js?v=20260904-production-login-1",
+  "/app.js?v=20260911-report-person-groups-1",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
