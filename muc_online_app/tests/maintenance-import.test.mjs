@@ -25,6 +25,17 @@ test("supported headers and headerless template rows normalize dates for dispatc
   assert.equal(rows[0].flightNo, "MU6863");
   assert.equal(parse([["2026.9.1", "MU6863", "B6886"]]).rows[0].date, "2026-09-01");
   assert.equal(parse([["日期", "航班号", "机号"], ["25569", "MU6863", "B6886"]]).rows[0].date, "1970-01-01");
+  assert.equal(rows[0].departureFlightNo, "");
+});
+
+test("optional departure flight number imports by header or appended positional column", async () => {
+  const named = parse([["日期", "进港航班号", "机号", "出港航班号"], ["2026-07-12", "MU6406&", "B-6406", "MU6407"]]).rows[0];
+  assert.equal(named.flightNo, "MU6406&");
+  assert.equal(named.departureFlightNo, "MU6407");
+  const positional = parse([["2026-07-12", "MU6406&", "B-6406", "A321", "117", "0043+", "0130", "航后", "", "", "", "", "", "MU6407"]]).rows[0];
+  assert.equal(positional.departureFlightNo, "MU6407");
+  const template = await fs.readFile(new URL("../航班计划导入模板.csv", import.meta.url), "utf8");
+  assert.equal(template.trim().split(",").at(-1), "出港航班号");
 });
 
 test("invalid dates and missing identifiers stop the whole import", () => {
