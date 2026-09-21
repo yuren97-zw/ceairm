@@ -181,6 +181,35 @@ test("flight import rejects shifted columns before inserting any rows and normal
   assert.ok(list.payload.flights.some(flight => flight.aircraftNo === "BIMPORT" && flight.date === "2026-09-01"));
 });
 
+test("departure flight number survives old updates and import only fills an empty value", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const base = { date: "2026-07-12", flightNo: "MU6406&", aircraftNo: "B-6406", aircraftType: "A321", stand: "117", plannedArrival: "0043+", plannedDeparture: "0130", workKind: "航后" };
+  const created = await request("/api/maintenance/flights", { method: "POST", cookie, body: { ...base, departureFlightNo: "MU6407" } });
+  assert.equal(created.res.statusCode, 201, JSON.stringify(created.payload));
+  const id = created.payload.flight.id;
+  assert.equal(created.payload.flight.departureFlightNo, "MU6407");
+  const listUrl = "/api/maintenance/flights?scope=dispatch&view=summary&dateFrom=2026-07-12&dateTo=2026-07-12";
+  const search = await request(`${listUrl}&search=MU6407`, { cookie });
+  assert.ok(search.payload.flights.some(row => row.id === id && row.departureFlightNo === "MU6407"));
+  const legacyUpdate = await request(`/api/maintenance/flights/${id}`, { method: "PUT", cookie, body: base });
+  assert.equal(legacyUpdate.res.statusCode, 200, JSON.stringify(legacyUpdate.payload));
+  assert.equal(db.prepare("select departure_flight_no from maintenance_flights where id=?").get(id).departure_flight_no, "MU6407");
+  const cleared = await request(`/api/maintenance/flights/${id}`, { method: "PUT", cookie, body: { ...base, departureFlightNo: "" } });
+  assert.equal(cleared.res.statusCode, 200);
+  db.prepare("update maintenance_flights set status='已派工' where id=?").run(id);
+  const before = db.prepare("select * from maintenance_flights where id=?").get(id);
+  const imported = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [{ ...base, plannedArrival: "2222", departureFlightNo: "MU6408" }] } });
+  assert.equal(imported.res.statusCode, 200);
+  assert.equal(imported.payload.created, 0);
+  const after = db.prepare("select * from maintenance_flights where id=?").get(id);
+  assert.equal(after.departure_flight_no, "MU6408");
+  for (const key of Object.keys(before).filter(key => !["departure_flight_no", "updated_by", "updated_at"].includes(key))) assert.equal(after[key], before[key]);
+  const repeated = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [{ ...base, departureFlightNo: "MU6409" }] } });
+  assert.equal(repeated.res.statusCode, 200);
+  assert.equal(db.prepare("select departure_flight_no from maintenance_flights where id=?").get(id).departure_flight_no, "MU6408");
+});
+
 test("release-only report confirmation always waits for task-tree review", async () => {
   const login = await request("/api/login", {
     method: "POST",
@@ -455,7 +484,7 @@ test("pending review supplemental work validates reason and signatures then foll
   assert.equal(saved.payload.review.flight.nonroutineElectronicSigned, null);
   const hour = db.prepare("select * from maintenance_hour_results where flight_id=?").get(f.id);
   assert.equal(hour.status, "待复核");
-  assert.equal(hour.hours, 0.8);
+  assert.equal(hour.hours, 2);
   assert.equal(db.prepare("select status from maintenance_report_batches where flight_id=? and report_type='nonroutine'").get(f.id).status, "待复核");
   assert.equal(Number(db.prepare("select count(*) n from maintenance_report_entries where flight_id=? and owner_type='subtask'").get(f.id).n), 1);
   assert.equal((await f.putReview({ mode: "confirm" })).res.statusCode, 400);
@@ -471,6 +500,94 @@ test("pending review supplemental work validates reason and signatures then foll
   assert.equal(archived.res.statusCode, 200, JSON.stringify(archived.payload));
   assert.equal(archived.payload.review.flight.status, "已确认");
   assert.equal(Number(db.prepare("select count(*) n from maintenance_hour_results where flight_id=? and status='已确认'").get(f.id).n), 2);
+});
+
+test("tow nonroutine work uses main-do only and preserves total hours when shared", async () => {
+  const f = await supplementalWorkFixture("MUTOW");
+  const rules = await request("/api/maintenance/rules", { cookie: f.cookie });
+  const towRule = rules.payload.rules.find(row => row.rule_type === "nonroutineCategoryHours" && row.name === "拖机");
+  assert.equal(towRule.value, 3);
+  assert.ok(rules.payload.rules.some(row => row.rule_type === "roleRatio" && row.name === "主做"));
+  assert.ok(!rules.payload.rules.some(row => row.rule_type === "roleRatio" && row.name === "主作"));
+
+  assert.equal((await f.report({})).res.statusCode, 200);
+  const admin = db.prepare("select * from users where id=?").get(f.user.id);
+  for (const [id, username, name] of [["tow-user-2", "tow-user-2", "拖机人员二"], ["tow-user-3", "tow-user-3", "拖机人员三"]]) {
+    const row = { ...admin, id, username, name, role: "receiver", status: "active" };
+    db.prepare(`insert into users(${Object.keys(row).join(",")}) values(${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+  }
+  const people = [f.user, { id: "tow-user-2" }, { id: "tow-user-3" }];
+  assert.equal(people.length, 3);
+  const base = {
+    chapter: "09",
+    title: "拖机测试",
+    category: "拖机",
+    standardHours: 1,
+    assignments: people.map(person => ({ userId: person.id, role: "主做" }))
+  };
+  const invalid = await f.putReview({ reason: "拖机补录", newSubtasks: [{ ...base, assignments: [{ userId: people[0].id, role: "检验" }] }] });
+  assert.equal(invalid.res.statusCode, 400);
+
+  const saved = await f.putReview({ reason: "拖机补录", newSubtasks: [base] });
+  assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
+  const subtask = db.prepare("select * from maintenance_subtasks where flight_id=? and category='拖机'").get(f.id);
+  assert.equal(subtask.card_no, "09");
+  const assignments = db.prepare("select role from maintenance_assignments where owner_type='subtask' and owner_id=?").all(subtask.id);
+  assert.deepEqual(new Set(assignments.map(row => row.role)), new Set(["主做"]));
+  const hours = db.prepare("select hours from maintenance_hour_results where owner_type='subtask' and owner_id=? order by hours").all(subtask.id).map(row => Number(row.hours));
+  assert.equal(hours.length, 3);
+  assert.equal(Number(hours.reduce((sum, value) => sum + value, 0).toFixed(2)), 1);
+  assert.ok(hours.at(-1) - hours[0] <= 0.010001);
+
+  const details = await request("/api/maintenance/stats/personal/details?month=2026-09&period=month&type=nonroutine&status=pending", { cookie: f.cookie });
+  assert.equal(details.res.statusCode, 200);
+  const towDetail = details.payload.rows.find(row => row.flightId === f.id && row.taskName === "拖机测试");
+  assert.equal(towDetail?.category, "拖机");
+  assert.equal(towDetail?.role, "主做");
+  const stats = await request("/api/maintenance/stats/personal?month=2026-09", { cookie: f.cookie });
+  assert.equal(stats.res.statusCode, 200);
+  assert.ok(stats.payload.composition.month.items.some(item => item.category === "拖机" && item.pendingHours > 0));
+});
+
+test("nonroutine combination rules allocate full task hours and preserve existing results", async () => {
+  const f = await supplementalWorkFixture("MUCOMBORULE");
+  const initial = (await request("/api/maintenance/rules", { cookie: f.cookie })).payload.rules;
+  const combinations = initial.filter(row => row.rule_type === "nonroutineCombinationRatio");
+  assert.equal(combinations.length, 12);
+  for (const name of ["主做+检验+辅助", "主做+检验", "主做+辅助", "检验+辅助", "主做", "检验", "辅助"]) {
+    assert.equal(Number(combinations.filter(row => row.combination === name).reduce((sum, row) => sum + row.value, 0).toFixed(2)), 1);
+  }
+  const admin = db.prepare("select * from users where id=?").get(f.user.id);
+  const ids = ["combo-worker-1", "combo-worker-2", "combo-worker-3"];
+  ids.forEach(id => {
+    const row = { ...admin, id, username: id, name: id, role: "receiver", status: "active" };
+    db.prepare(`insert into users(${Object.keys(row).join(",")}) values(${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+  });
+  assert.equal((await f.report({})).res.statusCode, 200);
+  const task = (title, roles) => ({ title, category: "其他", standardHours: 1, assignments: roles.map(([userId, role]) => ({ userId, role })) });
+  const added = await f.putReview({ reason: "核对组合", newSubtasks: [
+    task("三工种", [[f.user.id, "主做"], [ids[0], "检验"], [ids[1], "辅助"]]),
+    task("主做检验", [[f.user.id, "主做"], [ids[0], "检验"]]),
+    task("仅主做", [[f.user.id, "主做"], [ids[0], "主做"], [ids[1], "主做"]]),
+    task("检验辅助", [[ids[0], "检验"], [ids[1], "辅助"]])
+  ] });
+  assert.equal(added.res.statusCode, 200, JSON.stringify(added.payload));
+  const results = title => db.prepare(`select h.role,h.hours from maintenance_hour_results h join maintenance_subtasks s on s.id=h.owner_id
+    where s.flight_id=? and s.title=? order by h.role,h.hours`).all(f.id, title);
+  assert.deepEqual(results("三工种").map(row => row.hours).sort(), [0.3, 0.3, 0.4]);
+  assert.deepEqual(results("主做检验").map(row => row.hours).sort(), [0.4, 0.6]);
+  assert.deepEqual(results("仅主做").map(row => row.hours).sort(), [0.33, 0.33, 0.34]);
+  assert.deepEqual(results("检验辅助").map(row => row.hours).sort(), [0.5, 0.5]);
+  const before = results("主做检验");
+  const changed = combinations.map(row => row.combination === "主做+检验" ? { ...row, value: row.role === "主做" ? 0.55 : 0.45 } : row);
+  const invalid = changed.map(row => row.combination === "主做+检验" && row.role === "主做" ? { ...row, value: 0.56 } : row);
+  const withRules = items => initial.map(row => row.rule_type === "nonroutineCombinationRatio" ? items.find(item => item.id === row.id) : row);
+  assert.equal((await request("/api/maintenance/rules", { method: "PUT", cookie: f.cookie, body: { rules: withRules(invalid) } })).res.statusCode, 400);
+  assert.equal((await request("/api/maintenance/rules", { method: "PUT", cookie: f.cookie, body: { rules: withRules(changed) } })).res.statusCode, 200);
+  assert.deepEqual(results("主做检验"), before);
+  const after = await f.putReview({ reason: "新增使用新比例", newSubtasks: [task("更新后组合", [[f.user.id, "主做"], [ids[0], "检验"]])] });
+  assert.equal(after.res.statusCode, 200, JSON.stringify(after.payload));
+  assert.deepEqual(results("更新后组合").map(row => row.hours).sort(), [0.45, 0.55]);
 });
 
 test("first temporary work may be finalized directly and pending supplements may be confirmed in one transaction", async () => {
@@ -567,6 +684,11 @@ test("maintenance report separates data grains, signatures and selective export"
   const opportunities = await request(`${base}&view=opportunities`, { cookie });
   assert.equal(opportunities.payload.pagination.total, 2);
   assert.equal(opportunities.payload.rows.find(row => row.id === routineFlight).nonroutineSignature, "不适用");
+  const routineAudit = await request(`/api/maintenance/flights/${routineFlight}/report-detail`, { cookie });
+  assert.equal(routineAudit.res.statusCode, 200);
+  assert.equal(routineAudit.payload.detail.routineHours, 1.7);
+  assert.equal(routineAudit.payload.detail.sorties, 1);
+  assert.equal(routineAudit.payload.detail.people.filter(row => row.role === "放行").length, 1);
   const personDetails = await request(`${base}&view=personDetails&userId=${encodeURIComponent(user.id)}`, { cookie });
   assert.deepEqual(personDetails.payload.hours.map(row => row.flightId), [routineFlight, routineFlight, mixedFlight]);
   assert.equal(personDetails.payload.hours.find(row => row.id === `report-hour-1-${routineFlight}`).finalHours, 1);
@@ -584,4 +706,91 @@ test("maintenance report separates data grains, signatures and selective export"
   const exportResponse = await requestRaw(`${base.replace("/report?", "/report/export.xlsx?")}&sections=people,signatures,sorties`, { cookie });
   assert.equal(exportResponse.statusCode, 200);
   assert.equal(exportResponse.body.subarray(0, 2).toString(), "PK");
+});
+
+test("nonroutine audit keeps each task and its full assignment hours with scoped detail access", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const admin = db.prepare("select * from users where id=?").get(login.payload.user.id);
+  const workers = ["audit-worker-a", "audit-worker-b", "audit-worker-other"].map((id, index) => {
+    const row = { ...admin, id, username: id, name: `核对人员${index + 1}`, role: "receiver", status: "active" };
+    db.prepare(`insert into users(${Object.keys(row).join(",")}) values(${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+    return row;
+  });
+  const created = await request("/api/maintenance/flights", { method: "POST", cookie, body: { date: "2026-09-10", flightNo: "MUAUDIT", aircraftNo: "BAUDIT", workKind: "航后" } });
+  assert.equal(created.res.statusCode, 201);
+  const flightId = created.payload.flight.id;
+  db.prepare("update maintenance_flights set status='已确认',nonroutine_electronic_signed=1 where id=?").run(flightId);
+  const stamp = new Date().toISOString();
+  const task = (id, title, category, status, hours) => db.prepare(`insert into maintenance_subtasks(id,flight_id,card_no,title,category,standard_hours,status,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?)`).run(id, flightId, "09", title, category, hours, status, stamp, stamp);
+  const confirmedId = `audit-confirmed-${flightId}`;
+  const secondId = `audit-second-${flightId}`;
+  const emptyId = `audit-empty-${flightId}`;
+  task(confirmedId, "两人拖机", "拖机", "已确认", 3);
+  task(secondId, "同航班另一项", "工卡指令", "已确认", 2);
+  task(emptyId, "尚未派工", "单项工作", "未派工", 2);
+  const assignment = db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,user_id,user_name,team,role,status,assigned_at)
+    values(?,'subtask',?,?,?,?,?,?,?,?)`);
+  const result = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,hours,adjusted_hours,status,created_at,updated_at)
+    values(?,'subtask',?,?,?,?,?,?,?,?,?,?,?,?)`);
+  workers.slice(0, 2).forEach((person, index) => {
+    const assignmentId = `audit-assignment-${index}-${flightId}`;
+    assignment.run(assignmentId, confirmedId, flightId, person.id, person.name, "一组", "主做", "已确认", stamp);
+    result.run(`audit-hour-${index}-${flightId}`, confirmedId, flightId, assignmentId, person.id, person.name, "一组", "主做", 1.5, index === 0 ? 1.25 : null, "已确认", stamp, stamp);
+  });
+  const secondAssignment = `audit-second-assignment-${flightId}`;
+  assignment.run(secondAssignment, secondId, flightId, workers[1].id, workers[1].name, "一组", "检验", "已确认", stamp);
+  result.run(`audit-second-hour-${flightId}`, secondId, flightId, secondAssignment, workers[1].id, workers[1].name, "一组", "检验", 0.8, null, "已确认", stamp, stamp);
+  const base = "/api/maintenance/report?view=nonroutine&dateFrom=2026-09-10&dateTo=2026-09-10";
+  const confirmed = await request(`${base}&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4`, { cookie });
+  assert.equal(confirmed.res.statusCode, 200, JSON.stringify(confirmed.payload));
+  assert.equal(confirmed.payload.pagination.total, 2);
+  assert.deepEqual(new Set(confirmed.payload.rows.map(row => row.id)), new Set([confirmedId, secondId]));
+  assert.equal(confirmed.payload.rows.find(row => row.id === confirmedId).actualHours, 2.75);
+  assert.equal(confirmed.payload.rows.find(row => row.id === confirmedId).assignedCount, 2);
+  const filtered = await request(`${base}&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&userId=${workers[0].id}&nonroutineCategory=%E6%8B%96%E6%9C%BA`, { cookie });
+  assert.equal(filtered.payload.rows.length, 1);
+  assert.equal(filtered.payload.rows[0].actualHours, 2.75);
+  const opportunities = await request(`/api/maintenance/report?view=opportunities&dateFrom=2026-09-10&dateTo=2026-09-10&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&userId=${workers[0].id}`, { cookie });
+  assert.equal(opportunities.payload.rows.length, 1);
+  assert.equal(opportunities.payload.rows[0].totalHours, 3.55);
+  assert.equal(opportunities.payload.rows[0].participants.length, 2);
+  const opportunityDetailUrl = `/api/maintenance/flights/${flightId}/report-detail`;
+  assert.equal((await request(opportunityDetailUrl)).res.statusCode, 401);
+  const opportunityDetail = await request(opportunityDetailUrl, { cookie });
+  assert.equal(opportunityDetail.res.statusCode, 200);
+  assert.equal(opportunityDetail.payload.detail.totalHours, 3.55);
+  assert.equal(opportunityDetail.payload.detail.subtasks.length, 3);
+  const searched = await request(`${base}&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&search=${workers[0].username}`, { cookie });
+  assert.deepEqual(searched.payload.rows.map(row => row.id), [confirmedId]);
+  const literalWildcard = await request(`${base}&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&search=%25`, { cookie });
+  assert.equal(literalWildcard.payload.pagination.total, 0);
+  const unassigned = await request(`${base}&status=%E6%9C%AA%E6%B4%BE%E5%B7%A5`, { cookie });
+  assert.equal(unassigned.payload.rows[0].id, emptyId);
+  assert.equal(unassigned.payload.rows[0].hasResults, false);
+  const endpoint = `/api/maintenance/subtasks/${confirmedId}/hour-audit`;
+  assert.equal((await request(endpoint)).res.statusCode, 401);
+  const ownLogin = await request("/api/login", { method: "POST", body: { username: workers[0].username, password: "muc2026" } });
+  const ownCookie = String(ownLogin.res.headers["Set-Cookie"] || ownLogin.res.headers["set-cookie"] || "").split(";")[0];
+  assert.equal((await request(opportunityDetailUrl, { cookie: ownCookie })).res.statusCode, 403);
+  const detail = await request(endpoint, { cookie: ownCookie });
+  assert.equal(detail.res.statusCode, 200, JSON.stringify(detail.payload));
+  assert.equal(detail.payload.detail.people.length, 2);
+  assert.equal(detail.payload.detail.people[0].resultHours, 1.5);
+  assert.equal(detail.payload.detail.people[0].finalHours, 1.25);
+  const outsiderLogin = await request("/api/login", { method: "POST", body: { username: workers[2].username, password: "muc2026" } });
+  const outsiderCookie = String(outsiderLogin.res.headers["Set-Cookie"] || outsiderLogin.res.headers["set-cookie"] || "").split(";")[0];
+  assert.equal((await request(endpoint, { cookie: outsiderCookie })).res.statusCode, 403);
+  assert.equal((await request(`/api/maintenance/subtasks/${secondId}/hour-audit`, { cookie: ownCookie })).res.statusCode, 403);
+  assert.equal((await request(`/api/maintenance/subtasks/${emptyId}/hour-audit`, { cookie: ownCookie })).res.statusCode, 403);
+  const ownDetails = await request("/api/maintenance/stats/personal/details?month=2026-09&period=month&type=nonroutine&status=confirmed", { cookie: ownCookie });
+  assert.equal(ownDetails.payload.rows.find(row => row.subtaskId === confirmedId)?.hours, 1.25);
+  const exported = await requestRaw(`${base.replace("/report?", "/report/export.xlsx?")}&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&sections=nonroutine`, { cookie });
+  assert.equal(exported.statusCode, 200);
+  assert.ok(exported.body.includes(Buffer.from("非例行任务")));
+  assert.ok(exported.body.includes(Buffer.from("非例行人员工时")));
+  const opportunityExport = await requestRaw(`/api/maintenance/report/export.xlsx?view=opportunities&dateFrom=2026-09-10&dateTo=2026-09-10&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&userId=${workers[0].id}&sections=opportunities`, { cookie });
+  assert.equal(opportunityExport.statusCode, 200);
+  assert.ok(opportunityExport.body.includes(Buffer.from("维修机会核对")));
 });

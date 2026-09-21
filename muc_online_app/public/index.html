@@ -725,6 +725,15 @@
     .maintenance-flight-identity{display:grid;gap:4px;min-width:0}
     .maintenance-flight-identity strong{display:flex;align-items:baseline;flex-wrap:wrap;row-gap:1px;min-width:0}
     .maintenance-flight-identity strong span{display:inline;margin:0}
+    .maintenance-flight-identity .maintenance-flight-primary{align-items:center;column-gap:5px;row-gap:3px}
+    .maintenance-flight-primary .maintenance-opportunity-tag,.maintenance-flight-primary .maintenance-stand-tag{display:inline-flex;align-items:center;padding:3px 7px;border-radius:8px;font-size:11px!important;font-weight:750;line-height:1.2;white-space:nowrap}
+    .maintenance-flight-primary .maintenance-opportunity-tag{background:var(--opportunity-bg);color:var(--opportunity-color)!important}
+    .maintenance-flight-primary .maintenance-stand-tag{background:#EEF2F7;color:#334155!important}
+    .maintenance-flight-primary .maintenance-flight-separator{padding:0;color:#94A3B8!important}
+    .maintenance-card-head .maintenance-flight-secondary,.execute-flight-info-row .maintenance-flight-secondary{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 9px;min-width:0;max-width:100%;line-height:1.25}
+    .maintenance-flight-secondary>span{display:inline;margin:0;min-width:0}
+    .maintenance-flight-secondary .maintenance-flight-no{flex-shrink:0;overflow:visible;text-overflow:clip}
+    .maintenance-flight-secondary .maintenance-time-tag{color:var(--muted)!important;font-size:11px!important;font-weight:600;white-space:nowrap}
     .maintenance-aircraft-no{font-size:18px!important;font-weight:800;color:#111827!important;white-space:nowrap}
     .maintenance-flight-no{font-size:15px!important;font-weight:750;color:#1F4D63!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .maintenance-flight-identity strong .maintenance-aircraft-type{font-size:12px!important;font-weight:650;color:var(--muted)!important;white-space:nowrap;flex-shrink:0}
@@ -938,6 +947,25 @@
     .maintenance-report-row.head{background:#F1F5F9;color:#52657A;font-size:10px;font-weight:750}
     .maintenance-report-list.people .maintenance-report-row{grid-template-columns:minmax(130px,1.5fr) repeat(5,minmax(72px,1fr))}
     .maintenance-report-list.opportunities .maintenance-report-row{grid-template-columns:minmax(150px,1.35fr) minmax(70px,.6fr) minmax(120px,1.2fr) minmax(100px,.8fr) minmax(90px,.8fr) minmax(105px,.9fr) minmax(72px,.6fr)}
+    .maintenance-report-list.nonroutine .maintenance-report-row{grid-template-columns:minmax(130px,1.1fr) minmax(120px,1.3fr) minmax(90px,.8fr) repeat(3,minmax(86px,.7fr)) minmax(72px,.6fr)}
+    .maintenance-report-nonroutine-entry,.maintenance-report-opportunity-entry{min-width:0;border-top:1px solid #E5ECF2}
+    .maintenance-report-nonroutine-entry:first-of-type,.maintenance-report-opportunity-entry:first-of-type{border-top:0}
+    .maintenance-report-nonroutine-entry .maintenance-report-row,.maintenance-report-opportunity-entry .maintenance-report-row{border-top:0}
+    .maintenance-report-nonroutine-detail,.maintenance-report-opportunity-detail,.maintenance-personal-audit-detail{min-width:0;padding:11px;border-top:1px solid #E5ECF2;background:#F8FAFC;color:#52657A;font-size:11px}
+    .maintenance-opportunity-audit-section{min-width:0;margin-top:12px}
+    .maintenance-opportunity-audit-section h4{margin:0 0 5px;color:#26394F;font-size:12px}
+    .maintenance-opportunity-audit-task{min-width:0;padding:8px 0;border-top:1px solid #E2E8F0;overflow-wrap:anywhere}
+    .maintenance-opportunity-audit-task>strong{color:#26394F}
+    .maintenance-opportunity-audit-task>small{margin-left:8px;color:#718096}
+    .maintenance-audit-summary{display:flex;flex-wrap:wrap;gap:7px 16px;min-width:0}
+    .maintenance-audit-summary b{color:#0F5F7A}
+    .maintenance-audit-explanation{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+    .maintenance-audit-people{display:grid;gap:0;margin-top:8px;border-top:1px solid #E2E8F0}
+    .maintenance-audit-person{display:grid;grid-template-columns:minmax(110px,1.3fr) minmax(100px,1fr) repeat(2,minmax(68px,.7fr)) minmax(90px,.8fr) minmax(70px,.6fr);align-items:center;gap:6px;min-width:0;padding:8px 0;border-bottom:1px dashed #E2E8F0;overflow-wrap:anywhere}
+    .maintenance-audit-person strong{color:#26394F}
+    .maintenance-audit-person small{display:block;color:#718096;font-size:10px;font-weight:500}
+    .maintenance-audit-person b{color:#0F5F7A}
+    .maintenance-audit-person em{font-style:normal;text-align:right}
     .maintenance-report-row>span{display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
     .maintenance-report-row>span.wrap{line-height:1.45}
     .maintenance-report-row strong,.maintenance-report-row b{color:#102033;font-size:12px}
@@ -960,7 +988,7 @@
     @media(max-width:680px){
       .maintenance-report-panel{padding:8px;border-radius:14px}
       .maintenance-report-head{align-items:stretch}
-      .maintenance-report-views{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1}
+      .maintenance-report-views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));flex:1}
       .maintenance-report-views button{min-width:0;padding:0 5px;font-size:11px}
       .maintenance-report-head>.btn{padding-inline:9px;font-size:11px;white-space:nowrap}
       .maintenance-report-filters{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:7px}
@@ -977,6 +1005,10 @@
       .maintenance-report-row.head{display:none}
       .maintenance-report-list.people .maintenance-report-row,.maintenance-report-list.opportunities .maintenance-report-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid #DCE5ED;border-radius:10px}
       .maintenance-report-list.opportunities .maintenance-report-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .maintenance-report-list.nonroutine .maintenance-report-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px;border:1px solid #DCE5ED;border-radius:8px}
+      .maintenance-report-nonroutine-entry,.maintenance-report-opportunity-entry{border:0}
+      .maintenance-audit-person{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .maintenance-audit-person em{text-align:left}
       .maintenance-report-row>span::before{content:attr(data-label);display:block;margin-bottom:2px;color:#8291A3;font-size:9px;font-weight:650}
       .maintenance-report-pagination{align-items:flex-end}
       .maintenance-report-pagination>span{max-width:42%}
@@ -1032,9 +1064,11 @@
     .maintenance-report-context strong{min-width:0;overflow-wrap:anywhere;font-size:11px}
     .maintenance-report-context small{flex:0 0 auto;color:var(--muted);font-size:10px}
     .maintenance-add-temp-report{align-self:flex-start;margin:0}
-    .maintenance-temporary-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;min-width:0}
-    .maintenance-temporary-fields label{display:grid;gap:4px;min-width:0;color:var(--muted);font-size:11px}
+    .maintenance-temporary-fields{display:grid;grid-template-columns:minmax(64px,.75fr) minmax(108px,1.15fr) minmax(70px,.7fr);gap:6px;min-width:0}
+    .maintenance-temporary-fields label{display:grid;gap:3px;min-width:0;color:var(--muted);font-size:11px}
     .maintenance-temporary-fields input,.maintenance-temporary-fields select,.maintenance-temporary-fields textarea{width:100%;min-width:0;box-sizing:border-box;border-radius:10px}
+    .maintenance-temporary-fields input,.maintenance-temporary-fields select{height:40px;padding:6px 8px}
+    .maintenance-temporary-fields .maintenance-temp-title{grid-column:1/-1}
     .maintenance-temporary-fields .maintenance-project-explanation{grid-column:1/-1}
     .maintenance-remove-temp-report{align-self:end;min-width:0;color:var(--danger)}
     .maintenance-work-role-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:7px;min-width:0}
@@ -1047,10 +1081,11 @@
     .maintenance-work-role strong{font-size:12px;color:var(--ink)}
     .maintenance-work-role small{font-size:10px;color:#0F6B7D;font-weight:750;white-space:nowrap}
     .maintenance-work-role em{min-width:0;min-height:1.3em;overflow-wrap:anywhere;word-break:break-word;color:#075E70;font-size:10px;font-style:normal;font-weight:650;line-height:1.3}
-    .maintenance-work-report-dialog .maintenance-people-picker{min-height:100px;max-height:min(42vh,390px)}
+    .maintenance-work-report-dialog .maintenance-people-picker{min-height:100px;max-height:min(42vh,390px);gap:5px}
+    .maintenance-work-report-dialog .maintenance-person-row{min-height:44px;padding:4px 8px;box-sizing:border-box;gap:8px}
     .maintenance-work-report-dialog .maintenance-picker-tools{grid-template-columns:minmax(110px,150px) auto minmax(160px,1fr)}
     .maintenance-work-feedback{display:grid;gap:5px;color:var(--muted);font-size:11px}
-    .maintenance-work-feedback textarea{width:100%;min-width:0;min-height:70px;box-sizing:border-box}
+    .maintenance-work-feedback textarea{width:100%;height:64px;min-width:0;min-height:64px;box-sizing:border-box;line-height:1.4;overflow:auto;resize:vertical}
     .maintenance-work-report-actions{flex-shrink:0}
     .maintenance-release-confirm-dialog{width:min(360px,90vw);max-width:90vw}
     .maintenance-release-confirm-body{width:100%;max-width:100%;box-sizing:border-box;overflow:hidden;outline:none}
@@ -1277,14 +1312,14 @@
     button.personal-metric-card{cursor:pointer}
     button.personal-metric-card:hover,button.personal-metric-card:focus-visible{border-color:#83B7C4;outline:none;box-shadow:0 0 0 2px rgba(15,107,125,.1)}
     .personal-metric-card>span{color:#52657A;font-size:15px;font-weight:750}
-    .personal-metric-card>strong{min-width:0;color:#172231;font-size:32px;line-height:1;font-weight:850;overflow-wrap:anywhere}
-    .personal-metric-card>strong small{margin-left:5px;color:#657687;font-size:14px;font-weight:650}
+    .personal-metric-card>strong{display:inline-flex;align-items:baseline;gap:5px;min-width:0;color:#172231;font-size:30px;line-height:1;font-weight:850;white-space:nowrap;overflow-wrap:normal}
+    .personal-metric-card>strong small{margin-left:0;color:#657687;font-size:14px;font-weight:650;white-space:nowrap}
     .personal-metric-card>em{color:#8A98A6;font-size:10px;font-style:normal}
     .personal-metric-pending{display:block;color:#9A6700!important;font-size:10px!important;font-weight:750;line-height:1.35}
     button.personal-metric-pending{width:max-content;max-width:100%;padding:0;border:0;background:transparent;font:inherit;cursor:pointer;text-align:left}
     .personal-metric-main-action{display:grid;gap:7px;min-width:0;padding:0;border:0;background:transparent;font:inherit;text-align:left;cursor:pointer}
-    .personal-metric-main-action strong{min-width:0;color:#0F6B7D;font-size:32px;line-height:1;font-weight:850;overflow-wrap:anywhere}
-    .personal-metric-main-action strong small{margin-left:5px;color:#657687;font-size:14px;font-weight:650}
+    .personal-metric-main-action strong{display:inline-flex;align-items:baseline;gap:5px;min-width:0;color:#0F6B7D;font-size:30px;line-height:1;font-weight:850;white-space:nowrap;overflow-wrap:normal}
+    .personal-metric-main-action strong small{margin-left:0;color:#657687;font-size:14px;font-weight:650;white-space:nowrap}
     .personal-metric-main-action em{color:#8A98A6;font-size:10px;font-style:normal}
     .personal-metric-card.actionable>strong{color:#0F6B7D}
     .maintenance-comparison-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
@@ -1360,11 +1395,17 @@
     .maintenance-personal-detail-list strong{color:#243746;font-size:12px}
     .maintenance-personal-detail-list span{color:#71808E;font-size:11px}
     .maintenance-personal-detail-list b{color:#0F6B7D;font-size:12px;white-space:nowrap}
-    .maintenance-personal-detail-list article.maintenance-hour-detail-group{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding:12px 3px}
+    .maintenance-personal-detail-list article.maintenance-hour-detail-group{display:block;padding:4px 3px}
+    .maintenance-detail-group-toggle{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 12px;width:100%;min-width:0;padding:8px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+    .maintenance-detail-group-toggle:hover,.maintenance-detail-group-toggle:focus-visible{background:#F7FAFB;outline:2px solid #B9D5DD;outline-offset:-2px;border-radius:6px}
+    .maintenance-detail-group-heading{display:grid;gap:3px;min-width:0}
     .maintenance-detail-group-total{align-content:start;text-align:right}
     .maintenance-detail-group-total span{font-size:10px}
     .maintenance-detail-group-total small{color:#71808E;font-size:9px;white-space:nowrap}
-    .maintenance-detail-work-items{grid-column:1/-1;display:grid!important;gap:0!important;min-width:0;border-top:1px dashed #DDE7ED;text-align:left!important}
+    .maintenance-detail-group-total i{display:inline-block;width:7px;height:7px;margin:0 3px 2px 7px;border-right:1.5px solid #71808E;border-bottom:1.5px solid #71808E;transform:rotate(45deg);transition:transform .15s ease}
+    .maintenance-detail-group-toggle[aria-expanded="true"] .maintenance-detail-group-total i{margin-bottom:-2px;transform:rotate(225deg)}
+    .maintenance-detail-work-items{display:grid!important;gap:4px!important;min-width:0;padding-top:4px;border-top:1px dashed #DDE7ED;text-align:left!important}
+    .maintenance-detail-work-items[hidden]{display:none!important}
     .maintenance-detail-work-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;padding:7px 0;border-bottom:1px dashed #E7EDF2}
     .maintenance-detail-work-item:last-child{border-bottom:0;padding-bottom:0}
     .maintenance-detail-work-items .maintenance-detail-work-item>div{display:flex;align-items:center;gap:6px;min-width:0}
@@ -1372,6 +1413,12 @@
     .maintenance-detail-work-item strong{font-size:11px;color:#52657A}
     .maintenance-detail-work-item span{font-size:10px}
     .maintenance-detail-work-item b{font-size:11px}
+    .maintenance-detail-work-item.routine{padding-right:7px;padding-left:7px;border-left:3px solid #86C99B;border-radius:5px;background:#F3FAF5}
+    .maintenance-detail-work-item.nonroutine{padding-right:7px;padding-left:7px;border-left:3px solid #E5B867;border-radius:5px;background:#FFF8EA}
+    .maintenance-detail-work-item.routine:last-child,.maintenance-detail-work-item.nonroutine:last-child{padding-bottom:7px}
+    button.maintenance-hour-audit-trigger{width:100%;border:0;background:transparent;text-align:left;font:inherit;cursor:pointer}
+    button.maintenance-hour-audit-trigger:hover,button.maintenance-hour-audit-trigger:focus-visible{background:#F1F8FA;outline:2px solid #9ECAD6;outline-offset:-2px}
+    .maintenance-personal-audit-detail{grid-column:1/-1;overflow-wrap:anywhere}
     .maintenance-detail-status{justify-self:end;width:max-content;padding:2px 5px;border-radius:4px;font-size:9px!important;font-style:normal;font-weight:800}
     .maintenance-detail-status.confirmed{background:#E7F6EB;color:#277344!important}
     .maintenance-detail-status.pending{background:#FFF2D8;color:#9A5B00!important}
@@ -1420,15 +1467,22 @@
       .maintenance-personal-metrics{gap:6px}
       .personal-metric-card{min-height:116px;padding:10px}
       .personal-metric-card>span{font-size:13px}
-      .personal-metric-card>strong{font-size:25px}
-      .personal-metric-card>strong small{display:block;margin:5px 0 0;font-size:11px}
-      .personal-metric-main-action strong{font-size:25px}
-      .personal-metric-main-action strong small{display:block;margin:5px 0 0;font-size:11px}
+      .personal-metric-card>strong{font-size:23px}
+      .personal-metric-card>strong small{margin:0;font-size:11px}
+      .personal-metric-main-action strong{font-size:23px}
+      .personal-metric-main-action strong small{margin:0;font-size:11px}
       .maintenance-review-head h2{flex-wrap:wrap;line-height:1.25}
       .maintenance-review-head h2 small{flex-basis:100%;max-width:100%}
       .maintenance-review-person{grid-template-columns:minmax(78px,1fr) minmax(0,1fr) max-content}
       .maintenance-review-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
       .maintenance-review-actions [data-maint-review-confirm]{grid-column:1/-1}
+    }
+    @media(max-width:360px){
+      .maintenance-personal-metrics{gap:4px}
+      .personal-metric-card{padding-right:6px;padding-left:6px}
+      .personal-metric-card>span{font-size:12px}
+      .personal-metric-card>strong,.personal-metric-main-action strong{gap:3px}
+      .personal-metric-card>strong small,.personal-metric-main-action strong small{font-size:10px}
     }
     @media(max-width:760px){
       input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
@@ -1543,7 +1597,7 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260911-report-person-groups-1"></script>
+  <script src="app.js?v=20260921-report-dialog-compact-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

@@ -544,6 +544,7 @@ async function initDb() {
       id text primary key,
       date text,
       flight_no text,
+      departure_flight_no text,
       aircraft_no text,
       aircraft_type text,
       stand text,
@@ -752,6 +753,7 @@ async function initDb() {
   ensureColumn("records", "publisher_id", "text");
   ensureColumn("records", "imported_read", "integer default 0");
   ensureColumn("maintenance_flights", "report_finalized_by", "text");
+  ensureColumn("maintenance_flights", "departure_flight_no", "text");
   ensureColumn("maintenance_flights", "report_finalized_by_name", "text");
   ensureColumn("maintenance_flights", "report_finalized_at", "text");
   ensureColumn("maintenance_flights", "archived_at", "text");
@@ -797,6 +799,8 @@ async function initDb() {
   normalizeMaintenanceRoleRules();
   normalizeMaintenanceRoutineRatioRules();
   migrateMaintenanceSubtaskRoles();
+  normalizeMaintenanceTowAndPrimaryRole();
+  normalizeMaintenanceNonroutineCombinationRules();
   migrateMaintenanceReleaseResults();
   migrateMaintenanceThreeLineReports();
   reconcileActiveMaintenanceStatuses();
@@ -846,7 +850,7 @@ function normalizeMaintenanceStatuses() {
 function normalizeMaintenanceNonroutineCategories() {
   db.prepare(`update maintenance_subtasks
     set category='其他'
-    where category is null or trim(category)='' or category not in ('工卡指令','单项工作','其他')`).run();
+    where category is null or trim(category)='' or category not in ('工卡指令','单项工作','拖机','其他')`).run();
 }
 
 function migrateMaintenanceThreeLineReports() {
@@ -977,6 +981,10 @@ function maintenanceRoutineRuleName(opportunity, role) {
 
 function maintenanceRulesResponse() {
   return db.prepare("select * from maintenance_hour_rules order by rule_type,name").all().map(row => {
+    if (row.rule_type === "nonroutineCombinationRatio") {
+      const [combination, role] = row.name.split("::");
+      return { ...row, combination, role };
+    }
     if (row.rule_type !== "routineRatio") return row;
     const separator = String(row.name || "").indexOf("::");
     return {
@@ -985,6 +993,66 @@ function maintenanceRulesResponse() {
       role: separator >= 0 ? row.name.slice(separator + 2) : ""
     };
   });
+}
+
+const maintenanceNonroutineRoleOrder = ["主做", "检验", "辅助"];
+const maintenanceNonroutineCombinations = [
+  ["主做", "检验", "辅助"], ["主做", "检验"], ["主做", "辅助"],
+  ["检验", "辅助"], ["主做"], ["检验"], ["辅助"]
+];
+
+function maintenanceNonroutineCombinationName(roles) {
+  return maintenanceNonroutineRoleOrder.filter(role => roles.includes(role)).join("+");
+}
+
+function maintenanceNormalizedRatioCents(weights) {
+  const positive = weights.map(value => Math.max(0, Number(value) || 0));
+  const sum = positive.reduce((total, value) => total + value, 0);
+  if (!sum) return positive.map((_, index) => index === 0 ? 100 : 0);
+  const raw = positive.map(value => value * 100 / sum);
+  const cents = raw.map(Math.floor);
+  const order = raw.map((value, index) => ({ index, fraction: value - cents[index] }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+  for (let remaining = 100 - cents.reduce((total, value) => total + value, 0), index = 0; remaining > 0; remaining--, index++) cents[order[index].index]++;
+  return cents;
+}
+
+function normalizeMaintenanceNonroutineCombinationRules() {
+  const legacy = maintenanceNonroutineRoleOrder.map((role, index) => {
+    const value = Number(db.prepare("select value from maintenance_hour_rules where rule_type='roleRatio' and name=?").get(role)?.value);
+    return Number.isFinite(value) && value >= 0 ? value : [0.4, 0.3, 0.3][index];
+  });
+  const weights = legacy.some(value => value > 0) ? legacy : [0.4, 0.3, 0.3];
+  const insert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do nothing");
+  for (const roles of maintenanceNonroutineCombinations) {
+    const name = maintenanceNonroutineCombinationName(roles);
+    const values = roles.length === 1 ? [100] : name === "主做+检验" ? [60, 40]
+      : maintenanceNormalizedRatioCents(roles.map(role => weights[maintenanceNonroutineRoleOrder.indexOf(role)]));
+    roles.forEach((role, index) => insert.run(randomId("mtnr"), "nonroutineCombinationRatio", `${name}::${role}`, values[index] / 100, now(), now()));
+  }
+}
+
+function validateMaintenanceNonroutineCombinationRules(rows) {
+  const values = new Map();
+  for (const row of rows) {
+    const combination = String(row.combination || "").trim();
+    const role = String(row.role || "").trim();
+    const allowed = maintenanceNonroutineCombinations.find(roles => maintenanceNonroutineCombinationName(roles) === combination);
+    if (!allowed?.includes(role)) throw maintenanceDispatchError("非例行工种组合无效");
+    const value = Number(row.value);
+    if (!Number.isFinite(value) || value < 0 || value > 1 || Math.abs(value * 100 - Math.round(value * 100)) > 1e-8) {
+      throw maintenanceDispatchError(`${combination}的${role}比例必须为0到1且最多保留两位小数`);
+    }
+    const key = `${combination}::${role}`;
+    if (values.has(key)) throw maintenanceDispatchError(`${combination}的${role}比例重复`);
+    values.set(key, value);
+  }
+  for (const roles of maintenanceNonroutineCombinations) {
+    const combination = maintenanceNonroutineCombinationName(roles);
+    if (roles.some(role => !values.has(`${combination}::${role}`))) throw maintenanceDispatchError(`${combination}的比例不完整`);
+    const total = roles.reduce((sum, role) => sum + values.get(`${combination}::${role}`), 0);
+    if (Math.abs(total - 1) > 1e-8) throw maintenanceDispatchError(`${combination}的比例合计必须为1`);
+  }
 }
 
 function validateMaintenanceRoutineRules(rows) {
@@ -1106,7 +1174,7 @@ function migrateMaintenanceReleaseResults() {
 function migrateMaintenanceSubtaskRoles() {
   const migrationKey = "maintenance_subtask_roles_v1";
   if (settingValue(migrationKey, null)) return;
-  const defaults = new Map([["主作", 0.4], ["检验", 0.3], ["辅助", 0.3]]);
+  const defaults = new Map([["主做", 0.4], ["检验", 0.3], ["辅助", 0.3]]);
   const upsert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do update set value=excluded.value,updated_at=excluded.updated_at");
   const counts = {
     assignments: db.prepare("select count(*) as count from maintenance_assignments where owner_type='subtask'").get().count,
@@ -1124,6 +1192,53 @@ function migrateMaintenanceSubtaskRoles() {
     db.prepare("update maintenance_subtasks set status='未派工',updated_at=?").run(now());
     maintenanceLog(null, "migrate_subtask_roles", "system", migrationKey, "", JSON.stringify({ ...counts, roles: Object.fromEntries(defaults) }));
     setSetting(migrationKey, { completedAt: now(), ...counts });
+    db.exec("commit");
+  } catch (error) {
+    try { db.exec("rollback"); } catch {}
+    throw error;
+  }
+}
+
+function normalizeMaintenanceTowAndPrimaryRole() {
+  const legacy = "主作";
+  const current = "主做";
+  const stamp = now();
+  const legacyRule = db.prepare("select value from maintenance_hour_rules where rule_type='roleRatio' and name=?").get(legacy);
+  const currentRule = db.prepare("select id from maintenance_hour_rules where rule_type='roleRatio' and name=?").get(current);
+  db.exec("begin immediate");
+  try {
+    if (!currentRule) {
+      db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?)")
+        .run(randomId("mtnr"), "roleRatio", current, Number(legacyRule?.value ?? 0.4), stamp, stamp);
+    }
+    db.prepare("delete from maintenance_hour_rules where rule_type='roleRatio' and name=?").run(legacy);
+    for (const table of ["maintenance_assignments", "maintenance_feedback", "maintenance_hour_results"]) {
+      db.prepare(`update ${table} set role=? where role=?`).run(current, legacy);
+    }
+    for (const row of db.prepare("select * from maintenance_report_entries where role=?").all(legacy)) {
+      const duplicate = db.prepare("select 1 from maintenance_report_entries where batch_id=? and owner_type=? and owner_id=? and role=? and user_id=?")
+        .get(row.batch_id, row.owner_type, row.owner_id, current, row.user_id);
+      if (duplicate) db.prepare("delete from maintenance_report_entries where id=?").run(row.id);
+      else db.prepare("update maintenance_report_entries set role=? where id=?").run(current, row.id);
+    }
+    for (const row of db.prepare("select * from maintenance_work_report_entries where role=?").all(legacy)) {
+      const duplicate = db.prepare("select 1 from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").get(row.flight_id, current, row.user_id);
+      if (duplicate) db.prepare("delete from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").run(row.flight_id, legacy, row.user_id);
+      else db.prepare("update maintenance_work_report_entries set role=? where flight_id=? and role=? and user_id=?").run(current, row.flight_id, legacy, row.user_id);
+    }
+    const normalizeDraftValue = value => {
+      if (Array.isArray(value)) return value.map(normalizeDraftValue);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeDraftValue(item)]));
+      return value === legacy ? current : value;
+    };
+    for (const draft of db.prepare("select id,payload_json from maintenance_report_drafts where payload_json like ?").all(`%${legacy}%`)) {
+      try {
+        db.prepare("update maintenance_report_drafts set payload_json=?,updated_at=? where id=?")
+          .run(JSON.stringify(normalizeDraftValue(JSON.parse(draft.payload_json || "{}"))), stamp, draft.id);
+      } catch {}
+    }
+    db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do nothing")
+      .run(randomId("mtnr"), "nonroutineCategoryHours", "拖机", 3, stamp, stamp);
     db.exec("commit");
   } catch (error) {
     try { db.exec("rollback"); } catch {}
@@ -1473,10 +1588,15 @@ function maintenanceRolesForOpportunity(value) {
   return combined;
 }
 
-const maintenanceSubtaskRoles = ["主作", "检验", "辅助"];
+const maintenanceSubtaskRoles = ["主做", "检验", "辅助"];
+
+function normalizeMaintenanceSubtaskRole(value) {
+  const role = String(value || "").trim();
+  return role === "主作" ? "主做" : role;
+}
 
 function maintenanceRolesForOwner(ownerType, owner) {
-  if (ownerType === "subtask") return maintenanceSubtaskRoles;
+  if (ownerType === "subtask") return owner?.category === "拖机" ? ["主做"] : maintenanceSubtaskRoles;
   return maintenanceRolesForOpportunity(owner?.work_kind || owner?.work_type || "其他");
 }
 
@@ -1505,7 +1625,7 @@ function normalizeMaintenanceAssignments(ownerType, owner, assignments) {
     const person = people.get(userId);
     if (!person) throw maintenanceDispatchError("派工人员不存在或已停用");
     const rawRole = String(item.role || "").trim();
-    const role = aliases[rawRole] || rawRole;
+    const role = ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(rawRole) : (aliases[rawRole] || rawRole);
     if (!allowed.includes(role)) throw maintenanceDispatchError(`${ownerType === "subtask" ? "非例行" : "当前维修机会"}不支持“${role || "未设置"}”类别`);
     const key = `${userId}\u0000${role}`;
     if (seen.has(key)) continue;
@@ -1524,7 +1644,9 @@ function maintenanceFlightPayload(input = {}) {
   const maintenanceOpportunity = allowedOpportunities.includes(rawOpportunity) ? rawOpportunity : "其他";
   return {
     date: String(input.date || input["日期"] || "").trim(),
-    flightNo: String(input.flightNo || input.flight_no || input["航班号"] || "").trim(),
+    flightNo: String(input.flightNo || input.flight_no || input["航班号"] || input["进港航班号"] || "").trim(),
+    departureFlightNo: ["departureFlightNo", "departure_flight_no", "出港航班号"].some(key => Object.hasOwn(input, key))
+      ? String(input.departureFlightNo ?? input.departure_flight_no ?? input["出港航班号"] ?? "").trim() : undefined,
     aircraftNo: String(input.aircraftNo || input.aircraft_no || input["机号"] || "").trim(),
     aircraftType: String(input.aircraftType || input.aircraft_type || input["机型"] || "A320").trim(),
     stand: String(input.stand || input["机位"] || "").trim(),
@@ -1704,7 +1826,7 @@ function insertMaintenanceAssignment({
 }
 
 const maintenanceReportTypes = ["release", "routine", "nonroutine"];
-const maintenanceNonroutineCategories = ["工卡指令", "单项工作", "其他"];
+const maintenanceNonroutineCategories = ["工卡指令", "单项工作", "拖机", "其他"];
 
 function maintenanceReportBatch(flightId, reportType) {
   const row = db.prepare("select * from maintenance_report_batches where flight_id=? and report_type=?").get(flightId, reportType);
@@ -1785,18 +1907,22 @@ function writeMaintenanceReportDraft(flightId, reportType, payload, user, curren
 
 function normalizeMaintenanceNonroutineDraft(payload) {
   const people = new Set(allPeople().map(person => person.id));
-  const items = (Array.isArray(payload?.items) ? payload.items : []).slice(0, 30).map(raw => ({
-    clientId: String(raw?.clientId || randomId("mtnrditem")).slice(0, 120),
-    chapter: String(raw?.chapter || raw?.cardNo || "").slice(0, 200),
-    title: String(raw?.title || "").slice(0, 500),
-    category: maintenanceNonroutineCategories.includes(String(raw?.category || "")) ? String(raw.category) : "其他",
-    standardHours: raw?.standardHours === "" || raw?.standardHours === null || raw?.standardHours === undefined ? "" : Number(raw.standardHours),
-    reportExplanation: String(raw?.reportExplanation || raw?.content || "").slice(0, 4000),
-    entries: (Array.isArray(raw?.entries) ? raw.entries : [])
-      .filter(entry => maintenanceSubtaskRoles.includes(String(entry?.role || "")) && people.has(String(entry?.userId || "")))
-      .map(entry => ({ role: String(entry.role), userId: String(entry.userId) }))
-      .filter((entry, index, entries) => entries.findIndex(item => item.role === entry.role && item.userId === entry.userId) === index)
-  }));
+  const items = (Array.isArray(payload?.items) ? payload.items : []).slice(0, 30).map(raw => {
+    const category = maintenanceNonroutineCategories.includes(String(raw?.category || "")) ? String(raw.category) : "其他";
+    const allowedRoles = new Set(category === "拖机" ? ["主做"] : maintenanceSubtaskRoles);
+    return {
+      clientId: String(raw?.clientId || randomId("mtnrditem")).slice(0, 120),
+      chapter: String(raw?.chapter || raw?.cardNo || "").slice(0, 200),
+      title: String(raw?.title || "").slice(0, 500),
+      category,
+      standardHours: raw?.standardHours === "" || raw?.standardHours === null || raw?.standardHours === undefined ? "" : Number(raw.standardHours),
+      reportExplanation: String(raw?.reportExplanation || raw?.content || "").slice(0, 4000),
+      entries: (Array.isArray(raw?.entries) ? raw.entries : [])
+        .map(entry => ({ role: normalizeMaintenanceSubtaskRole(entry?.role), userId: String(entry?.userId || "") }))
+        .filter(entry => allowedRoles.has(entry.role) && people.has(entry.userId))
+        .filter((entry, index, entries) => entries.findIndex(item => item.role === entry.role && item.userId === entry.userId) === index)
+    };
+  });
   return { items };
 }
 
@@ -2091,6 +2217,7 @@ function publicMaintenanceFlight(row) {
     id: row.id,
     date: row.date || "",
     flightNo: row.flight_no || "",
+    departureFlightNo: row.departure_flight_no || "",
     aircraftNo: row.aircraft_no || "",
     aircraftType: row.aircraft_type || "",
     stand: row.stand || "",
@@ -2265,6 +2392,7 @@ function publicMaintenanceBatch(rows, scope, user) {
       id: row.id,
       date: row.date || "",
       flightNo: row.flight_no || "",
+      departureFlightNo: row.departure_flight_no || "",
       aircraftNo: row.aircraft_no || "",
       aircraftType: row.aircraft_type || "",
       stand: row.stand || "",
@@ -2333,11 +2461,11 @@ function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
   }
   if (filters.search) {
     const term = `%${filters.search.toLowerCase()}%`;
-    conditions.push(`(lower(coalesce(flight_no,'')) like ? or lower(coalesce(aircraft_no,'')) like ?
+    conditions.push(`(lower(coalesce(flight_no,'')) like ? or lower(coalesce(departure_flight_no,'')) like ? or lower(coalesce(aircraft_no,'')) like ?
       or lower(coalesce(aircraft_type,'')) like ? or lower(coalesce(stand,'')) like ?
       or lower(coalesce(work_kind,'')) like ? or exists (select 1 from maintenance_assignments search_assignment
         where search_assignment.flight_id=maintenance_flights.id and lower(search_assignment.user_name) like ?))`);
-    params.push(term, term, term, term, term, term);
+    params.push(term, term, term, term, term, term, term);
   }
   const limit = Number.isFinite(filters.limit) ? Math.max(1, Math.min(500, filters.limit)) : 0;
   const offset = limit ? Math.max(0, Number(filters.cursor || 0)) : 0;
@@ -2378,14 +2506,22 @@ function maintenanceRoutineRoleRatioRule(opportunity, role) {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function maintenanceRatioForOwner(ownerType, owner, role) {
-  if (ownerType === "subtask") return maintenanceRoleRatio(role);
+function maintenanceRatioForOwner(ownerType, owner, role, assignments = []) {
+  if (ownerType === "subtask") return owner?.category === "拖机" ? (normalizeMaintenanceSubtaskRole(role) === "主做" ? 1 : 0)
+    : maintenanceRatioRuleForOwner(ownerType, owner, role, assignments) ?? 0;
   return maintenanceRoutineRoleRatioRule(owner?.work_kind || owner?.work_type || "其他", role) ?? 0;
 }
 
-function maintenanceRatioRuleForOwner(ownerType, owner, role) {
+function maintenanceRatioRuleForOwner(ownerType, owner, role, assignments = []) {
+  if (ownerType === "subtask" && owner?.category !== "拖机") {
+    const combination = maintenanceNonroutineCombinationName(assignments.map(item => normalizeMaintenanceSubtaskRole(item.role)));
+    const row = db.prepare("select value from maintenance_hour_rules where rule_type='nonroutineCombinationRatio' and name=?")
+      .get(`${combination}::${normalizeMaintenanceSubtaskRole(role)}`);
+    const value = Number(row?.value);
+    return row && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  }
   return ownerType === "subtask"
-    ? maintenanceRoleRatioRule(role)
+    ? (normalizeMaintenanceSubtaskRole(role) === "主做" ? 1 : null)
     : maintenanceRoutineRoleRatioRule(owner?.work_kind || owner?.work_type || "其他", role);
 }
 
@@ -2394,6 +2530,44 @@ function maintenanceBaseHours(ownerType, owner) {
   const opportunity = owner?.work_kind || owner?.work_type || "其他";
   const row = db.prepare("select value from maintenance_hour_rules where rule_type='workType' and name=?").get(opportunity);
   return Number(row?.value || 0) || 0;
+}
+
+function maintenanceCalculatedHours(ownerType, owner, assignments) {
+  const baseHours = maintenanceBaseHours(ownerType, owner);
+  if (ownerType === "subtask" && owner?.category === "拖机") {
+    const ordered = [...assignments].sort((a, b) => String(a.assigned_at || "").localeCompare(String(b.assigned_at || "")) || String(a.id).localeCompare(String(b.id)));
+    const totalCents = Math.round(baseHours * 100);
+    const baseCents = Math.floor(totalCents / Math.max(1, ordered.length));
+    let remainder = totalCents - baseCents * ordered.length;
+    return new Map(ordered.map(item => [item.id, (baseCents + (remainder-- > 0 ? 1 : 0)) / 100]));
+  }
+  if (ownerType === "subtask") {
+    const totalCents = Math.round(baseHours * 100);
+    const roles = maintenanceNonroutineRoleOrder.filter(role => assignments.some(item => normalizeMaintenanceSubtaskRole(item.role) === role));
+    if (!roles.length) return new Map();
+    const raw = roles.map(role => totalCents * maintenanceRatioForOwner(ownerType, owner, role, assignments));
+    const roleCents = raw.map(Math.floor);
+    const order = raw.map((value, index) => ({ index, fraction: value - roleCents[index] }))
+      .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+    for (let remaining = totalCents - roleCents.reduce((sum, value) => sum + value, 0), index = 0; remaining > 0; remaining--, index++) roleCents[order[index].index]++;
+    const result = new Map();
+    roles.forEach((role, index) => {
+      const people = assignments.filter(item => normalizeMaintenanceSubtaskRole(item.role) === role)
+        .sort((left, right) => String(left.assigned_at || "").localeCompare(String(right.assigned_at || "")) || String(left.id).localeCompare(String(right.id)));
+      const shared = Math.floor(roleCents[index] / people.length);
+      const remainder = roleCents[index] % people.length;
+      people.forEach((item, personIndex) => result.set(item.id, (shared + (personIndex < remainder ? 1 : 0)) / 100));
+    });
+    return result;
+  }
+  const counts = assignments.reduce((result, item) => {
+    result[item.role] = (result[item.role] || 0) + 1;
+    return result;
+  }, {});
+  return new Map(assignments.map(item => [
+    item.id,
+    Number(((baseHours * maintenanceRatioForOwner(ownerType, owner, item.role)) / Math.max(1, counts[item.role] || 1)).toFixed(2))
+  ]));
 }
 
 function updateMaintenanceOwnerStatus(ownerType, ownerId, status, userId = "") {
@@ -2460,18 +2634,12 @@ function regenerateMaintenanceHours(ownerType, ownerId, resultStatus = "待复�
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? and status=? and role<>'放行'").all(ownerType, ownerId, resultStatus);
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=? and status=?").run(ownerType, ownerId, resultStatus);
   if (!assignments.length) return maintenanceHours(ownerType, ownerId);
-  const counts = assignments.reduce((acc, row) => {
-    acc[row.role] = (acc[row.role] || 0) + 1;
-    return acc;
-  }, {});
   const insert = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     on conflict(owner_type,owner_id,assignment_id) do update set user_name=excluded.user_name,team=excluded.team,role=excluded.role,source=excluded.source,hours=excluded.hours,status=excluded.status,confirmed_by='',confirmed_at='',updated_at=excluded.updated_at`);
-  const baseHours = maintenanceBaseHours(ownerType, owner);
+  const calculatedHours = maintenanceCalculatedHours(ownerType, owner, assignments);
   for (const item of assignments) {
-    const ratio = maintenanceRatioForOwner(ownerType, owner, item.role);
-    const hours = (baseHours * ratio) / Math.max(1, counts[item.role] || 1);
-    insert.run(randomId("mtnh"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.user_id, item.user_name, item.team || "", item.role, ownerType === "subtask" ? "非例行" : "维修机会", Number(hours.toFixed(2)), null, resultStatus, "", "", now(), now());
+    insert.run(randomId("mtnh"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.user_id, item.user_name, item.team || "", item.role, ownerType === "subtask" ? "非例行" : "维修机会", calculatedHours.get(item.id) || 0, null, resultStatus, "", "", now(), now());
   }
   return maintenanceHours(ownerType, ownerId);
 }
@@ -2538,10 +2706,7 @@ function maintenanceReviewTask(ownerType, owner, flight) {
   const baseHours = maintenanceBaseHours(ownerType, owner);
   const allowedRoles = maintenanceRolesForOwner(ownerType, ownerType === "flight" ? flight : owner);
   const archivedFlight = flight.status === "已确认" || Boolean(flight.archived_at);
-  const counts = assignments.reduce((result, row) => {
-    result[row.role] = (result[row.role] || 0) + 1;
-    return result;
-  }, {});
+  const calculatedHours = maintenanceCalculatedHours(ownerType, owner, assignments.filter(row => row.role !== "放行"));
   return {
     ownerType,
     ownerId: owner.id,
@@ -2552,13 +2717,13 @@ function maintenanceReviewTask(ownerType, owner, flight) {
     baseHoursSource: ownerType === "flight" ? `维修机会规则 · ${flight.work_kind || flight.work_type || "其他"}` : "非例行标准工时",
     editable: ["已提报", "待复核", "已确认"].includes(owner.status || "未派工") || (archivedFlight && ownerType === "subtask"),
     archiveCorrection: archivedFlight && ownerType === "subtask" && owner.status !== "已确认",
-    roles: allowedRoles.map(role => ({ role, metricType: role === "放行" ? "sorties" : "hours", ratio: role === "放行" ? null : maintenanceRatioForOwner(ownerType, owner, role) })),
+    roles: allowedRoles.map(role => ({ role, metricType: role === "放行" ? "sorties" : "hours", ratio: role === "放行" ? null : maintenanceRatioForOwner(ownerType, owner, role, assignments) })),
     assignments: assignments.map(row => {
       const savedHour = hourByAssignment.get(row.id);
       const savedSortie = sortieByAssignment.get(row.id);
       const isRelease = row.role === "放行";
-      const ruleHours = isRelease ? 0 : (baseHours * maintenanceRatioForOwner(ownerType, owner, row.role)) / Math.max(1, counts[row.role] || 1);
-      return { ...row, metricType: isRelease ? "sorties" : "hours", ruleHours: Number(ruleHours.toFixed(2)), reportedHours: isRelease ? 0 : (savedHour ? savedHour.finalHours : Number(ruleHours.toFixed(2))), reportedSorties: isRelease ? (savedSortie?.sorties || 0) : 0, resultStatus: savedHour?.status || savedSortie?.status || row.status };
+      const ruleHours = isRelease ? 0 : (calculatedHours.get(row.id) || 0);
+      return { ...row, metricType: isRelease ? "sorties" : "hours", ruleHours, reportedHours: isRelease ? 0 : (savedHour ? savedHour.finalHours : ruleHours), reportedSorties: isRelease ? (savedSortie?.sorties || 0) : 0, resultStatus: savedHour?.status || savedSortie?.status || row.status };
     })
   };
 }
@@ -2609,7 +2774,7 @@ function maintenanceReviewTaskPayloads(flightId, tasks, { archiveMode = false } 
     const current = maintenanceAssignments(ownerType, ownerId);
     if (!["已提报", "待复核", "已确认"].includes(owner.status || "未派工")) {
       const currentKeys = current.map(row => `${row.userId}\u0000${row.role}`).sort().join("|");
-      const submittedKeys = (Array.isArray(raw.assignments) ? raw.assignments : []).map(row => `${String(row.userId || "").trim()}\u0000${String(row.role || "").trim()}`).sort().join("|");
+      const submittedKeys = (Array.isArray(raw.assignments) ? raw.assignments : []).map(row => `${String(row.userId || "").trim()}\u0000${ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(row.role) : String(row.role || "").trim()}`).sort().join("|");
       if (!archiveMode || ownerType !== "subtask") {
         if (currentKeys !== submittedKeys) throw maintenanceReviewError(`${ownerType === "flight" ? "主任务" : owner.title || "非例行"}尚未完成，不能在复核中修改人员`);
         return { ownerType, ownerId, owner, current, normalized: current.map(row => ({ person: allPeople().find(person => person.id === row.userId), role: row.role })).filter(row => row.person), changed: false };
@@ -2648,7 +2813,7 @@ function maintenanceArchivedNewSubtasks(flightId, input, status = "已确认") {
     const normalized = normalizeMaintenanceAssignments("subtask", owner, Array.isArray(raw?.assignments) ? raw.assignments : []);
     if (!normalized.length) throw maintenanceReviewError(`新增非例行 ${index + 1}：请至少选择一名人员`);
     for (const item of normalized) {
-      if (maintenanceRoleRatioRule(item.role) === null) throw maintenanceReviewError(`新增非例行 ${index + 1}：${item.role}缺少有效工时比例`);
+      if (maintenanceRatioRuleForOwner("subtask", owner, item.role, normalized) === null) throw maintenanceReviewError(`新增非例行 ${index + 1}：${item.role}缺少有效工时比例`);
     }
     return { owner, payload, normalized };
   });
@@ -2663,7 +2828,7 @@ function maintenanceReviewConfirmBlockers(rows) {
     const hourRoles = new Set(row.normalized.map(item => item.role).filter(role => role !== "放行"));
     if (hourRoles.size && maintenanceBaseHours(row.ownerType, row.owner) <= 0) blockers.push(`${label}未设置有效标准工时`);
     for (const role of hourRoles) {
-      if (maintenanceRatioRuleForOwner(row.ownerType, row.owner, role) === null) blockers.push(`${label}的${role}比例缺失或无效`);
+      if (maintenanceRatioRuleForOwner(row.ownerType, row.owner, role, row.normalized) === null) blockers.push(`${label}的${role}比例缺失或无效`);
     }
     const currentByKey = new Map(row.current.map(item => [`${item.userId}\u0000${item.role}`, item]));
     row.normalized.forEach(item => {
@@ -2726,11 +2891,7 @@ function rebuildMaintenanceReviewResults(row, manager, mode) {
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? order by user_name").all(row.ownerType, row.ownerId);
   const existingHours = new Map(db.prepare("select * from maintenance_hour_results where owner_type=? and owner_id=?").all(row.ownerType, row.ownerId).map(item => [item.assignment_id, item]));
   const existingSorties = new Map(db.prepare("select * from maintenance_sortie_results where owner_type=? and owner_id=?").all(row.ownerType, row.ownerId).map(item => [item.assignment_id, item]));
-  const counts = assignments.reduce((result, item) => {
-    result[item.role] = (result[item.role] || 0) + 1;
-    return result;
-  }, {});
-  const baseHours = maintenanceBaseHours(row.ownerType, row.owner);
+  const calculatedHours = maintenanceCalculatedHours(row.ownerType, row.owner, assignments.filter(item => item.role !== "放行"));
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
   db.prepare("delete from maintenance_sortie_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
   const insertHour = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
@@ -2746,7 +2907,7 @@ function rebuildMaintenanceReviewResults(row, manager, mode) {
       insertSortie.run(old?.id || randomId("mtnsrt"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.user_id, assignment.user_name, assignment.team || "", "放行", "放行架次", 1, status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
     } else {
       const old = existingHours.get(assignment.id);
-      const calculated = Number(((baseHours * maintenanceRatioForOwner(row.ownerType, row.owner, assignment.role)) / Math.max(1, counts[assignment.role] || 1)).toFixed(2));
+      const calculated = calculatedHours.get(assignment.id) || 0;
       const source = row.resultSource || old?.source || (row.ownerType === "subtask" ? "非例行" : "维修机会");
       insertHour.run(old?.id || randomId("mtnh"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.user_id, assignment.user_name, assignment.team || "", assignment.role, source, calculated, row.changed ? null : (old?.adjusted_hours ?? null), status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
     }
@@ -3040,8 +3201,8 @@ function maintenanceStats(params = {}, user = null) {
   };
 }
 
-const maintenanceReportStatuses = ["已提报", "待复核", "已确认"];
-const maintenanceReportViews = ["dashboard", "people", "opportunities", "personDetails"];
+const maintenanceReportStatuses = ["未派工", "已派工", "已提报", "待复核", "已确认"];
+const maintenanceReportViews = ["dashboard", "people", "opportunities", "nonroutine", "personDetails"];
 
 function maintenanceReportFilters(params = {}) {
   const today = maintenanceDateKey();
@@ -3058,6 +3219,7 @@ function maintenanceReportFilters(params = {}) {
     team: String(params.team || "").trim(),
     userId: String(params.userId || "").trim(),
     opportunity: String(params.opportunity || "").trim(),
+    nonroutineCategory: maintenanceNonroutineCategories.includes(String(params.nonroutineCategory || "")) ? String(params.nonroutineCategory) : "",
     workType,
     status,
     signature,
@@ -3122,6 +3284,18 @@ function maintenanceReportDataset(params = {}) {
   if (needsParticipantMatch || filters.search) {
     const eligibilityRows = filters.workType === "all" ? [...hours, ...sorties] : hours;
     const eligible = new Set(eligibilityRows.map(row => row.flight_id));
+    if (filters.view === "opportunities") {
+      const assignments = db.prepare("select flight_id,owner_type,user_id,user_name,team,role from maintenance_assignments").all();
+      for (const row of assignments) {
+        if (!flightById.has(row.flight_id)) continue;
+        if (filters.team && row.team !== filters.team) continue;
+        if (filters.userId && row.user_id !== filters.userId) continue;
+        if (filters.workType === "routine" && (row.owner_type !== "flight" || row.role === "放行")) continue;
+        if (filters.workType === "nonroutine" && row.owner_type !== "subtask") continue;
+        if (filters.search && ![row.user_id, row.user_name, row.team, row.role].some(value => String(value || "").toLowerCase().includes(filters.search))) continue;
+        eligible.add(row.flight_id);
+      }
+    }
     if (filters.search) {
       for (const [id, flight] of flightById) {
         const text = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
@@ -3180,7 +3354,11 @@ function maintenanceReportDataset(params = {}) {
     routineSignature: maintenanceReportSignatureLabel(flight.routine_electronic_signed),
     nonroutineSignature: (subtasksByFlight.get(flight.id) || []).length ? maintenanceReportSignatureLabel(flight.nonroutine_electronic_signed) : "不适用"
   }]));
-  for (const row of hours) {
+  const wholeHours = db.prepare(`select h.* from maintenance_hour_results h join maintenance_flights f on f.id=h.flight_id where f.date>=? and f.date<=?`)
+    .all(filters.dateFrom, filters.dateTo).filter(row => opportunityMap.has(row.flight_id));
+  const wholeSorties = db.prepare(`select s.* from maintenance_sortie_results s join maintenance_flights f on f.id=s.flight_id where f.date>=? and f.date<=?`)
+    .all(filters.dateFrom, filters.dateTo).filter(row => opportunityMap.has(row.flight_id));
+  for (const row of wholeHours) {
     const item = opportunityMap.get(row.flight_id);
     if (!item) continue;
     const value = finalHours(row);
@@ -3189,12 +3367,16 @@ function maintenanceReportDataset(params = {}) {
     item.totalHours += value;
     item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
   }
-  for (const row of sorties) {
+  for (const row of wholeSorties) {
     const item = opportunityMap.get(row.flight_id);
     if (!item) continue;
     item.sorties += Number(row.sorties || 1);
     item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
     item.releasePeople.add(row.user_name);
+  }
+  for (const row of db.prepare("select flight_id,user_id,user_name,team,role from maintenance_assignments").all()) {
+    const item = opportunityMap.get(row.flight_id);
+    if (item) item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
   }
   const opportunities = [...opportunityMap.values()].map(item => ({
     ...item,
@@ -3247,7 +3429,134 @@ function maintenanceReportSort(rows, view, sort) {
   });
 }
 
+function maintenanceNonroutineAuditRow(row, assignments = null, results = null) {
+  assignments ??= db.prepare("select * from maintenance_assignments where owner_type='subtask' and owner_id=? order by assigned_at,id").all(row.id);
+  results ??= db.prepare("select * from maintenance_hour_results where owner_type='subtask' and owner_id=? order by created_at,id").all(row.id);
+  const byAssignment = new Map(results.map(result => [result.assignment_id, result]));
+  const people = assignments.map(assignment => {
+    const result = byAssignment.get(assignment.id);
+    byAssignment.delete(assignment.id);
+    return { userId: assignment.user_id, userName: assignment.user_name, team: assignment.team || "未设置", role: assignment.role,
+      assignmentStatus: assignment.status, resultHours: result ? Number(result.hours || 0) : null,
+      adjustedHours: result?.adjusted_hours == null ? null : Number(result.adjusted_hours),
+      finalHours: result ? maintenanceFinalHours(result) : null, resultStatus: result?.status || "" };
+  });
+  for (const result of byAssignment.values()) people.push({ userId: result.user_id, userName: result.user_name, team: result.team || "未设置", role: result.role,
+    assignmentStatus: "派工记录缺失", resultHours: Number(result.hours || 0), adjustedHours: result.adjusted_hours == null ? null : Number(result.adjusted_hours),
+    finalHours: maintenanceFinalHours(result), resultStatus: result.status });
+  return { id: row.id, flightId: row.flight_id, date: row.date, flightNo: row.flight_no, aircraftNo: row.aircraft_no,
+    aircraftType: row.aircraft_type, opportunity: row.work_kind || row.work_type || "其他", chapter: row.card_no || "", title: row.title,
+    category: row.category || "其他", reportExplanation: row.content || "", standardHours: Number(row.standard_hours || 0), status: row.status,
+    assignedCount: new Set(assignments.map(item => item.user_id)).size,
+    actualHours: Number(results.reduce((sum, result) => sum + maintenanceFinalHours(result), 0).toFixed(2)),
+    hasResults: results.length > 0, people };
+}
+
+function maintenanceNonroutineAuditRows(rows) {
+  const assignments = new Map();
+  const results = new Map();
+  for (let start = 0; start < rows.length; start += 200) {
+    const ids = rows.slice(start, start + 200).map(row => row.id);
+    const placeholders = ids.map(() => "?").join(",");
+    for (const row of db.prepare(`select * from maintenance_assignments where owner_type='subtask' and owner_id in (${placeholders}) order by assigned_at,id`).all(...ids)) {
+      assignments.set(row.owner_id, [...(assignments.get(row.owner_id) || []), row]);
+    }
+    for (const row of db.prepare(`select * from maintenance_hour_results where owner_type='subtask' and owner_id in (${placeholders}) order by created_at,id`).all(...ids)) {
+      results.set(row.owner_id, [...(results.get(row.owner_id) || []), row]);
+    }
+  }
+  return rows.map(row => maintenanceNonroutineAuditRow(row, assignments.get(row.id) || [], results.get(row.id) || []));
+}
+
+function maintenanceNonroutineAuditQuery(filters, { paged = true } = {}) {
+  const conditions = ["f.date>=?", "f.date<=?", "s.status=?"];
+  const values = [filters.dateFrom, filters.dateTo, filters.status];
+  if (filters.opportunity) { conditions.push("coalesce(nullif(f.work_kind,''),f.work_type)=?"); values.push(filters.opportunity); }
+  if (filters.nonroutineCategory) { conditions.push("s.category=?"); values.push(filters.nonroutineCategory); }
+  if (filters.signature !== "all" && filters.status === "已确认") {
+    const field = filters.signature.startsWith("nonroutine") ? "f.nonroutine_electronic_signed" : "f.routine_electronic_signed";
+    conditions.push(`${field}=?`); values.push(filters.signature.endsWith("Electronic") ? 1 : 0);
+  }
+  if (filters.userId || filters.team) {
+    const matches = [];
+    for (const table of ["maintenance_assignments", "maintenance_hour_results"]) {
+      const parts = [`p.owner_type='subtask'`, "p.owner_id=s.id"];
+      if (filters.userId) { parts.push("p.user_id=?"); values.push(filters.userId); }
+      if (filters.team) { parts.push("p.team=?"); values.push(filters.team); }
+      matches.push(`exists(select 1 from ${table} p where ${parts.join(" and ")})`);
+    }
+    conditions.push(`(${matches.join(" or ")})`);
+  }
+  if (filters.search) {
+    const pattern = `%${filters.search.replace(/[!%_]/g, character => `!${character}`)}%`;
+    conditions.push(`(lower(coalesce(f.flight_no,'') || ' ' || coalesce(f.aircraft_no,'') || ' ' || coalesce(f.work_kind,'') || ' ' || coalesce(f.work_type,'') || ' ' || coalesce(s.card_no,'') || ' ' || coalesce(s.title,'') || ' ' || coalesce(s.category,'') || ' ' || coalesce(s.content,'')) like ? escape '!'
+      or exists(select 1 from maintenance_assignments a left join users u on u.id=a.user_id where a.owner_type='subtask' and a.owner_id=s.id
+        and lower(coalesce(a.user_name,'') || ' ' || coalesce(a.user_id,'') || ' ' || coalesce(u.username,'')) like ? escape '!'))`);
+    values.push(pattern, pattern);
+  }
+  const from = `from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where ${conditions.join(" and ")}`;
+  const total = Number(db.prepare(`select count(*) as count ${from}`).get(...values)?.count || 0);
+  const sort = filters.sort === "date:asc" ? "f.date asc,s.id asc" : filters.sort === "actualHours:desc" || filters.sort === "actualHours:asc"
+    ? `(select coalesce(sum(coalesce(h.adjusted_hours,h.hours)),0) from maintenance_hour_results h where h.owner_type='subtask' and h.owner_id=s.id) ${filters.sort.endsWith("asc") ? "asc" : "desc"},f.date desc,s.id`
+    : "f.date desc,s.id desc";
+  const limit = paged ? " limit ? offset ?" : "";
+  const args = paged ? [...values, filters.pageSize, (filters.page - 1) * filters.pageSize] : values;
+  const rows = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type ${from} order by ${sort}${limit}`).all(...args));
+  return { rows, pagination: { page: filters.page, pageSize: filters.pageSize, total, pages: Math.max(1, Math.ceil(total / filters.pageSize)) } };
+}
+
+function maintenanceNonroutineAuditDetail(id, user) {
+  const row = db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type
+    from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.id=?`).get(id);
+  if (!row) return null;
+  if (!maintenanceCanManage(user)) {
+    const assigned = db.prepare("select 1 from maintenance_assignments where owner_type='subtask' and owner_id=? and user_id=?").get(id, user.id);
+    const result = db.prepare("select 1 from maintenance_hour_results where owner_type='subtask' and owner_id=? and user_id=?").get(id, user.id);
+    if (!assigned && !result) return false;
+  }
+  return maintenanceNonroutineAuditRow(row);
+}
+
+function maintenanceOpportunityAuditDetail(id) {
+  const flight = db.prepare("select * from maintenance_flights where id=?").get(id);
+  if (!flight) return null;
+  const assignments = db.prepare("select * from maintenance_assignments where flight_id=? and owner_type='flight' order by assigned_at,id").all(id);
+  const hours = db.prepare("select * from maintenance_hour_results where flight_id=? and owner_type='flight' order by created_at,id").all(id);
+  const sorties = db.prepare("select * from maintenance_sortie_results where flight_id=? order by created_at,id").all(id);
+  const hourByAssignment = new Map(hours.map(row => [row.assignment_id, row]));
+  const sortieByAssignment = new Map(sorties.map(row => [row.assignment_id, row]));
+  const people = assignments.map(row => {
+    const hour = hourByAssignment.get(row.id);
+    const sortie = sortieByAssignment.get(row.id);
+    hourByAssignment.delete(row.id);
+    sortieByAssignment.delete(row.id);
+    return { userId: row.user_id, userName: row.user_name, team: row.team || "未设置", role: row.role, assignmentStatus: row.status,
+      resultHours: hour ? Number(hour.hours || 0) : null, adjustedHours: hour?.adjusted_hours == null ? null : Number(hour.adjusted_hours),
+      finalHours: hour ? maintenanceFinalHours(hour) : null, resultStatus: hour?.status || sortie?.status || "",
+      sorties: sortie ? Number(sortie.sorties || 0) : null };
+  });
+  for (const row of [...hourByAssignment.values(), ...sortieByAssignment.values()]) {
+    people.push({ userId: row.user_id, userName: row.user_name, team: row.team || "未设置", role: row.role,
+      assignmentStatus: "派工记录缺失", resultHours: row.owner_type === "flight" && row.role !== "放行" ? Number(row.hours || 0) : null,
+      adjustedHours: row.adjusted_hours == null ? null : Number(row.adjusted_hours), finalHours: row.role === "放行" ? null : maintenanceFinalHours(row),
+      resultStatus: row.status, sorties: row.role === "放行" ? Number(row.sorties || 0) : null });
+  }
+  const subtasks = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type
+    from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.flight_id=? order by s.created_at,s.id`).all(id));
+  const routineHours = hours.reduce((sum, row) => sum + maintenanceFinalHours(row), 0);
+  const nonroutineHours = subtasks.reduce((sum, row) => sum + row.actualHours, 0);
+  return { id, date: flight.date, flightNo: flight.flight_no, aircraftNo: flight.aircraft_no, opportunity: flight.work_kind || flight.work_type || "其他",
+    status: flight.status, routineHours: Number(routineHours.toFixed(2)), nonroutineHours: Number(nonroutineHours.toFixed(2)),
+    totalHours: Number((routineHours + nonroutineHours).toFixed(2)), sorties: sorties.reduce((sum, row) => sum + Number(row.sorties || 0), 0),
+    people, subtasks };
+}
+
 function maintenanceReport(params = {}) {
+  const filters = maintenanceReportFilters(params);
+  if (filters.view === "nonroutine") {
+    if (filters.dateFrom > filters.dateTo) [filters.dateFrom, filters.dateTo] = [filters.dateTo, filters.dateFrom];
+    return { filters, ...maintenanceNonroutineAuditQuery(filters) };
+  }
   const data = maintenanceReportDataset(params);
   if (data.filters.view === "personDetails") {
     const byFlightDate = (left, right) => String(right.date || "").localeCompare(String(left.date || ""))
@@ -3336,6 +3645,7 @@ function maintenancePersonalCategory(row) {
   const category = String(row.subtask_category || "").trim();
   if (["工卡指令", "EO", "工程指令"].includes(category)) return "工卡指令";
   if (["单项工作", "ADD WORK", "NRC", "临时工作"].includes(category)) return "单项工作";
+  if (category === "拖机") return "拖机";
   return "其他";
 }
 
@@ -3343,6 +3653,7 @@ function maintenancePersonalHourDetail(row) {
   return {
     id: row.id,
     flightId: row.flight_id || "",
+    subtaskId: row.owner_type === "subtask" ? row.owner_id : "",
     date: row.date || "",
     flightNo: row.flight_no || "-",
     aircraftNo: row.aircraft_no || "-",
@@ -3552,9 +3863,9 @@ function maintenancePersonalDetails(params, user) {
 
 function insertMaintenanceFlight(payload, user) {
   const id = randomId("mtnf");
-  db.prepare(`insert into maintenance_flights(id,date,flight_no,aircraft_no,aircraft_type,stand,planned_arrival,planned_departure,work_type,card_no,card_name,work_kind,standard_hours,status,remark,source,created_by,updated_by,created_at,updated_at)
-    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, payload.date, payload.flightNo, payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, payload.status, payload.remark, payload.source, user.id, user.id, now(), now());
+  db.prepare(`insert into maintenance_flights(id,date,flight_no,departure_flight_no,aircraft_no,aircraft_type,stand,planned_arrival,planned_departure,work_type,card_no,card_name,work_kind,standard_hours,status,remark,source,created_by,updated_by,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, payload.date, payload.flightNo, payload.departureFlightNo || "", payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, payload.status, payload.remark, payload.source, user.id, user.id, now(), now());
   maintenanceLog(user, "create_flight", "flight", id, id, payload.flightNo || "");
   return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id));
 }
@@ -3562,8 +3873,8 @@ function insertMaintenanceFlight(payload, user) {
 function updateMaintenanceFlight(id, payload, user) {
   const existing = db.prepare("select * from maintenance_flights where id=?").get(id);
   if (!existing) return null;
-  db.prepare(`update maintenance_flights set date=?,flight_no=?,aircraft_no=?,aircraft_type=?,stand=?,planned_arrival=?,planned_departure=?,work_type=?,card_no=?,card_name=?,work_kind=?,standard_hours=?,status=?,remark=?,updated_by=?,updated_at=? where id=?`)
-    .run(payload.date, payload.flightNo, payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, existing.status, payload.remark, user.id, now(), id);
+  db.prepare(`update maintenance_flights set date=?,flight_no=?,departure_flight_no=?,aircraft_no=?,aircraft_type=?,stand=?,planned_arrival=?,planned_departure=?,work_type=?,card_no=?,card_name=?,work_kind=?,standard_hours=?,status=?,remark=?,updated_by=?,updated_at=? where id=?`)
+    .run(payload.date, payload.flightNo, payload.departureFlightNo === undefined ? existing.departure_flight_no || "" : payload.departureFlightNo, payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, existing.status, payload.remark, user.id, now(), id);
   maintenanceLog(user, "update_flight", "flight", id, id, payload.flightNo || "");
   reconcileMaintenanceTreeStatus(id, user.id);
   return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id));
@@ -3694,7 +4005,7 @@ function normalizeMaintenanceReportEntries(rawEntries, allowedRoles, { ownerType
   const seen = new Set();
   const entries = [];
   for (const item of Array.isArray(rawEntries) ? rawEntries : []) {
-    const role = String(item.role || "").trim();
+    const role = ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(item.role) : String(item.role || "").trim();
     const userId = String(item.userId || item.id || "").trim();
     if (!allowed.has(role)) throw maintenanceDispatchError(`当前任务不支持上报“${role || "未设置"}”`);
     const person = people.get(userId);
@@ -3899,11 +4210,11 @@ function normalizeNonroutineReportItems(flightId, rawItems, user, {
     if (validateComplete && Math.abs(standardHours * 10 - Math.round(standardHours * 10)) > 1e-8) {
       throw maintenanceDispatchError(`${itemLabel}工时必须以0.1小时为单位`);
     }
-    const entries = normalizeMaintenanceReportEntries(raw.entries, maintenanceSubtaskRoles, { ownerType: "subtask", ownerId: item.id, standardHours, source: raw.temporary ? "临时非例行报工" : "非例行报工" });
+    const entries = normalizeMaintenanceReportEntries(raw.entries, category === "拖机" ? ["主做"] : maintenanceSubtaskRoles, { ownerType: "subtask", ownerId: item.id, standardHours, source: raw.temporary ? "临时非例行报工" : "非例行报工" });
     if (validateComplete && !entries.length && !allowEmptyEntries) throw maintenanceDispatchError(`${itemLabel}尚未选择实际参与人员`);
     if (validateComplete) {
       for (const role of new Set(entries.map(entry => entry.role))) {
-        if (maintenanceRoleRatioRule(role) === null) throw maintenanceDispatchError(`${itemLabel}的${role}缺少有效工时比例`);
+        if (maintenanceRatioRuleForOwner("subtask", { category }, role, entries) === null) throw maintenanceDispatchError(`${itemLabel}的${role}缺少有效工时比例`);
       }
     }
     items.push({ row: item, chapter, title, category, standardHours, reportExplanation, entries });
@@ -5118,7 +5429,7 @@ function maintenanceXlsx(data) {
 }
 
 function maintenanceReportXlsx(data, selectedSections = []) {
-  const allowed = new Set(["people", "hours", "signatures", "sorties", "teams"]);
+  const allowed = new Set(["people", "hours", "signatures", "sorties", "teams", "nonroutine", "opportunities"]);
   const selected = selectedSections.filter(section => allowed.has(section));
   if (!selected.length) throw maintenanceDispatchError("请至少选择一项导出内容");
   const tables = [];
@@ -5142,6 +5453,18 @@ function maintenanceReportXlsx(data, selectedSections = []) {
     name: "班组汇总",
     rows: [["班组", "人数", "例行工时", "非例行工时", "总工时", "放行架次", "维修机会数"], ...data.teams.sort((a, b) => b.totalHours - a.totalHours || a.team.localeCompare(b.team, "zh-Hans-CN")).map(row => [row.team, row.peopleCount, row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.opportunityCount])]
   });
+  if (selected.includes("opportunities")) tables.push({
+    name: "维修机会核对", rows: [["维修机会ID", "日期", "航班号", "机号", "维修机会", "参与人员", "例行工时", "非例行工时", "总工时", "放行架次", "状态"],
+      ...maintenanceReportSort(data.opportunitiesAudit || [], "opportunities", "date:desc").map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.opportunity,
+        row.participants.map(person => person.name).join("、"), row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.status])] });
+  if (selected.includes("nonroutine")) {
+    const tasks = data.nonroutineAudit || [];
+    tables.push({ name: "非例行任务", rows: [["条目ID", "日期", "航班号", "机号", "维修机会", "章节", "标题", "类别", "标准总工时", "实际总工时", "派工人数", "状态"],
+      ...tasks.map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.opportunity, row.chapter, row.title, row.category, row.standardHours, row.hasResults ? row.actualHours : "尚无工时结果", row.assignedCount, row.status])] });
+    tables.push({ name: "非例行人员工时", rows: [["条目ID", "日期", "航班号", "标题", "姓名", "班组", "工种", "派工状态", "原始工时", "调整后工时", "最终工时", "结果状态"],
+      ...tasks.flatMap(row => row.people.map(person => [row.id, row.date, row.flightNo, row.title, person.userName, person.team, person.role, person.assignmentStatus,
+        person.resultHours ?? "", person.adjustedHours ?? "", person.finalHours ?? "", person.resultStatus || "尚无工时结果"]))] });
+  }
   const workbook = `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${tables.map((table, index) => `<sheet name="${xmlEscape(table.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets></workbook>`;
   const rels = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${tables.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}</Relationships>`;
   const content = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${tables.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`;
@@ -5378,6 +5701,11 @@ async function route(req, res) {
           if (!existing) created++;
           imported.set(matchKey, flight);
         }
+        if (flight && !flight.departureFlightNo && payload.departureFlightNo) {
+          const updated = db.prepare("update maintenance_flights set departure_flight_no=?,updated_by=?,updated_at=? where id=? and coalesce(departure_flight_no,'')=''")
+            .run(payload.departureFlightNo, manager.id, now(), flight.id);
+          if (updated.changes) flight.departureFlightNo = payload.departureFlightNo;
+        }
         const subPayload = maintenanceSubtaskPayload(raw);
         if (subPayload.title || subPayload.cardNo || subPayload.content) {
           subPayload.title ||= subPayload.cardNo || `${payload.workKind}非例行`;
@@ -5584,16 +5912,22 @@ async function route(req, res) {
       const rows = Array.isArray(p.rules) ? p.rules : [];
       const upsert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do update set value=excluded.value,updated_at=excluded.updated_at");
       const routineRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "routineRatio");
+      const combinationRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "nonroutineCombinationRatio");
       validateMaintenanceRoutineRules(routineRows);
+      if (combinationRows.length) validateMaintenanceNonroutineCombinationRules(combinationRows);
       maintenanceTransaction(() => {
         for (const row of rows) {
           const ruleType = String(row.rule_type || row.ruleType || "").trim();
           let name = String(row.name || "").trim();
-          if (!["workType", "roleRatio", "routineRatio"].includes(ruleType)) continue;
+          if (!["workType", "roleRatio", "routineRatio", "nonroutineCategoryHours", "nonroutineCombinationRatio"].includes(ruleType)) continue;
           if (ruleType === "routineRatio") name = maintenanceRoutineRuleName(String(row.opportunity || "").trim(), String(row.role || "").trim());
+          if (ruleType === "nonroutineCombinationRatio") name = `${String(row.combination || "").trim()}::${String(row.role || "").trim()}`;
           if (!name || (ruleType === "roleRatio" && name === "放行")) continue;
           const value = Number(row.value);
           if (!Number.isFinite(value) || value < 0) throw maintenanceDispatchError("工时和分配比例不能为负数");
+          if (ruleType === "nonroutineCategoryHours" && (name !== "拖机" || value <= 0 || Math.abs(value * 10 - Math.round(value * 10)) > 1e-8)) {
+            throw maintenanceDispatchError("拖机默认总工时必须大于0且以0.1小时为单位");
+          }
           upsert.run(row.id || randomId("mtnr"), ruleType, name, value, now(), now());
         }
       });
@@ -5619,11 +5953,29 @@ async function route(req, res) {
       if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
       return send(res, 200, maintenancePersonalDetails(Object.fromEntries(url.searchParams.entries()), login));
     }
+    const nonroutineAuditMatch = url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)\/hour-audit$/);
+    if (method === "GET" && nonroutineAuditMatch) {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      const detail = maintenanceNonroutineAuditDetail(routeParam(nonroutineAuditMatch[1]), login);
+      if (detail === null) return send(res, 404, { error: "未找到非例行工作" });
+      if (detail === false) return send(res, 403, { error: "只能查看自己参与的非例行工作" });
+      return send(res, 200, { detail });
+    }
     if (method === "GET" && url.pathname === "/api/maintenance/report") {
       const login = requireLogin(req, res);
       if (!login) return;
       if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
       return send(res, 200, maintenanceReport(Object.fromEntries(url.searchParams.entries())));
+    }
+    const opportunityAuditMatch = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/report-detail$/);
+    if (method === "GET" && opportunityAuditMatch) {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
+      const detail = maintenanceOpportunityAuditDetail(routeParam(opportunityAuditMatch[1]));
+      return detail ? send(res, 200, { detail }) : send(res, 404, { error: "未找到维修机会" });
     }
     if (method === "GET" && url.pathname === "/api/maintenance/report/export.xlsx") {
       const login = requireLogin(req, res);
@@ -5632,6 +5984,12 @@ async function route(req, res) {
       const params = Object.fromEntries(url.searchParams.entries());
       const sections = String(params.sections || "").split(",").map(item => item.trim()).filter(Boolean);
       const data = maintenanceReportDataset(params);
+      if (sections.includes("opportunities")) data.opportunitiesAudit = maintenanceReportDataset({ ...params, view: "opportunities" }).opportunities;
+      if (sections.includes("nonroutine")) {
+        const filters = maintenanceReportFilters({ ...params, view: "nonroutine" });
+        if (filters.dateFrom > filters.dateTo) [filters.dateFrom, filters.dateTo] = [filters.dateTo, filters.dateFrom];
+        data.nonroutineAudit = maintenanceNonroutineAuditQuery(filters, { paged: false }).rows;
+      }
       const workbook = maintenanceReportXlsx(data, sections);
       const filename = `维修管控综合报表_${data.filters.dateFrom}_${data.filters.dateTo}.xlsx`;
       return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}` });
