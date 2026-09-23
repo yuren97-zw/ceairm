@@ -854,6 +854,9 @@ const maintenanceService = {
   async importRows(rows) {
     return await apiRequest("/maintenance/flights/import", { method: "POST", body: { rows } });
   },
+  async importSubtasks(rows) {
+    return await apiRequest("/maintenance/subtasks/import", { method: "POST", body: { rows } });
+  },
   async createFlight(payload) {
     return await apiRequest("/maintenance/flights", { method: "POST", body: payload });
   },
@@ -2428,7 +2431,7 @@ function renderMaintenanceDispatch() {
         ${maintenanceOpportunityMenuHtml()}
         <input id="maintenanceFlightSearch" class="search" type="search" placeholder="航班 / 机号 / 人员" value="${escapeHtml(state.maintenanceFlightSearch)}" aria-label="搜索航班、机号、机位、机型或人员">
       </div>
-      <div class="actions"><input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn" type="button" data-maint-create-flight>新建维修机会</button></div>
+      <div class="actions"><input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><input id="maintenanceSubtaskImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn secondary" type="button" data-maint-subtask-import>导入附加工作</button><button class="btn" type="button" data-maint-create-flight>新建维修机会</button></div>
     </div>
     <div class="maintenance-dispatch-board">${renderColumn("left", state.maintenanceLeftStatuses)}${renderColumn("right", state.maintenanceRightStatuses)}</div>
     ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
@@ -2658,6 +2661,31 @@ function maintenanceDataComparisonCard(kind, comparison = {}) {
   return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">个人排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.memberCount || 0)} 人</span></div><p>超过 <b>${maintenanceHoursLabel(comparison.exceededPercent)}%</b> 车间成员</p><p>${gap}</p></article>`;
 }
 
+function maintenanceTrendDayNumber(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000);
+}
+
+function maintenanceConfirmedTrendPath(points, x, y) {
+  let path = "";
+  let previousDay = null;
+  let active = false;
+  points.forEach((item, index) => {
+    const total = Number(item.total || 0);
+    const day = maintenanceTrendDayNumber(item.date);
+    const consecutive = active && day !== null && previousDay !== null && day === previousDay + 1;
+    if (total > 0) {
+      path += `${consecutive ? " L" : path ? " M" : "M"}${x(index).toFixed(1)},${y(total).toFixed(1)}`;
+      active = true;
+    } else {
+      active = false;
+    }
+    previousDay = day;
+  });
+  return path;
+}
+
 function maintenanceTrendSvg(points = []) {
   if (!points.length) return '<div class="maintenance-chart-empty">所选范围暂无工时数据。</div>';
   const width = 760;
@@ -2673,7 +2701,7 @@ function maintenanceTrendSvg(points = []) {
   const max = Math.max(1, ...points.map(item => Number(item.total || 0) + Number(item.pendingTotal || 0)));
   const x = index => points.length === 1 ? left + chartWidth / 2 : pointLeft + index * pointSpan / (points.length - 1);
   const y = value => top + chartHeight - Number(value || 0) / max * chartHeight;
-  const line = points.map((item, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(item.total).toFixed(1)}`).join(" ");
+  const line = maintenanceConfirmedTrendPath(points, x, y);
   const pendingLine = points.map((item, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(Number(item.total || 0) + Number(item.pendingTotal || 0)).toFixed(1)}`).join(" ");
   const hasPending = points.some(item => Number(item.pendingTotal || 0) > 0);
   const grid = [0, .25, .5, .75, 1].map(step => {
@@ -2684,16 +2712,23 @@ function maintenanceTrendSvg(points = []) {
   const marks = points.map((item, index) => {
     const px = x(index);
     const barWidth = Math.min(15, Math.max(8, chartWidth / Math.max(points.length, 1) / 5));
+    const stackedBarWidth = barWidth * 2 + 4;
+    const barX = px - stackedBarWidth / 2;
+    const routine = Number(item.routine || 0);
+    const nonroutine = Number(item.nonroutine || 0);
+    const confirmedTotal = routine + nonroutine;
+    const pendingRoutine = Number(item.pendingRoutine || 0);
+    const pendingNonroutine = Number(item.pendingNonroutine || 0);
     const routineY = y(item.routine);
-    const nonroutineY = y(item.nonroutine);
-    const pendingRoutineY = y(Number(item.routine || 0) + Number(item.pendingRoutine || 0));
-    const pendingNonroutineY = y(Number(item.nonroutine || 0) + Number(item.pendingNonroutine || 0));
+    const confirmedTotalY = y(confirmedTotal);
+    const pendingRoutineY = y(confirmedTotal + pendingRoutine);
+    const pendingNonroutineY = y(confirmedTotal + pendingRoutine + pendingNonroutine);
     const pendingTotal = Number(item.pendingTotal || 0);
     return `<g>
-      ${Number(item.routine || 0) ? `<rect class="maintenance-chart-bar routine" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 已确认例行 ${maintenanceHoursLabel(item.routine)} 小时" data-maint-personal-detail data-detail-status="confirmed" data-detail-date="${escapeHtml(item.date)}" data-detail-type="routine" x="${px - barWidth - 2}" y="${routineY}" width="${barWidth}" height="${top + chartHeight - routineY}" rx="2"/>` : ""}
-      ${Number(item.pendingRoutine || 0) ? `<rect class="maintenance-chart-bar routine pending" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 待复核例行 ${maintenanceHoursLabel(item.pendingRoutine)} 小时" data-maint-personal-detail data-detail-status="pending" data-detail-date="${escapeHtml(item.date)}" data-detail-type="routine" x="${px - barWidth - 2}" y="${pendingRoutineY}" width="${barWidth}" height="${Math.max(0, routineY - pendingRoutineY)}" rx="2"/>` : ""}
-      ${Number(item.nonroutine || 0) ? `<rect class="maintenance-chart-bar nonroutine" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 已确认非例行 ${maintenanceHoursLabel(item.nonroutine)} 小时" data-maint-personal-detail data-detail-status="confirmed" data-detail-date="${escapeHtml(item.date)}" data-detail-type="nonroutine" x="${px + 2}" y="${nonroutineY}" width="${barWidth}" height="${top + chartHeight - nonroutineY}" rx="2"/>` : ""}
-      ${Number(item.pendingNonroutine || 0) ? `<rect class="maintenance-chart-bar nonroutine pending" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 待复核非例行 ${maintenanceHoursLabel(item.pendingNonroutine)} 小时" data-maint-personal-detail data-detail-status="pending" data-detail-date="${escapeHtml(item.date)}" data-detail-type="nonroutine" x="${px + 2}" y="${pendingNonroutineY}" width="${barWidth}" height="${Math.max(0, nonroutineY - pendingNonroutineY)}" rx="2"/>` : ""}
+      ${routine ? `<rect class="maintenance-chart-bar routine" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 已确认例行 ${maintenanceHoursLabel(item.routine)} 小时" data-maint-personal-detail data-detail-status="confirmed" data-detail-date="${escapeHtml(item.date)}" data-detail-type="routine" x="${barX}" y="${routineY}" width="${stackedBarWidth}" height="${top + chartHeight - routineY}" rx="2"/>` : ""}
+      ${nonroutine ? `<rect class="maintenance-chart-bar nonroutine" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 已确认非例行 ${maintenanceHoursLabel(item.nonroutine)} 小时" data-maint-personal-detail data-detail-status="confirmed" data-detail-date="${escapeHtml(item.date)}" data-detail-type="nonroutine" x="${barX}" y="${confirmedTotalY}" width="${stackedBarWidth}" height="${Math.max(0, routineY - confirmedTotalY)}" rx="2"/>` : ""}
+      ${pendingRoutine ? `<rect class="maintenance-chart-bar routine pending" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 待复核例行 ${maintenanceHoursLabel(item.pendingRoutine)} 小时" data-maint-personal-detail data-detail-status="pending" data-detail-date="${escapeHtml(item.date)}" data-detail-type="routine" x="${barX}" y="${pendingRoutineY}" width="${stackedBarWidth}" height="${Math.max(0, confirmedTotalY - pendingRoutineY)}" rx="2"/>` : ""}
+      ${pendingNonroutine ? `<rect class="maintenance-chart-bar nonroutine pending" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 待复核非例行 ${maintenanceHoursLabel(item.pendingNonroutine)} 小时" data-maint-personal-detail data-detail-status="pending" data-detail-date="${escapeHtml(item.date)}" data-detail-type="nonroutine" x="${barX}" y="${pendingNonroutineY}" width="${stackedBarWidth}" height="${Math.max(0, pendingRoutineY - pendingNonroutineY)}" rx="2"/>` : ""}
       ${Number(item.total || 0) ? `<circle class="maintenance-chart-point" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 已确认总工时 ${maintenanceHoursLabel(item.total)} 小时" data-maint-personal-detail data-detail-status="confirmed" data-detail-date="${escapeHtml(item.date)}" data-detail-type="all" cx="${px}" cy="${y(item.total)}" r="5"/>` : ""}
       ${pendingTotal ? `<circle class="maintenance-chart-point pending" tabindex="0" role="button" aria-label="${escapeHtml(item.date)} 待复核总工时 ${maintenanceHoursLabel(pendingTotal)} 小时" data-maint-personal-detail data-detail-status="pending" data-detail-date="${escapeHtml(item.date)}" data-detail-type="all" cx="${px}" cy="${y(Number(item.total || 0) + pendingTotal)}" r="4"/>` : ""}
       ${Number(item.total || 0) ? `<text x="${px}" y="${y(item.total) - 10}" text-anchor="middle" class="maintenance-chart-value">${maintenanceHoursLabel(item.total)}</text>` : ""}
@@ -4207,6 +4242,48 @@ async function maintenanceRowsFromFile(file) {
   if (name.endsWith(".xls") && !name.endsWith(".xlsx")) throw new Error("xls 格式请先另存为 xlsx 或 CSV");
   if (name.endsWith(".xlsx")) return maintenanceRowsFromRows(await parseXlsx(file));
   return maintenanceRowsFromRows(parseCsv(await file.text()));
+}
+
+function maintenanceSubtaskRowsFromRows(rows) {
+  const filtered = rows.map(row => row.map(cell => String(cell ?? "").trim())).filter(row => row.some(Boolean));
+  if (!filtered.length) return { rows: [], skipped: 0 };
+  const headers = filtered[0].map(normalizeHeader);
+  const indexOf = names => headers.findIndex(header => names.includes(header));
+  const map = {
+    date: indexOf(["日期", "航班日期", "计划日期"]),
+    flightNo: indexOf(["进港航班号", "航班号"]),
+    departureFlightNo: indexOf(["出港航班号"]),
+    aircraftNo: indexOf(["机号"]),
+    workKind: indexOf(["维修机会", "工作类型", "工作种类"]),
+    externalWorkNo: indexOf(["工作编号", "附加工作编号"]),
+    chapter: indexOf(["章节", "工卡编号", "工卡号"]),
+    title: indexOf(["工作标题", "工卡名称", "标题"]),
+    category: indexOf(["非例行类别", "工作类别", "类别"]),
+    standardHours: indexOf(["标准工时"]),
+    reportExplanation: indexOf(["报工说明", "内容"]),
+    priority: indexOf(["优先级"]),
+    remark: indexOf(["备注"])
+  };
+  const required = [
+    ["date", "日期"], ["flightNo", "进港航班号"], ["aircraftNo", "机号"], ["workKind", "维修机会"],
+    ["externalWorkNo", "工作编号"], ["title", "工作标题"], ["category", "非例行类别"], ["standardHours", "标准工时"]
+  ];
+  const missing = required.filter(([key]) => map[key] < 0).map(([, label]) => label);
+  if (missing.length) throw new Error(`附加工作表缺少列：${missing.join("、")}。请核对表头，未导入任何数据。`);
+  const parsed = filtered.slice(1).map((row, index) => {
+    const item = Object.fromEntries(Object.entries(map).map(([key, column]) => [key, column >= 0 ? row[column] : ""]));
+    const date = maintenanceImportDate(item.date);
+    if (!date) throw new Error(`第 ${index + 2} 行日期无效，请核对后重新导入。`);
+    return { ...item, date, standardHours: Number(item.standardHours) };
+  });
+  return { rows: parsed, skipped: 0 };
+}
+
+async function maintenanceSubtaskRowsFromFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".xls") && !name.endsWith(".xlsx")) throw new Error("xls 格式请先另存为 xlsx 或 CSV");
+  if (name.endsWith(".xlsx")) return maintenanceSubtaskRowsFromRows(await parseXlsx(file));
+  return maintenanceSubtaskRowsFromRows(parseCsv(await file.text()));
 }
 
 async function refreshMaintenance() {
@@ -6036,6 +6113,10 @@ document.addEventListener("click", async event => {
     $("#maintenanceImportFile")?.click();
     return;
   }
+  if (event.target.closest("[data-maint-subtask-import]")) {
+    $("#maintenanceSubtaskImportFile")?.click();
+    return;
+  }
   const maintenanceLoadMore = event.target.closest("[data-maint-load-more]");
   if (maintenanceLoadMore) {
     maintenanceLoadMore.disabled = true;
@@ -7346,6 +7427,22 @@ document.addEventListener("change", async event => {
       alert(`导入完成：新增维修机会 ${result.created} 条，非例行 ${result.subCreated || 0} 条，跳过 ${result.skipped + parsed.skipped} 行。`);
       event.target.value = "";
     })().catch(error => alert(error.message));
+    return;
+  }
+  if (event.target.id === "maintenanceSubtaskImportFile") {
+    (async () => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const parsed = await maintenanceSubtaskRowsFromFile(file);
+      if (!parsed.rows.length) return alert("未识别到有效附加工作，请检查列名和表格内容。");
+      const result = await maintenanceService.importSubtasks(parsed.rows);
+      await refreshMaintenance();
+      alert(`导入完成：新增附加工作 ${result.created} 条，匹配维修机会 ${result.matchedFlights} 个。`);
+      event.target.value = "";
+    })().catch(error => {
+      event.target.value = "";
+      alert(error.message);
+    });
     return;
   }
   if (event.target.id === "maintenanceMonth" || event.target.id === "maintenanceDataMonth") {

@@ -674,7 +674,7 @@
     #maintenanceTaskDialogBody #maintDate::-webkit-date-and-time-value{min-width:0;text-align:left}
     #maintenanceTaskDialogBody #maintDate::-webkit-calendar-picker-indicator{flex:0 0 auto;margin:0;padding:0}
     .maintenance-panel{display:grid;gap:14px;min-width:0;max-width:100%;overflow:visible}
-    .maintenance-dispatch-actions{position:relative;z-index:4;display:grid;grid-template-columns:minmax(238px,268px) minmax(112px,138px) minmax(120px,1fr) auto auto;align-items:center;gap:6px;min-width:0;padding:2px 0 4px;overflow:visible}
+    .maintenance-dispatch-actions{position:relative;z-index:4;display:grid;grid-template-columns:minmax(238px,268px) minmax(112px,138px) minmax(120px,1fr) auto auto auto;align-items:center;gap:6px;min-width:0;padding:2px 0 4px;overflow:visible}
     .maintenance-dispatch-actions:has(.maintenance-opportunity-menu[open]){z-index:100}
     .maintenance-dispatch-filters,.maintenance-dispatch-actions>.actions{display:contents}
     .maintenance-dispatch-filters>select,.maintenance-dispatch-filters>.search{height:36px;min-width:0;margin:0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);font:inherit}
@@ -1168,32 +1168,31 @@
     .maintenance-archive-delete-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .maintenance-archive-delete-actions .btn{width:100%;min-width:0}
     @media(max-width:1000px){
-      .maintenance-dispatch-actions{grid-template-columns:minmax(222px,240px) minmax(108px,125px) minmax(92px,1fr) auto auto;gap:5px}
+      .maintenance-dispatch-actions{grid-template-columns:minmax(222px,240px) minmax(108px,125px) minmax(92px,1fr) auto auto auto;gap:5px}
       .maintenance-dispatch-actions .btn{padding-inline:9px;font-size:11px}
     }
     @media(max-width:680px){
       .maintenance-tabs{gap:6px;padding-bottom:2px}
       .maintenance-panel{gap:10px}
-      .maintenance-dispatch-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;padding-top:0}
-      .maintenance-dispatch-filters,.maintenance-dispatch-actions>.actions{display:contents}
-      .maintenance-date-filter{grid-column:1/3;grid-row:1;justify-content:space-between}
+      .maintenance-dispatch-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px;padding-top:0}
+      .maintenance-dispatch-filters{display:contents}
+      .maintenance-dispatch-actions>.actions{display:flex;grid-column:2/5;grid-row:2;gap:6px}
+      .maintenance-date-filter{grid-column:1/4;grid-row:1;justify-content:space-between}
       .maintenance-date-inputs{flex:1}
-      .maintenance-opportunity-menu{grid-column:3;grid-row:1;min-width:122px}
+      .maintenance-opportunity-menu{grid-column:4;grid-row:1;min-width:122px}
       .maintenance-dispatch-filters>select,.maintenance-dispatch-filters>.search,.maintenance-opportunity-menu{width:100%}
       .maintenance-dispatch-filters>.search{grid-column:1;grid-row:2}
       .maintenance-dispatch-actions .btn{min-width:0;padding-inline:9px}
-      .maintenance-dispatch-actions [data-maint-import]{grid-column:2;grid-row:2}
-      .maintenance-dispatch-actions [data-maint-create-flight]{grid-column:3;grid-row:2}
       .maintenance-opportunity-options{left:auto;right:0}
       .maintenance-opportunity-menu>summary{overflow:visible;text-overflow:clip}
     }
     @media(max-width:479px){
-      .maintenance-dispatch-actions{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+      .maintenance-dispatch-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
       .maintenance-date-filter{grid-column:1/-1;grid-row:1}
       .maintenance-opportunity-menu{grid-column:1;grid-row:2;min-width:0}
-      .maintenance-dispatch-filters>.search{grid-column:2;grid-row:2}
-      .maintenance-dispatch-actions [data-maint-import]{grid-column:1;grid-row:3}
-      .maintenance-dispatch-actions [data-maint-create-flight]{grid-column:2;grid-row:3}
+      .maintenance-dispatch-filters>.search{grid-column:2/4;grid-row:2}
+      .maintenance-dispatch-actions>.actions{display:grid;grid-column:1/-1;grid-row:3;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+      .maintenance-dispatch-actions .btn{width:100%;padding-inline:3px;font-size:10px}
       .maintenance-opportunity-options{left:0;right:auto}
     }
     @media(max-width:760px){
@@ -1597,7 +1596,7 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260921-report-dialog-compact-1"></script>
+  <script src="app.js?v=20260923-subtask-import-trend-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
