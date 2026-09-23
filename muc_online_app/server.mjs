@@ -318,8 +318,10 @@ function requireAdmin(req, res) {
 }
 
 function audit(user, action, targetType, targetId, detail = "") {
+  const id = randomId("audit");
   db.prepare("insert into audit_logs(id,user_id,user_name,action,target_type,target_id,detail,created_at) values(?,?,?,?,?,?,?,?)")
-    .run(randomId("audit"), user?.id || "guest", user?.name || "访客", action, targetType, targetId, detail, now());
+    .run(id, user?.id || "guest", user?.name || "访客", action, targetType, targetId, detail, now());
+  return id;
 }
 
 function send(res, status, data, headers = {}) {
@@ -567,6 +569,7 @@ async function initDb() {
     create table if not exists maintenance_subtasks(
       id text primary key,
       flight_id text not null,
+      external_work_no text,
       card_no text,
       title text not null,
       content text,
@@ -759,6 +762,8 @@ async function initDb() {
   ensureColumn("maintenance_flights", "archived_at", "text");
   ensureColumn("maintenance_flights", "routine_electronic_signed", "integer");
   ensureColumn("maintenance_flights", "nonroutine_electronic_signed", "integer");
+  ensureColumn("maintenance_subtasks", "external_work_no", "text");
+  db.exec("create unique index if not exists idx_maintenance_subtasks_flight_external_work_no on maintenance_subtasks(flight_id,external_work_no) where external_work_no is not null and trim(external_work_no)<>''");
   db.prepare("insert into maintenance_sync_state(id,version,updated_at) values(1,0,?) on conflict(id) do nothing").run(now());
   db.prepare("delete from sessions where expires_at<=?").run(now());
   db.prepare("delete from favorites where record_id not in (select id from records)").run();
@@ -1638,10 +1643,11 @@ function normalizeMaintenanceAssignments(ownerType, owner, assignments) {
   return normalized;
 }
 
+const maintenanceOpportunityCategories = ["航前", "航后", "航后/航前", "短停", "热备机", "停场", "附加", "其他", "三方短停", "三方航后", "三方航前"];
+
 function maintenanceFlightPayload(input = {}) {
-  const allowedOpportunities = ["航前", "航后", "航后/航前", "短停", "热备机", "停场", "附加", "其他", "三方短停", "三方航后", "三方航前"];
   const rawOpportunity = String(input.maintenanceOpportunity || input.maintenance_opportunity || input.workKind || input.work_kind || input["维修机会"] || input.workType || input.work_type || input["工作类型"] || input["工作种类"] || "航后").trim();
-  const maintenanceOpportunity = allowedOpportunities.includes(rawOpportunity) ? rawOpportunity : "其他";
+  const maintenanceOpportunity = maintenanceOpportunityCategories.includes(rawOpportunity) ? rawOpportunity : "其他";
   return {
     date: String(input.date || input["日期"] || "").trim(),
     flightNo: String(input.flightNo || input.flight_no || input["航班号"] || input["进港航班号"] || "").trim(),
@@ -2193,6 +2199,7 @@ function publicMaintenanceSubtask(row) {
   return {
     id: row.id,
     flightId: row.flight_id,
+    externalWorkNo: row.external_work_no || "",
     cardNo: row.card_no || "",
     title: row.title || "",
     content: row.content || "",
@@ -5671,6 +5678,75 @@ async function route(req, res) {
         : finalizeMaintenanceReports(flightId, payload, executor);
       bumpMaintenanceVersion(flightId, saveOnly ? "maintenance.report.confirmation.saved" : "maintenance.report.finalized");
       return send(res, 200, { flight });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/subtasks/import") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有派工管理权限" });
+      const payload = await bodyJson(req);
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      if (!rows.length) return send(res, 400, { error: "未识别到有效附加工作，请检查表格内容" });
+      const fileKeys = new Set();
+      const prepared = rows.map((raw, index) => {
+        const rowNumber = index + 1;
+        const date = normalizeMaintenanceStatsDate(raw?.date ?? raw?.["日期"]);
+        const flightNo = String(raw?.flightNo ?? raw?.flight_no ?? raw?.["进港航班号"] ?? raw?.["航班号"] ?? "").trim();
+        const departureFlightNo = String(raw?.departureFlightNo ?? raw?.departure_flight_no ?? raw?.["出港航班号"] ?? "").trim();
+        const aircraftNo = String(raw?.aircraftNo ?? raw?.aircraft_no ?? raw?.["机号"] ?? "").trim();
+        const workKind = String(raw?.workKind ?? raw?.work_kind ?? raw?.["维修机会"] ?? "").trim();
+        const externalWorkNo = String(raw?.externalWorkNo ?? raw?.external_work_no ?? raw?.["工作编号"] ?? raw?.["附加工作编号"] ?? "").trim().toUpperCase();
+        const category = String(raw?.category ?? raw?.["非例行类别"] ?? raw?.["类别"] ?? raw?.["工作类别"] ?? "").trim();
+        const title = String(raw?.title ?? raw?.cardName ?? raw?.card_name ?? raw?.["工作标题"] ?? raw?.["工卡名称"] ?? "").trim();
+        const standardHours = Number(raw?.standardHours ?? raw?.standard_hours ?? raw?.["标准工时"]);
+        const priority = String(raw?.priority ?? raw?.["优先级"] ?? "普通").trim() || "普通";
+        const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+        if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw maintenanceReviewError(`第 ${rowNumber} 行日期无效`);
+        if (!flightNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少进港航班号`);
+        if (!aircraftNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少机号`);
+        if (!maintenanceOpportunityCategories.includes(workKind)) throw maintenanceReviewError(`第 ${rowNumber} 行维修机会无效`);
+        if (!externalWorkNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少工作编号`);
+        if (!title) throw maintenanceReviewError(`第 ${rowNumber} 行缺少工作标题`);
+        if (!maintenanceNonroutineCategories.includes(category)) throw maintenanceReviewError(`第 ${rowNumber} 行非例行类别无效`);
+        if (!Number.isFinite(standardHours) || !(standardHours > 0) || Math.abs(standardHours * 10 - Math.round(standardHours * 10)) > 1e-8) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行标准工时必须大于0且以0.1小时为单位`);
+        }
+        if (!["普通", "重要", "紧急"].includes(priority)) throw maintenanceReviewError(`第 ${rowNumber} 行优先级无效`);
+        const matches = db.prepare(`select * from maintenance_flights
+          where date=? and lower(trim(flight_no))=? and lower(trim(aircraft_no))=? and work_kind=?`)
+          .all(date, flightNo.toLowerCase(), aircraftNo.toLowerCase(), workKind);
+        if (!matches.length) throw maintenanceReviewError(`第 ${rowNumber} 行未找到对应维修机会`);
+        if (matches.length > 1) throw maintenanceReviewError(`第 ${rowNumber} 行匹配到多个维修机会，请先核对航班计划`);
+        const flight = matches[0];
+        if (departureFlightNo && flight.departure_flight_no && departureFlightNo.toLowerCase() !== String(flight.departure_flight_no).trim().toLowerCase()) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行出港航班号与维修机会不一致`);
+        }
+        if (!["未派工", "已派工"].includes(flight.status || "未派工") || flight.report_finalized_at || flight.archived_at) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行对应维修机会已进入报工或复核，不能导入附加工作`, 409);
+        }
+        const uniqueKey = `${flight.id}\u0000${externalWorkNo}`;
+        if (fileKeys.has(uniqueKey)) throw maintenanceReviewError(`第 ${rowNumber} 行工作编号在文件中重复`);
+        fileKeys.add(uniqueKey);
+        const existing = db.prepare("select id from maintenance_subtasks where flight_id=? and external_work_no=?").get(flight.id, externalWorkNo);
+        if (existing) throw maintenanceReviewError(`第 ${rowNumber} 行工作编号已存在于该维修机会`);
+        const subtask = maintenanceSubtaskPayload({ ...raw, externalWorkNo, category, title, standardHours, priority, status: "未派工" });
+        return { rowNumber, flight, externalWorkNo, subtask };
+      });
+      const matchedFlightIds = [...new Set(prepared.map(item => item.flight.id))];
+      const result = maintenanceTransaction(() => {
+        const stamp = now();
+        for (const item of prepared) {
+          const id = randomId("mtns");
+          const subtask = item.subtask;
+          db.prepare(`insert into maintenance_subtasks(id,flight_id,external_work_no,card_no,title,content,category,standard_hours,priority,status,remark,created_by,updated_by,created_at,updated_at)
+            values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .run(id, item.flight.id, item.externalWorkNo, subtask.cardNo, subtask.title, subtask.content, subtask.category, subtask.standardHours, subtask.priority, "未派工", subtask.remark, manager.id, manager.id, stamp, stamp);
+          maintenanceLog(manager, "import_subtask", "subtask", id, item.flight.id, JSON.stringify({ externalWorkNo: item.externalWorkNo, rowNumber: item.rowNumber }));
+        }
+        const auditId = audit(manager, "maintenance_subtask_import", "maintenance", "subtasks", JSON.stringify({ created: prepared.length, matchedFlightIds }));
+        return { auditId };
+      });
+      bumpMaintenanceVersion("", "maintenance.subtasks.imported");
+      return send(res, 200, { created: prepared.length, matchedFlights: matchedFlightIds.length, auditId: result.auditId });
     }
     if (method === "POST" && url.pathname === "/api/maintenance/flights/import") {
       const manager = requireLogin(req, res);

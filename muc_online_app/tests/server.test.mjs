@@ -181,6 +181,69 @@ test("flight import rejects shifted columns before inserting any rows and normal
   assert.ok(list.payload.flights.some(flight => flight.aircraftNo === "BIMPORT" && flight.date === "2026-09-01"));
 });
 
+test("additional work import only appends unique subtasks and rolls back the whole file on errors", async () => {
+  const unauthorized = await request("/api/maintenance/subtasks/import", { method: "POST", body: { rows: [{}] } });
+  assert.equal(unauthorized.res.statusCode, 401);
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const flightPayload = {
+    date: "2026-09-22", flightNo: "MUADD88", departureFlightNo: "MUADD89", aircraftNo: "B-ADD",
+    aircraftType: "A321", stand: "118", plannedArrival: "0043+", plannedDeparture: "0130", workKind: "航后", remark: "不得修改"
+  };
+  const createdFlight = await request("/api/maintenance/flights", { method: "POST", cookie, body: flightPayload });
+  assert.equal(createdFlight.res.statusCode, 201, JSON.stringify(createdFlight.payload));
+  const flightId = createdFlight.payload.flight.id;
+  const flightBefore = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+  const base = { date: "2026-09-22", flightNo: " muadd88 ", departureFlightNo: "MUADD89", aircraftNo: "b-add", workKind: "航后" };
+  const rows = [
+    { ...base, externalWorkNo: "nr-001", chapter: "25", title: "工卡工作", category: "工卡指令", standardHours: 1.2 },
+    { ...base, externalWorkNo: "NR-002", chapter: "26", title: "单项工作", category: "单项工作", standardHours: 0.5 },
+    { ...base, externalWorkNo: "NR-003", chapter: "09", title: "拖机", category: "拖机", standardHours: 3 },
+    { ...base, externalWorkNo: "NR-004", chapter: "27", title: "其他工作", category: "其他", standardHours: 0.4, reportExplanation: "说明", priority: "重要", remark: "备注" }
+  ];
+  const imported = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows } });
+  assert.equal(imported.res.statusCode, 200, JSON.stringify(imported.payload));
+  assert.equal(imported.payload.created, 4);
+  assert.equal(imported.payload.matchedFlights, 1);
+  assert.ok(imported.payload.auditId);
+  const stored = db.prepare("select * from maintenance_subtasks where flight_id=? order by external_work_no").all(flightId);
+  assert.deepEqual(stored.map(row => row.external_work_no), ["NR-001", "NR-002", "NR-003", "NR-004"]);
+  assert.deepEqual(stored.map(row => row.category), ["工卡指令", "单项工作", "拖机", "其他"]);
+  assert.ok(stored.every(row => row.status === "未派工"));
+  assert.equal(stored[3].content, "说明");
+  const flightAfter = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+  assert.deepEqual(flightAfter, flightBefore);
+
+  const duplicate = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows: [rows[0]] } });
+  assert.equal(duplicate.res.statusCode, 400);
+  assert.match(duplicate.payload.error, /工作编号已存在/);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+
+  const atomic = await request("/api/maintenance/subtasks/import", {
+    method: "POST", cookie, body: { rows: [
+      { ...base, externalWorkNo: "NR-005", title: "应回滚", category: "其他", standardHours: 0.5 },
+      { ...base, externalWorkNo: "NR-006", title: "非法工时", category: "其他", standardHours: 0.55 }
+    ] }
+  });
+  assert.equal(atomic.res.statusCode, 400);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+
+  db.prepare("update maintenance_flights set status='待复核' where id=?").run(flightId);
+  const protectedImport = await request("/api/maintenance/subtasks/import", {
+    method: "POST", cookie, body: { rows: [{ ...base, externalWorkNo: "NR-007", title: "状态保护", category: "其他", standardHours: 0.5 }] }
+  });
+  assert.equal(protectedImport.res.statusCode, 409);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+  const adminId = login.payload.user.id;
+  db.prepare("update users set role='receiver' where id=?").run(adminId);
+  try {
+    const forbidden = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows: [rows[0]] } });
+    assert.equal(forbidden.res.statusCode, 403);
+  } finally {
+    db.prepare("update users set role='admin' where id=?").run(adminId);
+  }
+});
+
 test("departure flight number survives old updates and import only fills an empty value", async () => {
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
