@@ -217,7 +217,7 @@ test("additional work import only appends unique subtasks and rolls back the who
   const duplicate = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows: [rows[0]] } });
   assert.equal(duplicate.res.statusCode, 400);
   assert.match(duplicate.payload.error, /工作编号已存在/);
-  assert.equal(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total, 4);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
 
   const atomic = await request("/api/maintenance/subtasks/import", {
     method: "POST", cookie, body: { rows: [
@@ -226,14 +226,14 @@ test("additional work import only appends unique subtasks and rolls back the who
     ] }
   });
   assert.equal(atomic.res.statusCode, 400);
-  assert.equal(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total, 4);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
 
   db.prepare("update maintenance_flights set status='待复核' where id=?").run(flightId);
   const protectedImport = await request("/api/maintenance/subtasks/import", {
     method: "POST", cookie, body: { rows: [{ ...base, externalWorkNo: "NR-007", title: "状态保护", category: "其他", standardHours: 0.5 }] }
   });
   assert.equal(protectedImport.res.statusCode, 409);
-  assert.equal(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total, 4);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
   const adminId = login.payload.user.id;
   db.prepare("update users set role='receiver' where id=?").run(adminId);
   try {
