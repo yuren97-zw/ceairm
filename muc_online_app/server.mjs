@@ -1,4 +1,20 @@
+import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
+import {createImportWorkspace,IMPORT_WORKSPACE_SCHEMA} from './import-workspace.mjs';
+import {organizationLanes,resolveOrganizationPath} from './organization-lanes.mjs';
 import http from "node:http";
+import { createCapabilityService } from "./capability-service.mjs";
+import {
+  RBAC_PERMISSION_DEFINITIONS,
+  RBAC_ROLE_DEFINITIONS,
+  RBAC_ROLE_NAMES,
+  RBAC_ROLE_DESCRIPTIONS,
+  accountRoleCombinationErrors,
+  permissionDependencyErrors,
+  visibleNavigation
+} from "./rbac-policy.mjs";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
+import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS } from "./personnel-access.mjs";
 import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
@@ -8,8 +24,17 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import COS from "cos-nodejs-sdk-v5";
 import { createDatabase } from "./db.mjs";
+import { createAuthorizationProjects } from "./authorization-projects.mjs";
+import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./personnel-deletion.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isCodexWorktree = __dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`);
+if (isCodexWorktree && process.env.MUC_NO_LISTEN !== "1") {
+  const missing = ["PORT", "DB_PATH", "UPLOAD_DIR"].filter(key => !String(process.env[key] || "").trim());
+  if (missing.length) throw new Error(`Codex工作树禁止使用默认运行参数，缺少：${missing.join("、")}。请执行 npm run start:worktree`);
+  if (Number(process.env.PORT) === 8787) throw new Error("Codex工作树禁止占用主站8787端口，请使用8788或其他隔离端口");
+  if (path.resolve(process.env.DB_PATH) === path.join(__dirname, "data", "muc.sqlite")) throw new Error("Codex工作树禁止连接默认data/muc.sqlite，请显式使用隔离数据库");
+}
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(__dirname, "public");
 const dbPath = process.env.DB_PATH || path.join(__dirname, "data", "muc.sqlite");
@@ -28,36 +53,40 @@ const cosConfig = {
 };
 let cosClient = null;
 const sessions = new Map();
+const requestContext = new AsyncLocalStorage();
+const requestUser = () => { const req = requestContext.getStore()?.req; return req ? currentUser(req) : null; };
 const maintenanceEventClients = new Set();
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_FILES_PER_REQUEST = 10;
 const MAX_JSON_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_EXTS = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "xlsx", "xls", "docx", "doc", "mp4", "mov", "m4v", "webm", "avi", "mp3", "wav", "m4a", "aac"]);
 const BLOCKED_ATTACHMENT_EXTS = new Set(["html", "htm", "svg", "js", "mjs"]);
+const SUPER_ACCOUNT_ID = "54002010";
+const INCORRECT_SUPER_ACCOUNT_ID = "5400210";
+const SUPER_ACCOUNT_NAME = "赵威";
 
-const roles = {
-  receiver: { permissions: ["view"], allowedTabs: ["homePage", "infoPage", "maintenancePage"] },
-  publisher: { permissions: ["view", "create", "remind"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"] },
-  admin: { permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"], allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage", "settingsPage"] }
-};
-const allowedTabKeys = ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"];
-const allowedPermissionKeys = ["view", "create", "edit", "delete", "remind", "fixedManage"];
 const personnelFunctionCategories = ["维修", "放行"];
-
-const defaultPeople = [
-  { id: "00000001", name: "接收者", department: "未设置", team: "一班", functionCategory: "维修" },
-  { id: "10000001", name: "王大伟", department: "未设置", team: "一班", functionCategory: "维修" },
-  { id: "10000002", name: "赵威", department: "未设置", team: "管理组", functionCategory: "维修" },
-  { id: "10000003", name: "黄金山", department: "未设置", team: "二班", functionCategory: "维修" },
-  { id: "10000004", name: "黄磊", department: "未设置", team: "检查组", functionCategory: "维修" },
-  { id: "10000005", name: "田元鹏", department: "未设置", team: "运行组", functionCategory: "维修" }
+const rbacPermissionDefinitions = RBAC_PERMISSION_DEFINITIONS;
+const retiredRbacPermissionCodes = [
+  "info.update", "info.delete", "info.void", "info.remind", "scopes.manage",
+  "capability.read", "capability.allocate", "capability.export",
+  "personnel.read", "personnel.create", "personnel.sensitive.read", "personnel.import", "personnel.update", "personnel.qualification.read", "personnel.audit.read",
+  "maintenance.read", "maintenance.execute", "maintenance.dispatch", "maintenance.review", "maintenance.stats.read"
 ];
+const retiredRbacRoleCodes = ["info_publisher", "employee", "maintenance_manager", "personnel_manager", "account_manager", "hours_manager", "attendance_manager", "display_readonly"];
+const rbacRoleDefinitions = RBAC_ROLE_DEFINITIONS;
 
 const defaultCategories = ["质量问题", "规定要求", "周例会", "日例会", "其他"];
 
 await fs.mkdir(dataDir, { recursive: true });
 await fs.mkdir(uploadDir, { recursive: true });
 const db = await createDatabase({ dbPath });
+const authorizationProjects = createAuthorizationProjects({ db, now, randomId, audit });
+const personnelDeletion = createPersonnelDeletion({ db, now, randomId, audit, superAccountId: SUPER_ACCOUNT_ID,
+  clearSessionCache: userId => { for (const [sid, id] of sessions) if (id === userId) sessions.delete(sid); } });
+
+const personnelAccess = createPersonnelAccess({ db, hasRbac, randomId, now, audit, superAccountId: SUPER_ACCOUNT_ID });
+const capabilityService = createCapabilityService({ db, hasRbac, personnelAccess, audit, resolveActor: id => { const row=db.prepare('select * from users where id=?').get(id); return row&&normalizeStatus(row.status)==='active'&&!isDeletedAccountPerson(row)?toUser(row):null; }, superAccountId: SUPER_ACCOUNT_ID });
 
 function randomId(prefix) {
   return `${prefix}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
@@ -97,6 +126,10 @@ function verifyPassword(password, row) {
   const expected = Buffer.from(hash, "hex");
   const actual = Buffer.from(row.password_hash, "hex");
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function isValidEmployeeNo(value) {
+  return /^\d{8}$/.test(String(value || "").trim());
 }
 
 function lanAddresses() {
@@ -139,49 +172,46 @@ function bumpMaintenanceVersion(flightId = "", eventType = "maintenance.updated"
   return JSON.parse(payload);
 }
 
-function normalizePerson(person, index = 0) {
-  const rawId = String(person?.id || "");
-  const id = rawId.trim() || String(90000000 + index).slice(0, 8);
-  return {
-    id,
-    name: String(person?.name || "").trim() || "未命名",
-    department: String(person?.department || "未设置").trim() || "未设置",
-    team: String(person?.team || person?.department || "未设置").trim() || "未设置",
-    functionCategory: normalizeFunctionCategory(person?.functionCategory || person?.function_category)
-  };
+function allPeople(module = "maintenance") {
+  const user = requestUser(), scope = user ? personnelAccess.predicate(user,module) : { sql:"1=1",params:[] };
+  const maintenanceEligible=module==="maintenance"?" and g.unit_type='personnel_group' and g.maintenance_eligible=1":"";
+  return db.prepare(`select p.*,u.id as account_id,u.username,u.status as account_status,u.function_category,d.name as department_name,g.name as personnel_group_name,at.name as administrative_team_name,wt.name as working_team_name,cs.working_team_id from personnel p
+    left join users u on u.person_id=p.id left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units at on at.id=p.administrative_team_id left join capability_current_states cs on cs.person_id=p.id left join organization_units wt on wt.id=cs.working_team_id where p.data_status='active'
+    and p.employment_status not in ('离职','停职') and (${scope.sql})${maintenanceEligible} order by p.employee_no`).all(...scope.params).map(row => ({
+      id: row.id, personId:row.id, accountId:row.account_id || null, employeeNo:row.employee_no,
+      username:row.username||"",name:row.name,department:row.department_name||"未设置",personnelGroup:row.personnel_group_name||"",administrativeTeam:row.administrative_team_name||"",
+      personnelGroupId:row.personnel_group_id,administrativeTeamId:row.administrative_team_id,teamId:row.working_team_id||row.administrative_team_id,
+      team:row.working_team_name||row.administrative_team_name||"未设置",functionCategory:normalizeFunctionCategory(row.function_category),
+      hasAccount:!!row.account_id && row.account_status !== "disabled"
+    }));
 }
 
-function allPeople() {
-  const rows = db.prepare("select id,username,name,department,team,function_category from users where status is null or status<>'disabled' order by username").all();
-  return rows.length ? rows.map(row => ({
-    id: row.id,
-    username: row.username,
-    name: row.name,
-    department: row.department || "未设置",
-    team: row.team || "未设置",
-    functionCategory: normalizeFunctionCategory(row.function_category)
-  })) : [];
-}
-
-function allLoginPeople() {
-  return allPeople();
-}
+function allLoginPeople() { return allPeople("info").filter(person => person.hasAccount).map(person => ({...person,id:person.accountId})); }
 
 function toUser(row) {
-  if (!row) return { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] };
-  const role = normalizeRole(row.role);
-  const preset = roles[role] || roles.receiver;
+  if (!row) return { id: "", username: "", name: "", rbacRoles: [], rbacPermissions: [], dataScopes: [], visibleNavigation: [] };
+  const rbac = rbacSnapshot(row.id);
+  if (row.id === SUPER_ACCOUNT_ID) {
+    rbac.permissions = db.prepare("select code from rbac_permissions order by code").all().map(item => item.code);
+    rbac.scopes = SCOPE_MODULES.map(module => ({id: "super-"+module,module,scopeType:"all",scopeId:"",validFrom:"",validTo:""}));
+  }
+  const person = row.person_id ? db.prepare("select p.*,d.name as organization_department,g.name as personnel_group,t.name as administrative_team from personnel p left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units t on t.id=p.administrative_team_id where p.id=?").get(row.person_id) : null;
   return {
     id: row.id,
+    personId: row.person_id || "",
+    employeeNo: person?.employee_no || "",
     username: row.username,
-    name: row.name,
-    role,
-    department: row.department || "未设置",
-    team: row.team || "未设置",
+    name: person?.name || row.name,
+    department:person?.organization_department||row.department||"未设置",
+    team:person?.administrative_team||person?.personnel_group||"未设置",
     functionCategory: normalizeFunctionCategory(row.function_category),
     status: row.status || "active",
-    permissions: normalizeKeys(row.permissions, preset.permissions, allowedPermissionKeys),
-    allowedTabs: normalizeKeys(row.allowed_tabs, preset.allowedTabs, allowedTabKeys.concat("settingsPage"))
+    mustChangePassword: !!row.must_change_password,
+    credentialVersion: Number(row.credential_version || 1),
+    rbacRoles: rbac.roles,
+    rbacPermissions: rbac.permissions,
+    dataScopes: rbac.scopes,
+    visibleNavigation: visibleNavigation(rbac.permissions, row.id === SUPER_ACCOUNT_ID)
   };
 }
 
@@ -189,18 +219,10 @@ function adminUser(row) {
   const user = toUser(row);
   return {
     ...user,
+    personDeleted: db.prepare("select data_status from personnel where id=?").get(row.person_id || "")?.data_status === "deleted",
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
-}
-
-function roleDefaults(role) {
-  return roles[role] || roles.receiver;
-}
-
-function normalizeRole(value) {
-  const normalized = { 接收者: "receiver", 发布者: "publisher", 管理员: "admin", 访客: "receiver", readonly: "receiver", guest: "receiver", user: "receiver", editor: "publisher" }[String(value || "").trim()] || value;
-  return ["receiver", "publisher", "admin"].includes(normalized) ? normalized : "receiver";
 }
 
 function normalizeStatus(value) {
@@ -214,33 +236,54 @@ function normalizeFunctionCategory(value) {
   return personnelFunctionCategories.includes(normalized) ? normalized : "维修";
 }
 
-function normalizeKeys(value, fallback, allowed) {
-  if (Array.isArray(value)) {
-    return Array.from(new Set(value.map(item => String(item).trim()).filter(item => allowed.includes(item))));
+function rbacSnapshot(userId) {
+  if (!userId) return { roles: [], permissions: [], scopes: [] };
+  const assignedRoles = db.prepare(`select r.code,r.name from rbac_roles r
+    join rbac_user_roles ur on ur.role_id=r.id where ur.user_id=? and r.status='active' order by r.code`).all(userId);
+  const permissions = db.prepare(`select distinct p.code from rbac_permissions p
+    join rbac_role_permissions rp on rp.permission_id=p.id
+    join rbac_user_roles ur on ur.role_id=rp.role_id
+    join rbac_roles r on r.id=ur.role_id
+    where ur.user_id=? and r.status='active' order by p.code`).all(userId).map(row => row.code);
+  const scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId);
+  return { roles: assignedRoles, permissions, scopes };
+}
+
+function hasRbac(user, permission) {
+  if (!user?.id) return false;
+  if (user.id === SUPER_ACCOUNT_ID) return true;
+  return (user.rbacPermissions || rbacSnapshot(user.id).permissions).includes(permission);
+}
+
+function hasAnyRbac(user, permissions) {
+  return permissions.some(permission => hasRbac(user, permission));
+}
+
+function dataScopeAllowsUser(user, targetAccountId, module = "info") {
+ const account=db.prepare("select person_id from users where id=?").get(targetAccountId || "");
+ return !!account?.person_id && personnelAccess.allows(user,module,account.person_id);
+}
+
+function requireRbacPermission(req, res, permission) {
+  const user = requireLogin(req, res);
+  if (!user) return null;
+  if (!hasRbac(user, permission)) {
+    audit(user, "permission_denied", "permission", permission);
+    send(res, 403, { error: "当前账号没有权限", permission });
+    return null;
   }
-  const text = String(value || "").trim();
-  if (!text) return fallback;
-  if (text.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) return normalizeKeys(parsed, fallback, allowed);
-    } catch {}
+  return user;
+}
+
+function requireAnyRbacPermission(req, res, permissions) {
+  const user = requireLogin(req, res);
+  if (!user) return null;
+  if (!hasAnyRbac(user, permissions)) {
+    audit(user, "permission_denied", "permission", permissions.join("|"));
+    send(res, 403, { error: "当前账号没有权限", permissions });
+    return null;
   }
-  const input = text.split("|");
-  const set = new Set(input.map(item => String(item).trim()).filter(item => allowed.includes(item)));
-  return set.size ? Array.from(set) : fallback;
-}
-
-function publicRolePermissions() {
-  return Object.fromEntries(Object.entries(roles).map(([key, value]) => [key, value]));
-}
-
-function has(user, permission) {
-  return user.permissions.includes(permission);
-}
-
-function isAdmin(user) {
-  return user?.role === "admin";
+  return user;
 }
 
 function routeParam(value) {
@@ -272,20 +315,47 @@ function sessionCookie(value, maxAge = 604800) {
 
 function currentUser(req) {
   const sid = parseCookies(req).muc_sid;
-  const savedSession = sid ? db.prepare("select user_id from sessions where id=? and expires_at>?").get(sid, now()) : null;
-  const userId = sid && (sessions.get(sid) || savedSession?.user_id);
-  if (sid && savedSession?.user_id && !sessions.has(sid)) sessions.set(sid, savedSession.user_id);
-  return toUser(userId ? db.prepare("select * from users where id=?").get(userId) : null);
+  const savedSession = sid ? db.prepare("select user_id,credential_version from sessions where id=? and expires_at>?").get(sid, now()) : null;
+  if (!savedSession?.user_id) {
+    if (sid) sessions.delete(sid);
+    return toUser(null);
+  }
+  const row = db.prepare("select * from users where id=?").get(savedSession.user_id);
+  const active = row && (row.status || "active") !== "disabled" && !isDeletedAccountPerson(row);
+  const currentVersion = Number(row?.credential_version || 1);
+  if (!active || currentVersion !== Number(savedSession.credential_version || 1)) {
+    sessions.delete(sid);
+    db.prepare("delete from sessions where id=?").run(sid);
+    return toUser(null);
+  }
+  sessions.set(sid, row.id);
+  return toUser(row);
 }
 
 function createLoginSession(row) {
   const sid = randomId("sid");
   sessions.set(sid, row.id);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare("insert into sessions(id,user_id,created_at,expires_at) values(?,?,?,?)").run(sid, row.id, now(), expiresAt);
+  db.prepare("insert into sessions(id,user_id,created_at,expires_at,credential_version) values(?,?,?,?,?)").run(sid, row.id, now(), expiresAt, Number(row.credential_version || 1));
+  db.prepare("update users set last_login_at=? where id=?").run(now(), row.id);
   const user = toUser(row);
   audit(user, "login", "user", user.id);
   return { sid, user };
+}
+
+function revokeUserSessions(userId, { bumpCredentialVersion = false } = {}) {
+  if (!userId) return;
+  db.prepare("delete from sessions where user_id=?").run(userId);
+  for (const [sid, savedUserId] of sessions.entries()) {
+    if (savedUserId === userId) sessions.delete(sid);
+  }
+  if (bumpCredentialVersion) db.prepare("update users set credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(now(), userId);
+}
+
+function revokeRoleUserSessions(roleId) {
+  const users = db.prepare("select user_id as userId from rbac_user_roles where role_id=?").all(roleId);
+  users.filter(item => item.userId !== SUPER_ACCOUNT_ID).forEach(item => revokeUserSessions(item.userId, { bumpCredentialVersion: true }));
+  return users.map(item => item.userId);
 }
 
 function requireLogin(req, res) {
@@ -297,37 +367,25 @@ function requireLogin(req, res) {
   return user;
 }
 
-function requirePermission(req, res, permission) {
-  const user = requireLogin(req, res);
-  if (!user) return null;
-  if (!has(user, permission)) {
-    send(res, 403, { error: "当前账号没有权限" });
-    return null;
-  }
-  return user;
-}
-
-function requireAdmin(req, res) {
-  const user = requireLogin(req, res);
-  if (!user) return null;
-  if (!isAdmin(user)) {
-    send(res, 403, { error: "当前账号没有管理员权限" });
-    return null;
-  }
-  return user;
-}
-
 function audit(user, action, targetType, targetId, detail = "") {
   db.prepare("insert into audit_logs(id,user_id,user_name,action,target_type,target_id,detail,created_at) values(?,?,?,?,?,?,?,?)")
     .run(randomId("audit"), user?.id || "guest", user?.name || "访客", action, targetType, targetId, detail, now());
 }
 
 function send(res, status, data, headers = {}) {
+  const actor=requestUser(), routePath=requestContext.getStore()?.req?.url || "";
+  if(actor && routePath.startsWith("/api/maintenance/") && !personnelAccess.hasAll(actor,"maintenance")) data=redactMaintenanceResponse(data,actor);
   const body = JSON.stringify(data);
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", ...headers });
   res.end(body);
 }
 
+function redactMaintenanceResponse(value,user) {
+ if(Array.isArray(value))return value.filter(item=>!item?.personId || item.personId===user.personId || personnelAccess.allows(user,"maintenance",item.personId)).map(item=>redactMaintenanceResponse(item,user));
+ if(!value || typeof value!=="object")return value;
+ if(value.personId && value.personId!==user.personId && !personnelAccess.allows(user,"maintenance",value.personId))return null;
+ return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,redactMaintenanceResponse(item,user)]));
+}
 function sendText(res, status, body, type = "text/plain; charset=utf-8", headers = {}) {
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, "Content-Length": Buffer.byteLength(body), ...headers });
   res.end(body);
@@ -359,8 +417,10 @@ function corsHeaders() {
 }
 
 async function bodyJson(req) {
+  if(Object.hasOwn(req,"parsedJson"))return req.parsedJson;
   const text = (await bodyBuffer(req, MAX_JSON_BYTES)).toString("utf8");
-  return text ? JSON.parse(text) : {};
+  req.parsedJson=text ? JSON.parse(text) : {};
+  return req.parsedJson;
 }
 
 async function bodyForm(req) {
@@ -423,42 +483,6 @@ function syncRecordCategories(categories) {
   return valid;
 }
 
-async function seedInitialRecords() {
-  const count = db.prepare("select count(*) as count from records").get().count;
-  if (count) return;
-  const htmlPath = path.join(rootDir, "outputs/muc_apr_may_rules_full/index.html");
-  if (!fss.existsSync(htmlPath)) return;
-  const records = parseSeedRecords(await fs.readFile(htmlPath, "utf8"));
-  const insertRecord = db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-  const insertRecipient = db.prepare("insert or ignore into record_recipients(record_id,user_id,name,department,team) values(?,?,?,?,?)");
-  const insertAttachment = db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)");
-  const people = allPeople();
-  for (const record of records) {
-    const rid = recordId(record);
-    const deadline = deadlineFor(record.date);
-    insertRecord.run(rid, record.date, record.publisher || "", normalizeCategory(record.category || "规定要求"), record.title || "", record.summary || "", record.original || "", record.sourceSet || "初始导入", "system", "system", now(), now(), deadline, "普通", "已发布", "", 0);
-    people.forEach(person => insertRecipient.run(rid, person.id, person.name, person.department, person.team));
-    for (const attachment of record.attachments || []) {
-      const attId = randomId("att");
-      const name = attachment.name || path.basename(attachment.path || "附件");
-      let storedName = "";
-      let size = 0;
-      if (attachment.path) {
-        const source = path.join(rootDir, "outputs/muc_apr_may_rules_full", attachment.path);
-        storedName = `${attId}-${name}`;
-        const target = path.join(uploadDir, storedName);
-        try {
-          await fs.copyFile(source, target);
-          size = (await fs.stat(target)).size;
-        } catch {
-          storedName = "";
-        }
-      }
-      insertAttachment.run(attId, "record", rid, name, "application/octet-stream", size, storedName ? "server" : "missing", storedName, "system", now());
-    }
-  }
-}
-
 function deadlineFor(dateValue) {
   const date = parseRecordDate(dateValue) || new Date();
   const days = Number(settingValue("overdueDays", 3)) || 3;
@@ -494,10 +518,6 @@ async function initDb() {
     create table if not exists users(
       id text primary key, username text unique not null, name text not null, role text not null,
       salt text not null, password_hash text not null, permissions text not null, allowed_tabs text not null,
-      created_at text not null, updated_at text not null
-    );
-    create table if not exists people(
-      id text primary key, name text not null, department text, team text,
       created_at text not null, updated_at text not null
     );
     create table if not exists records(
@@ -539,6 +559,210 @@ async function initDb() {
     );
     create table if not exists sessions(
       id text primary key, user_id text not null, created_at text not null, expires_at text not null
+    );
+    create table if not exists personnel(
+      id text primary key,
+      employee_no text unique not null check(length(employee_no)=8),
+      name text not null,
+      department text,
+      home_team text,
+      is_instructor integer default 0,
+      position_code text,
+      actual_grade text,
+      employment_status text not null default '在职',
+      source_batch_id text,
+      data_status text not null default 'active',
+      department_id text,
+      personnel_group_id text,
+      administrative_team_id text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists organization_units(
+      id text primary key,
+      code text unique not null,
+      name text not null,
+      unit_type text not null,
+      parent_id text,
+      status text not null default 'active',
+      maintenance_eligible integer not null default 0,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists personnel_licenses(
+      id text primary key,
+      person_id text not null,
+      employee_no text not null,
+      license_no text,
+      license_type text,
+      license_english_level text,
+      issued_at text,
+      renewed_at text,
+      validity_years text,
+      expires_at text,
+      is_valid text,
+      remark text,
+      source_created_by text,
+      source_created_at text,
+      source_updated_by text,
+      source_updated_at text,
+      source_batch_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(person_id,license_no,license_type)
+    );
+    create table if not exists capability_catalog(
+      id text primary key,
+      project_code text unique not null,
+      project_name text not null,
+      project_category text not null default '',
+      category_source text not null default '',
+      category_updated_by text not null default '',
+      category_updated_at text not null default '',
+      third_party_company text not null default '',
+      authorization_type text,
+      authorization_unit text,
+      status text not null default 'active',
+      created_at text not null,
+      updated_at text not null
+    );
+    ${AUTHORIZATION_SCHEMA};
+    create table if not exists course_catalog(
+      id text primary key,
+      course_code text not null,
+      course_name text not null,
+      course_version text not null default '',
+      course_nature text,
+      status text not null default 'active',
+      created_at text not null,
+      updated_at text not null,
+      unique(course_code,course_version)
+    );
+    create table if not exists personnel_training_records(
+      id text primary key,
+      person_id text not null,
+      employee_no text not null,
+      course_code text not null,
+      course_name text,
+      course_version text not null default '',
+      course_nature text,
+      started_at text not null default '',
+      completed_at text,
+      training_result text,
+      certificate_no text,
+      issuer text,
+      issuing_unit text,
+      issued_at text,
+      attendance_status text,
+      qualification_status text,
+      data_source text,
+      class_no text not null default '',
+      source_batch_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(person_id,course_code,course_version,class_no,started_at)
+    );
+    create table if not exists personnel_import_batches(
+      id text primary key,
+      import_type text not null,
+      file_name text,
+      file_hash text,
+      status text not null default 'pending',
+      rows_json text not null,
+      summary_json text not null,
+      created_by text,
+      created_by_name text,
+      confirmed_by text,
+      confirmed_at text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists personnel_import_issues(
+      id text primary key,
+      batch_id text not null,
+      row_number integer,
+      issue_type text not null,
+      severity text not null default 'error',
+      employee_no text,
+      detail text,
+      status text not null default 'open',
+      resolution text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists personnel_change_logs(
+      id text primary key,
+      person_id text not null,
+      field_name text not null,
+      field_label text,
+      old_value text,
+      new_value text,
+      source_type text not null default 'manual',
+      source_batch_id text,
+      reason text,
+      operator_id text,
+      operator_name text,
+      created_at text not null
+    );
+    create table if not exists personnel_field_overrides(
+      person_id text not null,
+      field_name text not null,
+      field_value text,
+      reason text,
+      updated_by text,
+      updated_at text not null,
+      primary key(person_id,field_name)
+    );
+    create table if not exists master_data_dictionary_values(
+      id text primary key,
+      category text not null,
+      code text not null default '',
+      value text not null,
+      status text not null default 'active',
+      source_batch_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(category,code,value)
+    );
+    create table if not exists rbac_roles(
+      id text primary key,
+      code text unique not null,
+      name text not null,
+      description text,
+      system_role integer not null default 0,
+      status text not null default 'active',
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists rbac_permissions(
+      id text primary key,
+      code text unique not null,
+      name text not null,
+      module text not null,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists rbac_role_permissions(
+      role_id text not null,
+      permission_id text not null,
+      primary key(role_id,permission_id)
+    );
+    create table if not exists rbac_user_roles(
+      user_id text not null,
+      role_id text not null,
+      created_at text not null,
+      primary key(user_id,role_id)
+    );
+    create table if not exists rbac_user_scopes(
+      id text primary key,
+      user_id text not null,
+      scope_type text not null,
+      scope_id text not null default '',
+      valid_from text,
+      valid_to text,
+      created_at text not null,
+      updated_at text not null,
+      unique(user_id,scope_type,scope_id)
     );
     create table if not exists maintenance_flights(
       id text primary key,
@@ -585,7 +809,7 @@ async function initDb() {
       owner_type text not null,
       owner_id text not null,
       flight_id text,
-      user_id text not null,
+      person_id text not null,
       user_name text not null,
       team text,
       role text not null,
@@ -606,7 +830,7 @@ async function initDb() {
       assignment_id text not null,
       owner_type text not null,
       owner_id text not null,
-      user_id text not null,
+      person_id text not null,
       role text,
       content text,
       created_at text not null,
@@ -627,7 +851,7 @@ async function initDb() {
       owner_id text not null,
       flight_id text,
       assignment_id text not null,
-      user_id text not null,
+      person_id text not null,
       user_name text not null,
       team text,
       role text,
@@ -647,7 +871,7 @@ async function initDb() {
       owner_id text not null,
       flight_id text,
       assignment_id text not null,
-      user_id text not null,
+      person_id text not null,
       user_name text not null,
       team text,
       role text not null default '放行',
@@ -676,12 +900,12 @@ async function initDb() {
     create table if not exists maintenance_work_report_entries(
       flight_id text not null,
       role text not null,
-      user_id text not null,
+      person_id text not null,
       user_name text not null,
       team text,
       created_at text not null,
       updated_at text not null,
-      primary key(flight_id, role, user_id)
+      primary key(flight_id, role, person_id)
     );
     create table if not exists maintenance_report_batches(
       id text primary key,
@@ -704,14 +928,14 @@ async function initDb() {
       owner_type text not null,
       owner_id text not null,
       role text not null,
-      user_id text not null,
+      person_id text not null,
       user_name text not null,
       team text,
       standard_hours real default 0,
       source text,
       created_at text not null,
       updated_at text not null,
-      unique(batch_id, owner_type, owner_id, role, user_id)
+      unique(batch_id, owner_type, owner_id, role, person_id)
     );
     create table if not exists maintenance_report_drafts(
       id text primary key,
@@ -746,6 +970,27 @@ async function initDb() {
   ensureColumn("users", "team", "text");
   ensureColumn("users", "status", "text default 'active'");
   ensureColumn("users", "function_category", "text default '维修'");
+  ensureColumn("users", "person_id", "text");
+  ensureColumn("users", "credential_version", "integer default 1");
+  ensureColumn("users", "must_change_password", "integer default 0");
+  ensureColumn("users", "last_login_at", "text");
+  ensureColumn("sessions", "credential_version", "integer default 1");
+  ensureColumn("personnel", "department_id", "text");
+  if(!new Set(db.prepare("pragma table_info(personnel)").all().map(row=>row.name)).has("personnel_group_id")&&!new Set(db.prepare("pragma table_info(personnel)").all().map(row=>row.name)).has("organization_branch_id"))ensureColumn("personnel", "personnel_group_id", "text");
+  ensureColumn("personnel", "administrative_team_id", "text");
+  ensureColumn("organization_units", "maintenance_eligible", "integer not null default 0");
+  ensureColumn("personnel_licenses", "data_status", "text default 'active'");
+  ensureColumn("personnel_authorizations", "data_status", "text default 'active'");
+  ensureColumn("personnel_training_records", "data_status", "text default 'active'");
+  db.exec(`
+    create index if not exists personnel_department_idx on personnel(department_id);
+    create index if not exists personnel_administrative_team_idx on personnel(administrative_team_id);
+    create index if not exists personnel_employment_idx on personnel(employment_status);
+    create index if not exists personnel_license_person_idx on personnel_licenses(person_id);
+    create index if not exists personnel_authorization_person_idx on personnel_authorizations(person_id);
+    create index if not exists personnel_training_person_idx on personnel_training_records(person_id);
+    create index if not exists personnel_changes_person_idx on personnel_change_logs(person_id,created_at);
+  `);
   db.prepare("update users set function_category='维修' where function_category is null or trim(function_category)=''").run();
   ensureColumn("records", "deadline", "text");
   ensureColumn("records", "priority", "text default '普通'");
@@ -762,33 +1007,22 @@ async function initDb() {
   db.prepare("insert into maintenance_sync_state(id,version,updated_at) values(1,0,?) on conflict(id) do nothing").run(now());
   db.prepare("delete from sessions where expires_at<=?").run(now());
   db.prepare("delete from favorites where record_id not in (select id from records)").run();
-  const seeds = isProduction ? [] : [
-    { id: "00000001", username: "receiver", password: "123456", name: "接收者", role: "receiver", department: "未设置", team: "一班" },
-    { id: "u-publisher", username: "publisher", password: "123456", name: "发布者", role: "publisher", department: "未设置", team: "发布组" },
-    { id: "54002010", username: "54002010", password: "muc2026", name: "系统管理员", role: "admin", department: "系统管理", team: "管理员" }
-  ];
-  const insertUser = db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)");
-  for (const seed of seeds) {
-    if (db.prepare("select id from users where username=?").get(seed.username)) continue;
-    const pass = hashPassword(seed.password);
-    insertUser.run(seed.id, seed.username, seed.name, seed.role, pass.salt, pass.hash, JSON.stringify(roles[seed.role].permissions), JSON.stringify(roles[seed.role].allowedTabs), seed.department, seed.team, "active", now(), now());
-  }
-  ensureDefaultAdmin();
-  const legacyAdmin = isProduction ? null : db.prepare("select id from users where username=?").get("admin");
+  for (const column of ["deleted_at", "deleted_by", "delete_reason"]) ensureColumn("personnel", column, "text not null default ''");
+  ensureSuperAccount();
+  migratePersonnelFoundation(db, now, randomId);
+  migrateAuthorizationNine(db,{now,randomId,audit,allowReset:process.env.NODE_ENV==='test'||process.env.MUC_AUTHORIZATION_RESET==='1',backupPath:process.env.MUC_AUTHORIZATION_BACKUP||''});
+  authorizationProjects.migrate();
+  seedRbac();
+  ensureSuperAccountRbac();
+  const legacyAdmin = db.prepare("select id from users where username=?").get("admin");
   if (legacyAdmin) {
     db.prepare("delete from sessions where user_id=?").run(legacyAdmin.id);
     db.prepare("delete from favorites where user_id=?").run(legacyAdmin.id);
     db.prepare("delete from users where username=?").run("admin");
   }
-  const peopleCount = db.prepare("select count(*) as count from people").get().count;
-  if (!peopleCount && !isProduction) {
-    const insertPeople = db.prepare("insert into people(id,name,department,team,created_at,updated_at) values(?,?,?,?,?,?)");
-    defaultPeople.forEach(person => insertPeople.run(person.id, person.name, person.department, person.team, now(), now()));
-  }
   if (!db.prepare("select key from settings where key='categories'").get()) setSetting("categories", defaultCategories);
   if (!db.prepare("select key from settings where key='overdueDays'").get()) setSetting("overdueDays", 3);
   if (!db.prepare("select key from settings where key='reminderDays'").get()) setSetting("reminderDays", 1);
-  if (!isProduction) await seedInitialRecords();
   backupMaintenanceThreeLineMigration();
   dropLegacyMaintenanceTables();
   seedMaintenanceRules();
@@ -804,7 +1038,6 @@ async function initDb() {
   migrateMaintenanceReleaseResults();
   migrateMaintenanceThreeLineReports();
   reconcileActiveMaintenanceStatuses();
-  migrateLegacyRolesAndPermissions();
   migrateCategories();
   backfillRecordRecipients();
   cleanupOrphanUserData();
@@ -860,8 +1093,8 @@ function migrateMaintenanceThreeLineReports() {
   const flights = db.prepare("select * from maintenance_flights order by created_at").all();
   const upsertBatch = db.prepare(`insert into maintenance_report_batches(id,flight_id,report_type,status,feedback,version,submitted_by,submitted_by_name,submitted_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?) on conflict(flight_id,report_type) do nothing`);
-  const insertEntry = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,user_id,user_name,team,standard_hours,source,created_at,updated_at)
-    values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(batch_id,owner_type,owner_id,role,user_id) do nothing`);
+  const insertEntry = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,person_id,user_name,team,standard_hours,source,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(batch_id,owner_type,owner_id,role,person_id) do nothing`);
   maintenanceTransaction(() => {
     for (const flight of flights) {
       const assignments = db.prepare("select * from maintenance_assignments where flight_id=? order by assigned_at,user_name").all(flight.id);
@@ -870,9 +1103,9 @@ function migrateMaintenanceThreeLineReports() {
       if (sortie) {
         const status = sortie.status === "已确认" ? "已确认" : "已提报";
         const batchId = randomId("mtnrb");
-        upsertBatch.run(batchId, flight.id, "release", status, release.feedback || "", 1, release.user_id, release.user_name, release.submitted_at || sortie.updated_at || stamp, release.assigned_at || stamp, stamp);
+        upsertBatch.run(batchId, flight.id, "release", status, release.feedback || "", 1, release.person_id, release.user_name, release.submitted_at || sortie.updated_at || stamp, release.assigned_at || stamp, stamp);
         const saved = db.prepare("select id from maintenance_report_batches where flight_id=? and report_type='release'").get(flight.id);
-        insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "flight", flight.id, "放行", release.user_id, release.user_name, release.team || "", 0, "历史放行架次", stamp, stamp);
+        insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "flight", flight.id, "放行", release.person_id, release.user_name, release.team || "", 0, "历史放行架次", stamp, stamp);
       }
 
       const legacy = db.prepare("select * from maintenance_work_reports where flight_id=?").get(flight.id);
@@ -883,7 +1116,7 @@ function migrateMaintenanceThreeLineReports() {
         upsertBatch.run(batchId, flight.id, "routine", submitted ? (flight.status === "已确认" ? "已确认" : "已提报") : "预填", legacy.feedback || "", submitted ? 1 : 0, legacy.reported_by || "", legacy.reported_by_name || "", legacy.reported_at || "", legacy.created_at || stamp, stamp);
         const saved = db.prepare("select id from maintenance_report_batches where flight_id=? and report_type='routine'").get(flight.id);
         for (const item of legacyEntries) {
-          insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "flight", flight.id, item.role, item.user_id, item.user_name, item.team || "", maintenanceBaseHours("flight", flight), "历史例行报工", item.created_at || stamp, stamp);
+          insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "flight", flight.id, item.role, item.person_id, item.user_name, item.team || "", maintenanceBaseHours("flight", flight), "历史例行报工", item.created_at || stamp, stamp);
         }
         if (legacy.status === "已提交" && legacy.finalized_at) {
           db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=? where id=?")
@@ -898,11 +1131,11 @@ function migrateMaintenanceThreeLineReports() {
         if (subAssignments.length) {
           const complete = subAssignments.length === submittedRows.length;
           const batchId = randomId("mtnrb");
-          upsertBatch.run(batchId, flight.id, "nonroutine", complete ? (flight.status === "已确认" ? "已确认" : "已提报") : "预填", "", complete ? 1 : 0, submittedRows[0]?.user_id || "", submittedRows[0]?.user_name || "", submittedRows[0]?.submitted_at || "", subtasks[0]?.created_at || stamp, stamp);
+          upsertBatch.run(batchId, flight.id, "nonroutine", complete ? (flight.status === "已确认" ? "已确认" : "已提报") : "预填", "", complete ? 1 : 0, submittedRows[0]?.person_id || "", submittedRows[0]?.user_name || "", submittedRows[0]?.submitted_at || "", subtasks[0]?.created_at || stamp, stamp);
           const saved = db.prepare("select id from maintenance_report_batches where flight_id=? and report_type='nonroutine'").get(flight.id);
           for (const item of subAssignments) {
             const subtask = subtasks.find(row => row.id === item.owner_id);
-            insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "subtask", item.owner_id, item.role, item.user_id, item.user_name, item.team || "", Number(subtask?.standard_hours || 0), "历史非例行报工", item.assigned_at || stamp, stamp);
+            insertEntry.run(randomId("mtnre"), saved?.id || batchId, flight.id, "subtask", item.owner_id, item.role, item.person_id, item.user_name, item.team || "", Number(subtask?.standard_hours || 0), "历史非例行报工", item.assigned_at || stamp, stamp);
           }
         }
       }
@@ -1100,14 +1333,14 @@ function normalizeMaintenanceRoutineRatioRules() {
     db.prepare("update maintenance_hour_results set role=? where role=?").run(current, legacy);
     const workEntries = db.prepare("select * from maintenance_work_report_entries where role=?").all(legacy);
     for (const entry of workEntries) {
-      const duplicate = db.prepare("select 1 from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").get(entry.flight_id, current, entry.user_id);
-      if (duplicate) db.prepare("delete from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").run(entry.flight_id, legacy, entry.user_id);
-      else db.prepare("update maintenance_work_report_entries set role=? where flight_id=? and role=? and user_id=?").run(current, entry.flight_id, legacy, entry.user_id);
+      const duplicate = db.prepare("select 1 from maintenance_work_report_entries where flight_id=? and role=? and person_id=?").get(entry.flight_id, current, entry.person_id);
+      if (duplicate) db.prepare("delete from maintenance_work_report_entries where flight_id=? and role=? and person_id=?").run(entry.flight_id, legacy, entry.person_id);
+      else db.prepare("update maintenance_work_report_entries set role=? where flight_id=? and role=? and person_id=?").run(current, entry.flight_id, legacy, entry.person_id);
     }
     const reportEntries = db.prepare("select * from maintenance_report_entries where role=?").all(legacy);
     for (const entry of reportEntries) {
-      const duplicate = db.prepare("select 1 from maintenance_report_entries where batch_id=? and owner_type=? and owner_id=? and role=? and user_id=?")
-        .get(entry.batch_id, entry.owner_type, entry.owner_id, current, entry.user_id);
+      const duplicate = db.prepare("select 1 from maintenance_report_entries where batch_id=? and owner_type=? and owner_id=? and role=? and person_id=?")
+        .get(entry.batch_id, entry.owner_type, entry.owner_id, current, entry.person_id);
       if (duplicate) db.prepare("delete from maintenance_report_entries where id=?").run(entry.id);
       else db.prepare("update maintenance_report_entries set role=? where id=?").run(current, entry.id);
     }
@@ -1153,12 +1386,12 @@ function migrateMaintenanceReleaseResults() {
   const migrationKey = "maintenance_release_sorties_v1";
   if (settingValue(migrationKey, null)) return;
   const rows = db.prepare("select * from maintenance_hour_results where role='放行'").all();
-  const insert = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
+  const insert = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(owner_type,owner_id,assignment_id) do nothing`);
   db.exec("begin immediate");
   try {
     for (const row of rows) {
-      insert.run(randomId("mtnsrt"), row.owner_type, row.owner_id, row.flight_id || "", row.assignment_id, row.user_id, row.user_name, row.team || "", "放行", "放行架次", 1, row.status, row.confirmed_by || "", row.confirmed_at || "", row.created_at || now(), row.updated_at || now());
+      insert.run(randomId("mtnsrt"), row.owner_type, row.owner_id, row.flight_id || "", row.assignment_id, row.person_id, row.user_name, row.team || "", "放行", "放行架次", 1, row.status, row.confirmed_by || "", row.confirmed_at || "", row.created_at || now(), row.updated_at || now());
     }
     db.prepare("delete from maintenance_hour_results where role='放行'").run();
     db.prepare("delete from maintenance_hour_rules where rule_type='roleRatio' and name='放行'").run();
@@ -1246,16 +1479,53 @@ function normalizeMaintenanceTowAndPrimaryRole() {
   }
 }
 
-function migrateLegacyRolesAndPermissions() {
-  const rows = db.prepare("select id,role,permissions,allowed_tabs from users").all();
-  const update = db.prepare("update users set role=?,permissions=?,allowed_tabs=?,updated_at=? where id=?");
-  for (const row of rows) {
-    const role = normalizeRole(row.role);
-    const defaults = roleDefaults(role);
-    const permissions = normalizeKeys(row.permissions, defaults.permissions, allowedPermissionKeys);
-    const allowedTabs = normalizeKeys(row.allowed_tabs, defaults.allowedTabs, allowedTabKeys.concat("settingsPage"));
-    update.run(role, JSON.stringify(permissions), JSON.stringify(allowedTabs), now(), row.id);
+function seedRbac() {
+  const stamp = now();
+  const permissionIds = new Map();
+  const insertPermission = db.prepare("insert into rbac_permissions(id,code,name,module,created_at,updated_at) values(?,?,?,?,?,?) on conflict(code) do update set name=excluded.name,module=excluded.module,updated_at=excluded.updated_at");
+  for (const [code, name, module] of rbacPermissionDefinitions) {
+    const existing = db.prepare("select id from rbac_permissions where code=?").get(code);
+    const id = existing?.id || `perm-${code}`;
+    insertPermission.run(id, code, name, module, stamp, stamp);
+    permissionIds.set(code, id);
   }
+  for (const code of retiredRbacPermissionCodes) {
+    const retired = db.prepare("select id from rbac_permissions where code=?").get(code);
+    if (!retired) continue;
+    db.prepare("delete from rbac_role_permissions where permission_id=?").run(retired.id);
+    db.prepare("delete from rbac_permissions where id=?").run(retired.id);
+  }
+  if (retiredRbacRoleCodes.length) {
+    const marks = retiredRbacRoleCodes.map(() => "?").join(",");
+    db.prepare(`update rbac_roles set status='inactive',updated_at=? where code in (${marks})`).run(stamp, ...retiredRbacRoleCodes);
+  }
+  const roleNames = RBAC_ROLE_NAMES;
+  const roleIds = new Map();
+  const insertRole = db.prepare("insert into rbac_roles(id,code,name,description,system_role,status,created_at,updated_at) values(?,?,?,?,?,?,?,?) on conflict(code) do update set name=excluded.name,description=excluded.description,system_role=1,status='active',updated_at=excluded.updated_at");
+  const preserveControlledEdit = code => code !== "system_admin" && settingValue(`rbacRoleControlledEdit:${code}`, false) === true;
+  for (const [code, permissions] of Object.entries(rbacRoleDefinitions)) {
+    const existing = db.prepare("select id from rbac_roles where code=?").get(code);
+    const id = existing?.id || `role-${code}`;
+    if (existing && preserveControlledEdit(code)) {
+      db.prepare("update rbac_roles set system_role=1,status='active',updated_at=? where id=?").run(stamp, id);
+    } else {
+      insertRole.run(id, code, roleNames[code] || code, RBAC_ROLE_DESCRIPTIONS[code] || "系统预置角色", 1, "active", stamp, stamp);
+    }
+    roleIds.set(code, id);
+  }
+  const assignPermission = db.prepare("insert or ignore into rbac_role_permissions(role_id,permission_id) values(?,?)");
+  for (const [code, permissions] of Object.entries(rbacRoleDefinitions)) {
+    const roleId = roleIds.get(code);
+    if (preserveControlledEdit(code)) continue;
+    db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
+    permissions.forEach(permission => assignPermission.run(roleId, permissionIds.get(permission)));
+  }
+  setSetting("pureRbacV2Migrated", true);
+  setSetting("rbacPermissionCatalogV3Seeded", true);
+  // 54002010使用单一正常账号，但系统管理员角色始终同步全部权限，避免新增权限后出现缺口。
+  const systemRoleId = roleIds.get("system_admin");
+  const assignSystemPermission = db.prepare("insert or ignore into rbac_role_permissions(role_id,permission_id) values(?,?)");
+  RBAC_ROLE_DEFINITIONS.system_admin.forEach(permission => assignSystemPermission.run(systemRoleId, permissionIds.get(permission)));
 }
 
 function dropLegacyMaintenanceTables() {
@@ -1269,8 +1539,7 @@ function dropLegacyMaintenanceTables() {
 }
 
 function cleanupOrphanUserData() {
-  db.prepare("delete from record_recipients where user_id not in (select id from users)").run();
-  db.prepare("delete from read_receipts where user_id not in (select id from users)").run();
+  // 账户可清理，但信息传达中的接收人和阅读记录属于业务历史快照，不能随账户删除。
   db.prepare("delete from favorites where user_id not in (select id from users)").run();
   db.prepare(`delete from read_receipts
     where not exists (
@@ -1309,63 +1578,89 @@ function seedMaintenanceRules() {
   for (const [name, value] of roles) insert.run(randomId("mtnr"), "roleRatio", name, value, now(), now());
 }
 
-function ensureDefaultAdmin() {
-  if (isProduction) {
-    const userCount = Number(db.prepare("select count(*) as count from users").get()?.count || 0);
-    if (userCount > 0) return;
-    const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || "");
-    if (!password) throw new Error("生产数据库没有账号，请设置 ADMIN_BOOTSTRAP_PASSWORD 完成首次管理员初始化");
-    const username = String(process.env.ADMIN_BOOTSTRAP_USERNAME || "admin").trim() || "admin";
-    const name = String(process.env.ADMIN_BOOTSTRAP_NAME || "系统管理员").trim() || "系统管理员";
-    const pass = hashPassword(password);
-    db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(randomId("u"), username, name, "admin", pass.salt, pass.hash, JSON.stringify(roles.admin.permissions), JSON.stringify(roles.admin.allowedTabs), "系统管理", "管理员", "active", now(), now());
-    return;
+function migrateIncorrectSuperAccountId() {
+  const incorrectPerson = db.prepare("select * from personnel where employee_no=?").get(INCORRECT_SUPER_ACCOUNT_ID);
+  const correctPerson = db.prepare("select * from personnel where employee_no=?").get(SUPER_ACCOUNT_ID);
+  const incorrectUser = db.prepare("select * from users where id=? or username=?").get(INCORRECT_SUPER_ACCOUNT_ID, INCORRECT_SUPER_ACCOUNT_ID);
+  const correctUser = db.prepare("select * from users where id=? or username=?").get(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID);
+  if (!incorrectPerson && !incorrectUser) return;
+  if (incorrectPerson && correctPerson && incorrectPerson.id !== correctPerson.id) {
+    throw new Error(`超级账号工号迁移冲突：${INCORRECT_SUPER_ACCOUNT_ID} 与 ${SUPER_ACCOUNT_ID} 同时存在`);
   }
-  const adminDefaults = {
-    id: "54002010",
-    username: "54002010",
-    password: "muc2026",
-    name: "系统管理员",
-    role: "admin",
-    department: "系统管理",
-    team: "管理员"
-  };
-  const row = db.prepare("select * from users where username=?").get(adminDefaults.username);
-  const pass = hashPassword(adminDefaults.password);
-  const permissions = JSON.stringify(roles.admin.permissions);
-  const allowedTabs = JSON.stringify(roles.admin.allowedTabs);
+  if (incorrectUser && correctUser && incorrectUser.id !== correctUser.id) {
+    throw new Error(`超级账号迁移冲突：${INCORRECT_SUPER_ACCOUNT_ID} 与 ${SUPER_ACCOUNT_ID} 同时存在`);
+  }
+  db.exec("begin immediate");
+  try {
+    if (incorrectPerson && !correctPerson) {
+      db.prepare("update personnel set employee_no=?,updated_at=? where id=?").run(SUPER_ACCOUNT_ID, now(), incorrectPerson.id);
+      ["personnel_licenses", "personnel_authorizations", "personnel_training_records", "personnel_import_issues"].forEach(table => {
+        db.prepare(`update ${table} set employee_no=? where employee_no=?`).run(SUPER_ACCOUNT_ID, INCORRECT_SUPER_ACCOUNT_ID);
+      });
+    }
+    if (incorrectUser && !correctUser) {
+      db.prepare("delete from sessions where user_id=?").run(INCORRECT_SUPER_ACCOUNT_ID);
+      ["record_recipients", "read_receipts", "favorites", "rbac_user_roles", "rbac_user_scopes"].forEach(table => {
+        db.prepare(`update ${table} set user_id=? where user_id=?`).run(SUPER_ACCOUNT_ID, INCORRECT_SUPER_ACCOUNT_ID);
+      });
+      ["audit_logs", "audit"].forEach(table => {
+        db.prepare(`update ${table} set user_id=? where user_id=?`).run(SUPER_ACCOUNT_ID, INCORRECT_SUPER_ACCOUNT_ID);
+      });
+      db.prepare("update users set id=?,username=?,updated_at=? where id=?").run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, now(), incorrectUser.id);
+    }
+    const resetState = settingValue("pureRbacAccountResetV1", false);
+    if (resetState) setSetting("pureRbacAccountResetV1", { ...resetState, retainedAccount: SUPER_ACCOUNT_ID, correctedAt: now() });
+    setSetting("superAccountEightDigitMigrationV1", { completedAt: now(), previousAccount: INCORRECT_SUPER_ACCOUNT_ID, account: SUPER_ACCOUNT_ID });
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+}
+
+function ensureSuperAccount() {
+  migrateIncorrectSuperAccountId();
+  let person = db.prepare("select * from personnel where employee_no=?").get(SUPER_ACCOUNT_ID);
+  if (!person) {
+    const personId = randomId("person");
+    db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,source_batch_id,data_status,created_at,updated_at)
+      values(?,?,?,?,?,'在职','system_super_account','active',?,?)`)
+      .run(personId, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, "系统管理", "管理员", now(), now());
+    person = db.prepare("select * from personnel where id=?").get(personId);
+  } else if (person.data_status !== "active" || ["离职", "停职"].includes(person.employment_status)) {
+    db.prepare("update personnel set employment_status='在职',data_status='active',updated_at=? where id=?").run(now(), person.id);
+    person = db.prepare("select * from personnel where id=?").get(person.id);
+  }
+
+  if (!settingValue("pureRbacAccountResetV1", false)) {
+    if (db.prepare("select 1 from users where id<>?").get(SUPER_ACCOUNT_ID)) throw new Error("旧账户迁移状态缺失：禁止自动删除账户，请先完成只读预检");
+    setSetting("pureRbacAccountResetV1", { completedAt: now(), retainedAccount: SUPER_ACCOUNT_ID });
+  }
+
+  const row = db.prepare("select * from users where id=? or username=?").get(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID);
   if (!row) {
-    db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(adminDefaults.id, adminDefaults.username, adminDefaults.name, adminDefaults.role, pass.salt, pass.hash, permissions, allowedTabs, adminDefaults.department, adminDefaults.team, "active", now(), now());
-    return;
+    const initialPassword = String(process.env.INITIAL_ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? "" : "muc2026"));
+    if (!initialPassword) throw new Error("生产环境首次建立超级账号必须设置 INITIAL_ADMIN_PASSWORD");
+    const pass = hashPassword(initialPassword);
+    db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
+      values(?,?,?,'rbac',?,?,'[]','[]',?,?,'维修','active',?,0,1,?,?)`)
+      .run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, pass.salt, pass.hash, person.department || "系统管理", person.home_team || "管理员", person.id, now(), now());
+  } else {
+    db.prepare(`update users set id=?,username=?,name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category='维修',status='active',person_id=?,updated_at=? where id=?`)
+      .run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, person.department || "系统管理", person.home_team || "管理员", person.id, now(), row.id);
   }
-  const passwordOk = verifyPassword(adminDefaults.password, row);
-  const needsRepair = row.id !== adminDefaults.id
-    || row.role !== adminDefaults.role
-    || (row.status || "active") !== "active"
-    || !passwordOk
-    || JSON.stringify(json(row.permissions, [])) !== permissions
-    || JSON.stringify(json(row.allowed_tabs, [])) !== allowedTabs;
-  if (!needsRepair) return;
-  db.prepare(`update users
-    set id=?, name=?, role=?, salt=?, password_hash=?, permissions=?, allowed_tabs=?, department=?, team=?, status='active', updated_at=?
-    where username=?`)
-    .run(adminDefaults.id, adminDefaults.name, adminDefaults.role, pass.salt, pass.hash, permissions, allowedTabs, adminDefaults.department, adminDefaults.team, now(), adminDefaults.username);
-  db.prepare("update sessions set user_id=? where user_id=?").run(adminDefaults.id, row.id);
-  db.prepare("update favorites set user_id=? where user_id=?").run(adminDefaults.id, row.id);
-  db.prepare("update read_receipts set user_id=? where user_id=?").run(adminDefaults.id, row.id);
-  db.prepare("update record_recipients set user_id=? where user_id=?").run(adminDefaults.id, row.id);
+  db.exec("create unique index if not exists users_person_id_unique on users(person_id) where person_id is not null and trim(person_id)<>''");
+}
+
+function ensureSuperAccountRbac() {
+ const role=db.prepare("select id from rbac_roles where code='system_admin'").get();
+ db.prepare("delete from rbac_user_roles where user_id=?").run(SUPER_ACCOUNT_ID);
+ db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(SUPER_ACCOUNT_ID,role.id,now());
+ db.prepare("delete from rbac_user_scopes where user_id=?").run(SUPER_ACCOUNT_ID);
+ for(const module of SCOPE_MODULES) db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,'all','','','',?,?)").run(randomId("scope"),SUPER_ACCOUNT_ID,module,now(),now());
 }
 
 function backfillRecordRecipients() {
-  const people = allPeople();
-  const insert = db.prepare("insert or ignore into record_recipients(record_id,user_id,name,department,team) values(?,?,?,?,?)");
-  const rows = db.prepare("select id from records").all();
-  rows.forEach(record => {
-    const count = db.prepare("select count(*) as count from record_recipients where record_id=?").get(record.id).count;
-    if (!count) people.forEach(person => insert.run(record.id, person.id, person.name, person.department, person.team));
-  });
   db.prepare("update records set deadline=coalesce(deadline, ''), priority=coalesce(priority, '普通'), publish_status=coalesce(publish_status, '已发布')").run();
   db.prepare("select id,date from records where deadline is null or deadline=''").all().forEach(row => {
     db.prepare("update records set deadline=? where id=?").run(deadlineFor(row.date), row.id);
@@ -1400,12 +1695,12 @@ function publicAttachment(row, ownerType = row.owner_type, ownerId = row.owner_i
 }
 
 function recipients(recordId) {
-  return db.prepare(`select rr.user_id as id,
-      coalesce(u.name, rr.name) as name,
-      coalesce(u.department, rr.department, '未设置') as department,
-      coalesce(u.team, rr.team, '未设置') as team
+  return db.prepare(`select rr.user_id as id,rr.user_id as accountId,rr.person_id as personId,
+      rr.name as name,
+      coalesce(rr.department, '未设置') as department,
+      coalesce(rr.team, '未设置') as team
     from record_recipients rr
-    join users u on u.id=rr.user_id and (u.status is null or u.status<>'disabled')
+    left join users u on u.id=rr.user_id
     where rr.record_id=?
     order by rr.user_id`).all(recordId);
 }
@@ -1415,12 +1710,12 @@ function receipts(recordId = "") {
     ? db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
       from read_receipts r
       join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-      join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')
+      left join users u on u.id=r.user_id
       where r.record_id=?`).all(recordId)
     : db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
       from read_receipts r
       join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-      join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')`).all();
+      left join users u on u.id=r.user_id`).all();
   return rows.map(row => ({ ...row, isOverdue: !!row.isOverdue }));
 }
 
@@ -1429,9 +1724,7 @@ function publicSettings() {
     categories: settingValue("categories", defaultCategories),
     overdueDays: settingValue("overdueDays", 3),
     reminderDays: settingValue("reminderDays", 1),
-    people: allPeople(),
     personnelFunctionCategories,
-    rolePermissions: publicRolePermissions(),
     securityNotes: "正式部署后由后端认证、数据库权限校验、附件访问鉴权和操作日志保障。"
   };
 }
@@ -1445,9 +1738,9 @@ async function removeOwnerAttachmentFiles(ownerType, ownerId) {
 }
 
 function publicRecord(row, user) {
-  const canSeeFullFeedback = user.role === "admin" || user.role === "publisher";
+  const canSeeFullFeedback = hasAnyRbac(user, ["info.receipt.manage", "info.stats.read"]);
   const recordRecipients = recipients(row.id);
-  const recordReceipts = receipts(row.id);
+  const recordReceipts = receipts(row.id).filter(receipt=>receipt.userId===user.id || dataScopeAllowsUser(user,receipt.userId,"info"));
   return {
     id: row.id,
     date: row.date,
@@ -1559,15 +1852,15 @@ function publicProjects(rows) {
 }
 
 function maintenanceHasAccess(user) {
-  return isAdmin(user) || (user.allowedTabs || []).includes("maintenancePage");
+  return hasRbac(user, "maintenance.view");
 }
 
 function maintenanceCanManage(user) {
-  return isAdmin(user) || (user.role === "publisher" && maintenanceHasAccess(user));
+  return hasAnyRbac(user, ["maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"]);
 }
 
-function maintenanceCanExecute(user) {
-  return maintenanceHasAccess(user);
+function maintenanceCanExecute(user, write = false) {
+  return maintenanceHasAccess(user) && hasRbac(user, write ? "maintenance.execute.submit" : "maintenance.execute.view");
 }
 
 function maintenanceStatus(value, fallback = "未派工") {
@@ -1621,16 +1914,16 @@ function normalizeMaintenanceAssignments(ownerType, owner, assignments) {
   const normalized = [];
   const releaseUsers = new Set();
   for (const item of assignments) {
-    const userId = String(item.userId || item.id || "").trim();
-    const person = people.get(userId);
+    const personId = String(item.personId || "").trim();
+    const person = people.get(personId);
     if (!person) throw maintenanceDispatchError("派工人员不存在或已停用");
     const rawRole = String(item.role || "").trim();
     const role = ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(rawRole) : (aliases[rawRole] || rawRole);
     if (!allowed.includes(role)) throw maintenanceDispatchError(`${ownerType === "subtask" ? "非例行" : "当前维修机会"}不支持“${role || "未设置"}”类别`);
-    const key = `${userId}\u0000${role}`;
+    const key = `${personId}\u0000${role}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (role === "放行") releaseUsers.add(userId);
+    if (role === "放行") releaseUsers.add(personId);
     normalized.push({ person, role });
   }
   if (!normalized.length) throw maintenanceDispatchError("请至少选择一项派工人员");
@@ -1684,7 +1977,7 @@ function publicMaintenanceAssignment(row) {
     ownerType: row.owner_type,
     ownerId: row.owner_id,
     flightId: row.flight_id || "",
-    userId: row.user_id,
+    personId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: row.role,
@@ -1715,7 +2008,7 @@ function publicMaintenanceHour(row) {
     ownerId: row.owner_id,
     flightId: row.flight_id || "",
     assignmentId: row.assignment_id,
-    userId: row.user_id,
+    personId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: row.role || "",
@@ -1738,7 +2031,7 @@ function publicMaintenanceSortie(row) {
     ownerId: row.owner_id,
     flightId: row.flight_id || "",
     assignmentId: row.assignment_id,
-    userId: row.user_id,
+    personId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: "放行",
@@ -1768,7 +2061,7 @@ function maintenanceWorkReport(flightId) {
   const row = db.prepare("select * from maintenance_work_reports where flight_id=?").get(flightId);
   const entries = db.prepare("select * from maintenance_work_report_entries where flight_id=? order by role,user_name").all(flightId).map(item => ({
     role: item.role,
-    userId: item.user_id,
+    personId: item.person_id,
     userName: item.user_name,
     team: item.team || "未设置"
   }));
@@ -1789,7 +2082,19 @@ function maintenanceWorkReport(flightId) {
 function maintenanceTransaction(callback) {
   db.exec("begin immediate");
   try {
+    if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+    const user=requestUser();
+    const snapshot=()=>new Map(PERSON_TABLES.flatMap(table=>db.prepare(`select * from ${table}`).all().map(row=>[table+":"+ (row.id || JSON.stringify([row.flight_id,row.role,row.person_id])),row])));
+    const before=user && !personnelAccess.hasAll(user,"maintenance")?snapshot():null;
     const result = callback();
+    if(before){
+      const after=snapshot();
+      for(const key of new Set([...before.keys(),...after.keys()])){
+        const old=before.get(key),next=after.get(key);
+        if(JSON.stringify(old)===JSON.stringify(next))continue;
+        for(const row of [old,next].filter(Boolean))if(row.person_id!==user.personId && !personnelAccess.allows(user,"maintenance",row.person_id))throw Object.assign(new Error("操作涉及维修范围外人员，整笔操作已取消"),{status:403});
+      }
+    }
     db.exec("commit");
     return result;
   } catch (error) {
@@ -1803,7 +2108,7 @@ function insertMaintenanceAssignment({
   ownerType,
   ownerId,
   flightId,
-  userId,
+  personId,
   userName,
   team = "未设置",
   role,
@@ -1819,9 +2124,9 @@ function insertMaintenanceAssignment({
   modifiedAt = "",
   confirmedAt = ""
 }) {
-  db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,user_id,user_name,team,role,is_lead,status,feedback,assigned_by,assigned_at,received_at,started_at,completed_at,submitted_at,modified_at,confirmed_at)
+  db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,is_lead,status,feedback,assigned_by,assigned_at,received_at,started_at,completed_at,submitted_at,modified_at,confirmed_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, ownerType, ownerId, flightId, userId, userName, team, role, isLead, status, feedback, assignedBy, assignedAt, receivedAt, startedAt, completedAt, submittedAt, modifiedAt, confirmedAt);
+    .run(id, ownerType, ownerId, flightId, personId, userName, team, role, isLead, status, feedback, assignedBy, assignedAt, receivedAt, startedAt, completedAt, submittedAt, modifiedAt, confirmedAt);
   return id;
 }
 
@@ -1846,7 +2151,7 @@ function maintenanceReportBatch(flightId, reportType) {
       ownerType: item.owner_type,
       ownerId: item.owner_id,
       role: item.role,
-      userId: item.user_id,
+      personId: item.person_id,
       userName: item.user_name,
       team: item.team || "未设置",
       standardHours: Number(item.standard_hours || 0),
@@ -1867,10 +2172,10 @@ function maintenanceReportDraft(flightId, reportType = "nonroutine") {
       reportType: row.report_type,
       entries: Array.isArray(payload.entries) ? payload.entries.map(item => ({
         role: String(item?.role || ""),
-        userId: String(item?.userId || "")
+        personId: String(item?.personId || "")
       })) : [],
       feedback: String(payload.feedback || ""),
-      releaseUserId: String(payload.releaseUserId || ""),
+      releasePersonId: String(payload.releasePersonId || ""),
       version: Number(row.version || 1),
       updatedBy: row.updated_by || "",
       updatedByName: row.updated_by_name || "",
@@ -1907,6 +2212,9 @@ function writeMaintenanceReportDraft(flightId, reportType, payload, user, curren
 
 function normalizeMaintenanceNonroutineDraft(payload) {
   const people = new Set(allPeople().map(person => person.id));
+  for (const item of (payload?.items || [])) for (const entry of (item.entries || [])) {
+    if (!people.has(String(entry.personId || ""))) throw Object.assign(new Error("草稿包含范围外或无效人员"), { status: 403 });
+  }
   const items = (Array.isArray(payload?.items) ? payload.items : []).slice(0, 30).map(raw => {
     const category = maintenanceNonroutineCategories.includes(String(raw?.category || "")) ? String(raw.category) : "其他";
     const allowedRoles = new Set(category === "拖机" ? ["主做"] : maintenanceSubtaskRoles);
@@ -1918,9 +2226,9 @@ function normalizeMaintenanceNonroutineDraft(payload) {
       standardHours: raw?.standardHours === "" || raw?.standardHours === null || raw?.standardHours === undefined ? "" : Number(raw.standardHours),
       reportExplanation: String(raw?.reportExplanation || raw?.content || "").slice(0, 4000),
       entries: (Array.isArray(raw?.entries) ? raw.entries : [])
-        .map(entry => ({ role: normalizeMaintenanceSubtaskRole(entry?.role), userId: String(entry?.userId || "") }))
-        .filter(entry => allowedRoles.has(entry.role) && people.has(entry.userId))
-        .filter((entry, index, entries) => entries.findIndex(item => item.role === entry.role && item.userId === entry.userId) === index)
+        .map(entry => ({ role: normalizeMaintenanceSubtaskRole(entry?.role), personId: String(entry?.personId || "") }))
+        .filter(entry => allowedRoles.has(entry.role) && people.has(entry.personId))
+        .filter((entry, index, entries) => entries.findIndex(item => item.role === entry.role && item.personId === entry.personId) === index)
     };
   });
   return { items };
@@ -1936,8 +2244,30 @@ function assertMaintenanceNonroutineDraftAccess(flightId, user) {
   return flight;
 }
 
+function assertMaintenanceNonroutineDraftPermission(flightId, user) {
+  const current = db.prepare("select 1 from maintenance_report_drafts where flight_id=? and report_type='nonroutine'").get(flightId);
+  const permission = current ? "maintenance.nonroutine.update.own" : "maintenance.nonroutine.create.own";
+  if (!hasRbac(user, permission)) throw Object.assign(new Error(current ? "当前账号没有修改本人非例行的权限" : "当前账号没有新增本人非例行的权限"), { status: 403, permission });
+}
+
+function assertMaintenanceNonroutineChangePermissions(flightId, payload, user) {
+  const existing = new Set(db.prepare("select id from maintenance_subtasks where flight_id=?").all(flightId).map(row => row.id));
+  const incoming = Array.isArray(payload?.items) ? payload.items : [];
+  const incomingExisting = new Set(incoming.map(item => String(item?.id || "")).filter(id => existing.has(id)));
+  const creates = incoming.some(item => !existing.has(String(item?.id || "")));
+  const updates = incomingExisting.size > 0;
+  const deletes = [...existing].some(id => !incomingExisting.has(id));
+  const required = [
+    creates && ["maintenance.nonroutine.create.own", "新增本人非例行"],
+    updates && ["maintenance.nonroutine.update.own", "修改本人非例行"],
+    deletes && ["maintenance.nonroutine.delete.own", "删除本人非例行"]
+  ].filter(Boolean);
+  for (const [permission, label] of required) if (!hasRbac(user, permission)) throw Object.assign(new Error(`当前账号没有${label}的权限`), { status: 403, permission });
+}
+
 function saveMaintenanceNonroutineDraft(flightId, payload, user) {
   assertMaintenanceNonroutineDraftAccess(flightId, user);
+  assertMaintenanceNonroutineDraftPermission(flightId, user);
   const current = db.prepare("select * from maintenance_report_drafts where flight_id=? and report_type='nonroutine'").get(flightId);
   const expectedVersion = payload?.version;
   if (current && Number(expectedVersion) !== Number(current.version || 1)) throw maintenanceReviewError("草稿已被其他人员更新，请刷新后重试", 409);
@@ -1968,21 +2298,21 @@ function applyMaintenanceReleaseSelection(flightId, requestedUserId, user) {
   const release = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
   if (!release) throw maintenanceDispatchError("当前维修机会尚未派工放行人员");
   const releaseBatch = maintenanceReportBatch(flightId, "release");
-  const requested = String(requestedUserId || release.user_id).trim();
+  const requested = String(requestedUserId || release.person_id).trim();
   if (releaseBatch) {
-    const lockedUserId = String(releaseBatch.entries.find(item => item.role === "放行")?.userId || release.user_id);
+    const lockedUserId = String(releaseBatch.entries.find(item => item.role === "放行")?.personId || release.person_id);
     if (requested && requested !== lockedUserId) throw maintenanceReviewError("放行架次已提报，放行人员已锁定", 409);
     return lockedUserId;
   }
-  if (!requested || requested === release.user_id) return release.user_id;
-  if (release.user_id !== user.id) throw maintenanceDispatchError("只有当前放行人员可以调整放行归属");
+  if (!requested || requested === release.person_id) return release.person_id;
+  if (release.person_id !== user.personId) throw maintenanceDispatchError("只有当前放行人员可以调整放行归属");
   const person = allPeople().find(item => item.id === requested);
   if (!person) throw maintenanceDispatchError("新的放行人员不存在或已停用");
-  db.prepare("update maintenance_assignments set user_id=?,user_name=?,team=?,modified_at=? where id=?")
+  db.prepare("update maintenance_assignments set person_id=?,user_name=?,team=?,modified_at=? where id=?")
     .run(person.id, person.name, person.team || "未设置", now(), release.id);
   maintenanceLog(user, "routine_draft_release_reassigned", "flight", flightId, flightId, JSON.stringify({
     assignmentId: release.id,
-    beforeUserId: release.user_id,
+    beforeUserId: release.person_id,
     afterUserId: person.id
   }));
   return person.id;
@@ -2006,16 +2336,16 @@ function syncMaintenanceRoutineAssignments(flight, entries, user) {
     entry
   ]));
   const currentByKey = new Map(currentRows.map(row => [
-    `${row.role}\u0000${row.user_id}`,
+    `${row.role}\u0000${row.person_id}`,
     row
   ]));
   const before = currentRows
     .filter(row => allowedRoles.has(row.role))
-    .map(row => ({ id: row.id, role: row.role, userId: row.user_id, userName: row.user_name, status: row.status }));
+    .map(row => ({ id: row.id, role: row.role, personId: row.person_id, userName: row.user_name, status: row.status }));
 
   for (const row of currentRows) {
     if (!allowedRoles.has(row.role)) continue;
-    if (desiredByKey.has(`${row.role}\u0000${row.user_id}`)) continue;
+    if (desiredByKey.has(`${row.role}\u0000${row.person_id}`)) continue;
     db.prepare("delete from maintenance_feedback where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_hour_results where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_sortie_results where assignment_id=?").run(row.id);
@@ -2037,7 +2367,7 @@ function syncMaintenanceRoutineAssignments(flight, entries, user) {
       ownerType: "flight",
       ownerId: flightId,
       flightId,
-      userId: entry.person.id,
+      personId: entry.person.id,
       userName: entry.person.name,
       team: entry.person.team || "未设置",
       role: entry.role,
@@ -2050,7 +2380,7 @@ function syncMaintenanceRoutineAssignments(flight, entries, user) {
   db.prepare("update maintenance_flights set updated_by=?,updated_at=? where id=?")
     .run(user.id, stamp, flightId);
   const after = db.prepare(
-    "select id,role,user_id as userId,user_name as userName,status from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行' order by role,user_name"
+    "select id,role,person_id as personId,user_name as userName,status from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行' order by role,user_name"
   ).all(flightId).filter(row => allowedRoles.has(row.role));
   return { before, after };
 }
@@ -2066,7 +2396,7 @@ function saveMaintenanceRoutineDraft(flightId, payload, user) {
   if (current && Number(expectedVersion) !== Number(current.version || 1)) throw maintenanceReviewError("例行未提报数据已被其他人员更新，请刷新后重试", 409);
   if (!current && expectedVersion !== null && expectedVersion !== undefined && Number(expectedVersion) !== 0) throw maintenanceReviewError("例行未提报数据版本已变化，请刷新后重试", 409);
   return maintenanceTransaction(() => {
-    const releaseUserId = applyMaintenanceReleaseSelection(flightId, payload?.releaseUserId, user);
+    const releasePersonId = applyMaintenanceReleaseSelection(flightId, payload?.releasePersonId, user);
     const roles = maintenanceRolesForOpportunity(flight.work_kind || flight.work_type).filter(role => role !== "放行");
     const reportEntries = normalizeMaintenanceReportEntries(payload?.entries, roles, {
       ownerType: "flight",
@@ -2075,17 +2405,17 @@ function saveMaintenanceRoutineDraft(flightId, payload, user) {
       source: "例行派工保存"
     });
     const assignmentChanges = syncMaintenanceRoutineAssignments(flight, reportEntries, user);
-    const entries = reportEntries.map(item => ({ role: item.role, userId: item.person.id }));
+    const entries = reportEntries.map(item => ({ role: item.role, personId: item.person.id }));
     const normalized = {
       entries,
       feedback: String(payload?.feedback || "").slice(0, 4000),
-      releaseUserId
+      releasePersonId
     };
     const version = writeMaintenanceReportDraft(flightId, "routine", normalized, user, current);
     maintenanceLog(user, "save_routine_draft", "flight", flightId, flightId, JSON.stringify({
       version,
       entryCount: entries.length,
-      releaseUserId,
+      releasePersonId,
       beforeAssignments: assignmentChanges.before,
       afterAssignments: assignmentChanges.after
     }));
@@ -2113,7 +2443,7 @@ function upsertMaintenanceReportBatch(flightId, reportType, { status = "已提�
     values(?,?,?,?,?,?,?,?,?,?,?) on conflict(flight_id,report_type) do update set status=excluded.status,feedback=excluded.feedback,version=maintenance_report_batches.version+1,submitted_by=excluded.submitted_by,submitted_by_name=excluded.submitted_by_name,submitted_at=excluded.submitted_at,updated_at=excluded.updated_at`)
     .run(id, flightId, reportType, status, feedback, current ? Number(current.version || 0) + 1 : 1, user?.id || current?.submitted_by || "", user?.name || current?.submitted_by_name || "", user ? stamp : current?.submitted_at || "", current?.created_at || stamp, stamp);
   db.prepare("delete from maintenance_report_entries where batch_id=?").run(id);
-  const insert = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,user_id,user_name,team,standard_hours,source,created_at,updated_at)
+  const insert = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,person_id,user_name,team,standard_hours,source,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   for (const entry of entries) insert.run(randomId("mtnre"), id, flightId, entry.ownerType, entry.ownerId, entry.role, entry.person.id, entry.person.name, entry.person.team || "未设置", Number(entry.standardHours || 0), entry.source || "报工补录", stamp, stamp);
   return maintenanceReportBatch(flightId, reportType);
@@ -2122,7 +2452,7 @@ function upsertMaintenanceReportBatch(flightId, reportType, { status = "已提�
 function replaceMaintenanceReportEntries(batchId, flightId, entries, { feedback } = {}) {
   const stamp = now();
   db.prepare("delete from maintenance_report_entries where batch_id=?").run(batchId);
-  const insert = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,user_id,user_name,team,standard_hours,source,created_at,updated_at)
+  const insert = db.prepare(`insert into maintenance_report_entries(id,batch_id,flight_id,owner_type,owner_id,role,person_id,user_name,team,standard_hours,source,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   for (const entry of entries) insert.run(randomId("mtnre"), batchId, flightId, entry.ownerType, entry.ownerId, entry.role, entry.person.id, entry.person.name, entry.person.team || "未设置", Number(entry.standardHours || 0), entry.source || "报工确认调整", stamp, stamp);
   if (feedback === undefined) {
@@ -2137,7 +2467,7 @@ function maintenanceTaskTreeAssignments(flightId) {
 }
 
 function maintenanceCanSubmitReport(user, flightId) {
-  return maintenanceTaskTreeAssignments(flightId).some(row => row.user_id === user.id);
+  return maintenanceTaskTreeAssignments(flightId).some(row => row.person_id === user.personId);
 }
 
 function maintenanceReportProgress(flightId) {
@@ -2178,7 +2508,7 @@ function publicMaintenanceNonroutineDraft(flightId) {
     items: draft.items.map(item => ({
       ...item,
       entries: (item.entries || []).map(entry => {
-        const person = people.get(entry.userId);
+        const person = people.get(entry.personId);
         return {
           ...entry,
           userName: person?.name || "",
@@ -2249,10 +2579,10 @@ function publicMaintenanceFlight(row) {
 }
 
 function publicMaintenanceExecutionView(flight, user) {
-  const mainMine = flight.assignments.filter(assignment => assignment.userId === user.id);
+  const mainMine = flight.assignments.filter(assignment => assignment.personId === user.personId);
   const activeStatuses = new Set(["已派工", "已提报"]);
   const isActive = assignment => activeStatuses.has(assignment.status);
-  const isMine = assignment => assignment.userId === user.id && isActive(assignment);
+  const isMine = assignment => assignment.personId === user.personId && isActive(assignment);
   const activeMainMine = mainMine.filter(isActive);
   const activeSubtaskMine = flight.subtasks.flatMap(item => item.assignments.filter(isMine));
   const personalRoutineAndNonroutine = [
@@ -2327,7 +2657,7 @@ function publicMaintenanceBatch(rows, scope, user) {
       ownerType: item.owner_type,
       ownerId: item.owner_id,
       role: item.role,
-      userId: item.user_id,
+      personId: item.person_id,
       userName: item.user_name,
       team: item.team || "未设置",
       standardHours: Number(item.standard_hours || 0),
@@ -2357,9 +2687,9 @@ function publicMaintenanceBatch(rows, scope, user) {
           reportExplanation: "",
           entries: (item?.entries || []).map(entry => ({
             role: String(entry?.role || ""),
-            userId: String(entry?.userId || ""),
-            userName: people.get(entry.userId)?.name || "",
-            team: people.get(entry.userId)?.team || "未设置"
+            personId: String(entry?.personId || ""),
+            userName: people.get(entry.personId)?.name || "",
+            team: people.get(entry.personId)?.team || "未设置"
           }))
         })),
         version: Number(draftRow.version || 1),
@@ -2449,9 +2779,17 @@ function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
   const params = [];
   if (!(maintenanceCanManage(user) && scope !== "execute" && scope !== "data")) {
     conditions.push(`exists (select 1 from maintenance_assignments visible_assignment
-      where visible_assignment.flight_id=maintenance_flights.id and visible_assignment.user_id=?
+      where visible_assignment.flight_id=maintenance_flights.id and visible_assignment.person_id=?
       ${scope === "execute" ? "and visible_assignment.status in ('已派工','已提报') and maintenance_flights.status in ('已派工','已提报')" : ""})`);
-    params.push(user.id);
+    params.push(user.personId);
+  } else if (!personnelAccess.hasAll(user, "maintenance")) {
+    const scoped = personnelAccess.predicate(user, "maintenance", "visible_person");
+    conditions.push(`(created_by=? or exists (
+      select 1 from maintenance_assignments visible_assignment
+      join personnel visible_person on visible_person.id=visible_assignment.person_id
+      where visible_assignment.flight_id=maintenance_flights.id and (${scoped.sql})
+    ))`);
+    params.push(user.id, ...scoped.params);
   }
   if (filters.dateFrom) { conditions.push("date>=?"); params.push(filters.dateFrom); }
   if (filters.dateTo) { conditions.push("date<=?"); params.push(filters.dateTo); }
@@ -2570,9 +2908,9 @@ function maintenanceCalculatedHours(ownerType, owner, assignments) {
   ]));
 }
 
-function updateMaintenanceOwnerStatus(ownerType, ownerId, status, userId = "") {
+function updateMaintenanceOwnerStatus(ownerType, ownerId, status, personId = "") {
   const table = ownerType === "flight" ? "maintenance_flights" : "maintenance_subtasks";
-  db.prepare(`update ${table} set status=?,updated_by=coalesce(?,updated_by),updated_at=? where id=?`).run(status, userId || "", now(), ownerId);
+  db.prepare(`update ${table} set status=?,updated_by=coalesce(?,updated_by),updated_at=? where id=?`).run(status, personId || "", now(), ownerId);
 }
 
 function maintenanceAssignmentsStatus(ownerType, ownerId) {
@@ -2596,7 +2934,7 @@ function maintenanceSubtaskCompletionBlockers(flightId) {
   return blockers;
 }
 
-function reconcileMaintenanceTreeStatus(flightId, userId = "", { preserveConfirmed = true } = {}) {
+function reconcileMaintenanceTreeStatus(flightId, personId = "", { preserveConfirmed = true } = {}) {
   const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
   if (!flight) return null;
   const subtasks = db.prepare("select * from maintenance_subtasks where flight_id=? order by created_at").all(flightId);
@@ -2604,7 +2942,7 @@ function reconcileMaintenanceTreeStatus(flightId, userId = "", { preserveConfirm
   for (const subtask of subtasks) {
     const derived = maintenanceAssignmentsStatus("subtask", subtask.id);
     const target = preserveConfirmed && subtask.status === "已确认" && derived !== "已确认" ? "已确认" : derived;
-    if (subtask.status !== target) updateMaintenanceOwnerStatus("subtask", subtask.id, target, userId);
+    if (subtask.status !== target) updateMaintenanceOwnerStatus("subtask", subtask.id, target, personId);
     subtaskStatuses.push(target);
   }
 
@@ -2619,7 +2957,7 @@ function reconcileMaintenanceTreeStatus(flightId, userId = "", { preserveConfirm
     else target = "已派工";
   }
   if (preserveConfirmed && flight.status === "已确认" && target !== "已确认") target = "已确认";
-  if (flight.status !== target) updateMaintenanceOwnerStatus("flight", flightId, target, userId);
+  if (flight.status !== target) updateMaintenanceOwnerStatus("flight", flightId, target, personId);
   return target;
 }
 
@@ -2634,12 +2972,12 @@ function regenerateMaintenanceHours(ownerType, ownerId, resultStatus = "待复�
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? and status=? and role<>'放行'").all(ownerType, ownerId, resultStatus);
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=? and status=?").run(ownerType, ownerId, resultStatus);
   if (!assignments.length) return maintenanceHours(ownerType, ownerId);
-  const insert = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
+  const insert = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     on conflict(owner_type,owner_id,assignment_id) do update set user_name=excluded.user_name,team=excluded.team,role=excluded.role,source=excluded.source,hours=excluded.hours,status=excluded.status,confirmed_by='',confirmed_at='',updated_at=excluded.updated_at`);
   const calculatedHours = maintenanceCalculatedHours(ownerType, owner, assignments);
   for (const item of assignments) {
-    insert.run(randomId("mtnh"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.user_id, item.user_name, item.team || "", item.role, ownerType === "subtask" ? "非例行" : "维修机会", calculatedHours.get(item.id) || 0, null, resultStatus, "", "", now(), now());
+    insert.run(randomId("mtnh"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.person_id, item.user_name, item.team || "", item.role, ownerType === "subtask" ? "非例行" : "维修机会", calculatedHours.get(item.id) || 0, null, resultStatus, "", "", now(), now());
   }
   return maintenanceHours(ownerType, ownerId);
 }
@@ -2649,10 +2987,10 @@ function regenerateMaintenanceSorties(ownerType, ownerId, resultStatus = "待复
   if (!owner) return [];
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? and status=? and role='放行'").all(ownerType, ownerId, resultStatus);
   db.prepare("delete from maintenance_sortie_results where owner_type=? and owner_id=? and status=?").run(ownerType, ownerId, resultStatus);
-  const insert = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
+  const insert = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(owner_type,owner_id,assignment_id) do update set user_name=excluded.user_name,team=excluded.team,sorties=1,status=excluded.status,confirmed_by='',confirmed_at='',updated_at=excluded.updated_at`);
   for (const item of assignments) {
-    insert.run(randomId("mtnsrt"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.user_id, item.user_name, item.team || "", "放行", "放行架次", 1, resultStatus, "", "", now(), now());
+    insert.run(randomId("mtnsrt"), ownerType, ownerId, item.flight_id || owner.flight_id || owner.id, item.id, item.person_id, item.user_name, item.team || "", "放行", "放行架次", 1, resultStatus, "", "", now(), now());
   }
   return maintenanceSorties(ownerType, ownerId);
 }
@@ -2690,9 +3028,9 @@ function maintenanceReviewSnapshot(flightId) {
         standardHours: Number(owner?.standard_hours || 0),
         reportExplanation: owner?.content || ""
       },
-      assignments: maintenanceAssignments(ownerType, ownerId).map(row => ({ userId: row.userId, userName: row.userName, team: row.team, role: row.role, status: row.status, feedback: row.feedback, submittedAt: row.submittedAt })),
-      hours: maintenanceHours(ownerType, ownerId).map(row => ({ userId: row.userId, role: row.role, hours: row.hours, adjustedHours: row.adjustedHours, finalHours: row.finalHours, status: row.status })),
-      sorties: maintenanceSorties(ownerType, ownerId).map(row => ({ userId: row.userId, role: row.role, sorties: row.sorties, status: row.status }))
+      assignments: maintenanceAssignments(ownerType, ownerId).map(row => ({ personId: row.personId, userName: row.userName, team: row.team, role: row.role, status: row.status, feedback: row.feedback, submittedAt: row.submittedAt })),
+      hours: maintenanceHours(ownerType, ownerId).map(row => ({ personId: row.personId, role: row.role, hours: row.hours, adjustedHours: row.adjustedHours, finalHours: row.finalHours, status: row.status })),
+      sorties: maintenanceSorties(ownerType, ownerId).map(row => ({ personId: row.personId, role: row.role, sorties: row.sorties, status: row.status }))
     };
   });
 }
@@ -2773,20 +3111,20 @@ function maintenanceReviewTaskPayloads(flightId, tasks, { archiveMode = false } 
     const raw = provided.get(`${ownerType}:${ownerId}`);
     const current = maintenanceAssignments(ownerType, ownerId);
     if (!["已提报", "待复核", "已确认"].includes(owner.status || "未派工")) {
-      const currentKeys = current.map(row => `${row.userId}\u0000${row.role}`).sort().join("|");
-      const submittedKeys = (Array.isArray(raw.assignments) ? raw.assignments : []).map(row => `${String(row.userId || "").trim()}\u0000${ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(row.role) : String(row.role || "").trim()}`).sort().join("|");
+      const currentKeys = current.map(row => `${row.personId}\u0000${row.role}`).sort().join("|");
+      const submittedKeys = (Array.isArray(raw.assignments) ? raw.assignments : []).map(row => `${String(row.personId || "").trim()}\u0000${ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(row.role) : String(row.role || "").trim()}`).sort().join("|");
       if (!archiveMode || ownerType !== "subtask") {
         if (currentKeys !== submittedKeys) throw maintenanceReviewError(`${ownerType === "flight" ? "主任务" : owner.title || "非例行"}尚未完成，不能在复核中修改人员`);
-        return { ownerType, ownerId, owner, current, normalized: current.map(row => ({ person: allPeople().find(person => person.id === row.userId), role: row.role })).filter(row => row.person), changed: false };
+        return { ownerType, ownerId, owner, current, normalized: current.map(row => ({ person: allPeople().find(person => person.id === row.personId), role: row.role })).filter(row => row.person), changed: false };
       }
       if (!submittedKeys && !currentKeys) return { ownerType, ownerId, owner, current, normalized: [], changed: false, archiveMode: true };
       const normalized = normalizeMaintenanceAssignments(ownerType, owner, Array.isArray(raw.assignments) ? raw.assignments : []);
-      const beforeKeys = current.map(row => `${row.userId}\u0000${row.role}`).sort();
+      const beforeKeys = current.map(row => `${row.personId}\u0000${row.role}`).sort();
       const afterKeys = normalized.map(row => `${row.person.id}\u0000${row.role}`).sort();
       return { ownerType, ownerId, owner, current, normalized, changed: beforeKeys.join("|") !== afterKeys.join("|"), archiveMode: true, resultSource: "后台归档修正" };
     }
     const normalized = normalizeMaintenanceAssignments(ownerType, owner, Array.isArray(raw.assignments) ? raw.assignments : []);
-    const beforeKeys = current.map(row => `${row.userId}\u0000${row.role}`).sort();
+    const beforeKeys = current.map(row => `${row.personId}\u0000${row.role}`).sort();
     const afterKeys = normalized.map(row => `${row.person.id}\u0000${row.role}`).sort();
     return { ownerType, ownerId, owner, current, normalized, changed: beforeKeys.join("|") !== afterKeys.join("|"), archiveMode, resultSource: archiveMode ? "后台归档修正" : "" };
   });
@@ -2830,7 +3168,7 @@ function maintenanceReviewConfirmBlockers(rows) {
     for (const role of hourRoles) {
       if (maintenanceRatioRuleForOwner(row.ownerType, row.owner, role, row.normalized) === null) blockers.push(`${label}的${role}比例缺失或无效`);
     }
-    const currentByKey = new Map(row.current.map(item => [`${item.userId}\u0000${item.role}`, item]));
+    const currentByKey = new Map(row.current.map(item => [`${item.personId}\u0000${item.role}`, item]));
     row.normalized.forEach(item => {
       const current = currentByKey.get(`${item.person.id}\u0000${item.role}`);
       if (["已派工", "已提报"].includes(current?.status || "")) blockers.push(`${label}的${item.person.name}/${item.role}尚未进入待复核`);
@@ -2848,10 +3186,10 @@ function maintenanceReviewConfirmBlockers(rows) {
 function reconcileMaintenanceReviewAssignments(row, manager) {
   if (!row.changed) return maintenanceAssignments(row.ownerType, row.ownerId);
   const currentRows = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=?").all(row.ownerType, row.ownerId);
-  const currentByKey = new Map(currentRows.map(item => [`${item.user_id}\u0000${item.role}`, item]));
+  const currentByKey = new Map(currentRows.map(item => [`${item.person_id}\u0000${item.role}`, item]));
   const desiredKeys = new Set(row.normalized.map(item => `${item.person.id}\u0000${item.role}`));
   for (const item of currentRows) {
-    if (desiredKeys.has(`${item.user_id}\u0000${item.role}`)) continue;
+    if (desiredKeys.has(`${item.person_id}\u0000${item.role}`)) continue;
     db.prepare("delete from maintenance_feedback where assignment_id=?").run(item.id);
     db.prepare("delete from maintenance_hour_results where assignment_id=?").run(item.id);
     db.prepare("delete from maintenance_sortie_results where assignment_id=?").run(item.id);
@@ -2866,7 +3204,7 @@ function reconcileMaintenanceReviewAssignments(row, manager) {
       ownerType: row.ownerType,
       ownerId: row.ownerId,
       flightId: row.ownerType === "flight" ? row.owner.id : row.owner.flight_id,
-      userId: item.person.id,
+      personId: item.person.id,
       userName: item.person.name,
       team: item.person.team || "未设置",
       role: item.role,
@@ -2894,9 +3232,9 @@ function rebuildMaintenanceReviewResults(row, manager, mode) {
   const calculatedHours = maintenanceCalculatedHours(row.ownerType, row.owner, assignments.filter(item => item.role !== "放行"));
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
   db.prepare("delete from maintenance_sortie_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
-  const insertHour = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
+  const insertHour = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const insertSortie = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,user_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
+  const insertSortie = db.prepare(`insert into maintenance_sortie_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,sorties,status,confirmed_by,confirmed_at,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   for (const assignment of assignments) {
     const status = mode === "confirm" || row.archiveMode ? "已确认" : assignment.status;
@@ -2904,12 +3242,12 @@ function rebuildMaintenanceReviewResults(row, manager, mode) {
     const confirmed = status === "已确认";
     if (assignment.role === "放行") {
       const old = existingSorties.get(assignment.id);
-      insertSortie.run(old?.id || randomId("mtnsrt"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.user_id, assignment.user_name, assignment.team || "", "放行", "放行架次", 1, status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
+      insertSortie.run(old?.id || randomId("mtnsrt"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.person_id, assignment.user_name, assignment.team || "", "放行", "放行架次", 1, status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
     } else {
       const old = existingHours.get(assignment.id);
       const calculated = calculatedHours.get(assignment.id) || 0;
       const source = row.resultSource || old?.source || (row.ownerType === "subtask" ? "非例行" : "维修机会");
-      insertHour.run(old?.id || randomId("mtnh"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.user_id, assignment.user_name, assignment.team || "", assignment.role, source, calculated, row.changed ? null : (old?.adjusted_hours ?? null), status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
+      insertHour.run(old?.id || randomId("mtnh"), row.ownerType, row.ownerId, assignment.flight_id || row.owner.flight_id || row.owner.id, assignment.id, assignment.person_id, assignment.user_name, assignment.team || "", assignment.role, source, calculated, row.changed ? null : (old?.adjusted_hours ?? null), status, confirmed ? manager.id : "", confirmed ? now() : "", old?.created_at || now(), now());
     }
     if (mode === "confirm" || confirmed) {
       db.prepare("update maintenance_assignments set status=?,modified_at=?,confirmed_at=? where id=?").run(status, now(), confirmed ? now() : "", assignment.id);
@@ -2924,7 +3262,7 @@ function saveMaintenanceReview(flightId, payload, manager) {
   const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
   if (!flight) throw maintenanceReviewError("未找到维修机会", 404);
   const editingConfirmed = flight.status === "已确认" || Boolean(flight.archived_at);
-  if (editingConfirmed && !isAdmin(manager)) throw maintenanceReviewError("已确认数据仅管理员可以修改", 403);
+  if (editingConfirmed && !hasRbac(manager, "maintenance.archive.modify")) throw maintenanceReviewError("当前账号没有修改已确认数据的权限", 403);
   const reason = String(payload?.reason || "").trim();
   if (editingConfirmed && !reason) throw maintenanceReviewError("修改已确认数据必须填写修改原因");
   if (editingConfirmed && mode === "confirm") throw maintenanceReviewError("已确认数据请使用保存归档修改");
@@ -3038,10 +3376,10 @@ function deleteMaintenanceFlight(flightId, manager, reason = "") {
   const confirmed = flight.status === "已确认" || Boolean(flight.archived_at);
   const pendingReview = !confirmed && (flight.status === "待复核" || Boolean(flight.report_finalized_at));
   const protectedDelete = confirmed || pendingReview;
-  if (confirmed && !isAdmin(manager)) {
-    throw maintenanceReviewError("已确认数据仅管理员可以删除", 403);
+  if (confirmed && !hasRbac(manager, "maintenance.archive.modify")) {
+    throw maintenanceReviewError("当前账号没有删除已确认数据的权限", 403);
   }
-  if (pendingReview && !maintenanceCanManage(manager)) {
+  if (pendingReview && !hasRbac(manager, "maintenance.review.submit")) {
     throw maintenanceReviewError("当前账号没有删除待复核数据的权限", 403);
   }
   if (protectedDelete && !String(reason || "").trim()) {
@@ -3087,10 +3425,10 @@ function deleteMaintenanceSubtask(subtaskId, manager, reason = "") {
   const pendingReview = !confirmed && (flight.status === "待复核" || Boolean(flight.report_finalized_at));
   const protectedDelete = confirmed || pendingReview;
   const deletionReason = String(reason || "").trim();
-  if (confirmed && !isAdmin(manager)) {
-    throw maintenanceReviewError("已确认非例行仅管理员可以删除", 403);
+  if (confirmed && !hasRbac(manager, "maintenance.archive.modify")) {
+    throw maintenanceReviewError("当前账号没有删除已确认非例行的权限", 403);
   }
-  if (pendingReview && !maintenanceCanManage(manager)) {
+  if (pendingReview && !hasRbac(manager, "maintenance.review.submit")) {
     throw maintenanceReviewError("当前账号没有删除待复核非例行的权限", 403);
   }
   if (protectedDelete && !deletionReason) {
@@ -3145,10 +3483,10 @@ function deleteMaintenanceSubtask(subtaskId, manager, reason = "") {
   });
 }
 
-function syncMaintenanceOwnerConfirmation(ownerType, ownerId, userId = "") {
+function syncMaintenanceOwnerConfirmation(ownerType, ownerId, personId = "") {
   const owner = maintenanceOwner(ownerType, ownerId);
   if (!owner) return;
-  reconcileMaintenanceTreeStatus(ownerType === "flight" ? owner.id : owner.flight_id, userId);
+  reconcileMaintenanceTreeStatus(ownerType === "flight" ? owner.id : owner.flight_id, personId);
 }
 
 function maintenanceStats(params = {}, user = null) {
@@ -3162,7 +3500,7 @@ function maintenanceStats(params = {}, user = null) {
   const month = String(params.month || "").trim();
   const status = String(params.status || "").trim();
   const filterRows = rows => rows.filter(row => {
-    if (user && !maintenanceCanManage(user) && row.user_id !== user.id) return false;
+    if (user && row.person_id !== user.personId && !personnelAccess.allows(user,"maintenance",row.person_id)) return false;
     if (month && month !== "全部" && !String(row.date || "").startsWith(month)) return false;
     if (status && status !== "全部" && row.status !== status) return false;
     if (!search) return true;
@@ -3174,7 +3512,7 @@ function maintenanceStats(params = {}, user = null) {
   const confirmedHours = visibleHours.filter(row => row.status === "已确认");
   const confirmedSorties = visibleSorties.filter(row => row.status === "已确认");
   const people = {}, teams = {};
-  const person = row => people[row.user_id] ||= { userId: row.user_id, name: row.user_name, team: row.team || "未设置", hours: 0, hourTaskCount: 0, sorties: 0, sortieTaskCount: 0 };
+  const person = row => people[row.person_id] ||= { personId: row.person_id, name: row.user_name, team: row.team || "未设置", hours: 0, hourTaskCount: 0, sorties: 0, sortieTaskCount: 0 };
   const team = row => teams[row.team || "未设置"] ||= { team: row.team || "未设置", hours: 0, hourTaskCount: 0, sorties: 0, sortieTaskCount: 0 };
   for (const row of confirmedHours) {
     person(row).hours += finalHours(row); person(row).hourTaskCount += 1;
@@ -3578,7 +3916,6 @@ function maintenanceReport(params = {}) {
 }
 
 const personalRoutineRoles = ["接机", "送机", "勤务", "例行检查", "例行机内", "例行L/G", "例行发动机", "例行机外", "例行电子"];
-const personalWorkshopTeams = ["一组", "二组", "三组", "四组"];
 
 function maintenanceDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -3668,9 +4005,9 @@ function maintenancePersonalHourDetail(row) {
   };
 }
 
-function maintenancePersonalComparison(members, totals, userId) {
-  const ownHours = Number(totals.get(userId) || 0);
-  const normalizedUserId = String(userId || "");
+function maintenancePersonalComparison(members, totals, personId) {
+  const ownHours = Number(totals.get(personId) || 0);
+  const normalizedUserId = String(personId || "");
   const ordered = members.map(member => ({ ...member, hours: Number(totals.get(member.id) || 0) }))
     .sort((a, b) => b.hours - a.hours || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
   const higher = ordered.filter(member => member.hours > ownHours);
@@ -3699,13 +4036,13 @@ function maintenancePersonalStats(params, user) {
   const rangeStart = range === "half" && shiftMaintenanceDate(rangeEnd, -14) > bounds.start
     ? shiftMaintenanceDate(rangeEnd, -14)
     : bounds.start;
-  const allResultHours = maintenancePersonalHourRows();
-  const allResultSorties = maintenancePersonalSortieRows();
+  const allResultHours = maintenancePersonalHourRows().filter(row=>row.person_id===user.personId || personnelAccess.allows(user,"maintenance",row.person_id));
+  const allResultSorties = maintenancePersonalSortieRows().filter(row=>row.person_id===user.personId || personnelAccess.allows(user,"maintenance",row.person_id));
   const allHours = allResultHours.filter(row => row.status === "已确认");
-  const ownConfirmedHours = allHours.filter(row => row.user_id === user.id);
-  const ownPendingHours = allResultHours.filter(row => row.user_id === user.id && row.status !== "已确认");
-  const ownConfirmedSorties = allResultSorties.filter(row => row.user_id === user.id && row.status === "已确认");
-  const ownPendingSorties = allResultSorties.filter(row => row.user_id === user.id && row.status !== "已确认");
+  const ownConfirmedHours = allHours.filter(row => row.person_id === user.personId);
+  const ownPendingHours = allResultHours.filter(row => row.person_id === user.personId && row.status !== "已确认");
+  const ownConfirmedSorties = allResultSorties.filter(row => row.person_id === user.personId && row.status === "已确认");
+  const ownPendingSorties = allResultSorties.filter(row => row.person_id === user.personId && row.status !== "已确认");
   const selectedMonthHours = ownConfirmedHours.filter(row => String(row.date || "").startsWith(bounds.month));
   const selectedMonthPendingHours = ownPendingHours.filter(row => String(row.date || "").startsWith(bounds.month));
   const todayHours = ownConfirmedHours.filter(row => row.date === today);
@@ -3763,30 +4100,33 @@ function maintenancePersonalStats(params, user) {
     };
   };
 
-  const activeMembers = db.prepare("select id,name,team from users where status is null or status<>'disabled' order by name").all();
+  const activeMembers = allPeople("maintenance");
   const monthTotals = new Map();
   for (const row of allHours) {
     if (!String(row.date || "").startsWith(bounds.month)) continue;
-    monthTotals.set(row.user_id, (monthTotals.get(row.user_id) || 0) + maintenanceFinalHours(row));
+    monthTotals.set(row.person_id, (monthTotals.get(row.person_id) || 0) + maintenanceFinalHours(row));
   }
-  const teamMembers = activeMembers.filter(member => member.team === user.team);
-  const teamComparison = maintenancePersonalComparison(teamMembers, monthTotals, user.id);
+  const currentPerson=activeMembers.find(member=>member.id===user.personId);
+  const teamMembers = currentPerson?.teamId ? activeMembers.filter(member => member.teamId === currentPerson.teamId) : [];
+  const teamComparison = maintenancePersonalComparison(teamMembers, monthTotals, user.personId);
   const teamTotal = teamMembers.reduce((sum, member) => sum + Number(monthTotals.get(member.id) || 0), 0);
-  teamComparison.available = !!teamMembers.some(member => member.id === user.id);
-  teamComparison.team = user.team || "未设置";
+  teamComparison.available = !!teamMembers.some(member => member.id === user.personId);
+  teamComparison.team = currentPerson?.team || "未设置";
   teamComparison.contributionPercent = teamTotal ? Number((teamComparison.ownHours / teamTotal * 100).toFixed(1)) : 0;
 
-  const workshopMembers = activeMembers.filter(member => personalWorkshopTeams.includes(member.team));
-  const workshopComparison = maintenancePersonalComparison(workshopMembers, monthTotals, user.id);
-  workshopComparison.available = personalWorkshopTeams.includes(user.team) && workshopMembers.some(member => member.id === user.id);
+  const groupMembers = currentPerson?.personnelGroupId ? activeMembers.filter(member => member.personnelGroupId===currentPerson.personnelGroupId) : [];
+  const groupComparison = maintenancePersonalComparison(groupMembers, monthTotals, user.personId);
+  groupComparison.available = !!currentPerson?.personnelGroupId && groupMembers.some(member => member.id === user.personId);
+  groupComparison.personnelGroup=currentPerson?.personnelGroup||"未分配";
 
-  const teamRanking = { available: personalWorkshopTeams.includes(user.team), team: user.team || "未设置", teamCount: personalWorkshopTeams.length };
+  const rankingTeams=organizationLanes(db).filter(team=>team.organizationId);
+  const teamRanking = { available: rankingTeams.some(team=>team.organizationId===currentPerson?.teamId), team: currentPerson?.team || "未设置", teamCount: rankingTeams.length };
   if (teamRanking.available) {
-    const teamTotals = personalWorkshopTeams.map(team => ({
-      team,
-      hours: Number(activeMembers.filter(member => member.team === team).reduce((sum, member) => sum + Number(monthTotals.get(member.id) || 0), 0).toFixed(2))
+    const teamTotals = rankingTeams.map(team => ({
+      team:team.name,teamId:team.organizationId,
+      hours: Number(activeMembers.filter(member => member.teamId === team.organizationId).reduce((sum, member) => sum + Number(monthTotals.get(member.id) || 0), 0).toFixed(2))
     }));
-    const ownTeam = teamTotals.find(item => item.team === user.team);
+    const ownTeam = teamTotals.find(item => item.teamId === currentPerson.teamId);
     const higher = teamTotals.filter(item => item.hours > ownTeam.hours).sort((a, b) => a.hours - b.hours);
     const nextHigher = higher[0] || null;
     Object.assign(teamRanking, {
@@ -3810,7 +4150,7 @@ function maintenancePersonalStats(params, user) {
       pendingMonthSorties: sumSorties(monthPendingSorties)
     },
     teamComparison,
-    workshopComparison,
+    groupComparison,
     teamRanking,
     trend,
     composition: {
@@ -3826,7 +4166,7 @@ function maintenancePersonalDetails(params, user) {
   const resultStatus = params.status === "pending" ? "pending" : "confirmed";
   const matchesStatus = row => resultStatus === "pending" ? row.status !== "已确认" : row.status === "已确认";
   if (type === "sortie") {
-    const rows = maintenancePersonalSortieRows().filter(row => row.user_id === user.id && matchesStatus(row) && String(row.date || "").startsWith(bounds.month));
+    const rows = maintenancePersonalSortieRows().filter(row => row.person_id === user.personId && matchesStatus(row) && String(row.date || "").startsWith(bounds.month));
     return {
       title: `${bounds.month} ${resultStatus === "pending" ? "待复核" : ""}放行架次明细`,
       unit: "架次",
@@ -3846,7 +4186,7 @@ function maintenancePersonalDetails(params, user) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || "")) ? String(params.date) : "";
   const period = params.period === "month" ? "month" : "day";
   const category = String(params.category || "").trim();
-  let rows = maintenancePersonalHourRows().filter(row => row.user_id === user.id && matchesStatus(row));
+  let rows = maintenancePersonalHourRows().filter(row => row.person_id === user.personId && matchesStatus(row));
   if (date) rows = rows.filter(row => row.date === date);
   else if (period === "month") rows = rows.filter(row => String(row.date || "").startsWith(bounds.month));
   if (type === "routine") rows = rows.filter(row => row.owner_type !== "subtask");
@@ -3958,7 +4298,7 @@ function setMaintenanceAssignments(ownerType, ownerId, assignments, user) {
     if (lockedRoles.size === allowedRoles.length) throw maintenanceReviewError("该任务的派工类别均已提报，请在复核阶段调整", 409);
 
     const currentRows = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=?").all(ownerType, ownerId);
-    const keyOf = item => `${item.role}\u0000${item.user_id || item.person?.id || ""}`;
+    const keyOf = item => `${item.role}\u0000${item.person_id || item.person?.id || ""}`;
     const currentLocked = currentRows.filter(row => lockedRoles.has(row.role)).map(keyOf).sort();
     const incomingLocked = normalizedAssignments.filter(item => lockedRoles.has(item.role)).map(keyOf).sort();
     if (currentLocked.length !== incomingLocked.length || currentLocked.some((key, index) => key !== incomingLocked[index])) {
@@ -3980,7 +4320,7 @@ function setMaintenanceAssignments(ownerType, ownerId, assignments, user) {
         ownerType,
         ownerId,
         flightId,
-        userId: person.id,
+        personId: person.id,
         userName: person.name,
         team: person.team || "未设置",
         role,
@@ -4006,11 +4346,11 @@ function normalizeMaintenanceReportEntries(rawEntries, allowedRoles, { ownerType
   const entries = [];
   for (const item of Array.isArray(rawEntries) ? rawEntries : []) {
     const role = ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(item.role) : String(item.role || "").trim();
-    const userId = String(item.userId || item.id || "").trim();
+    const personId = String(item.personId || "").trim();
     if (!allowed.has(role)) throw maintenanceDispatchError(`当前任务不支持上报“${role || "未设置"}”`);
-    const person = people.get(userId);
+    const person = people.get(personId);
     if (!person) throw maintenanceDispatchError("报工人员不存在或已停用");
-    const key = `${ownerType}\u0000${ownerId}\u0000${role}\u0000${userId}`;
+    const key = `${ownerType}\u0000${ownerId}\u0000${role}\u0000${personId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     entries.push({ ownerType, ownerId, role, person, standardHours, source });
@@ -4020,11 +4360,11 @@ function normalizeMaintenanceReportEntries(rawEntries, allowedRoles, { ownerType
 
 function replaceMaintenanceAssignmentsFromEntries(ownerType, ownerId, flightId, entries, user, status, feedback = "", preserveRoles = []) {
   const current = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=?").all(ownerType, ownerId);
-  const currentByKey = new Map(current.map(row => [`${row.role}\u0000${row.user_id}`, row]));
+  const currentByKey = new Map(current.map(row => [`${row.role}\u0000${row.person_id}`, row]));
   const desired = new Set(entries.map(item => `${item.role}\u0000${item.person.id}`));
   for (const row of current) {
     if (preserveRoles.includes(row.role)) continue;
-    if (desired.has(`${row.role}\u0000${row.user_id}`)) continue;
+    if (desired.has(`${row.role}\u0000${row.person_id}`)) continue;
     db.prepare("delete from maintenance_feedback where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_hour_results where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_sortie_results where assignment_id=?").run(row.id);
@@ -4042,7 +4382,7 @@ function replaceMaintenanceAssignmentsFromEntries(ownerType, ownerId, flightId, 
       ownerType,
       ownerId,
       flightId,
-      userId: item.person.id,
+      personId: item.person.id,
       userName: item.person.name,
       team: item.person.team || "未设置",
       role: item.role,
@@ -4075,17 +4415,17 @@ function maintenanceReportsView(flightId, user) {
     ? progress.batches.routine.entries
     : routineDraft
       ? routineDraft.entries.map(entry => {
-        const person = allPeople().find(item => item.id === entry.userId);
+        const person = allPeople().find(item => item.id === entry.personId);
         return {
           ownerType: "flight",
           ownerId: flightId,
           role: entry.role,
-          userId: entry.userId,
+          personId: entry.personId,
           userName: person?.name || "",
           team: person?.team || "未设置"
         };
       })
-      : routineAssignments.map(row => ({ ownerType: "flight", ownerId: flightId, role: row.role, userId: row.userId, userName: row.userName, team: row.team }));
+      : routineAssignments.map(row => ({ ownerType: "flight", ownerId: flightId, role: row.role, personId: row.personId, userName: row.userName, team: row.team }));
   const submittedRoutineRoles = new Set((progress.batches.routine?.entries || []).map(entry => entry.role));
   const roleStatuses = Object.fromEntries([
     ["放行", progress.batches.release ? "已提报" : "未提报"],
@@ -4113,7 +4453,7 @@ function maintenanceReportsView(flightId, user) {
         reportExplanation: item.content || "",
         entries: (progress.batches.nonroutine?.entries || []).filter(entry => entry.ownerType === "subtask" && entry.ownerId === item.id).length
           ? progress.batches.nonroutine.entries.filter(entry => entry.ownerType === "subtask" && entry.ownerId === item.id)
-          : item.assignments.map(row => ({ ownerType: "subtask", ownerId: item.id, role: row.role, userId: row.userId, userName: row.userName, team: row.team }))
+          : item.assignments.map(row => ({ ownerType: "subtask", ownerId: item.id, role: row.role, personId: row.personId, userName: row.userName, team: row.team }))
       })),
       feedback: progress.batches.nonroutine?.feedback || "",
       locked: ["已提报", "待复核", "已确认"].includes(progress.batches.nonroutine?.status || ""),
@@ -4121,9 +4461,9 @@ function maintenanceReportsView(flightId, user) {
       revision: flight.updatedAt || ""
     },
     release,
-    releaseEditable: !!release && release.userId === user.id && !progress.batches.release,
+    releaseEditable: !!release && release.personId === user.personId && !progress.batches.release,
     canSubmit: maintenanceCanSubmitReport(user, flightId),
-    canRelease: !!release && release.userId === user.id && !progress.batches.release,
+    canRelease: !!release && release.personId === user.personId && !progress.batches.release,
     canFinalize: !!progress.batches.release && progress.batches.release.submittedBy === user.id && progress.ready && !flight.reportFinalizedAt,
     isManager: maintenanceCanManage(user)
   };
@@ -4133,12 +4473,12 @@ function submitMaintenanceRelease(flightId, payload, user) {
   const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
   if (!flight) throw maintenanceDispatchError("未找到维修机会");
   const release = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
-  if (!release || release.user_id !== user.id) throw maintenanceDispatchError("只有当前维修机会的放行人员可以上报架次");
+  if (!release || release.person_id !== user.personId) throw maintenanceDispatchError("只有当前维修机会的放行人员可以上报架次");
   if (release.status !== "已派工") throw maintenanceReviewError("放行已经提报，请刷新页面", 409);
   return maintenanceTransaction(() => {
     const batch = upsertMaintenanceReportBatch(flightId, "release", {
       status: "已提报", feedback: "", user, expectedVersion: payload?.version ?? null,
-      entries: [{ ownerType: "flight", ownerId: flightId, role: "放行", person: allPeople().find(row => row.id === release.user_id) || { id: release.user_id, name: release.user_name, team: release.team }, standardHours: 0, source: "放行架次" }]
+      entries: [{ ownerType: "flight", ownerId: flightId, role: "放行", person: allPeople().find(row => row.id === release.person_id) || { id: release.person_id, name: release.user_name, team: release.team }, standardHours: 0, source: "放行架次" }]
     });
     const stamp = now();
     db.prepare("update maintenance_assignments set status='已提报',feedback='',completed_at=?,submitted_at=?,modified_at=? where id=?").run(stamp, stamp, stamp, release.id);
@@ -4155,7 +4495,7 @@ function submitMaintenanceRoutine(flightId, payload, user) {
   if (!maintenanceCanSubmitReport(user, flightId)) throw maintenanceDispatchError("只有该维修机会的派工人员可以提交例行报工");
   return maintenanceTransaction(() => {
     assertMaintenanceReportDraftVersion(flightId, "routine", payload?.draftVersion);
-    applyMaintenanceReleaseSelection(flightId, payload?.releaseUserId, user);
+    applyMaintenanceReleaseSelection(flightId, payload?.releasePersonId, user);
     const roles = maintenanceRolesForOpportunity(flight.work_kind || flight.work_type).filter(role => role !== "放行");
     const entries = normalizeMaintenanceReportEntries(payload?.entries, roles, { ownerType: "flight", ownerId: flightId, standardHours: maintenanceBaseHours("flight", flight), source: "例行报工" });
     const submittedRoles = [...new Set(entries.map(item => item.role))];
@@ -4234,6 +4574,7 @@ function assertMaintenanceNonroutineEditable(flightId, payload, user) {
   if (expectedRevision !== null && expectedRevision !== undefined && String(expectedRevision) !== String(flight.updated_at || "")) {
     throw maintenanceReviewError("非例行数据已被其他人员更新，请刷新后重试", 409);
   }
+  assertMaintenanceNonroutineChangePermissions(flightId, payload, user);
   return flight;
 }
 
@@ -4251,9 +4592,9 @@ function syncMaintenanceNonroutineAssignments(flightId, item, user) {
     throw maintenanceReviewError(`非例行“${item.title}”已经提报，不能调整人员`, 409);
   }
   const desired = new Map(item.entries.map(entry => [`${entry.role}\u0000${entry.person.id}`, entry]));
-  const current = new Map(currentRows.map(row => [`${row.role}\u0000${row.user_id}`, row]));
+  const current = new Map(currentRows.map(row => [`${row.role}\u0000${row.person_id}`, row]));
   for (const row of currentRows) {
-    if (desired.has(`${row.role}\u0000${row.user_id}`)) continue;
+    if (desired.has(`${row.role}\u0000${row.person_id}`)) continue;
     db.prepare("delete from maintenance_feedback where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_hour_results where assignment_id=?").run(row.id);
     db.prepare("delete from maintenance_sortie_results where assignment_id=?").run(row.id);
@@ -4273,7 +4614,7 @@ function syncMaintenanceNonroutineAssignments(flightId, item, user) {
       ownerType: "subtask",
       ownerId: item.row.id,
       flightId,
-      userId: entry.person.id,
+      personId: entry.person.id,
       userName: entry.person.name,
       team: entry.person.team || "未设置",
       role: entry.role,
@@ -4380,8 +4721,8 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
       const routineFeedback = payload && Object.prototype.hasOwnProperty.call(payload, "feedback")
         ? String(payload.feedback ?? "").trim()
         : String(routineBatch.feedback || "");
-      const currentRoutineKeys = new Set(db.prepare("select role,user_id from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行'")
-        .all(flightId).map(row => `${row.role}\u0000${row.user_id}`));
+      const currentRoutineKeys = new Set(db.prepare("select role,person_id from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行'")
+        .all(flightId).map(row => `${row.role}\u0000${row.person_id}`));
       const nextRoutineKeys = new Set(routineEntries.map(item => `${item.role}\u0000${item.person.id}`));
       const routinePeopleChanged = currentRoutineKeys.size !== nextRoutineKeys.size || [...nextRoutineKeys].some(key => !currentRoutineKeys.has(key));
       replaceMaintenanceAssignmentsFromEntries("flight", flightId, flightId, routineEntries, user, "已提报", routineFeedback, ["放行"]);
@@ -4408,18 +4749,18 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
       db.prepare("delete from maintenance_report_batches where id=?").run(nonroutineBatch.id);
     }
 
-    const lockedReleaseUserId = String(releaseBatch.entries.find(item => item.role === "放行")?.userId || releaseBatch.submittedBy || "").trim();
-    const requestedReleaseUserId = String(payload?.releaseUserId || lockedReleaseUserId).trim();
+    const lockedReleaseUserId = String(releaseBatch.entries.find(item => item.role === "放行")?.personId || "").trim();
+    const requestedReleaseUserId = String(payload?.releasePersonId || lockedReleaseUserId).trim();
     if (requestedReleaseUserId !== lockedReleaseUserId) throw maintenanceReviewError("放行架次已提报，放行人员不能修改", 409);
-    const releaseUserId = lockedReleaseUserId;
-    const releasePerson = allPeople().find(row => row.id === releaseUserId);
+    const releasePersonId = lockedReleaseUserId;
+    const releasePerson = allPeople().find(row => row.id === releasePersonId);
     if (!releasePerson) throw maintenanceDispatchError("最终放行人员不存在或已停用");
     const releaseAssignment = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
     if (!releaseAssignment) throw maintenanceDispatchError("未找到放行派工记录");
     const targetStatus = finalize ? "待复核" : "已提报";
-    db.prepare("update maintenance_assignments set user_id=?,user_name=?,team=?,status=?,modified_at=? where id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
-    db.prepare("update maintenance_sortie_results set user_id=?,user_name=?,team=?,sorties=1,status=?,updated_at=? where assignment_id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
-    db.prepare("update maintenance_report_entries set user_id=?,user_name=?,team=?,updated_at=? where batch_id=? and role='放行'").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", now(), releaseBatch.id);
+    db.prepare("update maintenance_assignments set person_id=?,user_name=?,team=?,status=?,modified_at=? where id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
+    db.prepare("update maintenance_sortie_results set person_id=?,user_name=?,team=?,sorties=1,status=?,updated_at=? where assignment_id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
+    db.prepare("update maintenance_report_entries set person_id=?,user_name=?,team=?,updated_at=? where batch_id=? and role='放行'").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", now(), releaseBatch.id);
 
     if (finalize) {
       const stamp = now();
@@ -4454,11 +4795,11 @@ function maintenanceWorkReportPayload(flightId, payload = {}) {
   const seen = new Set();
   for (const item of Array.isArray(payload.entries) ? payload.entries : []) {
     const role = String(item.role || "").trim();
-    const userId = String(item.userId || item.id || "").trim();
+    const personId = String(item.personId || item.id || "").trim();
     if (!allowedRoles.has(role)) throw maintenanceDispatchError(`当前维修机会不支持上报“${role || "未设置"}”`);
-    const person = people.get(userId);
+    const person = people.get(personId);
     if (!person) throw maintenanceDispatchError("报工人员不存在或已停用");
-    const key = `${role}\u0000${userId}`;
+    const key = `${role}\u0000${personId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     entries.push({ role, person });
@@ -4468,7 +4809,7 @@ function maintenanceWorkReportPayload(flightId, payload = {}) {
 }
 
 function canUseMaintenanceWorkReport(user, assignments) {
-  return assignments.some(row => row.user_id === user.id);
+  return assignments.some(row => row.person_id === user.personId);
 }
 
 function maintenanceWorkReportView(flightId, user) {
@@ -4477,7 +4818,7 @@ function maintenanceWorkReportView(flightId, user) {
   const assignments = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? order by assigned_at,user_name").all(flightId);
   if (!canUseMaintenanceWorkReport(user, assignments) && !maintenanceCanManage(user)) throw maintenanceDispatchError("只能查看派给自己的维修机会报工");
   const report = maintenanceWorkReport(flightId);
-  const defaultEntries = assignments.filter(row => row.role !== "放行").map(row => ({ role: row.role, userId: row.user_id, userName: row.user_name, team: row.team || "未设置" }));
+  const defaultEntries = assignments.filter(row => row.role !== "放行").map(row => ({ role: row.role, personId: row.person_id, userName: row.user_name, team: row.team || "未设置" }));
   const roles = maintenanceRolesForOpportunity(flight.work_kind || flight.work_type || "其他").filter(role => role !== "放行");
   const release = assignments.find(row => row.role === "放行") || null;
   return {
@@ -4494,7 +4835,7 @@ function maintenanceWorkReportView(flightId, user) {
     reportStatus: report.status,
     release: release ? publicMaintenanceAssignment(release) : null,
     releaseCompleted: !!release && ["已提报", "待复核", "已确认"].includes(release.status) && ["已提报", "待复核", "已确认"].includes(flight.status),
-    canFinalize: !!release && release.user_id === user.id,
+    canFinalize: !!release && release.person_id === user.personId,
     people: allPeople()
   };
 }
@@ -4508,7 +4849,7 @@ function saveMaintenanceWorkReport(flightId, payload, user) {
   if (mode === "finalize") {
     if (releaseAssignments.length !== 1) throw maintenanceDispatchError("最终提报前必须派工且仅派工一名放行人员");
     const release = releaseAssignments[0];
-    if (release.user_id !== user.id) throw maintenanceDispatchError("只有当前维修机会的放行人员可以报工确认");
+    if (release.person_id !== user.personId) throw maintenanceDispatchError("只有当前维修机会的放行人员可以报工确认");
     if (!["已提报", "待复核"].includes(release.status) || normalized.flight.status !== "已提报") throw maintenanceDispatchError("请先完成放行，再进行报工确认");
     const baseHours = maintenanceBaseHours("flight", normalized.flight);
     if (normalized.entries.length && !(baseHours > 0)) throw maintenanceDispatchError("当前维修机会缺少有效的标准工时规则");
@@ -4530,20 +4871,20 @@ function saveMaintenanceWorkReport(flightId, payload, user) {
       values(?,?,?,?,?,?,?,?,?,?,?) on conflict(flight_id) do update set status=excluded.status,feedback=excluded.feedback,reported_by=excluded.reported_by,reported_by_name=excluded.reported_by_name,reported_at=excluded.reported_at,finalized_by=excluded.finalized_by,finalized_by_name=excluded.finalized_by_name,finalized_at=excluded.finalized_at,updated_at=excluded.updated_at`)
       .run(flightId, mode === "finalize" ? "已提交" : "草稿", normalized.feedback, user.id, user.name, stamp, mode === "finalize" ? user.id : "", mode === "finalize" ? user.name : "", mode === "finalize" ? stamp : "", stamp, stamp);
     db.prepare("delete from maintenance_work_report_entries where flight_id=?").run(flightId);
-    const insertEntry = db.prepare("insert into maintenance_work_report_entries(flight_id,role,user_id,user_name,team,created_at,updated_at) values(?,?,?,?,?,?,?)");
+    const insertEntry = db.prepare("insert into maintenance_work_report_entries(flight_id,role,person_id,user_name,team,created_at,updated_at) values(?,?,?,?,?,?,?)");
     normalized.entries.forEach(({ role, person }) => insertEntry.run(flightId, role, person.id, person.name, person.team || "未设置", stamp, stamp));
 
     if (mode === "finalize") {
       const current = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行'").all(flightId);
       const desired = new Map(normalized.entries.map(item => [`${item.role}\u0000${item.person.id}`, item]));
       for (const row of current) {
-        const key = `${row.role}\u0000${row.user_id}`;
+        const key = `${row.role}\u0000${row.person_id}`;
         if (desired.has(key)) continue;
         db.prepare("delete from maintenance_feedback where assignment_id=?").run(row.id);
         db.prepare("delete from maintenance_hour_results where assignment_id=?").run(row.id);
         db.prepare("delete from maintenance_assignments where id=?").run(row.id);
       }
-      const retained = new Map(db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行'").all(flightId).map(row => [`${row.role}\u0000${row.user_id}`, row]));
+      const retained = new Map(db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role<>'放行'").all(flightId).map(row => [`${row.role}\u0000${row.person_id}`, row]));
       for (const { role, person } of normalized.entries) {
         const key = `${role}\u0000${person.id}`;
         let row = retained.get(key);
@@ -4552,7 +4893,7 @@ function saveMaintenanceWorkReport(flightId, payload, user) {
             ownerType: "flight",
             ownerId: flightId,
             flightId,
-            userId: person.id,
+            personId: person.id,
             userName: person.name,
             team: person.team || "未设置",
             role,
@@ -4572,7 +4913,7 @@ function saveMaintenanceWorkReport(flightId, payload, user) {
             .run(person.name, person.team || "未设置", normalized.feedback, stamp, stamp, stamp, row.id);
         }
         db.prepare("delete from maintenance_feedback where assignment_id=?").run(row.id);
-        db.prepare("insert into maintenance_feedback(id,assignment_id,owner_type,owner_id,user_id,role,content,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)")
+        db.prepare("insert into maintenance_feedback(id,assignment_id,owner_type,owner_id,person_id,role,content,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)")
           .run(randomId("mtnfb"), row.id, "flight", flightId, person.id, role, normalized.feedback, stamp, stamp);
       }
       regenerateMaintenanceResults("flight", flightId);
@@ -4634,37 +4975,19 @@ function sanitizeRichHtml(value) {
   return html;
 }
 
-function canViewRecord(user, record) {
-  if (!user || !user.id || !record) return false;
-  if ((record.publish_status || "已发布") === "作废") return user.role === "admin";
-  if (user.role === "admin") return true;
-  if (user.role === "publisher") return isRecordRecipient(user, record) || isRecordOwner(user, record);
-  return isRecordRecipient(user, record);
+function canViewRecord(user,record) {
+ if(!user?.id || !record || !hasRbac(user,"info.read"))return false;
+ const visible=personnelAccess.hasAll(user,"info") || isRecordRecipient(user,record) || isRecordOwner(user,record) || dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info");
+ return visible && (record.publish_status!=="作废" || hasAnyRbac(user,["info.restore","info.void.any"]));
 }
 
 function canViewFixedProject(user) {
-  return !!user?.id && Array.isArray(user.allowedTabs) && user.allowedTabs.includes("fixedPage");
+  return hasRbac(user, "fixed.read");
 }
 
-function publicReceiptsFor(user, recordIds) {
-  if (!recordIds.length) return [];
-  const placeholders = recordIds.map(() => "?").join(",");
-  if (user.role === "admin" || user.role === "publisher") {
-    return db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
-      from read_receipts r
-      join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-      join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')
-      where r.record_id in (${placeholders})`)
-      .all(...recordIds)
-      .map(row => ({ ...row, isOverdue: !!row.isOverdue }));
-  }
-  return db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
-    from read_receipts r
-    join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-    join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')
-    where r.user_id=? and r.record_id in (${placeholders})`)
-    .all(user.id, ...recordIds)
-    .map(row => ({ ...row, isOverdue: !!row.isOverdue }));
+function publicReceiptsFor(user,recordIds) {
+ const ids=new Set(recordIds);
+ return receipts().filter(row=>ids.has(row.recordId) && (row.userId===user.id || (hasAnyRbac(user,["info.receipt.manage","info.stats.read"]) && dataScopeAllowsUser(user,row.userId,"info"))));
 }
 
 function attachmentRow(id) {
@@ -4689,18 +5012,16 @@ function canManageAttachmentCheck(user, row) {
     const record = ownerRecord(row);
     if (!record) return { ok: false, error: "未找到信息" };
     if ((record.publish_status || "已发布") === "作废") {
-      return user.role === "admin"
+      return hasRbac(user, "info.restore") && (isRecordOwner(user,record) || dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info"))
         ? { ok: true }
-        : { ok: false, error: "作废信息仅管理员可管理附件" };
+        : { ok: false, error: "当前账户无权管理作废信息附件" };
     }
-    if (user.role === "admin") return { ok: true };
-    if (has(user, "edit") && canViewRecord(user, record)) return { ok: true };
-    if (!has(user, "create")) return { ok: false, error: "当前账号没有发布权限" };
-    if (!isRecordOwner(user, record)) return { ok: false, error: "只能给自己发布的信息上传附件" };
+    if (hasRbac(user, "info.update.any") && dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info")) return { ok: true };
+    if (!isRecordOwner(user, record) || !hasAnyRbac(user, ["info.update.own", "info.create"])) return { ok: false, error: "当前账号无权管理该信息附件" };
     return { ok: true };
   }
   if (row.owner_type === "fixedProject") {
-    return has(user, "fixedManage")
+    return hasRbac(user, "fixed.manage")
       ? { ok: true }
       : { ok: false, error: "当前账号没有固化项目维护权限" };
   }
@@ -4719,11 +5040,7 @@ function safeUploadPath(name) {
 }
 
 function isRecordOwner(user, record) {
-  if (!user || !user.id || !record) return false;
-  const publisherName = String(record.publisher || "").trim();
-  if (publisherName && publisherName === user.name && publisherName !== "发布者") return true;
-  if (publisherName && publisherName !== user.name) return false;
-  return record.publisher_id === user.id || record.created_by === user.id;
+ return !!user?.id && !!record && (record.publisher_id ? record.publisher_id === user.id : record.created_by === user.id);
 }
 
 function isRecordRecipient(user, record) {
@@ -4732,30 +5049,32 @@ function isRecordRecipient(user, record) {
 }
 
 function canEditRecord(user, record) {
-  return has(user, "edit") && canViewRecord(user, record);
+  return (hasRbac(user, "info.update.any") && dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info")) || (hasRbac(user, "info.update.own") && isRecordOwner(user, record));
 }
 
 function canDeleteRecord(user, record) {
-  return has(user, "delete") && canViewRecord(user, record);
+  return (hasRbac(user, "info.delete.any") && dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info")) || (hasRbac(user, "info.delete.own") && isRecordOwner(user, record));
 }
 
 function canVoidRecord(user, record) {
   if (!user || !record || (record.publish_status || "已发布") === "作废") return false;
-  if (user.role === "admin") return true;
-  return user.role === "publisher" && isRecordOwner(user, record);
+  return (hasRbac(user, "info.void.any") && dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info")) || (hasRbac(user, "info.void.own") && isRecordOwner(user, record));
 }
 
 function canUseStats(user) {
-  return user?.role === "admin" || user?.role === "publisher";
+  return hasRbac(user, "info.stats.read");
 }
 
 function saveRecipients(recordId, people) {
-  db.prepare("delete from record_recipients where record_id=?").run(recordId);
-  const insert = db.prepare("insert into record_recipients(record_id,user_id,name,department,team) values(?,?,?,?,?)");
-  people.forEach((person, index) => {
-    const normalized = normalizePerson(person, index);
-    insert.run(recordId, normalized.id, normalized.name, normalized.department, normalized.team);
-  });
+ const current=db.prepare("select * from record_recipients where record_id=?").all(recordId);
+ const wanted=new Map(people.map(p=>[p.accountId,p]));
+ for(const row of current) {
+   if(wanted.has(row.user_id)) {wanted.delete(row.user_id);continue;}
+   const p=db.prepare("select data_status from personnel where id=?").get(row.person_id);
+   if(p?.data_status==="deleted")continue;
+   db.prepare("delete from record_recipients where record_id=? and user_id=?").run(recordId,row.user_id);
+ }
+ for(const person of wanted.values()) db.prepare("insert into record_recipients(record_id,user_id,person_id,name,department,team) values(?,?,?,?,?,?)").run(recordId,person.accountId,person.personId,person.name,person.department,person.team);
 }
 
 function updateReceiptStatus(recordId, userId, status) {
@@ -4765,6 +5084,7 @@ function updateReceiptStatus(recordId, userId, status) {
     error.status = 400;
     throw error;
   }
+  const actor=requestUser();if(actor && !dataScopeAllowsUser(actor,userId,"info"))throw Object.assign(new Error("接收人员不在信息管理范围内"),{status:403});
   const existing = db.prepare("select * from read_receipts where record_id=? and user_id=?").get(recordId, userId);
   const remindCount = existing?.remind_count || 0;
   const lastRemindedAt = existing?.last_reminded_at || "";
@@ -4777,17 +5097,15 @@ function updateReceiptStatus(recordId, userId, status) {
     .run(recordId, userId, now(), status === "超期已读" ? 1 : 0, remindCount, lastRemindedAt);
 }
 
-function peopleByIds(ids = []) {
-  const map = new Map(allPeople().map(person => [person.id, person]));
-  return ids.map((item, index) => {
-    if (typeof item === "object" && item) return normalizePerson(item, index);
-    return map.get(String(item));
-  }).filter(Boolean);
-}
-
 function recipientsFromPayload(payload = {}) {
-  const selected = Array.isArray(payload.recipients) ? payload.recipients : [];
-  return selected.length ? peopleByIds(selected) : allPeople();
+ const selected=Array.isArray(payload.recipients)?payload.recipients:[];
+ const people=allLoginPeople();
+ if(payload.allInScope === true) return people;
+ if(!selected.length) throw Object.assign(new Error("请选择接收人员或明确选择范围内全部人员"),{status:400});
+ const allowed=new Map(people.map(p=>[p.personId,p]));
+ const result=selected.map(item=>allowed.get(String(typeof item === "object" ? item.personId : item)));
+ if(result.some(p=>!p))throw Object.assign(new Error("包含不可发送的接收人员"),{status:403});
+ return Array.from(new Map(result.map(p=>[p.personId,p])).values());
 }
 
 function fileNameFromDisposition(value) {
@@ -5135,6 +5453,8 @@ async function addUploadedAttachments(req, res, ownerType, ownerId) {
   try {
     db.exec("begin immediate");
     inTransaction = true;
+    const freshUser=currentUser(req);
+    if(!canManageAttachmentCheck(freshUser,probeRow).ok)throw Object.assign(new Error("当前权限或范围已变化，上传未生效"),{status:403});
     for (const file of files) {
       insert.run(file.id, ownerType, ownerId, file.name, file.type, file.size, "server", file.path, user.id, now());
     }
@@ -5265,8 +5585,9 @@ function readingStats(query = {}) {
     const date = parseRecordDate(record.date);
     return (!start || date >= start) && (!end || date <= end);
   });
-  const rows = records.flatMap(record => {
-    const recs = recipients(record.id);
+  const actor=requestUser();
+  const rows = records.filter(record=>!actor || canViewRecord(actor,record)).flatMap(record => {
+    const recs = recipients(record.id).filter(p=>!actor || personnelAccess.allows(actor,"info",p.personId));
     return recs.map(person => {
       const receipt = db.prepare("select * from read_receipts where record_id=? and user_id=?").get(record.id, person.id);
       const overdue = parseRecordDate(record.deadline || deadlineFor(record.date))?.getTime() < Date.now();
@@ -5477,10 +5798,556 @@ function maintenanceReportXlsx(data, selectedSections = []) {
   ]);
 }
 
-async function route(req, res) {
+const personnelImportTypes = new Set(["personnel", "license", "authorization", "training"]);
+
+function normalizedCell(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  return String(value).trim();
+}
+
+function normalizedHeader(value) {
+  return normalizedCell(value).replace(/[\s\r\n]+/g, "");
+}
+
+function tabularRowsToObjects(inputRows, rowNumbers = []) {
+  if (!Array.isArray(inputRows) || !inputRows.length) return [];
+  const sourceRow = (index, fallback) => Array.isArray(rowNumbers) && Number.isSafeInteger(rowNumbers[index]) && rowNumbers[index] > 0 ? rowNumbers[index] : fallback;
+  if (!Array.isArray(inputRows[0])) return inputRows.map((row, index) => ({ ...Object.fromEntries(Object.entries(row || {}).map(([key, value]) => [normalizedHeader(key), normalizedCell(value)])), __importRowNumber: sourceRow(index, index + 2) }));
+  const headers = inputRows[0].map(normalizedHeader);
+  return inputRows.slice(1).map((row, index) => ({ row, rowNumber: sourceRow(index + 1, index + 2) }))
+    .filter(({ row }) => Array.isArray(row) && row.some(cell => normalizedCell(cell)))
+    .map(({ row, rowNumber }) => ({ ...Object.fromEntries(headers.map((header, index) => [header, normalizedCell(row[index])])), __importRowNumber: rowNumber }));
+}
+
+function importValue(row, names) {
+  for (const name of names) {
+    const value = normalizedCell(row[normalizedHeader(name)]);
+    if (value) return value;
+  }
+  return "";
+}
+
+function importEmployeeNo(row) {
+  return importValue(row, ["员工工号", "工号", "人员工号", "员工号"]);
+}
+
+function importName(row) {
+  return importValue(row, ["员工姓名", "人员姓名", "姓名"]);
+}
+
+function importDepartment(row) {
+  return importValue(row, ["部门", "部门名称", "所在部门名称", "所属部门"]);
+}
+
+function importRequiredHeaders(type) {
+  return {
+    personnel: [["员工工号"], ["员工姓名"]],
+    license: [["员工工号", "工号", "人员工号"], ["人员姓名", "姓名"], ["执照类型"]],
+    authorization: [["工号"], ["姓名"], ["项目代码"], ["授权类型"], ["授权单位"], ["授权状态"]],
+    training: [["人员工号", "员工工号", "工号"], ["人员姓名", "姓名"], ["课程代码"], ["课程名称"]]
+  }[type] || [];
+}
+
+function analyzePersonnelImport(type, rows) {
+  const issues = type==="authorization"?authorizationImport.validate(rows):[];
+  const seenEmployees = new Map();
+  let valid = 0;
+  rows.forEach((row, index) => {
+    const rowNumber = Number(row.__importRowNumber) || index + 2;
+    const employeeNo = importEmployeeNo(row);
+    const name = importName(row);
+    if (type === "authorization") {
+      const projectCode = importValue(row, ["项目代码"]), sourceName = importValue(row, ["项目名称"]);
+      const project = authorizationProjects.getByCode(projectCode);
+      if (!authorizationProjects.configured(project)) issues.push({ rowNumber, issueType: "unconfigured_project", severity: "error", employeeNo, detail: `项目代码“${projectCode || "（空）"}”未配置，请先在后台设置维护后重新上传` });
+      else if (sourceName && sourceName !== project.project_name) issues.push({ rowNumber, issueType: "project_name_conflict", severity: "warning", employeeNo, detail: `项目 ${projectCode} 的导入名称“${sourceName}”与标准名称不同，将显示“${project.project_name}”，不会覆盖目录` });
+    }
+    if (!employeeNo) issues.push({ rowNumber, issueType: "missing_employee_no", severity: "error", employeeNo: "", detail: "员工工号不能为空" });
+    else if (!isValidEmployeeNo(employeeNo)) issues.push({ rowNumber, issueType: "invalid_employee_no", severity: "error", employeeNo, detail: "员工工号必须为8位数字" });
+    if (!name) issues.push({ rowNumber, issueType: "missing_name", severity: "error", employeeNo, detail: "人员姓名不能为空" });
+    if (type === "personnel" && employeeNo) {
+      if (seenEmployees.has(employeeNo)) issues.push({ rowNumber, issueType: "duplicate_employee_no", severity: "error", employeeNo, detail: `工号与第 ${seenEmployees.get(employeeNo)} 行重复` });
+      else seenEmployees.set(employeeNo, rowNumber);
+    }
+    const existing = employeeNo ? db.prepare("select name,department,data_status from personnel where employee_no=?").get(employeeNo) : null;
+    if (existing?.data_status === "deleted") issues.push({ rowNumber, issueType: "deleted_person", severity: "error", employeeNo, detail: `工号 ${employeeNo} 的人员已删除，不能通过导入恢复或新增资质` });
+    if (type !== "personnel" && employeeNo && !existing) issues.push({ rowNumber, issueType: "unmatched_person", severity: "error", employeeNo, detail: "未在人员基本信息中找到该工号，请先导入人员基本信息" });
+    if (existing && name && existing.name !== name) issues.push({ rowNumber, issueType: "name_conflict", severity: type==="authorization"?"error":"warning", employeeNo, detail: `系统姓名“${existing.name}”与导入姓名“${name}”不一致` });
+    const department = importDepartment(row);
+    if (existing?.department && department && existing.department !== department) issues.push({ rowNumber, issueType: "department_change", severity: "warning", employeeNo, detail: `部门由“${existing.department}”变为“${department}”` });
+    if (type === "personnel" && existing) {
+      const overrides = db.prepare("select field_name,field_value from personnel_field_overrides where person_id=(select id from personnel where employee_no=?)").all(employeeNo);
+      const importedValues = { name, department, homeTeam: importValue(row, ["正式班组", "班组"]), employmentStatus: importValue(row, ["用工状态"]) };
+      overrides.forEach(override => {
+        const incoming = importedValues[override.field_name];
+        if (incoming && String(incoming) !== String(override.field_value || "")) issues.push({ rowNumber, issueType: "manual_override_preserved", severity: "warning", employeeNo, detail: `${personnelEditableFields[override.field_name]?.[1] || override.field_name}已被管理员人工修正，本次导入将保留系统值` });
+      });
+    }
+    if (isValidEmployeeNo(employeeNo) && name) valid++;
+  });
+  return { total: rows.length, valid, errors: issues.filter(item => item.severity === "error").length, warnings: issues.filter(item => item.severity === "warning").length, issues };
+}
+
+function insertImportIssues(batchId, issues) {
+  const insert = db.prepare("insert into personnel_import_issues(id,batch_id,row_number,issue_type,severity,employee_no,detail,status,resolution,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)");
+  issues.forEach(issue => insert.run(randomId("pissue"), batchId, issue.rowNumber, issue.issueType, issue.severity, issue.employeeNo || "", issue.detail || "", "open", "", now(), now()));
+}
+
+function dictionaryValue(category, code, value, batchId) {
+  const normalized = normalizedCell(value);
+  if (!normalized) return;
+  db.prepare("insert or ignore into master_data_dictionary_values(id,category,code,value,status,source_batch_id,created_at,updated_at) values(?,?,?,?,?,?,?,?)")
+    .run(randomId("dict"), category, normalizedCell(code), normalized, "active", batchId, now(), now());
+}
+
+function findImportedPerson(employeeNo) {
+  return employeeNo ? db.prepare("select * from personnel where employee_no=?").get(employeeNo) : null;
+}
+
+const personnelImportFields = {
+ name:["员工姓名","人员姓名","姓名"],department:["部门"],personnelGroup:["人员分组"],administrativeTeam:["行政班组"],
+ isInstructor:["是否教员"],position:["职位"],actualGrade:["实际岗级"],employmentStatus:["用工状态"]
+};
+function personnelImportPayload(row) {
+ const fields={};
+ for(const [key,aliases] of Object.entries(personnelImportFields))if(aliases.some(a=>Object.hasOwn(row,a))) fields[key]=importValue(row,aliases);
+ if(!fields.name)fields.name=importName(row);
+ if(Object.hasOwn(fields,"isInstructor"))fields.isInstructor=["是","true","1"].includes(String(fields.isInstructor).toLowerCase());
+ return fields;
+}
+function validatePersonnelImportAccess(type,rows,user) {
+ const issues=[];
+ rows.forEach((row,index)=>{
+ try {
+   const existing=findImportedPerson(importEmployeeNo(row));
+   if(type==="personnel"){
+     const forbidden=["车间","人员分类","当前工作班组","工作班组","性别","年龄","需求单位","最高学历","英语等级","加入本企业途径","派遣标志"];
+     const found=forbidden.filter(key=>Object.hasOwn(row,key));
+     if(found.length)throw new Error(`不再接受旧字段：${found.join("、")}`);
+   }
+   if(existing && !personnelAccess.allows(user,"personnel",existing.id))throw new Error("该行不在可维护范围内");
+   if(existing?.data_status==="deleted")return; // The import analyser reports deleted employee numbers without attempting restoration.
+   if(type==="authorization"&&existing&&["离职","停职"].includes(existing.employment_status))throw new Error("停职或离职人员不能导入授权");
+   if(type==="personnel")personnelAccess.checkMutation(user,personnelImportPayload(row),existing);
+   else {personnelAccess.permission(user,"personnel.qualification.manage");if(existing)personnelAccess.requirePerson(user,"personnel",existing.id,true);}
+  }catch(e){issues.push({rowNumber:Number(row.__importRowNumber)||index+2,employeeNo:importEmployeeNo(row),detail:e.status===404?"该行不在可维护范围内":e.message});}
+ });
+ if(issues.length)throw Object.assign(new Error("导入存在权限、范围或组织异常，整批未生效"),{status:400,details:{issues}});
+}
+function visibleImportBatch(batch,user) {
+ const rows=json(batch.rows_json,[]);
+ return rows.every(row=>{
+   const p=findImportedPerson(importEmployeeNo(row));
+   if(p && !personnelAccess.allows(user,"personnel",p.id))return false;
+   if(!p && !personnelAccess.hasAll(user,"personnel"))return batch.created_by===user.id;
+   if(batch.import_type!=="personnel")return hasRbac(user,"personnel.qualification.view");
+   return hasRbac(user,"personnel.sensitive.view") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
+ });
+}
+function confirmPersonnelRows(batchId, rows) {
+  const upsert = db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(employee_no) do update set name=excluded.name,department=excluded.department,home_team=excluded.home_team,is_instructor=excluded.is_instructor,position_code=excluded.position_code,actual_grade=excluded.actual_grade,employment_status=excluded.employment_status,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
+  let created = 0, updated = 0, skipped = 0;
+  for (const row of rows) {
+    const employeeNo = importEmployeeNo(row), importedName = importEmployeeNo(row) === SUPER_ACCOUNT_ID ? SUPER_ACCOUNT_NAME : importName(row);
+    let name = importedName;
+    if (!employeeNo || !name) { skipped++; continue; }
+    const existing = findImportedPerson(employeeNo);
+    const values = {name,department:importDepartment(row),personnelGroup:importValue(row,["人员分组"]),administrativeTeam:importValue(row,["行政班组"]),isInstructor:["是","true","1"].includes(importValue(row,["是否教员"]).toLowerCase())?1:0,position:importValue(row,["职位"]),actualGrade:importValue(row,["实际岗级"]),employmentStatus:employeeNo===SUPER_ACCOUNT_ID?"在职":importValue(row,["用工状态"])||"在职"};
+    const supplied=personnelImportPayload(row);
+    if(existing)for(const [key,[column]] of Object.entries(personnelEditableFields))if(!Object.hasOwn(supplied,key))values[key]=existing[column];
+    if (existing) {
+      const overrideNames = new Set(db.prepare("select field_name from personnel_field_overrides where person_id=?").all(existing.id).map(item => item.field_name));
+      for (const [apiField, [column]] of Object.entries(personnelEditableFields)) if (overrideNames.has(apiField)) values[apiField] = existing[column];
+    }
+    const organizationImport={};
+    for(const key of ["department","personnelGroup","administrativeTeam"])if(Object.hasOwn(supplied,key))organizationImport[key]=values[key];
+    const org=personnelAccess.organizationPayload(organizationImport,existing || {});
+    ({ name } = values);
+    const department=org.department,team=org.home_team,status=values.employmentStatus;
+    upsert.run(existing?.id || randomId("person"), employeeNo, name, department, team, values.isInstructor, values.position, values.actualGrade, status, batchId, "active", existing?.created_at || now(), now());
+    const savedPerson = findImportedPerson(employeeNo);
+    personnelAccess.saveOrganization(savedPerson.id,org);
+    if(!existing||String(existing.department_id||"")!==String(org.department_id||"")||String(existing.personnel_group_id||"")!==String(org.personnel_group_id||"")||String(existing.administrative_team_id||"")!==String(org.administrative_team_id||"")){
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,now());
+      const linked=db.prepare("select id from users where person_id=?").get(savedPerson.id);
+      if(linked && linked.id!==SUPER_ACCOUNT_ID)revokeUserSessions(linked.id,{bumpCredentialVersion:true});
+    }
+    const linkedAccount = savedPerson ? db.prepare("select id from users where person_id=?").get(savedPerson.id) : null;
+    if (linkedAccount && ["离职", "停职"].includes(status)) {
+      db.prepare("update users set status='disabled',credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(now(), linkedAccount.id);
+      revokeUserSessions(linkedAccount.id);
+    } else if (linkedAccount) {
+      db.prepare("update users set name=?,department=?,team=?,updated_at=? where id=?").run(name, department, team, now(), linkedAccount.id);
+    }
+    [
+      ["department", "", department], ["position", "", importValue(row, ["职位"])],
+      ["actual_grade", "", importValue(row, ["实际岗级"])], ["employment_status", "", status]
+    ].forEach(([category, code, value]) => dictionaryValue(category, code, value, batchId));
+    if (existing) updated++; else created++;
+  }
+  return { created, updated, skipped };
+}
+
+function confirmLicenseRows(batchId, rows) {
+  const upsert = db.prepare(`insert into personnel_licenses(id,person_id,employee_no,license_no,license_type,license_english_level,issued_at,renewed_at,validity_years,expires_at,is_valid,remark,source_created_by,source_created_at,source_updated_by,source_updated_at,source_batch_id,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(person_id,license_no,license_type) do update set license_english_level=excluded.license_english_level,issued_at=excluded.issued_at,renewed_at=excluded.renewed_at,validity_years=excluded.validity_years,expires_at=excluded.expires_at,is_valid=excluded.is_valid,remark=excluded.remark,source_updated_by=excluded.source_updated_by,source_updated_at=excluded.source_updated_at,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
+  let created = 0, updated = 0, skipped = 0;
+  for (const row of rows) {
+    const employeeNo = importEmployeeNo(row), person = findImportedPerson(employeeNo), licenseType = importValue(row, ["执照类型"]), licenseNo = importValue(row, ["执照号码"]);
+    if (!person || !employeeNo || !licenseType) { skipped++; continue; }
+    const existing = db.prepare("select id,created_at from personnel_licenses where person_id=? and license_no=? and license_type=?").get(person.id, licenseNo, licenseType);
+    upsert.run(existing?.id || randomId("license"), person.id, employeeNo, licenseNo, licenseType, importValue(row, ["执照英语等级"]), importValue(row, ["颁发日期"]), importValue(row, ["续签日期"]), importValue(row, ["有效年限"]), importValue(row, ["执照有效期"]), importValue(row, ["是否有效"]), importValue(row, ["备注"]), importValue(row, ["创建人"]), importValue(row, ["创建时间"]), importValue(row, ["修改人"]), importValue(row, ["修改时间"]), batchId, existing?.created_at || now(), now());
+    dictionaryValue("license_type", "", licenseType, batchId);
+    dictionaryValue("license_english_level", "", importValue(row, ["执照英语等级"]), batchId);
+    dictionaryValue("license_validity", "", importValue(row, ["是否有效"]), batchId);
+    if (existing) updated++; else created++;
+  }
+  return { created, updated, skipped };
+}
+
+const authorizationImport = createAuthorizationImport({db,now,randomId,audit});
+
+function confirmTrainingRows(batchId, rows) {
+  const upsertCourse = db.prepare("insert into course_catalog(id,course_code,course_name,course_version,course_nature,status,created_at,updated_at) values(?,?,?,?,?,?,?,?) on conflict(course_code,course_version) do update set course_name=excluded.course_name,course_nature=excluded.course_nature,updated_at=excluded.updated_at");
+  const upsert = db.prepare(`insert into personnel_training_records(id,person_id,employee_no,course_code,course_name,course_version,course_nature,started_at,completed_at,training_result,certificate_no,issuer,issuing_unit,issued_at,attendance_status,qualification_status,data_source,class_no,source_batch_id,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(person_id,course_code,course_version,class_no,started_at) do update set course_name=excluded.course_name,course_nature=excluded.course_nature,completed_at=excluded.completed_at,training_result=excluded.training_result,certificate_no=excluded.certificate_no,issuer=excluded.issuer,issuing_unit=excluded.issuing_unit,issued_at=excluded.issued_at,attendance_status=excluded.attendance_status,qualification_status=excluded.qualification_status,data_source=excluded.data_source,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
+  let created = 0, updated = 0, skipped = 0;
+  for (const row of rows) {
+    const employeeNo = importEmployeeNo(row), person = findImportedPerson(employeeNo), courseCode = importValue(row, ["课程代码"]), courseName = importValue(row, ["课程名称"]);
+    if (!person || !employeeNo || !courseCode || !courseName) { skipped++; continue; }
+    const version = importValue(row, ["课程版本"]), classNo = importValue(row, ["班级编号"]), startedAt = importValue(row, ["开始时间"]);
+    const course = db.prepare("select id,created_at from course_catalog where course_code=? and course_version=?").get(courseCode, version);
+    upsertCourse.run(course?.id || randomId("course"), courseCode, courseName, version, importValue(row, ["课程性质"]), "active", course?.created_at || now(), now());
+    const existing = db.prepare("select id,created_at from personnel_training_records where person_id=? and course_code=? and course_version=? and class_no=? and started_at=?").get(person.id, courseCode, version, classNo, startedAt);
+    upsert.run(existing?.id || randomId("training"), person.id, employeeNo, courseCode, courseName, version, importValue(row, ["课程性质"]), startedAt, importValue(row, ["完成时间"]), importValue(row, ["培训结果"]), importValue(row, ["证书编号"]), importValue(row, ["签发人"]), importValue(row, ["签发单位"]), importValue(row, ["签发日期"]), importValue(row, ["出席情况"]), importValue(row, ["合格情况"]), importValue(row, ["数据来源"]), classNo, batchId, existing?.created_at || now(), now());
+    dictionaryValue("course", courseCode, courseName, batchId);
+    dictionaryValue("course_version", courseCode, version, batchId);
+    dictionaryValue("course_nature", "", importValue(row, ["课程性质"]), batchId);
+    dictionaryValue("training_result", "", importValue(row, ["培训结果"]), batchId);
+    dictionaryValue("attendance_status", "", importValue(row, ["出席情况"]), batchId);
+    dictionaryValue("qualification_status", "", importValue(row, ["合格情况"]), batchId);
+    dictionaryValue("training_source", "", importValue(row, ["数据来源"]), batchId);
+    dictionaryValue("issuing_unit", "", importValue(row, ["签发单位"]), batchId);
+    if (existing) updated++; else created++;
+  }
+  return { created, updated, skipped };
+}
+
+function confirmPersonnelImport(batch, user, payload={}) {
+  if (!batch || batch.status !== "pending") throw Object.assign(new Error("导入批次状态不允许确认"), { status: 409 });
+  if(batch.import_type==="authorization"&&payload.confirmReplacement!==true)throw Object.assign(new Error("请明确确认：将替换所列人员全部授权"),{status:400});
+  const summary = json(batch.summary_json, {});
+  if(summary.workspaceRevision && payload.workspaceRevision!==summary.workspaceRevision)throw Object.assign(new Error("暂存内容已修改，请重新打开处理区核对后确认"),{status:409});
+  if (Number(summary.errors || 0) > 0) throw Object.assign(new Error("请先修复导入文件中的阻断错误"), { status: 400, details: { summary } });
+  const rows = json(batch.rows_json, []);
+  validatePersonnelImportAccess(batch.import_type,rows,user);
+  let result;
+  db.exec("begin immediate");
+  try {
+    if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+    if(db.prepare("select status from personnel_import_batches where id=?").get(batch.id)?.status!=="pending")throw Object.assign(new Error("导入批次状态已变化"),{status:409});
+    if(db.prepare("select rows_json,summary_json from personnel_import_batches where id=?").get(batch.id)?.summary_json!==batch.summary_json)throw Object.assign(new Error("暂存内容已变化，请重新核对"),{status:409});
+    validatePersonnelImportAccess(batch.import_type,rows,user);
+    const deletedIssues = rows.map((row, index) => ({ row, index })).filter(({ row }) => findImportedPerson(importEmployeeNo(row))?.data_status === "deleted")
+      .map(({ row, index }) => ({ rowNumber: Number(row.__importRowNumber) || index + 2, employeeNo: importEmployeeNo(row), detail: `工号 ${importEmployeeNo(row)} 的人员已删除，请移除该行后重新上传` }));
+    if (deletedIssues.length) throw Object.assign(new Error("导入批次包含已删除人员，整批未生效"), { status: 409, details: { issues: deletedIssues } });
+    if (batch.import_type === "authorization") {
+      authorizationProjects.lock();
+      const checked = analyzePersonnelImport("authorization", rows);
+      if (checked.errors) throw Object.assign(new Error("授权项目或人员数据已变化，请修复后重新上传检查"), { status: 409, details: { summary: checked, issues: checked.issues } });
+      Object.assign(summary, checked);
+    }
+    result = batch.import_type === "personnel" ? confirmPersonnelRows(batch.id, rows)
+      : batch.import_type === "license" ? confirmLicenseRows(batch.id, rows)
+        : batch.import_type === "authorization" ? authorizationImport.replace(batch, rows, user, summary.replacement)
+          : confirmTrainingRows(batch.id, rows);
+    if(batch.import_type==="authorization")for(const row of rows){dictionaryValue("authorization_type","",row["授权类型"],batch.id);dictionaryValue("authorization_unit","",row["授权单位"],batch.id);dictionaryValue("authorization_status","",row["授权状态"],batch.id);}
+    db.prepare("update personnel_import_batches set status='confirmed',summary_json=?,confirmed_by=?,confirmed_at=?,updated_at=? where id=?")
+      .run(JSON.stringify({ ...summary, result }), user.id, now(), now(), batch.id);
+    audit(user, "confirm_personnel_import", "personnelImport", batch.id, JSON.stringify({ type: batch.import_type, ...result }));
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+  return result;
+}
+
+function publicPersonnelList(user=requestUser(), options={}) {
+  const scope=personnelAccess.predicate(user,"personnel");
+  return db.prepare(`select p.*,
+      coalesce(l.record_count,0) as license_count,
+      coalesce(a.record_count,0) as authorization_count,
+      coalesce(t.record_count,0) as training_count,
+      u.id as account_id,u.username as account_username,u.status as account_status,
+      d.name as department_name,g.name as personnel_group_name,g.maintenance_eligible as maintenance_eligible,at.name as administrative_team_name,
+      wt.id as current_working_team_id,wt.name as current_working_team_name
+    from personnel p
+    left join (select person_id,count(*) as record_count from personnel_licenses where coalesce(data_status,'active')='active' group by person_id) l on l.person_id=p.id
+    left join (select person_id,count(*) as record_count from personnel_authorizations where coalesce(data_status,'active')='active' group by person_id) a on a.person_id=p.id
+    left join (select person_id,count(*) as record_count from personnel_training_records where coalesce(data_status,'active')='active' group by person_id) t on t.person_id=p.id
+    left join users u on u.person_id=p.id
+    left join organization_units d on d.id=p.department_id
+    left join organization_units g on g.id=p.personnel_group_id
+    left join organization_units at on at.id=p.administrative_team_id
+    left join capability_current_states cs on cs.person_id=p.id
+    left join organization_units wt on wt.id=cs.working_team_id
+    where p.data_status='active' and (${scope.sql}) ${options.where || ''} order by ${options.order || "p.employee_no"} ${options.limit ? 'limit ? offset ?' : ''}`).all(...scope.params,...(options.params || []),...(options.limit ? [options.limit,options.offset || 0] : [])).map(row => personnelAccess.redact(user,({
+      id:row.id,personId:row.id,departmentId:row.department_id||"",departmentName:row.department_name||"",personnelGroupId:row.personnel_group_id||"",personnelGroupName:row.personnel_group_name||"",maintenanceEligible:!!row.maintenance_eligible,administrativeTeamId:row.administrative_team_id||"",administrativeTeamName:row.administrative_team_name||"",currentWorkingTeamId:row.current_working_team_id||"",currentWorkingTeamName:row.current_working_team_name||"",organizationStatus:!row.department_id&&!row.personnel_group_id&&!row.administrative_team_id?"unclassified":row.department_id&&!row.personnel_group_id?"group_unassigned":row.department_id&&row.personnel_group_id?"complete":"review_required",hasAccount:!!row.account_id,employeeNo:row.employee_no,name:row.name,
+      department:row.department_name||"未设置",homeTeam:row.administrative_team_name||"未设置",
+      isInstructor: !!row.is_instructor, position: row.position_code || "", actualGrade: row.actual_grade || "", employmentStatus: row.employment_status || "在职",
+      licenseCount: Number(row.license_count || 0), authorizationCount: Number(row.authorization_count || 0), trainingCount: Number(row.training_count || 0),
+      account: row.account_id ? { id: row.account_id, username: row.account_username, status: row.account_status || "active" } : null, updatedAt: row.updated_at
+    })));
+}
+
+function publicPersonnelPage(searchParams,user=requestUser()) {
+ const scope=personnelAccess.predicate(user,"personnel"), predicates=[], params=[];
+ const q=String(searchParams.get("q") || "").trim();
+ if(q){const pattern="%"+q+"%",authorizationSearch=hasRbac(user,"personnel.qualification.view")?" or exists(select 1 from personnel_authorizations pa left join capability_catalog cc on cc.project_code=pa.project_code where pa.person_id=p.id and coalesce(pa.data_status,'active')='active' and (coalesce(cc.project_name,pa.project_name,'') like ? or pa.project_code like ?))":"";predicates.push(`(p.employee_no like ? or p.name like ? or p.position_code like ? or d.name like ? or g.name like ? or at.name like ?${authorizationSearch})`);params.push(...Array(6).fill(pattern));if(authorizationSearch)params.push(pattern,pattern);}
+ for(const [key,column] of [["department","d.name"],["homeTeam","at.name"],["employmentStatus","p.employment_status"]])if(searchParams.get(key)){predicates.push(column+"=?");params.push(searchParams.get(key));}
+ const accountStatus=searchParams.get("accountStatus");
+ if(accountStatus==="linked")predicates.push("u.id is not null");
+ if(accountStatus==="unlinked")predicates.push("u.id is null");
+ const extra=predicates.length?" and "+predicates.join(" and "):"";
+ const base=`from personnel p left join users u on u.person_id=p.id left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units at on at.id=p.administrative_team_id where p.data_status='active' and (${scope.sql})`;
+ const pageSize=Math.min(200,Math.max(1,Number(searchParams.get("pageSize")) || 20)),page=Math.max(1,Number(searchParams.get("page")) || 1);
+ const sortColumns={employeeNo:"p.employee_no",name:"p.name",department:"d.name",homeTeam:"at.name",updatedAt:"p.updated_at"};
+ const order=(sortColumns[searchParams.get("sort")] || sortColumns.employeeNo)+(searchParams.get("order")==="desc"?" desc":" asc")+",p.id";
+ const total=Number(db.prepare(`select count(*) as n ${base} ${extra}`).get(...scope.params,...params).n);
+ const stats=db.prepare(`select count(*) as total,sum(case when p.employment_status not in ('停职','离职') then 1 else 0 end) as active,sum(case when u.id is not null then 1 else 0 end) as linked ${base}`).get(...scope.params);
+ const values=column=>db.prepare(`select distinct ${column} as value ${base} order by ${column}`).all(...scope.params).map(r=>r.value).filter(Boolean);
+ return {items:publicPersonnelList(user,{where:extra,params,order,limit:pageSize,offset:(page-1)*pageSize}),total,page,pageSize,facets:{total:Number(stats.total),active:Number(stats.active || 0),linked:Number(stats.linked || 0),departments:values("d.name"),homeTeams:values("at.name")}};
+}
+
+const personnelEditableFields = {
+  name:["name","姓名"],
+  isInstructor:["is_instructor","是否教员"],
+  position:["position_code","职位"],actualGrade:["actual_grade","实际级别"],employmentStatus:["employment_status","在职状态"]
+};
+const qualificationDefinitions = {
+  license:{table:"personnel_licenses",fields:{licenseNo:["license_no","执照号码"],licenseType:["license_type","执照类型"],expiresAt:["expires_at","执照有效期"],isValid:["is_valid","是否有效"],remark:["remark","备注"]}},
+  authorization:{table:"personnel_authorizations",fields:{authorizationStatus:["authorization_status","授权状态"],authorizationExpiresAt:["authorization_expires_at","授权有效期"]}},
+  training:{table:"personnel_training_records",fields:{courseName:["course_name","课程名称"],completedAt:["completed_at","完成时间"],trainingResult:["training_result","培训结果"],attendanceStatus:["attendance_status","出席情况"],qualificationStatus:["qualification_status","合格情况"]}}
+};
+
+function changeQualification(person, kind, recordId, payload, manager, voidRecord = false) {
+  if (kind === "authorization" && ["projectName", "projectCode", "project_name", "project_code"].some(key => key in payload)) throw Object.assign(new Error("授权项目代码和名称只读，请在后台设置维护项目名称"), { status: 400 });
+  if(kind==="authorization"&&Object.keys(payload).some(k=>!["authorizationStatus","authorizationExpiresAt","reason"].includes(k)))throw Object.assign(new Error("授权编辑包含只读或已移除字段"),{status:400});
+  const definition = qualificationDefinitions[kind];
+  if (!definition) throw Object.assign(new Error("资质类型无效"), { status: 400 });
+  const record = db.prepare(`select * from ${definition.table} where id=? and person_id=? and coalesce(data_status,'active')='active'`).get(recordId, person.id);
+  if (!record) throw Object.assign(new Error("未找到资质记录"), { status: 404 });
+  const reason = String(payload.reason || "").trim();
+  if (!reason) throw Object.assign(new Error("请填写修改或作废原因"), { status: 400 });
+  const changes = [];
+  if (voidRecord) changes.push({ column: "data_status", label: "记录状态", previous: record.data_status || "active", next: "void" });
+  else for (const [apiField, [column, label]] of Object.entries(definition.fields)) {
+    if (!(apiField in payload)) continue;
+    let next = String(payload[apiField] ?? "").trim();
+    if(kind==="authorization"&&apiField==="authorizationStatus"&&!next)throw Object.assign(new Error("授权状态不能为空"),{status:400});
+    if(kind==="authorization"&&apiField==="authorizationExpiresAt"){next=authorizationDate(next);const start=authorizationDate(record.authorized_at);if(start&&next&&next<start)throw Object.assign(new Error("授权有效期不得早于授权日期"),{status:400});}
+    if (String(record[column] ?? "") !== next) changes.push({ apiField, column, label, previous: record[column] ?? "", next });
+  }
+  if (!changes.length) return;
+  const stamp = now();
+  db.exec("begin immediate");
+  try {
+    if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+    if(!db.prepare(`select id from ${definition.table} where id=? and person_id=?`).get(recordId,person.id))throw Object.assign(new Error("记录已替换，请刷新"),{status:409});
+    db.prepare(`update ${definition.table} set ${changes.map(item => `${item.column}=?`).join(",")},updated_at=? where id=?`).run(...changes.map(item => item.next), stamp, recordId);
+    const insert = db.prepare("insert into personnel_change_logs(id,person_id,field_name,field_label,old_value,new_value,source_type,source_batch_id,reason,operator_id,operator_name,created_at) values(?,?,?,?,?,?,'manual','',?,?,?,?)");
+    changes.forEach(item => insert.run(randomId("pchange"), person.id, `${kind}.${recordId}.${item.apiField || "status"}`, item.label, String(item.previous), String(item.next), reason, manager.id, manager.name, stamp));
+    if(kind==="authorization")authorizationImport.bump(person.id);
+    db.exec("commit");
+  } catch (error) { db.exec("rollback"); throw error; }
+  audit(manager, voidRecord ? "void_personnel_qualification" : "update_personnel_qualification", kind, recordId, JSON.stringify({ personId: person.id, reason, fields: changes.map(item => item.column) }));
+}
+
+function normalizedPersonnelField(key, value) {
+  if (key === "isInstructor") return value === true || value === 1 || value === "1" ? 1 : 0;
+  return String(value ?? "").trim();
+}
+
+function updatePersonnel(person, payload, manager) {
+  const deprecated=["gender","age","demandUnit","highestEducation","englishLevel","entryChannel","dispatchFlag","workshop","workshopId","personnelCategory","personnelCategoryId"];
+  const suppliedDeprecated=deprecated.filter(key=>Object.hasOwn(payload,key));
+  if(suppliedDeprecated.length)throw Object.assign(new Error(`人员字段已停用：${suppliedDeprecated.join("、")}`),{status:400});
+  const org=personnelAccess.checkMutation(manager,payload,person);
+  const orgChanged=ORGANIZATION_FIELDS.some(k=>Object.hasOwn(payload,k));
+  const reason = String(payload.reason || "").trim();
+  if (!reason) throw Object.assign(new Error("请填写修改原因"), { status: 400 });
+  const updates = [];
+  for (const [apiField, [column, label]] of Object.entries(personnelEditableFields)) {
+    if (!(apiField in payload)) continue;
+    const next = normalizedPersonnelField(apiField, payload[apiField]);
+    const previous = person[column] ?? (column === "is_instructor" ? 0 : "");
+    if (String(previous ?? "") === String(next ?? "")) continue;
+    updates.push({ apiField, column, label, previous, next });
+  }
+  const nextName = updates.find(item => item.column === "name")?.next ?? person.name;
+  const nextStatus = updates.find(item => item.column === "employment_status")?.next ?? person.employment_status;
+  if (!String(nextName || "").trim()) throw Object.assign(new Error("姓名不能为空"), { status: 400 });
+  if (!["在职", "停职", "离职"].includes(nextStatus)) throw Object.assign(new Error("在职状态无效"), { status: 400 });
+  if (!updates.length && !orgChanged) return { changed: false, personId: person.id };
+  const stamp = now();
+  db.exec("begin immediate");
+  try {
+    if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+    personnelAccess.checkMutation(manager,payload,personnelAccess.requirePerson(manager,"personnel",person.id,true));
+    if(updates.length){const assignments = updates.map(item => `${item.column}=?`).join(",");
+    db.prepare(`update personnel set ${assignments},source_batch_id='manual_override',updated_at=? where id=?`).run(...updates.map(item => item.next), stamp, person.id);}
+    if(orgChanged){
+      personnelAccess.saveOrganization(person.id,org);
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),person.id,org.department_id,org.personnel_group_id,org.administrative_team_id,stamp);
+    }
+    const insertLog = db.prepare("insert into personnel_change_logs(id,person_id,field_name,field_label,old_value,new_value,source_type,source_batch_id,reason,operator_id,operator_name,created_at) values(?,?,?,?,?,?,'manual','',?,?,?,?)");
+    const upsertOverride = db.prepare("insert into personnel_field_overrides(person_id,field_name,field_value,reason,updated_by,updated_at) values(?,?,?,?,?,?) on conflict(person_id,field_name) do update set field_value=excluded.field_value,reason=excluded.reason,updated_by=excluded.updated_by,updated_at=excluded.updated_at");
+    updates.forEach(item => {
+      insertLog.run(randomId("pchange"), person.id, item.apiField, item.label, String(item.previous ?? ""), String(item.next ?? ""), reason, manager.id, manager.name, stamp);
+      upsertOverride.run(person.id, item.apiField, String(item.next ?? ""), reason, manager.id, stamp);
+    });
+    const refreshed = db.prepare("select * from personnel where id=?").get(person.id);
+    const account = db.prepare("select * from users where person_id=?").get(person.id);
+    if (account) {
+      const forcedDisabled = ["停职", "离职"].includes(refreshed.employment_status);
+      db.prepare("update users set name=?,department=?,team=?,status=?,updated_at=? where id=?")
+        .run(refreshed.name, refreshed.department || "未设置", refreshed.home_team || "未设置", forcedDisabled ? "disabled" : account.status, stamp, account.id);
+    }
+    if (account && account.id !== SUPER_ACCOUNT_ID && (orgChanged || updates.some(item => ["department", "home_team", "employment_status"].includes(item.column)))) {
+      revokeUserSessions(account.id, { bumpCredentialVersion: true });
+    }
+    audit(manager, "update_personnel", "personnel", person.id, JSON.stringify({ employeeNo: person.employee_no, fields: [...updates.map(item => item.apiField), ...(orgChanged ? ["departmentId","personnelGroupId","administrativeTeamId"] : [])], reason }));
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+  return { changed: true, personId: person.id };
+}
+
+function publicRbacRole(row) {
+  const permissions = db.prepare(`select p.code,p.name,p.module from rbac_permissions p
+    join rbac_role_permissions rp on rp.permission_id=p.id where rp.role_id=? order by p.module,p.code`).all(row.id);
+  const assignedUserCount = Number(db.prepare("select count(*) as count from rbac_user_roles where role_id=?").get(row.id)?.count || 0);
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description || "",
+    systemRole: !!row.system_role,
+    status: row.status,
+    assignedUserCount,
+    permissions: permissions.map(item => item.code),
+    permissionDetails: permissions
+  };
+}
+
+function validatedRolePayload(payload, roleId = "") {
+  const name = String(payload.name || "").trim();
+  const description = String(payload.description || "").trim();
+  const permissionCodes = Array.from(new Set((Array.isArray(payload.permissions) ? payload.permissions : []).map(item => String(item || "").trim()).filter(Boolean)));
+  if (!name) throw Object.assign(new Error("角色名称不能为空"), { status: 400 });
+  if (!permissionCodes.length) throw Object.assign(new Error("请至少选择一项权限"), { status: 400 });
+  const duplicate = roleId
+    ? db.prepare("select id from rbac_roles where lower(name)=lower(?) and id<>?").get(name, roleId)
+    : db.prepare("select id from rbac_roles where lower(name)=lower(?)").get(name);
+  if (duplicate) throw Object.assign(new Error("角色名称已存在"), { status: 409 });
+  const permissionRows = permissionCodes.map(code => db.prepare("select id,code from rbac_permissions where code=?").get(code)).filter(Boolean);
+  if (permissionRows.length !== permissionCodes.length) throw Object.assign(new Error("包含不存在的权限"), { status: 400 });
+  const dependencyErrors = permissionDependencyErrors(permissionCodes);
+  if (dependencyErrors.length) {
+    const names = new Map(rbacPermissionDefinitions.map(([code, label]) => [code, label]));
+    const detail = dependencyErrors.map(item => `${names.get(item.code) || item.code}需要同时选择${names.get(item.dependency) || item.dependency}`);
+    throw Object.assign(new Error(`权限组合不完整：${detail.join("；")}`), { status: 400, code: "RBAC_DEPENDENCY_MISSING", details: dependencyErrors });
+  }
+  return { name, description, permissionRows };
+}
+
+function replaceRolePermissions(roleId, permissionRows) {
+  db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
+  const insert = db.prepare("insert into rbac_role_permissions(role_id,permission_id) values(?,?)");
+  permissionRows.forEach(permission => insert.run(roleId, permission.id));
+}
+
+function importSelections(value) {
+  const items = Array.isArray(value) ? value : String(value || "").split(/[|,，、;；]+/);
+  return Array.from(new Set(items.map(item => String(item || "").trim()).filter(Boolean)));
+}
+
+function accountImportScope(value) {
+  const aliases={"本人":"self","本行政班组":"administrative_team","行政班组":"administrative_team","所属人员分组":"personnel_group","所属部门":"department","部门":"department","全部":"all","全部数据":"all"};
+  const allowed=new Set(["self","administrative_team","personnel_group","department","all"]);
+  const normalized = aliases[value] || value;
+  return allowed.has(normalized) ? normalized : "";
+}
+
+function validateAccountRoleCombination(roleCodes) {
+  const errors = accountRoleCombinationErrors(roleCodes);
+  if (errors.some(item => item.code === "SYSTEM_ADMIN_RESERVED")) throw Object.assign(new Error("系统管理员角色仅允许54002010使用"), { status: 403 });
+  if (errors.length) throw Object.assign(new Error("请且只能选择一个基础角色：工作者、派工人员或管理者"), { status: 400, code: "RBAC_BASE_ROLE_REQUIRED" });
+}
+
+function validateAccountAccess(payload, personId) {
+  const roleCodes = Array.from(new Set((Array.isArray(payload.roles) ? payload.roles : []).map(item => String(item || "").trim()).filter(Boolean)));
+  if (!roleCodes.length) throw Object.assign(new Error("请至少选择一个角色"), { status: 400 });
+  const roleRows = roleCodes.map(code => db.prepare("select id,code,name from rbac_roles where code=? and status='active'").get(code)).filter(Boolean);
+  if (roleRows.length !== roleCodes.length) throw Object.assign(new Error("包含不存在或已停用的角色"), { status: 400 });
+  validateAccountRoleCombination(roleCodes);
+  const scopes = personnelAccess.normalizeScopes(payload.scopes || [],personId);
+  return { roleRows, roleCodes, scopes };
+}
+
+function isDeletedAccountPerson(account) {
+  return !!account?.person_id && db.prepare("select data_status from personnel where id=?").get(account.person_id)?.data_status === "deleted";
+}
+
+function validateAccountIdentity(payload, existing = null) {
+  if (isDeletedAccountPerson(existing)) throw Object.assign(new Error("关联人员已删除，账户不可启用或换绑"), { status: 409 });
+  const personId = String(payload.personId ?? existing?.person_id ?? "").trim();
+  if (!personId) throw Object.assign(new Error("必须关联人员主数据"), { status: 400 });
+  if (existing && personId !== existing.person_id) throw Object.assign(new Error("账户创建后禁止更换关联人员"), {status:409});
+  const actor=requestUser();
+  if(actor) personnelAccess.requirePerson(actor,"accounts",personId,true);
+  const person = db.prepare("select * from personnel where id=? and data_status='active'").get(personId);
+  if (!person) throw Object.assign(new Error("关联人员不存在或已失效"), { status: 400 });
+  if (["离职", "停职"].includes(person.employment_status)) throw Object.assign(new Error("离职或停职人员不能开通或启用账户"), { status: 409 });
+  const linked = existing
+    ? db.prepare("select id from users where person_id=? and id<>?").get(personId, existing.id)
+    : db.prepare("select id from users where person_id=?").get(personId);
+  if (linked) throw Object.assign(new Error("该人员已经关联其他登录账户"), { status: 409 });
+  return person;
+}
+
+function replaceAccountAccess(userId, access) {
+  db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
+  const insertRole = db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)");
+  access.roleRows.forEach(role => insertRole.run(userId, role.id, now()));
+  db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
+  const insertScope = db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
+  access.scopes.forEach(scope => insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now()));
+}
+
+async function route(req,res) {
+ return requestContext.run({req}, () => routeRequest(req,res));
+}
+
+async function routeRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
   const method = req.method || "GET";
+  if (["POST","PUT","DELETE"].includes(method) && url.pathname.startsWith("/api/personnel")) {
+    // Refresh only after the master-data transaction and response succeeded.
+    // Sync failures must not turn a committed import into a misleading failed response.
+    res.once?.("finish", () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try { capabilityService.syncMaster(); } catch (error) { console.error("主数据已提交，能力快照待重试", error.message); }
+      }
+    });
+  }
   try {
+    if(["POST","PUT","DELETE"].includes(method) && String(req.headers["content-type"] || "").includes("application/json"))await bodyJson(req);
     if (method === "OPTIONS") {
       res.writeHead(204, corsHeaders());
       res.end();
@@ -5489,7 +6356,7 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/login") {
       const payload = await bodyForm(req);
       const row = db.prepare("select * from users where username=?").get(payload.username || "");
-      if (!row || !verifyPassword(payload.password || "", row) || (row.status || "active") === "disabled") {
+      if (!row || !verifyPassword(payload.password || "", row) || (row.status || "active") === "disabled" || isDeletedAccountPerson(row)) {
         res.writeHead(303, { "Location": `/?login_error=${encodeURIComponent("账号或密码不正确")}`, "Cache-Control": "no-store" });
         res.end();
         return;
@@ -5530,30 +6397,34 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/api/login") {
       const payload = await bodyJson(req);
       const row = db.prepare("select * from users where username=?").get(payload.username || "");
-      if (!row || !verifyPassword(payload.password || "", row)) return send(res, 401, { error: "账号或密码不正确" });
-      if ((row.status || "active") === "disabled") return send(res, 403, { error: "账号已停用" });
+      if (!row || !verifyPassword(payload.password || "", row)) {
+        audit(null, "login_failed", "user", String(payload.username || "guest"), "invalid_credentials");
+        return send(res, 401, { error: "账号或密码不正确" });
+      }
+      if ((row.status || "active") === "disabled" || isDeletedAccountPerson(row)) return send(res, 403, { error: "账号已停用或人员已删除" });
       const { sid, user } = createLoginSession(row);
       return send(res, 200, { user }, { "Set-Cookie": sessionCookie(sid) });
     }
     if (method === "POST" && url.pathname === "/api/change-password") {
+      const login = requireLogin(req, res);
+      if (!login) return;
       const payload = await bodyJson(req);
-      const username = String(payload.username || "").trim();
       const oldPassword = String(payload.oldPassword || "");
       const newPassword = String(payload.newPassword || "");
-      if (!username || !oldPassword || !newPassword || newPassword.length < 6) {
-        return send(res, 400, { error: "请填写账号、旧密码和至少6位新密码" });
+      if (!oldPassword || !newPassword || newPassword.length < 6) {
+        return send(res, 400, { error: "请填写旧密码和至少6位新密码" });
       }
-      const row = db.prepare("select * from users where username=?").get(username);
+      const row = db.prepare("select * from users where id=?").get(login.id);
       if (!row || (row.status || "active") === "disabled" || !verifyPassword(oldPassword, row)) {
-        return send(res, 401, { error: "账号或旧密码不正确" });
+        return send(res, 401, { error: "旧密码不正确" });
       }
       const pass = hashPassword(newPassword);
-      db.prepare("update users set salt=?,password_hash=?,updated_at=? where id=?").run(pass.salt, pass.hash, now(), row.id);
+      db.prepare("update users set salt=?,password_hash=?,must_change_password=0,credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(pass.salt, pass.hash, now(), row.id);
       db.prepare("delete from sessions where user_id=?").run(row.id);
       for (const [sid, savedUserId] of sessions.entries()) {
         if (savedUserId === row.id) sessions.delete(sid);
       }
-      audit(toUser(row), "change_password", "user", row.id, username);
+      audit(toUser(row), "change_password", "user", row.id, row.username);
       return send(res, 200, { ok: true });
     }
     if (method === "POST" && url.pathname === "/api/logout") {
@@ -5565,7 +6436,407 @@ async function route(req, res) {
       return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
     }
 
+    const passwordGateUser = currentUser(req);
+    if (passwordGateUser.id && passwordGateUser.mustChangePassword) {
+      return send(res, 428, { error: "首次登录或密码重置后必须先修改密码", code: "PASSWORD_CHANGE_REQUIRED" });
+    }
+
+    if(method==="GET" && url.pathname==="/api/personnel/directory"){
+      const user=requireLogin(req,res);if(!user)return;
+      return send(res,200,personnelAccess.directory(user,url.searchParams.get("purpose"),url.searchParams));
+    }
+    const orgRoute=url.pathname.match(/^\/api\/personnel\/organizations(?:\/([^/]+))?$/);
+    if(orgRoute){
+      const user=requireLogin(req,res);if(!user)return;
+      if(method==="GET") return send(res,200,{organizations:personnelAccess.organizations(user).map(o=>({...o,referenceCount:personnelAccess.hasAll(user,"personnel")?personnelAccess.orgReferences(o.id):undefined}))});
+      if(!["POST","PUT","DELETE"].includes(method))return send(res,405,{error:"不支持的操作"});
+      return send(res,method==="POST"?201:200,personnelAccess.mutateOrganization(user,method,orgRoute[1]?routeParam(orgRoute[1]):"",await bodyJson(req)));
+    }
+    if (url.pathname.startsWith("/api/capability/")) {
+      const capabilityViewPermissions = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"];
+      const actor = requireAnyRbacPermission(req, res, capabilityViewPermissions);
+      if (!actor) return;
+      capabilityService.syncMaster();
+      capabilityService.schedule();
+      const space = url.searchParams.get("workspace") || "";
+      if (method === "GET" && url.pathname === "/api/capability/workspaces") return send(res, 200, { items:capabilityService.spaces(actor),organizationIssues:capabilityService.organizationIssues(actor),nonParticipants:capabilityService.nonParticipants(actor),readiness:capabilityService.readiness(),masterDataVersion:capabilityService.masterRevision(),capabilityVersion:capabilityService.revision() });
+      if (method === "GET" && url.pathname === "/api/capability/snapshot") return send(res, 200, capabilityService.snapshot(actor, space));
+      const capabilityAuthorizationRoute=url.pathname.match(/^\/api\/capability\/personnel\/([^/]+)\/authorizations$/);
+      if(method==="GET"&&capabilityAuthorizationRoute)return send(res,200,capabilityService.personAuthorizations(actor,space,routeParam(capabilityAuthorizationRoute[1]),url.searchParams.get("category")||""));
+      if (method === "GET" && url.pathname === "/api/capability/reports") return send(res, 200, capabilityService.report(actor, space));
+      if (method === "POST" && url.pathname === "/api/capability/commands") {
+        const payload = await bodyJson(req);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return send(res, 400, { error: "能力操作请求格式无效" });
+        return send(res, 200, capabilityService.command(actor, space, payload.operation, payload));
+      }
+      if (method === "GET" && url.pathname === "/api/capability/events") {
+        res.writeHead(200, { ...securityHeaders(), "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+        const push = () => { const fresh = currentUser(req); if (!fresh?.id || !hasAnyRbac(fresh, capabilityViewPermissions)) { res.end(); return; } res.write(`data: ${JSON.stringify({ revision: capabilityService.revision(), masterDataVersion: capabilityService.masterRevision() })}\n\n`); };
+        push(); const unsubscribe = capabilityService.subscribe(push);
+        // The service listener handles same-process changes immediately.  The
+        // short revision poll also propagates commits made by another server
+        // process that shares the centre database.
+        const heartbeat = setInterval(push, 3000); heartbeat.unref?.();
+        res.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+        return;
+      }
+      return send(res, 404, { error: "能力配置接口不存在" });
+    }
+    if (method === "GET" && url.pathname === "/api/personnel") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      return send(res, 200, publicPersonnelPage(url.searchParams));
+    }
+    if (method === "POST" && url.pathname === "/api/personnel") {
+      const manager = requireRbacPermission(req, res, "personnel.profile.create");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const deprecated=["gender","age","demandUnit","highestEducation","englishLevel","entryChannel","dispatchFlag","workshop","workshopId","personnelCategory","personnelCategoryId"];
+      const suppliedDeprecated=deprecated.filter(key=>Object.hasOwn(payload,key));
+      if(suppliedDeprecated.length)return send(res,400,{error:`人员字段已停用：${suppliedDeprecated.join("、")}`});
+      const employeeNo = String(payload.employeeNo || "").trim();
+      const name = String(payload.name || "").trim();
+      if (!employeeNo || !name) return send(res, 400, { error: "工号和姓名为必填项" });
+      if (!isValidEmployeeNo(employeeNo)) return send(res, 400, { error: "工号必须为8位数字" });
+      const sameEmployee = db.prepare("select id,data_status from personnel where employee_no=?").get(employeeNo);
+      if (sameEmployee) return send(res, 409, { error: sameEmployee.data_status === "deleted" ? "该工号人员已删除，不能重新录入或恢复" : "该工号已存在" });
+      db.exec("begin immediate");
+      try {
+      if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+      const org=personnelAccess.checkMutation(manager,payload);
+      const personId = randomId("person");
+      const department=org.department||"";
+      const homeTeam=org.home_team||"";
+      const position = String(payload.position || "").trim();
+      const employmentStatus = String(payload.employmentStatus || "在职").trim() || "在职";
+      if(!["在职","停职","离职"].includes(employmentStatus))throw Object.assign(new Error("在职状态无效"),{status:400});
+      db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
+        values(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(personId, employeeNo, name, department, homeTeam, payload.isInstructor ? 1 : 0, position, String(payload.actualGrade || ""), employmentStatus, "manual", "active", now(), now());
+      personnelAccess.saveOrganization(personId,org);
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),personId,org.department_id,org.personnel_group_id,org.administrative_team_id,now());
+      dictionaryValue("department", "", org.department, "manual");
+      dictionaryValue("position", "", position, "manual");
+      dictionaryValue("employment_status", "", employmentStatus, "manual");
+      audit(manager, "create_personnel_manual", "personnel", personId, JSON.stringify({ employeeNo, name }));
+      db.exec("commit");
+      return send(res, 201, { person: publicPersonnelList().find(item => item.id === personId) });
+      } catch(error){db.exec("rollback");throw error;}
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/dictionaries") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      const values = []; // Values derived from personnel/imports must not expose out-of-scope personal attributes.
+      if(hasRbac(manager,"personnel.qualification.view")) values.push(...authorizationProjects.dictionaries());
+      return send(res, 200, { values });
+    }
+    const projectRoute = url.pathname.match(/^\/api\/personnel\/authorization-projects(?:\/([^/]+))?$/);
+    if (projectRoute) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (method === "GET" && !projectRoute[1]) {
+        if (!hasAnyRbac(manager, ["personnel.qualification.view", "personnel.qualification.manage"])) return send(res, 403, { error: "没有查看授权项目的权限" });
+        return send(res, 200, authorizationProjects.list(url.searchParams));
+      }
+      if (!hasRbac(manager, "personnel.qualification.manage")) {
+        audit(manager, method === "DELETE" ? "reject_delete_authorization_project" : "deny_authorization_project_write", "authorizationProject", projectRoute[1] ? routeParam(projectRoute[1]) : "", "缺少人员资质维护权限");
+        return send(res, 403, { error: "没有维护授权项目的权限" });
+      }
+      const id = projectRoute[1] ? routeParam(projectRoute[1]) : "";
+      if (method === "POST" && !id) return send(res, 201, { project: authorizationProjects.create(await bodyJson(req), manager) });
+      if (method === "PUT" && id === "categories") return send(res, 200, authorizationProjects.updateCategories(await bodyJson(req), manager));
+      if (method === "PUT" && id) return send(res, 200, { project: authorizationProjects.update(id, await bodyJson(req), manager) });
+      if (method === "DELETE" && id) return send(res, 200, authorizationProjects.remove(id, manager));
+      return send(res, 405, { error: "不支持的授权项目操作" });
+    }
+    const deletionPreviewRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/deletion-preview$/);
+    if (deletionPreviewRoute && method === "GET") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      return send(res, 200, personnelDeletion.preview(routeParam(deletionPreviewRoute[1]), manager));
+    }
+    const personnelDetailRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)$/);
+    if (personnelDetailRoute && method === "DELETE") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      return send(res, 200, personnelDeletion.remove(routeParam(personnelDetailRoute[1]), await bodyJson(req), manager));
+    }
+    if (personnelDetailRoute && method === "GET" && !["imports", "dictionaries"].includes(routeParam(personnelDetailRoute[1]))) {
+      const manager = requireRbacPermission(req, res, "personnel.detail.view");
+      if (!manager) return;
+      const personId = routeParam(personnelDetailRoute[1]);
+      const person = publicPersonnelList().find(item => item.id === personId);
+      if (!person) return send(res, 404, { error: "未找到人员" });
+      const canReadQualifications = hasRbac(manager, "personnel.qualification.view");
+      const englishLevels = canReadQualifications
+        ? [...new Set(db.prepare(`select license_english_level from personnel_licenses
+          where person_id=? and coalesce(data_status,'active')='active'
+          and lower(trim(coalesce(is_valid,''))) in ('是','有效','true','1')`)
+          .all(personId).map(row => String(row.license_english_level || "").trim()).filter(Boolean))]
+          .sort((a, b) => a.localeCompare(b, "zh-Hans-CN", { numeric: true }))
+        : undefined;
+      const qualificationCounts = canReadQualifications ? {
+        license: Number(db.prepare("select count(*) as count from personnel_licenses where person_id=? and coalesce(data_status,'active')='active'").get(personId).count),
+        authorization: Number(db.prepare("select count(*) as count from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active'").get(personId).count),
+        training: Number(db.prepare("select count(*) as count from personnel_training_records where person_id=? and coalesce(data_status,'active')='active'").get(personId).count)
+      } : { license: 0, authorization: 0, training: 0 };
+      const authorizationCategoryCounts = canReadQualifications
+        ? Object.assign({ release: 0, test_run: 0, maintenance: 0, special: 0, third_party: 0, other: 0 }, Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count
+          from personnel_authorizations a join capability_catalog c on c.project_code=a.project_code
+          where a.person_id=? and coalesce(a.data_status,'active')='active' and c.project_category in ('release','test_run','maintenance','special','third_party','other')
+          group by c.project_category`).all(personId).map(row => [row.category, Number(row.count)])))
+        : undefined;
+      return send(res, 200, { person, qualificationCounts, qualificationVisible: canReadQualifications, ...(canReadQualifications ? { authorizationCategoryCounts, englishLevels } : {}) });
+    }
+    if (personnelDetailRoute && method === "PUT" && !["imports", "dictionaries"].includes(routeParam(personnelDetailRoute[1]))) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      const personId = routeParam(personnelDetailRoute[1]);
+      const person = personnelAccess.requirePerson(manager,"personnel",personId,true);
+      const payload = await bodyJson(req);
+      updatePersonnel(person, payload, manager);
+      return send(res, 200, { person: publicPersonnelList().find(item => item.id === personId) });
+    }
+    const personnelChangesRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/changes$/);
+    if (personnelChangesRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.audit.view");
+      if (!manager) return;
+      const personId = routeParam(personnelChangesRoute[1]);
+      personnelAccess.requirePerson(manager,"personnel",personId);
+      const changes = db.prepare(`select id,field_name as fieldName,field_label as fieldLabel,old_value as oldValue,new_value as newValue,
+        source_type as sourceType,source_batch_id as sourceBatchId,reason,operator_id as operatorId,operator_name as operatorName,created_at as createdAt
+        from personnel_change_logs where person_id=? order by created_at desc limit 200`).all(personId);
+      return send(res, 200, { changes:changes.filter(row=>(hasRbac(manager,"personnel.sensitive.view") || !SENSITIVE_FIELDS.includes(row.fieldName)) && (hasRbac(manager,"personnel.qualification.view") || !/^(license|authorization|training)\./.test(row.fieldName))) });
+    }
+    const qualificationListRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/qualifications$/);
+    if (qualificationListRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.qualification.view");
+      if (!manager) return;
+      const personId = routeParam(qualificationListRoute[1]);
+      personnelAccess.requirePerson(manager, "personnel", personId);
+      const type = String(url.searchParams.get("type") || "authorization");
+      if (!["license", "authorization", "training"].includes(type)) return send(res, 400, { error: "资质类型无效" });
+      const positive = (value, fallback) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+      const pageSize = Math.min(100, positive(url.searchParams.get("pageSize"), 20));
+      const requestedPage = positive(url.searchParams.get("page"), 1);
+      const q = String(url.searchParams.get("q") || "").trim().toLowerCase().replace(/[!%_]/g, "!$&"), pattern = `%${q}%`;
+      let where, args, select, order, facets = {};
+      if (type === "authorization") {
+        const category = String(url.searchParams.get("category") || "").trim(), status = String(url.searchParams.get("status") || "").trim();
+        const validCategories = ["release", "test_run", "maintenance", "special", "third_party", "other"];
+        if (category && !validCategories.includes(category)) return send(res, 400, { error: "授权项目分类无效" });
+        where = "from personnel_authorizations a left join capability_catalog c on c.project_code=a.project_code where a.person_id=? and coalesce(a.data_status,'active')='active' and (lower(a.project_code) like ? escape '!' or lower(coalesce(c.project_name,a.project_name,'')) like ? escape '!')";
+        args = [personId, pattern, pattern];
+        if (category) { where += " and c.project_category=?"; args.push(category); }
+        if (status) { where += " and a.authorization_status=?"; args.push(status); }
+        select = `select a.id,a.project_code as projectCode,case when c.status='active' and trim(c.project_name)<>'' then c.project_name else '待配置名称（' || a.project_code || '）' end as projectName,
+          c.project_category as category,case c.project_category when 'release' then '放行' when 'test_run' then '试车' when 'maintenance' then '维修' when 'special' then '专项' when 'third_party' then '三方' when 'other' then '其他' else '待分类' end as categoryLabel,
+          coalesce(c.third_party_company,'') as thirdPartyCompany,
+          a.authorization_type as authorizationType,a.authorization_unit as authorizationUnit,a.authorized_at as authorizedAt,a.authorization_expires_at as authorizationExpiresAt,a.authorization_status as authorizationStatus`;
+        order = " order by c.project_category,a.project_code,a.authorization_unit";
+        facets = {
+          categories: Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count ${where.replace(/ and c\.project_category=\?/, "").replace(/ and a\.authorization_status=\?/, "")} group by c.project_category`).all(...[personId, pattern, pattern]).map(row => [row.category || "", Number(row.count)])),
+          statuses: db.prepare("select distinct authorization_status as value from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active' and trim(coalesce(authorization_status,''))<>'' order by authorization_status").all(personId).map(row => row.value)
+        };
+      } else if (type === "license") {
+        where = "from personnel_licenses where person_id=? and coalesce(data_status,'active')='active' and (lower(coalesce(license_no,'')) like ? escape '!' or lower(coalesce(license_type,'')) like ? escape '!')";
+        args = [personId, pattern, pattern];
+        select = "select id,license_no as licenseNo,license_type as licenseType,license_english_level as licenseEnglishLevel,issued_at as issuedAt,renewed_at as renewedAt,expires_at as expiresAt,is_valid as isValid,remark";
+        order = " order by license_type,expires_at";
+      } else {
+        where = "from personnel_training_records where person_id=? and coalesce(data_status,'active')='active' and (lower(coalesce(course_code,'')) like ? escape '!' or lower(coalesce(course_name,'')) like ? escape '!')";
+        args = [personId, pattern, pattern];
+        select = "select id,course_code as courseCode,course_name as courseName,course_version as courseVersion,course_nature as courseNature,started_at as startedAt,completed_at as completedAt,training_result as trainingResult,attendance_status as attendanceStatus,qualification_status as qualificationStatus,class_no as classNo";
+        order = " order by started_at desc,course_code";
+      }
+      const total = Number(db.prepare(`select count(*) as count ${where}`).get(...args).count), page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+      const items = db.prepare(`${select} ${where}${order} limit ? offset ?`).all(...args, pageSize, (page - 1) * pageSize);
+      return send(res, 200, { items, total, page, pageSize, facets });
+    }
+    const qualificationRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/qualifications\/(license|authorization|training)\/([^/]+)$/);
+    if (qualificationRoute && ["PUT", "DELETE"].includes(method)) {
+      const manager = requireRbacPermission(req, res, "personnel.qualification.manage");
+      if (!manager) return;
+      const personId = routeParam(qualificationRoute[1]), kind = qualificationRoute[2], recordId = routeParam(qualificationRoute[3]);
+      const person = personnelAccess.requirePerson(manager,"personnel",personId,true);
+      const payload = await bodyJson(req);
+      changeQualification(person, kind, recordId, payload, manager, method === "DELETE");
+      return send(res, 200, { ok: true });
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/imports") {
+      const manager = requireRbacPermission(req, res, "personnel.import.view");
+      if (!manager) return;
+      const batches = db.prepare("select *,import_type as importType,file_name as fileName,summary_json as summaryJson,created_by_name as createdByName,confirmed_by as confirmedBy,confirmed_at as confirmedAt,created_at as createdAt,updated_at as updatedAt from personnel_import_batches order by created_at desc").all().filter(row=>visibleImportBatch(row,manager)).map(row => ({ id:row.id,importType:row.importType,fileName:row.fileName,status:row.status,createdAt:row.createdAt,createdByName:row.createdByName,summary: json(row.summaryJson, {}) }));
+      return send(res, 200, { batches });
+    }
+    if (method === "POST" && url.pathname === "/api/personnel/imports") {
+      const manager = requireRbacPermission(req, res, "personnel.import.execute");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const type = String(payload.type || "");
+      if (!personnelImportTypes.has(type)) return send(res, 400, { error: "导入类别无效" });
+      const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (!rawRows.length) return send(res, 400, { error: "导入文件没有内容" });
+      const rawHeaders = Array.isArray(rawRows[0]) ? rawRows[0].map(normalizedHeader) : Object.keys(rawRows[0] || {}).map(normalizedHeader);
+      if(type==="authorization"){const unknown=rawHeaders.filter(h=>!AUTHORIZATION_HEADERS.includes(h));if(unknown.length)return send(res,400,{error:"授权模板不支持列："+unknown.join("、")});}
+      const missingGroups = importRequiredHeaders(type).filter(group => !group.some(name => rawHeaders.includes(normalizedHeader(name))));
+      if (missingGroups.length) return send(res, 400, { error: `缺少必填列：${missingGroups.map(group => group.join("/")).join("、")}` });
+      const rows = tabularRowsToObjects(rawRows, payload.rowNumbers);
+      if (!rows.length) return send(res, 400, { error: "文件只有表头，没有可导入的数据记录" });
+      db.exec("begin immediate");
+      try {
+      if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+      validatePersonnelImportAccess(type,rows,manager);
+      const analysis = analyzePersonnelImport(type, rows);
+      const replacement=type==="authorization"?authorizationImport.preview(rows):undefined;
+      const id = randomId("pimport");
+      const fileHash = crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+      db.prepare("insert into personnel_import_batches(id,import_type,file_name,file_hash,status,rows_json,summary_json,created_by,created_by_name,confirmed_by,confirmed_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, type, String(payload.fileName || ""), fileHash, "pending", JSON.stringify(rows), JSON.stringify({ total: analysis.total, valid: analysis.valid, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }), manager.id, manager.name, "", "", now(), now());
+      insertImportIssues(id, analysis.issues);
+      audit(manager, "stage_personnel_import", "personnelImport", id, JSON.stringify({ type, total: rows.length, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }));
+      db.exec("commit");
+      return send(res, 201, { batch: { id, importType: type, fileName: String(payload.fileName || ""), status: "pending", summary: { total: analysis.total, valid: analysis.valid, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }, issues: analysis.issues } });
+      }catch(e){db.exec("rollback");throw e;}
+    }
+    const workspaceRoute=url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)\/workspace$/);
+    if(workspaceRoute && ["GET","POST"].includes(method)) {
+      const manager=requireRbacPermission(req,res,method==="GET"?"personnel.import.view":"personnel.import.execute");if(!manager)return;
+      const workspace=createImportWorkspace({db,permission:personnelAccess.permission,hasAll:user=>personnelAccess.hasAll(user,"personnel"),visible:visibleImportBatch,employeeNo:importEmployeeNo,findPerson:findImportedPerson,analyze:analyzePersonnelImport,validateAccess:validatePersonnelImportAccess,preview:authorizationImport.preview,projects:authorizationProjects,audit,now,insertIssues:insertImportIssues});
+      const id=routeParam(workspaceRoute[1]);
+      return send(res,200,{workspace:method==="GET"?workspace.view(id,manager):workspace.mutate(id,await bodyJson(req),manager)});
+    }
+    const personnelImportRoute = url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)$/);
+    if (personnelImportRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.import.view");
+      if (!manager) return;
+      const id = routeParam(personnelImportRoute[1]);
+      const batch = db.prepare("select * from personnel_import_batches where id=?").get(id);
+      if (!batch || !visibleImportBatch(batch,manager)) return send(res, 404, { error: "未找到导入批次" });
+      const issues = db.prepare("select id,row_number as rowNumber,issue_type as issueType,severity,employee_no as employeeNo,detail,status,resolution from personnel_import_issues where batch_id=? order by row_number,id").all(id);
+      return send(res, 200, { batch: { id: batch.id, importType: batch.import_type, fileName: batch.file_name, status: batch.status, summary: json(batch.summary_json, {}), issues, createdAt: batch.created_at, confirmedAt: batch.confirmed_at } });
+    }
+    const personnelImportActionRoute = url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)\/(confirm|cancel)$/);
+    if (personnelImportActionRoute && method === "POST") {
+      const manager = requireRbacPermission(req, res, "personnel.import.execute");
+      if (!manager) return;
+      const id = routeParam(personnelImportActionRoute[1]);
+      const action = personnelImportActionRoute[2];
+      const batch = db.prepare("select * from personnel_import_batches where id=?").get(id);
+      if (!batch || !visibleImportBatch(batch,manager)) return send(res, 404, { error: "未找到导入批次" });
+      if (action === "cancel") {
+        if(batch.created_by!==manager.id && !personnelAccess.hasAll(manager,"personnel"))return send(res,403,{error:"只能取消本人创建的批次"});
+        if (batch.status !== "pending") return send(res, 409, { error: "当前批次不能取消" });
+        db.prepare("update personnel_import_batches set status='cancelled',updated_at=? where id=?").run(now(), id);
+        audit(manager, "cancel_personnel_import", "personnelImport", id, batch.import_type);
+        return send(res, 200, { ok: true });
+      }
+      const result = confirmPersonnelImport(batch, manager, await bodyJson(req));
+      let capabilitySync = "ready", capabilitySyncMessage = "";
+      try { capabilityService.syncMaster(); }
+      catch (error) { capabilitySync = "pending"; capabilitySyncMessage = error.message; console.error("人员主数据已提交，能力数据待刷新", error.message); }
+      return send(res, 200, { ok: true, result, personnel: batch.import_type === "personnel" ? publicPersonnelList() : undefined, capabilitySync, capabilitySyncMessage, masterDataVersion: capabilityService.masterRevision(), capabilityVersion: capabilityService.revision() });
+    }
+
+    if (method === "GET" && url.pathname === "/api/admin/rbac") {
+      const manager = requireRbacPermission(req, res, "roles.read");
+      if (!manager) return;
+      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
+      const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
+      return send(res, 200, { roles: rolesOut, permissions });
+    }
+    if (method === "POST" && url.pathname === "/api/admin/roles") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const payload = validatedRolePayload(await bodyJson(req));
+      const roleId = randomId("role");
+      const code = `custom_${crypto.randomBytes(8).toString("hex")}`;
+      db.exec("begin immediate");
+      try {
+        db.prepare("insert into rbac_roles(id,code,name,description,system_role,status,created_at,updated_at) values(?,?,?,?,0,'active',?,?)")
+          .run(roleId, code, payload.name, payload.description, now(), now());
+        replaceRolePermissions(roleId, payload.permissionRows);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "create_role", "role", roleId, JSON.stringify({ name: payload.name, permissions: payload.permissionRows.map(item => item.code) }));
+      return send(res, 201, { role: publicRbacRole(db.prepare("select * from rbac_roles where id=?").get(roleId)) });
+    }
+    const roleManageRoute = url.pathname.match(/^\/api\/admin\/roles\/([^/]+)$/);
+    if (roleManageRoute && method === "PUT") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const roleId = routeParam(roleManageRoute[1]);
+      const existing = db.prepare("select * from rbac_roles where id=? and status='active'").get(roleId);
+      if (!existing) return send(res, 404, { error: "未找到角色" });
+      if (existing.code === "system_admin") return send(res, 403, { error: "系统管理员角色必须保持全部权限，不允许修改" });
+      if (existing.system_role && manager.id !== SUPER_ACCOUNT_ID) return send(res, 403, { error: "只有超级管理员54002010可以调整系统预置角色" });
+      const payload = validatedRolePayload(await bodyJson(req), roleId);
+      const before = publicRbacRole(existing);
+      db.exec("begin immediate");
+      try {
+        db.prepare("update rbac_roles set name=?,description=?,updated_at=? where id=?").run(payload.name, payload.description, now(), roleId);
+        replaceRolePermissions(roleId, payload.permissionRows);
+        if (existing.system_role) setSetting(`rbacRoleControlledEdit:${existing.code}`, true);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      const affectedUserIds = revokeRoleUserSessions(roleId);
+      audit(manager, existing.system_role ? "controlled_update_system_role" : "update_role", "role", roleId, JSON.stringify({ before: { name: before.name, description: before.description, permissions: before.permissions }, after: { name: payload.name, description: payload.description, permissions: payload.permissionRows.map(item => item.code) }, affectedUserIds }));
+      return send(res, 200, { role: publicRbacRole(db.prepare("select * from rbac_roles where id=?").get(roleId)), sessionRevoked: affectedUserIds.includes(manager.id) && manager.id !== SUPER_ACCOUNT_ID });
+    }
+    if (roleManageRoute && method === "DELETE") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const roleId = routeParam(roleManageRoute[1]);
+      const existing = db.prepare("select * from rbac_roles where id=? and status='active'").get(roleId);
+      if (!existing) return send(res, 404, { error: "未找到角色" });
+      if (existing.system_role) {
+        audit(manager, "reject_delete_system_role", "role", roleId, existing.name);
+        return send(res, 400, { error: "系统预置角色不可删除" });
+      }
+      const assignedUserCount = Number(db.prepare("select count(*) as count from rbac_user_roles where role_id=?").get(roleId)?.count || 0);
+      if (assignedUserCount) {
+        audit(manager, "reject_delete_assigned_role", "role", roleId, JSON.stringify({ name: existing.name, assignedUserCount }));
+        return send(res, 409, { error: `该角色仍有 ${assignedUserCount} 个账户使用，请先调整账户角色`, assignedUserCount });
+      }
+      db.exec("begin immediate");
+      try {
+        db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
+        db.prepare("delete from rbac_roles where id=?").run(roleId);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "delete_role", "role", roleId, existing.name);
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === "/api/admin/users" || url.pathname.startsWith("/api/admin/users/")) {
+      return send(res, 410, { error: "旧账户接口已移除，请使用纯 RBAC 账户接口" });
+    }
     const user = currentUser(req);
+    if(url.pathname.startsWith("/api/maintenance/")){
+      let flightId=url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)/)?.[1];
+      const subtaskId=url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)/)?.[1];
+      const assignmentId=url.pathname.match(/^\/api\/maintenance\/assignments\/([^/]+)/)?.[1];
+      if(subtaskId)flightId=db.prepare("select flight_id from maintenance_subtasks where id=?").get(routeParam(subtaskId))?.flight_id;
+      if(assignmentId)flightId=db.prepare("select flight_id from maintenance_assignments where id=?").get(routeParam(assignmentId))?.flight_id;
+      if(flightId && !["import","export"].includes(flightId)){
+        flightId=routeParam(flightId);
+        const flight=db.prepare("select * from maintenance_flights where id=?").get(flightId);
+        if(flight){
+          const assigned=db.prepare("select person_id from maintenance_assignments where flight_id=?").all(flightId);
+          const own=assigned.some(a=>a.person_id===user.personId);
+          if(!personnelAccess.hasAll(user,"maintenance") && !own && flight.created_by!==user.id && !assigned.some(a=>personnelAccess.allows(user,"maintenance",a.person_id)) && !dataScopeAllowsUser(user,flight.created_by,"maintenance"))return send(res,404,{error:"未找到维修机会"});
+          if(!["GET","OPTIONS"].includes(method) && /(?:dispatch|review|archive)|^DELETE$/.test(url.pathname+" "+method) && assigned.some(a=>!personnelAccess.allows(user,"maintenance",a.person_id)))return send(res,403,{error:"任务包含维修管理范围外人员，不能修改"});
+        }
+      }
+    }
     if (method === "GET" && url.pathname === "/api/maintenance/version") {
       const login = requireLogin(req, res);
       if (!login) return;
@@ -5612,7 +6883,7 @@ async function route(req, res) {
     if (maintenanceReportDraftRoute && method === "DELETE") {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
+      if (!maintenanceCanExecute(executor, true) || !hasRbac(executor, "maintenance.nonroutine.delete.own")) return send(res, 403, { error: "当前账号没有删除本人非例行草稿的权限" });
       const flightId = routeParam(maintenanceReportDraftRoute[1]);
       const reportType = maintenanceReportDraftRoute[2];
       if (reportType !== "nonroutine") return send(res, 405, { error: "当前草稿不支持删除" });
@@ -5624,7 +6895,7 @@ async function route(req, res) {
     if (maintenanceReportDraftRoute && method === "PUT") {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
       const flightId = routeParam(maintenanceReportDraftRoute[1]);
       const reportType = maintenanceReportDraftRoute[2];
       const payload = await bodyJson(req);
@@ -5638,7 +6909,7 @@ async function route(req, res) {
     if (maintenanceReportsRoute && method === "GET" && !maintenanceReportsRoute[2]) {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
+      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有查看本人维修任务的权限" });
       const report = maintenanceReportsView(routeParam(maintenanceReportsRoute[1]), executor);
       if (!report) return send(res, 404, { error: "未找到维修机会" });
       return send(res, 200, { report });
@@ -5646,7 +6917,7 @@ async function route(req, res) {
     if (maintenanceReportsRoute && method === "PUT" && maintenanceReportsRoute[2]) {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
       const flightId = routeParam(maintenanceReportsRoute[1]);
       const payload = await bodyJson(req);
       const type = maintenanceReportsRoute[2];
@@ -5662,7 +6933,6 @@ async function route(req, res) {
     if (maintenanceFinalizeRoute && method === "POST") {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
       const flightId = routeParam(maintenanceFinalizeRoute[1]);
       const payload = await bodyJson(req);
       const saveOnly = payload?.mode === "save";
@@ -5675,7 +6945,7 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/api/maintenance/flights/import") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有派工管理权限" });
+      if (!hasRbac(manager, "maintenance.opportunity.import")) return send(res, 403, { error: "当前账号没有导入维修机会权限" });
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rows) ? p.rows : [];
       // Validate the entire file before any writes: mismatched columns must not become hidden flights.
@@ -5720,7 +6990,7 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/api/maintenance/flights") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有新建维修机会权限" });
+      if (!hasRbac(manager, "maintenance.opportunity.create")) return send(res, 403, { error: "当前账号没有新建维修机会权限" });
       const payload = maintenanceFlightPayload(await bodyJson(req));
       if (!payload.date || !payload.flightNo || !payload.aircraftNo) return send(res, 400, { error: "请填写日期、航班号和机号" });
       const flight = insertMaintenanceFlight(payload, manager);
@@ -5759,7 +7029,7 @@ async function route(req, res) {
     if (maintenanceReview && method === "GET") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有维修任务复核权限" });
+      if (!hasRbac(manager, "maintenance.review.view")) return send(res, 403, { error: "当前账号没有查看维修复核权限" });
       const review = maintenanceReviewTree(routeParam(maintenanceReview[1]));
       if (!review) return send(res, 404, { error: "未找到航班任务" });
       return send(res, 200, { review });
@@ -5767,7 +7037,7 @@ async function route(req, res) {
     if (maintenanceReview && method === "PUT") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有维修任务复核权限" });
+      if (!hasRbac(manager, "maintenance.review.submit")) return send(res, 403, { error: "当前账号没有提交维修复核权限" });
       const flightId = routeParam(maintenanceReview[1]);
       const review = saveMaintenanceReview(flightId, await bodyJson(req), manager);
       bumpMaintenanceVersion(flightId, "maintenance.review.saved");
@@ -5797,7 +7067,7 @@ async function route(req, res) {
     if (maintenanceFlight && method === "PUT") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有修改维修机会权限" });
+      if (!hasRbac(manager, "maintenance.opportunity.update")) return send(res, 403, { error: "当前账号没有修改维修机会权限" });
       const flightId = routeParam(maintenanceFlight[1]);
       const existing = assertMaintenanceTreeDirectEditAllowed(flightId);
       if (!existing) return send(res, 404, { error: "未找到航班任务" });
@@ -5814,7 +7084,7 @@ async function route(req, res) {
     if (maintenanceFlight && method === "DELETE") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有删除维修机会权限" });
+      if (!hasRbac(manager, "maintenance.opportunity.delete")) return send(res, 403, { error: "当前账号没有删除维修机会权限" });
       const flightId = routeParam(maintenanceFlight[1]);
       const payload = await bodyJson(req);
       const deleted = deleteMaintenanceFlight(flightId, manager, payload?.reason);
@@ -5826,7 +7096,7 @@ async function route(req, res) {
     if (maintenanceSubtasks && method === "POST") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有新增非例行权限" });
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
       const flightId = routeParam(maintenanceSubtasks[1]);
       const parent = assertMaintenanceTreeDirectEditAllowed(flightId);
       if (!parent) return send(res, 404, { error: "未找到航班任务" });
@@ -5843,7 +7113,7 @@ async function route(req, res) {
     if (maintenanceSubtask && method === "PUT") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有修改非例行权限" });
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
       const subtaskId = routeParam(maintenanceSubtask[1]);
       const existing = db.prepare("select * from maintenance_subtasks where id=?").get(subtaskId);
       if (!existing) return send(res, 404, { error: "未找到非例行" });
@@ -5857,7 +7127,7 @@ async function route(req, res) {
     if (maintenanceSubtask && method === "DELETE") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有删除非例行权限" });
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
       const subtaskId = routeParam(maintenanceSubtask[1]);
       const row = db.prepare("select flight_id from maintenance_subtasks where id=?").get(subtaskId);
       if (!row) return send(res, 404, { error: "未找到非例行" });
@@ -5870,7 +7140,7 @@ async function route(req, res) {
     if (maintenanceDispatch && method === "POST") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有派工权限" });
+      if (!hasRbac(manager, "maintenance.assignment.manage")) return send(res, 403, { error: "当前账号没有派工权限" });
       const p = await bodyJson(req);
       const ownerType = maintenanceDispatch[1] === "flights" ? "flight" : "subtask";
       const ownerId = routeParam(maintenanceDispatch[2]);
@@ -5888,11 +7158,11 @@ async function route(req, res) {
     if (maintenanceAssignmentAction && method === "POST") {
       const executor = requireLogin(req, res);
       if (!executor) return;
-      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有执行权限" });
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
       const assignmentId = routeParam(maintenanceAssignmentAction[1]);
       const assignment = db.prepare("select * from maintenance_assignments where id=?").get(assignmentId);
       if (!assignment) return send(res, 404, { error: "未找到派工任务" });
-      if (!isAdmin(executor) && assignment.user_id !== executor.id) return send(res, 403, { error: "只能反馈派给自己的任务" });
+      if (assignment.person_id !== executor.personId && !personnelAccess.allows(executor, "maintenance", assignment.person_id)) return send(res, 403, { error: "只能反馈派给自己的任务" });
       if (assignment.owner_type !== "flight" || assignment.role !== "放行") return send(res, 409, { error: assignment.owner_type === "subtask" ? "非例行请使用汇总报工" : "例行工作请使用例行报工" });
       const flight = submitMaintenanceRelease(assignment.flight_id, await bodyJson(req), executor);
       bumpMaintenanceVersion(assignment.flight_id, "maintenance.release.submitted");
@@ -5907,7 +7177,7 @@ async function route(req, res) {
     if (method === "PUT" && url.pathname === "/api/maintenance/rules") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rules) ? p.rules : [];
       const upsert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do update set value=excluded.value,updated_at=excluded.updated_at");
@@ -5938,19 +7208,19 @@ async function route(req, res) {
     if (method === "GET" && url.pathname === "/api/maintenance/stats") {
       const login = requireLogin(req, res);
       if (!login) return;
-      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      if (!hasRbac(login, "maintenance.stats.manage.view")) return send(res, 403, { error: "当前账号没有管理范围维修统计权限" });
       return send(res, 200, maintenanceStats(Object.fromEntries(url.searchParams.entries()), login));
     }
     if (method === "GET" && url.pathname === "/api/maintenance/stats/personal") {
       const login = requireLogin(req, res);
       if (!login) return;
-      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      if (!hasRbac(login, "maintenance.stats.self.view")) return send(res, 403, { error: "当前账号没有本人维修统计权限" });
       return send(res, 200, maintenancePersonalStats(Object.fromEntries(url.searchParams.entries()), login));
     }
     if (method === "GET" && url.pathname === "/api/maintenance/stats/personal/details") {
       const login = requireLogin(req, res);
       if (!login) return;
-      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      if (!hasAnyRbac(login, ["maintenance.stats.self.view", "maintenance.stats.manage.view"])) return send(res, 403, { error: "当前账号没有维修统计权限" });
       return send(res, 200, maintenancePersonalDetails(Object.fromEntries(url.searchParams.entries()), login));
     }
     const nonroutineAuditMatch = url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)\/hour-audit$/);
@@ -5998,9 +7268,11 @@ async function route(req, res) {
     if (maintenanceHour && method === "PUT") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有工时调整权限" });
+      if (!hasRbac(manager, "maintenance.hours.adjust")) return send(res, 403, { error: "当前账号没有工时调整权限" });
       const p = await bodyJson(req);
       const hourId = routeParam(maintenanceHour[1]);
+      const target=db.prepare("select person_id from maintenance_hour_results where id=?").get(hourId);
+      personnelAccess.requirePerson(manager,"maintenance",target?.person_id);
       db.prepare("update maintenance_hour_results set adjusted_hours=?,updated_at=? where id=?").run(Number(p.adjustedHours ?? p.adjusted_hours ?? 0), now(), hourId);
       audit(manager, "maintenance_adjust_hours", "maintenanceHour", hourId, String(p.adjustedHours ?? ""));
       const adjusted = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
@@ -6011,12 +7283,15 @@ async function route(req, res) {
     if (maintenanceConfirmHour && method === "POST") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有工时确认权限" });
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有工时确认权限" });
       const hourId = routeParam(maintenanceConfirmHour[1]);
       const hour = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
+      maintenanceTransaction(()=>{
+      personnelAccess.requirePerson(manager,"maintenance",hour?.person_id);
       db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), hourId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), hourId);
       if (hour) syncMaintenanceOwnerConfirmation(hour.owner_type, hour.owner_id, manager.id);
+      });
       audit(manager, "maintenance_confirm_hours", "maintenanceHour", hourId);
       bumpMaintenanceVersion(hour?.flight_id || "", "maintenance.hours.confirmed");
       return send(res, 200, { hour: publicMaintenanceHour(db.prepare("select * from maintenance_hour_results where id=?").get(hourId)) });
@@ -6024,14 +7299,17 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/api/maintenance/hours/confirm-batch") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有批量确认权限" });
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有批量确认权限" });
       const p = await bodyJson(req);
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const hours = ids.length ? db.prepare(`select * from maintenance_hour_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
+      if(hours.length!==ids.length || hours.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"工时不存在或超出范围"});
+      maintenanceTransaction(()=>{
       ids.forEach(id => db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), id));
       ids.forEach(id => db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), id));
       const owners = new Map(hours.map(row => [`${row.owner_type}:${row.owner_id}`, row]));
       owners.forEach(row => syncMaintenanceOwnerConfirmation(row.owner_type, row.owner_id, manager.id));
+      });
       audit(manager, "maintenance_batch_confirm_hours", "maintenanceHour", "batch", `${ids.length} 条`);
       bumpMaintenanceVersion("", "maintenance.hours.confirmed");
       return send(res, 200, { confirmed: ids.length });
@@ -6040,13 +7318,16 @@ async function route(req, res) {
     if (maintenanceConfirmSortie && method === "POST") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有架次确认权限" });
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有架次确认权限" });
       const sortieId = routeParam(maintenanceConfirmSortie[1]);
       const sortie = db.prepare("select * from maintenance_sortie_results where id=?").get(sortieId);
       if (!sortie) return send(res, 404, { error: "未找到放行架次记录" });
+      maintenanceTransaction(()=>{
+      personnelAccess.requirePerson(manager,"maintenance",sortie.person_id);
       db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortieId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
       syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
+      });
       audit(manager, "maintenance_confirm_sortie", "maintenanceSortie", sortieId);
       bumpMaintenanceVersion(sortie.flight_id || "", "maintenance.sorties.confirmed");
       return send(res, 200, { sortie: publicMaintenanceSortie(db.prepare("select * from maintenance_sortie_results where id=?").get(sortieId)) });
@@ -6054,15 +7335,18 @@ async function route(req, res) {
     if (method === "POST" && url.pathname === "/api/maintenance/sorties/confirm-batch") {
       const manager = requireLogin(req, res);
       if (!manager) return;
-      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有批量确认架次权限" });
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有批量确认架次权限" });
       const p = await bodyJson(req);
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const sorties = ids.length ? db.prepare(`select * from maintenance_sortie_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
+      if(sorties.length!==ids.length || sorties.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"架次不存在或超出范围"});
+      maintenanceTransaction(()=>{
       for (const sortie of sorties) {
         db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortie.id);
         db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
         syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
       }
+      });
       audit(manager, "maintenance_batch_confirm_sorties", "maintenanceSortie", "batch", `${sorties.length} 条`);
       bumpMaintenanceVersion("", "maintenance.sorties.confirmed");
       return send(res, 200, { confirmed: sorties.length });
@@ -6070,7 +7354,7 @@ async function route(req, res) {
     if (method === "GET" && url.pathname === "/api/maintenance/export.xlsx") {
       const login = requireLogin(req, res);
       if (!login) return;
-      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有导出权限" });
+      if (!hasRbac(login, "maintenance.export")) return send(res, 403, { error: "当前账号没有导出权限" });
       const workbook = maintenanceXlsx(maintenanceStats(Object.fromEntries(url.searchParams.entries()), login));
       return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("维修管控工时统计.xlsx")}` });
     }
@@ -6100,7 +7384,7 @@ async function route(req, res) {
       return send(res, 200, { settings: publicSettings() });
     }
     if (method === "PUT" && url.pathname === "/api/settings") {
-      const admin = requireAdmin(req, res);
+      const admin = requireRbacPermission(req, res, "settings.manage");
       if (!admin) return;
       const p = await bodyJson(req);
       const categories = normalizeCategoryList(p.categories);
@@ -6119,30 +7403,34 @@ async function route(req, res) {
       return send(res, 200, { ...result, settings: publicSettings() });
     }
     if (method === "POST" && url.pathname === "/api/records") {
-      const editor = requirePermission(req, res, "create");
+      const editor = requireRbacPermission(req, res, "info.create");
       if (!editor) return;
       const p = await bodyJson(req);
       const rid = randomId("rec");
+      maintenanceTransaction(() => {
       const selectedRecipients = recipientsFromPayload(p);
       db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .run(rid, p.date, editor.name, p.category, p.title, "", p.original, "后台录入", editor.id, editor.id, now(), now(), p.deadline || deadlineFor(p.date), p.priority || "普通", p.publishStatus || "已发布", editor.id, 0);
       saveRecipients(rid, selectedRecipients);
       audit(editor, "create_record", "record", rid, p.title);
+      });
       return send(res, 201, { record: publicRecord(db.prepare("select * from records where id=?").get(rid), editor) });
     }
     const rec = url.pathname.match(/^\/api\/records\/([^/]+)$/);
     if (rec && method === "PUT") {
-      const editor = requirePermission(req, res, "edit");
+      const editor = requireLogin(req, res);
       if (!editor) return;
       const p = await bodyJson(req);
       const recordId = routeParam(rec[1]);
       const existing = db.prepare("select * from records where id=?").get(recordId);
       if (!existing) return send(res, 404, { error: "未找到信息" });
       if (!canEditRecord(editor, existing)) return send(res, 403, { error: "当前账号无权修改该信息" });
+      maintenanceTransaction(() => {
       db.prepare("update records set date=?,category=?,title=?,original=?,updated_by=?,updated_at=?,deadline=?,priority=?,publish_status=? where id=?")
         .run(p.date, p.category, p.title, p.original, editor.id, now(), p.deadline || existing.deadline || deadlineFor(p.date), p.priority || existing.priority || "普通", p.publishStatus || existing.publish_status || "已发布", recordId);
-      if (Array.isArray(p.recipients)) saveRecipients(recordId, recipientsFromPayload(p));
+      if (Array.isArray(p.recipients) || p.allInScope === true) saveRecipients(recordId, recipientsFromPayload(p));
       audit(editor, "update_record", "record", recordId, p.title);
+      });
       return send(res, 200, { record: publicRecord(db.prepare("select * from records where id=?").get(recordId), editor) });
     }
     if (rec && method === "DELETE") {
@@ -6175,12 +7463,13 @@ async function route(req, res) {
     }
     const restoreRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/restore$/);
     if (restoreRecord && method === "POST") {
-      const admin = requireAdmin(req, res);
+      const admin = requireRbacPermission(req, res, "info.restore");
       if (!admin) return;
       const recordId = routeParam(restoreRecord[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
       if (!row) return send(res, 404, { error: "未找到信息" });
       if ((row.publish_status || "已发布") !== "作废") return send(res, 400, { error: "只有作废信息可以恢复" });
+      if(!isRecordOwner(admin,row) && !dataScopeAllowsUser(admin,row.publisher_id || row.created_by,"info"))return send(res,404,{error:"未找到信息"});
       const restoredAt = now();
       db.prepare("update records set date=?,deadline=?,publish_status='已发布',updated_by=?,updated_at=? where id=?")
         .run(restoredAt, deadlineFor(restoredAt), admin.id, restoredAt, recordId);
@@ -6210,7 +7499,7 @@ async function route(req, res) {
     }
     const receiptEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts\/([^/]+)$/);
     if (receiptEdit && method === "PUT") {
-      const admin = requireAdmin(req, res);
+      const admin = requireRbacPermission(req, res, "info.receipt.manage");
       if (!admin) return;
       const recordId = routeParam(receiptEdit[1]);
       const userId = routeParam(receiptEdit[2]);
@@ -6221,11 +7510,11 @@ async function route(req, res) {
       const p = await bodyJson(req);
       updateReceiptStatus(recordId, userId, p.status);
       audit(admin, "update_receipt_status", "record", recordId, `${userId}:${p.status}`);
-      return send(res, 200, { receipts: receipts(recordId) });
+      return send(res, 200, { receipts: publicReceiptsFor(admin,[recordId]) });
     }
     const receiptBatchEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts$/);
     if (receiptBatchEdit && method === "PUT") {
-      const admin = requireAdmin(req, res);
+      const admin = requireRbacPermission(req, res, "info.receipt.manage");
       if (!admin) return;
       const recordId = routeParam(receiptBatchEdit[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
@@ -6236,24 +7525,27 @@ async function route(req, res) {
       if (!userIds.length) return send(res, 400, { error: "请选择接收者" });
       const recipientSet = new Set(db.prepare("select user_id from record_recipients where record_id=?").all(recordId).map(item => item.user_id));
       if (userIds.some(userId => !recipientSet.has(userId))) return send(res, 400, { error: "包含非此信息接收者" });
-      userIds.forEach(userId => updateReceiptStatus(recordId, userId, p.status));
+      if(userIds.some(id=>!dataScopeAllowsUser(admin,id,"info")))return send(res,403,{error:"接收人员不在信息管理范围内"});
+      maintenanceTransaction(()=>userIds.forEach(userId => updateReceiptStatus(recordId, userId, p.status)));
       audit(admin, "batch_update_receipt_status", "record", recordId, `${userIds.length}:${p.status}`);
-      return send(res, 200, { receipts: receipts(recordId) });
+      return send(res, 200, { receipts: publicReceiptsFor(admin,[recordId]) });
     }
     const remind = url.pathname.match(/^\/api\/records\/([^/]+)\/remind$/);
     if (remind && method === "POST") {
-      const login = requirePermission(req, res, "remind");
+      const login = requireLogin(req, res);
       if (!login) return;
       const recordId = routeParam(remind[1]);
       const row = db.prepare("select * from records where id=?").get(recordId);
       if (!row) return send(res, 404, { error: "未找到信息" });
-      if (login.role !== "admin" && !isRecordOwner(login, row)) return send(res, 403, { error: "只能催办自己发布的信息" });
+      if (!hasRbac(login, "info.remind.any") && !(hasRbac(login, "info.remind.own") && isRecordOwner(login, row))) return send(res, 403, { error: "当前账号无权催办该信息" });
       const p = await bodyJson(req);
       const userIds = Array.isArray(p.userIds) ? p.userIds : [];
+      const eligible=new Set(recipients(recordId).filter(r=>dataScopeAllowsUser(login,r.accountId,"info")).map(r=>r.accountId));
+      if(userIds.some(id=>!eligible.has(id)))return send(res,403,{error:"包含不可催办的接收人员"});
       const upsert = db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values(?,?,?,?,?,?) on conflict(record_id,user_id) do update set remind_count=coalesce(remind_count,0)+1,last_reminded_at=excluded.last_reminded_at");
       userIds.forEach(userId => upsert.run(recordId, String(userId), "", 0, 1, now()));
       audit(login, "remind_record", "record", recordId, `${userIds.length} 人`);
-      return send(res, 200, { reminded: userIds.length, receipts: receipts(recordId) });
+      return send(res, 200, { reminded: userIds.length, receipts: publicReceiptsFor(login,[recordId]) });
     }
     const fav = url.pathname.match(/^\/api\/records\/([^/]+)\/favorite$/);
     if (fav && (method === "POST" || method === "DELETE")) {
@@ -6269,13 +7561,13 @@ async function route(req, res) {
       return send(res, 200, { ok: true, favorite: method === "POST" });
     }
     if (method === "POST" && url.pathname === "/api/records/import") {
-      const admin = requireAdmin(req, res);
+      const admin = requireRbacPermission(req, res, "info.create");
       if (!admin) return;
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rows) ? p.rows : [];
       const people = allLoginPeople();
       const insertRecord = db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-      const insertRecipient = db.prepare("insert into record_recipients(record_id,user_id,name,department,team) values(?,?,?,?,?)");
+      const insertRecipient = db.prepare("insert into record_recipients(record_id,user_id,person_id,name,department,team) values(?,?,?,?,?,?)");
       const insertReceipt = db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values(?,?,?,?,?,?)");
       let created = 0;
       let skipped = 0;
@@ -6293,7 +7585,7 @@ async function route(req, res) {
         const publisher = String(row.publisher || "").trim() || admin.name;
         insertRecord.run(rid, date, publisher, category, title, "", original, "batchImport", admin.id, admin.id, importedAt, importedAt, deadlineFor(date), row.priority || "普通", "已发布", admin.id, 1);
         people.forEach(person => {
-          insertRecipient.run(rid, person.id, person.name, person.department || "未设置", person.team || "未设置");
+          insertRecipient.run(rid, person.accountId, person.personId, person.name, person.department || "未设置", person.team || "未设置");
           insertReceipt.run(rid, person.id, importedAt, 0, 0, "");
         });
         created++;
@@ -6303,12 +7595,12 @@ async function route(req, res) {
     }
 
     if (method === "GET" && url.pathname === "/api/fixed-projects") {
-      if (!currentUser(req).allowedTabs.includes("fixedPage")) return send(res, 403, { error: "当前账号没有权限" });
+      if (!hasRbac(currentUser(req), "fixed.read")) return send(res, 403, { error: "当前账号没有权限" });
       const rows = db.prepare("select * from fixed_projects order by ata asc,title asc").all();
       return send(res, 200, { projects: publicProjects(rows) });
     }
     if (method === "POST" && url.pathname === "/api/fixed-projects") {
-      const admin = requirePermission(req, res, "fixedManage");
+      const admin = requireRbacPermission(req, res, "fixed.manage");
       if (!admin) return;
       const p = await bodyJson(req);
       const pid = randomId("fix");
@@ -6319,7 +7611,7 @@ async function route(req, res) {
     }
     const fix = url.pathname.match(/^\/api\/fixed-projects\/([^/]+)$/);
     if (fix && method === "PUT") {
-      const admin = requirePermission(req, res, "fixedManage");
+      const admin = requireRbacPermission(req, res, "fixed.manage");
       if (!admin) return;
       const p = await bodyJson(req);
       const projectId = routeParam(fix[1]);
@@ -6329,7 +7621,7 @@ async function route(req, res) {
       return send(res, 200, { project: publicProject(db.prepare("select * from fixed_projects where id=?").get(projectId)) });
     }
     if (fix && method === "DELETE") {
-      const admin = requirePermission(req, res, "fixedManage");
+      const admin = requireRbacPermission(req, res, "fixed.manage");
       if (!admin) return;
       const projectId = routeParam(fix[1]);
       await removeOwnerAttachmentFiles("fixedProject", projectId);
@@ -6409,215 +7701,225 @@ async function route(req, res) {
       return send(res, 200, { ok: true });
     }
 
-    if (method === "GET" && url.pathname === "/api/admin/users") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      return send(res, 200, { users: db.prepare("select * from users order by created_at").all().map(adminUser), rolePermissions: publicRolePermissions() });
+    if (method === "GET" && url.pathname === "/api/admin/accounts") {
+      const manager = requireRbacPermission(req, res, "accounts.read");
+      if (!manager) return;
+      return send(res, 200, { accounts: db.prepare("select * from users order by created_at").all().filter(row=>personnelAccess.allows(manager,"accounts",row.person_id)).map(adminUser) });
     }
-    if (method === "POST" && url.pathname === "/api/admin/users") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      const p = await bodyJson(req);
-      const username = String(p.username || "").trim();
-      if (!username) return send(res, 400, { error: "账号不能为空" });
-      if (db.prepare("select id from users where username=?").get(username)) return send(res, 409, { error: "账号已存在" });
-      const role = normalizeRole(p.role);
-      const defaults = roleDefaults(role);
-      const allowedTabs = normalizeKeys(p.allowedTabs, defaults.allowedTabs, allowedTabKeys);
-      const permissions = normalizeKeys(p.permissions, defaults.permissions, allowedPermissionKeys);
-      const pass = hashPassword(p.password || "123456");
-      const uid = randomId("u");
-      db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(uid, username, p.name || username, role, pass.salt, pass.hash, JSON.stringify(permissions), JSON.stringify(allowedTabs), p.department || "未设置", p.team || "未设置", normalizeFunctionCategory(p.functionCategory), normalizeStatus(p.status), now(), now());
-      audit(admin, "create_user", "user", uid, username);
-      return send(res, 201, { user: adminUser(db.prepare("select * from users where id=?").get(uid)) });
-    }
-    if (method === "PUT" && url.pathname === "/api/admin/users/batch") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      const p = await bodyJson(req);
-      const userIds = Array.isArray(p.userIds) ? Array.from(new Set(p.userIds.map(item => String(item || "").trim()).filter(Boolean))) : [];
-      const updates = p.updates && typeof p.updates === "object" ? p.updates : {};
-      if (!userIds.length) return send(res, 400, { error: "请选择账号" });
-
-      const hasField = field => Object.prototype.hasOwnProperty.call(updates, field);
-      const role = hasField("role") ? normalizeRole(updates.role) : null;
-      const roleDefaultsForUpdate = role ? roleDefaults(role) : null;
-      const status = hasField("status") ? normalizeStatus(updates.status) : null;
-      const team = hasField("team") ? String(updates.team || "未设置").trim() || "未设置" : null;
-      const functionCategory = hasField("functionCategory") ? normalizeFunctionCategory(updates.functionCategory) : null;
-      const allowedTabs = hasField("allowedTabs") ? normalizeKeys(updates.allowedTabs, roleDefaultsForUpdate?.allowedTabs || roles.receiver.allowedTabs, allowedTabKeys) : null;
-      const permissions = hasField("permissions") ? normalizeKeys(updates.permissions, roleDefaultsForUpdate?.permissions || roles.receiver.permissions, allowedPermissionKeys) : null;
-      const updateFields = ["role", "status", "team", "functionCategory", "allowedTabs", "permissions"].filter(hasField);
-      if (!updateFields.length) return send(res, 400, { error: "请选择要修改的内容" });
-
-      let updated = 0;
-      let skipped = 0;
-      let skippedProtected = 0;
-      db.exec("begin immediate");
-      try {
-        for (const userId of userIds) {
-          const existing = db.prepare("select * from users where id=?").get(userId);
-          if (!existing) {
-            skipped++;
-            continue;
-          }
-          const next = {
-            role: existing.role,
-            status: existing.status || "active",
-            team: existing.team || "未设置",
-            functionCategory: normalizeFunctionCategory(existing.function_category),
-            allowedTabs: json(existing.allowed_tabs, roleDefaults(existing.role).allowedTabs),
-            permissions: json(existing.permissions, roleDefaults(existing.role).permissions)
-          };
-          let protectedSkip = false;
-          const isDefaultAdmin = userId === "54002010";
-          if (hasField("role")) {
-            if (isDefaultAdmin && role !== "admin") protectedSkip = true;
-            else next.role = role;
-          }
-          if (hasField("status")) {
-            if ((isDefaultAdmin || userId === admin.id) && status === "disabled") protectedSkip = true;
-            else next.status = status;
-          }
-          if (hasField("allowedTabs")) {
-            next.allowedTabs = allowedTabs;
-          }
-          if (hasField("permissions")) {
-            next.permissions = permissions;
-          }
-          if (hasField("team")) next.team = team;
-          if (hasField("functionCategory")) next.functionCategory = functionCategory;
-          if (protectedSkip) skippedProtected++;
-
-          db.prepare("update users set role=?,permissions=?,allowed_tabs=?,team=?,function_category=?,status=?,updated_at=? where id=?")
-            .run(next.role, JSON.stringify(next.permissions), JSON.stringify(next.allowedTabs), next.team, next.functionCategory, next.status, now(), userId);
-          db.prepare("update record_recipients set team=? where user_id=?").run(next.team, userId);
-          updated++;
-        }
-        db.exec("commit");
-      } catch (error) {
-        db.exec("rollback");
-        throw error;
-      }
-      audit(admin, "batch_update_users", "user", "bulk", `修改 ${updated}，保护跳过 ${skippedProtected}，不存在 ${skipped}，字段 ${updateFields.join("|")}`);
-      return send(res, 200, { updated, skipped, skippedProtected });
-    }
-    const adminUserRoute = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
-    if (adminUserRoute && method === "PUT") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      const userId = routeParam(adminUserRoute[1]);
-      const existing = db.prepare("select * from users where id=?").get(userId);
-      if (!existing) return send(res, 404, { error: "未找到账号" });
-      const p = await bodyJson(req);
-      const isDefaultAdmin = userId === "54002010";
-      const role = isDefaultAdmin ? "admin" : normalizeRole(p.role || existing.role);
-      const defaults = roleDefaults(role);
-      const allowedTabs = normalizeKeys(p.allowedTabs, defaults.allowedTabs, allowedTabKeys);
-      const permissions = normalizeKeys(p.permissions, defaults.permissions, allowedPermissionKeys);
-      const status = isDefaultAdmin ? "active" : normalizeStatus(p.status);
-      db.prepare("update users set name=?,role=?,permissions=?,allowed_tabs=?,department=?,team=?,function_category=?,status=?,updated_at=? where id=?")
-        .run(p.name || existing.name, role, JSON.stringify(permissions), JSON.stringify(allowedTabs), p.department || existing.department || "未设置", p.team || existing.team || "未设置", normalizeFunctionCategory(p.functionCategory || existing.function_category), status, now(), userId);
-      db.prepare("update record_recipients set name=?,department=?,team=? where user_id=?")
-        .run(p.name || existing.name, p.department || existing.department || "未设置", p.team || existing.team || "未设置", userId);
-      audit(admin, "update_user", "user", userId, existing.username);
-      return send(res, 200, { user: adminUser(db.prepare("select * from users where id=?").get(userId)) });
-    }
-    if (adminUserRoute && method === "DELETE") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      const userId = routeParam(adminUserRoute[1]);
-      if (userId === admin.id) return send(res, 400, { error: "不能删除当前登录账号" });
-      if (userId === "54002010") return send(res, 400, { error: "默认管理员账号不能删除" });
-      const existing = db.prepare("select * from users where id=?").get(userId);
-      if (!existing) return send(res, 404, { error: "未找到账号" });
-      db.exec("begin immediate");
-      try {
-        db.prepare("delete from sessions where user_id=?").run(userId);
-        db.prepare("delete from favorites where user_id=?").run(userId);
-        db.prepare("delete from read_receipts where user_id=?").run(userId);
-        db.prepare("delete from record_recipients where user_id=?").run(userId);
-        db.prepare("delete from people where id=?").run(userId);
-        db.prepare("delete from users where id=?").run(userId);
-        db.exec("commit");
-      } catch (error) {
-        db.exec("rollback");
-        throw error;
-      }
-      for (const [sid, savedUserId] of sessions.entries()) {
-        if (savedUserId === userId) sessions.delete(sid);
-      }
-      audit(admin, "delete_user", "user", userId, existing.username);
-      return send(res, 200, { ok: true });
-    }
-    const resetPasswordRoute = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/reset-password$/);
-    if (resetPasswordRoute && method === "POST") {
-      const admin = requireAdmin(req, res);
-      if (!admin) return;
-      const userId = routeParam(resetPasswordRoute[1]);
-      const existing = db.prepare("select * from users where id=?").get(userId);
-      if (!existing) return send(res, 404, { error: "未找到账号" });
-      const p = await bodyJson(req);
-      const password = String(p.password || "").trim();
-      if (!password) return send(res, 400, { error: "新密码不能为空" });
+    if (method === "POST" && url.pathname === "/api/admin/accounts") {
+      const manager = requireRbacPermission(req, res, "accounts.create");
+      if (!manager) return;
+      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
+      if (!hasRbac(manager, "accounts.scopes.assign")) return send(res, 403, { error: "当前账号没有分配数据范围权限", permission: "accounts.scopes.assign" });
+      const payload = await bodyJson(req);
+      const username = String(payload.username || "").trim();
+      const password = String(payload.password || "");
+      if (!username) return send(res, 400, { error: "登录账号不能为空" });
+      if (password.length < 6) return send(res, 400, { error: "初始密码至少需要6位" });
+      if (db.prepare("select id from users where username=?").get(username)) return send(res, 409, { error: "登录账号已存在" });
+      const person = validateAccountIdentity(payload);
+      const access = validateAccountAccess(payload,person.id);
+      const userId = randomId("u");
       const pass = hashPassword(password);
-      db.prepare("update users set salt=?,password_hash=?,updated_at=? where id=?").run(pass.salt, pass.hash, now(), userId);
-      db.prepare("delete from sessions where user_id=?").run(userId);
-      audit(admin, "reset_password", "user", userId, existing.username);
+      db.exec("begin immediate");
+      try {
+        validateAccountIdentity(payload);
+        db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
+          values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
+          .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
+        replaceAccountAccess(userId, access);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "create_account", "user", userId, JSON.stringify({ username, personId: person.id, roles: access.roleCodes, scopes: access.scopes }));
+      return send(res, 201, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
+    if (accountRoute && method === "PUT") {
+      const manager = requireRbacPermission(req, res, "accounts.update");
+      if (!manager) return;
+      const userId = routeParam(accountRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_update_super_account", "user", userId);
+        return send(res, 403, { error: "唯一超级账号不可修改；仅允许本人修改密码" });
+      }
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      const payload = await bodyJson(req);
+      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
+      if (!hasRbac(manager, "accounts.scopes.assign")) return send(res, 403, { error: "当前账号没有分配数据范围权限", permission: "accounts.scopes.assign" });
+      const person = validateAccountIdentity(payload, existing);
+      const access = validateAccountAccess(payload,person.id);
+      const status = normalizeStatus(payload.status ?? existing.status);
+      if(status!==existing.status && !hasRbac(manager,"accounts.disable"))return send(res,403,{error:"没有变更账户启用状态的权限",permission:"accounts.disable"});
+      db.exec("begin immediate");
+      try {
+        validateAccountIdentity(payload, existing);
+        db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
+          .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
+        replaceAccountAccess(userId, access);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      revokeUserSessions(userId, { bumpCredentialVersion: true });
+      audit(manager, "update_account", "user", userId, JSON.stringify({ personId: person.id, status, roles: access.roleCodes, scopes: access.scopes }));
+      return send(res, 200, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    if (accountRoute && method === "DELETE") {
+      const manager = requireRbacPermission(req, res, "accounts.disable");
+      if (!manager) return;
+      const userId = routeParam(accountRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_disable_super_account", "user", userId);
+        return send(res, 403, { error: "唯一超级账号不可删除或停用" });
+      }
+      if (userId === manager.id) return send(res, 400, { error: "不能停用当前登录账号" });
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      db.prepare("update users set status='disabled',credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(now(), userId);
+      revokeUserSessions(userId);
+      audit(manager, "disable_account", "user", userId, existing.username);
+      return send(res, 200, { ok: true, retainedHistory: true });
+    }
+    const accountResetRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)\/reset-password$/);
+    if (accountResetRoute && method === "POST") {
+      const manager = requireRbacPermission(req, res, "accounts.password.reset");
+      if (!manager) return;
+      const userId = routeParam(accountResetRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_reset_super_password", "user", userId);
+        return send(res, 403, { error: "超级账号密码只能由本人修改" });
+      }
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      if (isDeletedAccountPerson(existing)) return send(res, 409, { error: "关联人员已删除，账户仅保留历史，不可重置密码" });
+      const payload = await bodyJson(req);
+      const password = String(payload.password || "");
+      if (password.length < 6) return send(res, 400, { error: "新密码至少需要6位" });
+      const pass = hashPassword(password);
+      db.prepare("update users set salt=?,password_hash=?,must_change_password=1,credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(pass.salt, pass.hash, now(), userId);
+      revokeUserSessions(userId);
+      audit(manager, "reset_account_password", "user", userId, existing.username);
       return send(res, 200, { ok: true });
     }
-    if (method === "POST" && url.pathname === "/api/admin/users/import") {
-      const admin = requireAdmin(req, res);
+
+    if (method === "POST" && url.pathname === "/api/admin/accounts/bulk-open") {
+      const admin = requireRbacPermission(req, res, "accounts.bulk_open");
       if (!admin) return;
-      const p = await bodyJson(req);
-      const inputRows = Array.isArray(p.rows) ? p.rows : String(p.csv || "").split(/\r?\n/).map(line => {
-        const [username, name, team, role, password, allowedTabs, permissions, status, functionCategory] = line.split(",").map(cell => cell.trim());
-        return { username, name, team, role, password, allowedTabs, permissions, status, functionCategory };
-      });
-      let created = 0, updated = 0, skipped = 0;
-      const errors = [];
-      for (const raw of inputRows) {
-        const username = String(raw.username || raw["账号"] || "").trim();
-        if (!username || username === "账号") {
-          skipped++;
-          continue;
-        }
-        const isDefaultAdmin = username === "54002010";
-        const role = isDefaultAdmin ? "admin" : normalizeRole(raw.role || raw["角色"]);
-        const defaults = roleDefaults(role);
-        const tabs = normalizeKeys(raw.allowedTabs || raw["页签权限"], defaults.allowedTabs, allowedTabKeys);
-        const perms = normalizeKeys(raw.permissions || raw["功能权限"], defaults.permissions, allowedPermissionKeys);
-        const name = String(raw.name || raw["姓名"] || username).trim();
-        const team = String(raw.team || raw["班组"] || "未设置").trim() || "未设置";
-        const department = String(raw.department || raw["部门"] || "未设置").trim() || "未设置";
-        const functionCategory = normalizeFunctionCategory(raw.functionCategory || raw["人员职能类别"] || raw["职能类别"]);
-        const status = isDefaultAdmin ? "active" : normalizeStatus(raw.status || raw["状态"]);
-        const existing = db.prepare("select * from users where username=?").get(username);
-        if (existing) {
-          db.prepare("update users set name=?,role=?,permissions=?,allowed_tabs=?,department=?,team=?,function_category=?,status=?,updated_at=? where username=?")
-            .run(name, role, JSON.stringify(perms), JSON.stringify(tabs), department, team, functionCategory, status, now(), username);
-          db.prepare("update record_recipients set name=?,department=?,team=? where user_id=?")
-            .run(name, department, team, existing.id);
-          if (raw.password || raw["初始密码"]) {
-            const pass = hashPassword(String(raw.password || raw["初始密码"]));
-            db.prepare("update users set salt=?,password_hash=?,updated_at=? where username=?").run(pass.salt, pass.hash, now(), username);
-          }
-          updated++;
-        } else {
-          const pass = hashPassword(String(raw.password || raw["初始密码"] || "123456"));
-          db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .run(randomId("u"), username, name, role, pass.salt, pass.hash, JSON.stringify(perms), JSON.stringify(tabs), department, team, functionCategory, status, now(), now());
-          created++;
-        }
+      const requiredBulkAccountPermissions = ["accounts.roles.assign", "accounts.scopes.assign"];
+      const missingPermission = requiredBulkAccountPermissions.find(permission => !hasRbac(admin, permission));
+      if (missingPermission) {
+        audit(admin, "permission_denied", "permission", missingPermission, "bulk_open_accounts");
+        return send(res, 403, { error: "当前账号没有批量开通和配置账户的完整权限", permission: missingPermission });
       }
-      audit(admin, "import_users", "user", "bulk", `新增 ${created}，更新 ${updated}，跳过 ${skipped}`);
-      return send(res, 201, { created, updated, skipped, errors });
+      const p = await bodyJson(req);
+      const inputRows = Array.isArray(p.rows) ? p.rows : [];
+      if (!inputRows.length) return send(res, 400, { error: "没有可处理的账户数据" });
+      const errors = [];
+      const seenEmployeeNos = new Set(), seenUsernames = new Set(), prepared = [];
+      inputRows.forEach((raw, index) => {
+        const rowNumber = Number(raw.rowNumber || index + 2);
+        const employeeNo = String(raw.employeeNo || raw["员工工号"] || raw["工号"] || "").trim();
+        const username = String(raw.username || raw["登录账号"] || raw["账号"] || "").trim();
+        const password = String(raw.password || raw["初始密码"] || "").trim();
+        const roleValues = importSelections(raw.roles || raw.role || raw["角色"] || raw["RBAC角色"]);
+        const rowErrors = [];
+        let scopes=[];
+        try {
+          if(raw["数据范围"])throw new Error("请使用分模块数据范围列，旧数据范围列已移除");
+          if(raw.scopes !== undefined && !Array.isArray(raw.scopes)) throw Object.assign(new Error("数据范围必须使用分模块数组格式"),{status:400});
+          let input=raw.scopes || [];
+          if(!input.length)for(const module of SCOPE_MODULES){
+            const value=raw[MODULE_LABELS[module]+"范围"];
+            for(const token of importSelections(value || "本人")){
+              const separator=token.search(/[:：]/), label=(separator<0?token:token.slice(0,separator)).trim(), path=separator<0?"":token.slice(separator+1).trim();
+              const scopeType=accountImportScope(label)||({"指定行政班组":"specified_teams","指定班组":"specified_teams","指定人员分组":"specified_groups"}[label]||"");
+              const specified=["specified_teams","specified_groups"].includes(scopeType);
+              if(!specified&&path)throw new Error("该范围不接受组织路径");
+              const scopeId=specified?resolveOrganizationPath(db,path,scopeType==="specified_teams"?"administrative_team":"personnel_group"):"";
+              input.push({module,scopeType,scopeId,validFrom:raw[MODULE_LABELS[module]+"范围开始日期"],validTo:raw[MODULE_LABELS[module]+"范围结束日期"]});
+            }
+          }
+          const scopedPerson=employeeNo?db.prepare("select id from personnel where employee_no=? and data_status='active'").get(employeeNo):null;
+          scopes=personnelAccess.normalizeScopes(input,scopedPerson?.id||"");
+        }catch(e){rowErrors.push(e.message);}
+
+        if (!employeeNo) rowErrors.push("员工工号不能为空");
+        else if (!isValidEmployeeNo(employeeNo)) rowErrors.push("员工工号必须为8位数字");
+        if (!username) rowErrors.push("登录账号不能为空");
+        if (!roleValues.length) rowErrors.push("至少选择一个角色");
+        if (employeeNo && seenEmployeeNos.has(employeeNo)) rowErrors.push("工号在导入文件中重复");
+        if (username && seenUsernames.has(username)) rowErrors.push("登录账号在导入文件中重复");
+        seenEmployeeNos.add(employeeNo); seenUsernames.add(username);
+        const person = employeeNo ? db.prepare("select * from personnel where employee_no=? and data_status='active'").get(employeeNo) : null;
+        if (employeeNo && !person) rowErrors.push(db.prepare("select data_status from personnel where employee_no=?").get(employeeNo)?.data_status === "deleted" ? "该工号人员已删除，不能开通或恢复账户" : "未在人员主数据中找到该工号");
+        if(person && !personnelAccess.allows(admin,"accounts",person.id)){errors.push({rowNumber,employeeNo,detail:"该行不在账户管理范围内"});return;}
+        if (person && ["离职", "停职"].includes(person.employment_status)) rowErrors.push("离职或停职人员不能开通账户");
+        const roleRows = roleValues.map(value => db.prepare("select id,code,name from rbac_roles where status='active' and (code=? or name=?)").get(value, value)).filter(Boolean);
+        if (roleRows.length !== roleValues.length) rowErrors.push("包含不存在的角色");
+        else { try { validateAccountRoleCombination(roleRows.map(role => role.code)); } catch (error) { rowErrors.push(error.message); } }
+        const accountByPerson = person ? db.prepare("select * from users where person_id=?").get(person.id) : null;
+        const accountByUsername = username ? db.prepare("select * from users where username=?").get(username) : null;
+        if (accountByPerson && accountByPerson.username !== username) rowErrors.push(`该人员已关联账号 ${accountByPerson.username}`);
+        if (accountByUsername && accountByUsername.person_id !== person?.id) rowErrors.push("登录账号已关联其他人员");
+        const existing = accountByPerson || accountByUsername;
+        if(existing)rowErrors.push("人员或登录账号已开通，请在账户管理中维护，不能通过批量开通覆盖");
+        if (!existing && password.length < 6) rowErrors.push("新账户的初始密码至少6位");
+        if (existing && password && password.length < 6) rowErrors.push("如需重置密码，新密码至少6位");
+        if (rowErrors.length) errors.push({ rowNumber, employeeNo, username, detail: rowErrors.join("；") });
+        else prepared.push({ person, username, password, roleRows, scopes, status: normalizeStatus(raw.status || raw["账户状态"] || raw["状态"]), existing });
+      });
+      if (errors.length) {
+        audit(admin, "reject_bulk_open_accounts", "user", "bulk", JSON.stringify({ errors }));
+        return send(res, 400, { error: `发现 ${errors.length} 行异常，未开通任何账户`, errors });
+      }
+      let created = 0, updated = 0;
+      const updatedUserIds = [];
+      db.exec("begin immediate");
+      try {
+        for (const item of prepared) {
+          validateAccountIdentity({ personId: item.person.id }, item.existing);
+          let userId = item.existing?.id || randomId("u");
+          if (userId === SUPER_ACCOUNT_ID) throw Object.assign(new Error("批量开通不能修改唯一超级账号"), { status: 403 });
+          if (item.existing) {
+            db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
+              .run(item.person.name, item.person.department || "未设置", item.person.home_team || "未设置", item.status, item.person.id, item.password ? 1 : Number(item.existing.must_change_password || 0), now(), userId);
+            if (item.password) {
+              const pass = hashPassword(item.password);
+              db.prepare("update users set salt=?,password_hash=? where id=?").run(pass.salt, pass.hash, userId);
+            }
+            updatedUserIds.push(userId); updated++;
+          } else {
+            const pass = hashPassword(item.password);
+            db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at) values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,1,1,?,?)")
+              .run(userId, item.username, item.person.name, pass.salt, pass.hash, item.person.department || "未设置", item.person.home_team || "未设置", "维修", item.status, item.person.id, now(), now());
+            created++;
+          }
+          db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
+          item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
+          db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
+          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+        }
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      updatedUserIds.forEach(userId => revokeUserSessions(userId, { bumpCredentialVersion: true }));
+      audit(admin, "bulk_open_accounts", "user", "bulk", JSON.stringify({ created, updated }));
+      return send(res, 201, { created, updated, skipped: 0, errors: [] });
     }
 
     send(res, 404, { error: "接口不存在" });
   } catch (error) {
-    const status = error.status || 500;
+    const status = error.status || (error.message?.includes("人员已删除，不能恢复或新增关联") ? 409 : 500);
     if (status >= 500) console.error(error);
     send(res, status, { error: error.message || "服务异常", ...(error.details || {}) });
   }
@@ -6659,10 +7961,25 @@ async function measuredRoute(req, res) {
   return route(req, res);
 }
 
+// Fail before initialization writes when a populated pre-v3 database needs review.
+if (db.prepare("pragma table_info(personnel)").all().length &&
+    db.prepare("pragma table_info(maintenance_assignments)").all().length &&
+    db.prepare("pragma table_info(rbac_user_scopes)").all().length) {
+  const identity = preflightIdentity(db), organizations = preflightOrganizations(db);
+  if (!identity.ok || !organizations.ok) throw Object.assign(new Error("启动前预检未通过，未执行迁移：" + JSON.stringify({identity:identity.issues,organizations:organizations.issues})),{status:409});
+}
 await initDb();
+installPersonnelDeletionGuards(db);
+db.exec(IMPORT_WORKSPACE_SCHEMA);
+capabilityService.init();
 if (process.env.MUC_NO_LISTEN !== "1") {
+  const capabilityScheduler = setInterval(() => { try { capabilityService.syncMaster(); capabilityService.schedule(); } catch (error) { console.error("能力状态同步失败", error.message); } }, 15000);
+  capabilityScheduler.unref();
   http.createServer(measuredRoute).listen(port, host, () => {
     console.log(`MUC online app: http://127.0.0.1:${port}`);
+    console.log(`运行环境：${isCodexWorktree ? "Codex隔离工作树" : process.env.NODE_ENV || "development"}`);
+    console.log(`数据库：${db.kind === "postgres" ? "PostgreSQL（DATABASE_URL）" : path.resolve(dbPath)}`);
+    console.log(`附件目录：${path.resolve(uploadDir)}`);
     console.log(`健康检查：http://127.0.0.1:${port}/api/health`);
     if (host === "0.0.0.0" || host === "::") {
       const urls = lanAddresses().map(address => `http://${address}:${port}`);
@@ -6671,8 +7988,8 @@ if (process.env.MUC_NO_LISTEN !== "1") {
     } else {
       console.log("局域网访问：如需手机访问，请使用 HOST=0.0.0.0 启动服务");
     }
-    console.log("初始账号：54002010 / muc2026，publisher / 123456，receiver / 123456");
+    console.log(`唯一超级账号：${SUPER_ACCOUNT_ID} / ${process.env.NODE_ENV === "production" ? "由 INITIAL_ADMIN_PASSWORD 设置" : "muc2026"}`);
   });
 }
 
-export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, attachmentDisposition };
+export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };
