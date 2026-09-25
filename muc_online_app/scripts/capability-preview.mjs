@@ -1,0 +1,15 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import http from 'node:http';
+import {seedCapabilityFixture} from './capability-fixture.mjs';
+if(process.env.NODE_ENV!=='test')throw new Error('隔离能力预览仅允许在 NODE_ENV=test 下启动，不能作为正式后台');
+if(process.env.DATABASE_URL||process.env.DB_PATH)throw new Error('隔离能力预览禁止连接已有数据库');
+const dir=await fs.mkdtemp(path.join(os.tmpdir(),'capability-preview-'));
+Object.assign(process.env,{MUC_NO_LISTEN:'1',DATABASE_URL:'',DB_PATH:path.join(dir,'preview.sqlite'),UPLOAD_DIR:path.join(dir,'uploads')});
+const {route,db,capabilityService}=await import('../server.mjs');
+await seedCapabilityFixture(db,process.argv[2]);capabilityService.syncMaster();
+const server=http.createServer(route);
+server.on('error',e=>{console.error(e.message);process.exitCode=1;});
+server.listen(8795,'127.0.0.1',()=>console.log('隔离验收预览：http://127.0.0.1:8795/\n测试数据库：'+dir));
+const timer=setInterval(()=>{capabilityService.syncMaster();capabilityService.schedule();},15000);timer.unref();

@@ -1,0 +1,168 @@
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { migrateIdentity, preflightIdentity, PERSON_TABLES, SCOPE_MODULES } from "../personnel-identity.mjs";
+import { scopeDate, migratePersonnelFoundation } from "../personnel-access.mjs";
+
+function migrationFixture() {
+  const db=new DatabaseSync(":memory:");db.kind="sqlite";
+  db.exec(`create table personnel(id text primary key,employee_no text);create table users(id text primary key,person_id text);
+    insert into personnel values('p1','88000001'),('p2','88000002');insert into users values('a1','p1'),('a2','p2');
+    create table sessions(id text);insert into sessions values('old-session');
+    create table maintenance_report_drafts(id text,payload_json text);
+    create table record_recipients(record_id text,user_id text,primary key(record_id,user_id));
+    create table rbac_user_scopes(id text primary key,user_id text,scope_type text,scope_id text,valid_from text,valid_to text,created_at text,updated_at text);
+    insert into rbac_user_scopes values('scope','a1','home_team','','','','2026','2026');`);
+  for(const table of PERSON_TABLES)db.exec(`create table ${table}(id text primary key,user_id text not null,flight_id text,batch_id text,owner_type text,owner_id text,role text,${table.includes('report_entries')?'unique(flight_id,role,user_id)':'unique(id,user_id)'})`);
+  db.prepare("insert into maintenance_assignments(id,user_id) values('job','a1')").run();
+  db.prepare("insert into maintenance_report_drafts values('draft',?)").run(JSON.stringify({releaseUserId:"a1",items:[{entries:[{userId:"p2"}]}]}));
+  db.exec("insert into record_recipients values('record','a1')");
+  return db;
+}
+
+export function testIdentityMigration() {
+  const db=migrationFixture();
+  assert.equal(preflightIdentity(db).ok,true);
+  migrateIdentity(db);
+  assert.equal(db.prepare("select person_id from maintenance_assignments").get().person_id,"p1");
+  assert.equal(db.prepare("select count(*) as n from sessions").get().n,0);
+  assert.equal(db.prepare("select count(*) as n from rbac_user_scopes").get().n,6);
+  assert.deepEqual(JSON.parse(db.prepare("select payload_json from maintenance_report_drafts").get().payload_json),{releasePersonId:"p1",items:[{entries:[{personId:"p2"}]}]});
+  assert.deepEqual({...db.prepare("select * from record_recipients").get()},{record_id:"record",user_id:"a1",person_id:"p1"});
+  const snapshot=JSON.stringify(db.prepare("select * from personnel_identity_migrations").all());
+  migrateIdentity(db);assert.equal(JSON.stringify(db.prepare("select * from personnel_identity_migrations").all()),snapshot);db.close();
+  const bad=migrationFixture();bad.exec("insert into maintenance_assignments(id,user_id) values('orphan','missing')");
+  assert.equal(preflightIdentity(bad).ok,false);assert.throws(()=>migrateIdentity(bad),/预检失败/);
+  assert.ok(bad.prepare("pragma table_info(maintenance_assignments)").all().some(c=>c.name==="user_id"));bad.close();
+  const conflict=migrationFixture();
+  conflict.exec("insert into maintenance_report_entries(id,user_id,flight_id,batch_id,owner_type,owner_id,role) values('one','p1','f','b','flight','f','主作'),('two','a1','f','b','flight','f','主作')");
+  assert.equal(preflightIdentity(conflict).ok,false);conflict.close();
+  assert.equal(scopeDate("2026-09-01"),"2026-08-31T16:00:00.000Z");
+  assert.equal(scopeDate("2026-09-01",true),"2026-09-01T15:59:59.999Z");
+  assert.throws(()=>scopeDate("2026-02-30"));
+  assert.throws(()=>scopeDate("2026-13-01"),e=>e.status===400);
+  const rollback=migrationFixture();
+  rollback.exec("create table settings(key text primary key,value text,updated_at text);create table organization_units(id text primary key,code text,name text,unit_type text,parent_id text,status text,created_at text,updated_at text);alter table personnel add column department text;alter table personnel add column home_team text;alter table personnel add column organization_branch_id text;alter table personnel add column administrative_team_id text;update personnel set organization_branch_id='missing-group'");
+  assert.throws(()=>migratePersonnelFoundation(rollback,()=>new Date().toISOString(),x=>x+Math.random()),/待确认归属/);
+  assert.ok(rollback.prepare("pragma table_info(maintenance_assignments)").all().some(c=>c.name==="user_id"));
+  assert.equal(rollback.prepare("select count(*) as n from sessions").get().n,1);
+  assert.equal(rollback.prepare("select count(*) as n from rbac_user_scopes").get().n,1);
+  rollback.close();
+}
+
+export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
+  testIdentityMigration();
+  const call=async(url,options={})=>(await request(url,{cookie,...options})).data;
+  const post=(url,body,expected=201)=>call(url,{method:"POST",body,expected});
+  const depA=await post("/personnel/organizations",{name:"范围A部",type:"department"});
+  const depB=await post("/personnel/organizations",{name:"范围B部",type:"department"});
+  const group=await post("/personnel/organizations",{name:"人员分组",type:"personnel_group",parentId:depA.id,maintenanceEligible:true});
+  const groupB=await post("/personnel/organizations",{name:"人员分组",type:"personnel_group",parentId:depB.id,maintenanceEligible:true});
+  const team1=await post("/personnel/organizations",{name:"同名班组",type:"administrative_team",parentId:group.id});
+  const team2=await post("/personnel/organizations",{name:"二班",type:"administrative_team",parentId:group.id});
+  const teamB=await post("/personnel/organizations",{name:"同名班组",type:"administrative_team",parentId:groupB.id});
+  const people=[];
+  for(const [index,team] of [[1,team1],[2,team1],[3,team2],[4,teamB]])people.push((await post("/personnel",{employeeNo:`8800000${index}`,name:index===4?"同名人员":"权限测试"+index,administrativeTeamId:team.id})).person);
+  const [actor,peer,dispatchPeer,outside]=people;
+  assert.deepEqual((await call(`/personnel/${peer.id}`)).englishLevels,[]);
+  const insertEnglish=db.prepare(`insert into personnel_licenses(id,person_id,employee_no,license_type,license_english_level,is_valid,remark,data_status,created_at,updated_at)
+    values(?,?,?,'英语测试',?,?,?,?, '2026-09-15','2026-09-15')`);
+  for(const [id,level,valid,status,remark] of [
+    ['english-one',' 4级 ','有效','active',''],['english-two','5级','是','active',''],
+    ['english-duplicate','4级','true','active',''],['english-invalid','6级','无效','active',''],
+    ['english-deleted','3级','有效','deleted',''],['english-empty','','有效','active','英语等级：6']
+  ])insertEnglish.run(id,peer.id,peer.employeeNo,level,valid,remark,status);
+  assert.deepEqual((await call(`/personnel/${peer.id}`)).englishLevels,['4级','5级']);
+  db.prepare("update personnel_licenses set license_english_level='2级' where id='english-two'").run();
+  assert.deepEqual((await call(`/personnel/${peer.id}`)).englishLevels,['2级','4级']);
+  await call(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"P3",reason:"测试敏感字段"}});
+  const permissions=["personnel.list.view","personnel.detail.view","personnel.profile.update","personnel.profile.create","personnel.import.view","personnel.import.execute","personnel.audit.view","info.read","info.create","info.update.own","maintenance.view","maintenance.execute.view","maintenance.execute.submit","maintenance.dispatch.view","maintenance.review.view","maintenance.review.submit","maintenance.stats.manage.view","maintenance.hours.confirm","accounts.read","accounts.create","accounts.roles.assign","accounts.scopes.assign"];
+  const role=(await post("/admin/roles",{name:"范围隔离测试角色",permissions})).role;
+  const scopes=[{module:"personnel",scopeType:"administrative_team"},{module:"info",scopeType:"all"},{module:"maintenance",scopeType:"specified_teams",scopeId:team2.id},{module:"accounts",scopeType:"administrative_team"}];
+  const account=(await post("/admin/accounts",{username:"access-test",personId:actor.id,password:"123456",roles:["worker",role.code],scopes,mustChangePassword:false})).account;
+  let session=await request("/login",{method:"POST",body:{username:account.username,password:"123456"}});
+  const asActor=async(url,options={})=>(await request(url,{cookie:session.cookie,...options})).data;
+  const listed=await asActor("/personnel");
+  const hiddenEnglish=await asActor(`/personnel/${peer.id}`);
+  assert.equal(hiddenEnglish.qualificationVisible,false);
+  assert.equal(Object.hasOwn(hiddenEnglish,'englishLevels'),false);
+  await asActor(`/personnel/${outside.id}`,{expected:404});
+  assert.deepEqual(new Set(listed.items.map(p=>p.id)),new Set([actor.id,peer.id]));
+  assert.equal(listed.facets.total,2);assert.deepEqual(listed.facets.departments,["范围A部"]);
+  assert.equal(Object.hasOwn(listed.items[0],"actualGrade"),false);assert.equal(Object.hasOwn(listed.items[0],"licenseCount"),false);
+  assert.equal(Object.hasOwn((await asActor(`/personnel/${peer.id}`)).person,"actualGrade"),false);
+  await asActor(`/personnel/${outside.id}`,{expected:404});
+  await asActor(`/personnel/${outside.id}`,{method:"PUT",body:{name:"越权",reason:"测试"},expected:404});
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"P4",reason:"测试"},expected:403});
+  await call(`/personnel/${peer.id}`,{method:"PUT",body:{employeeNo:"88999999",reason:"禁止改工号"},expected:400});
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{administrativeTeamId:team2.id,reason:"测试"},expected:403});
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{position:"新职位",reason:"正常修改"}});
+  assert.equal(db.prepare("select actual_grade from personnel where id=?").get(peer.id).actual_grade,"P3");
+  const log=await asActor(`/personnel/${peer.id}/changes`);assert.ok(!log.changes.some(c=>c.fieldName==="actualGrade"));
+  assert.equal(Object.hasOwn((await asActor("/settings")).settings,"people"),false);
+  const directory=await asActor("/personnel/directory?purpose=maintenance");
+  assert.deepEqual(directory.items.map(p=>p.personId),[dispatchPeer.id]);
+  assert.equal(Object.hasOwn(directory.items[0],"actualGrade"),false);
+  await asActor("/personnel/directory?purpose=unknown",{expected:403});
+  assert.deepEqual((await asActor("/admin/accounts")).accounts.map(a=>a.id),[account.id]);
+  await asActor("/admin/accounts",{method:"POST",body:{username:"bad-open",personId:outside.id,password:"123456",roles:["worker",role.code],scopes},expected:404});
+  await call(`/admin/accounts/${account.id}`,{method:"PUT",body:{personId:peer.id,roles:["worker",role.code],scopes},expected:409});
+  const oldPayload={username:"old-format",personId:peer.id,password:"123456",roles:["worker",role.code],scopes:[{scopeType:"all"}]};
+  await post("/admin/accounts",oldPayload,400);
+  await asActor("/personnel/imports",{method:"POST",expected:400,body:{type:"personnel",rows:[["员工工号","员工姓名"],[outside.employeeNo,outside.name]]}});
+  const mixed=await post("/personnel/imports",{type:"personnel",rows:[["员工工号","员工姓名"],[peer.employeeNo,peer.name],[outside.employeeNo,outside.name]]});
+  await asActor(`/personnel/imports/${mixed.batch.id}`,{expected:404});
+  assert.ok(!(await asActor("/personnel/imports")).batches.some(b=>b.id===mixed.batch.id));
+  const staged=await asActor("/personnel/imports",{method:"POST",expected:201,body:{type:"personnel",rows:[["员工工号","员工姓名"],[peer.employeeNo,peer.name]]}});
+  await call(`/personnel/${peer.id}`,{method:"PUT",body:{administrativeTeamId:teamB.id,reason:"暂存后调动"}});
+  await asActor(`/personnel/imports/${staged.batch.id}/confirm`,{method:"POST",expected:404});
+  assert.equal(db.prepare("select status from personnel_import_batches where id=?").get(staged.batch.id).status,"pending");
+  // Stable person identity before and after account activation, including own task visibility.
+  const flight=(await post("/maintenance/flights",{date:"2026-09-01",flightNo:"IDENTITY",aircraftNo:"B-ID",workKind:"航后"})).flight;
+  await post(`/maintenance/flights/${flight.id}/dispatch`,{assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},200);
+  const assignment=db.prepare("select * from maintenance_assignments where flight_id=?").get(flight.id);
+  assert.equal(assignment.person_id,dispatchPeer.id);
+  const mixedFlight=(await post("/maintenance/flights",{date:"2026-09-01",flightNo:"MIXED-SCOPE",aircraftNo:"B-MIX",workKind:"航后"})).flight;
+  await post(`/maintenance/flights/${mixedFlight.id}/dispatch`,{assignments:[{personId:dispatchPeer.id,role:"例行机内"},{personId:outside.id,role:"例行机外"}]},200);
+  const mixedAssignments=db.prepare("select * from maintenance_assignments where flight_id=? order by person_id").all(mixedFlight.id);
+  for(const row of mixedAssignments)db.prepare("insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,hours,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,2,'待复核',?,?)").run("scope-hour-"+row.id,row.owner_type,row.owner_id,row.flight_id,row.id,row.person_id,row.user_name,row.team,row.role,"2026-09-01","2026-09-01");
+  const hourSnapshot=JSON.stringify(db.prepare("select * from maintenance_hour_results where flight_id=? order by id").all(mixedFlight.id));
+  await asActor("/maintenance/hours/confirm-batch",{method:"POST",body:{ids:mixedAssignments.map(a=>"scope-hour-"+a.id)},expected:404});
+  assert.equal(JSON.stringify(db.prepare("select * from maintenance_hour_results where flight_id=? order by id").all(mixedFlight.id)),hourSnapshot);
+  const outsideAssignment=mixedAssignments.find(a=>a.person_id===outside.id);
+  await asActor(`/maintenance/hours/scope-hour-${outsideAssignment.id}/confirm`,{method:"POST",expected:404});
+  await asActor(`/maintenance/flights/${mixedFlight.id}/dispatch`,{method:"POST",body:{assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},expected:403});
+  assert.equal(db.prepare("select count(*) as n from maintenance_assignments where flight_id=?").get(mixedFlight.id).n,2);
+  const beforeDirectory=(await call("/personnel/directory?purpose=maintenance")).items.find(p=>p.personId===dispatchPeer.id);
+  const target=(await post("/admin/accounts",{username:"identity-test",personId:dispatchPeer.id,password:"123456",roles:["worker"],scopes:[],mustChangePassword:false})).account;
+  const targetSession=await request("/login",{method:"POST",body:{username:"identity-test",password:"123456"}});
+  const own=await request("/maintenance/flights?scope=execute",{cookie:targetSession.cookie});
+  assert.ok(own.data.flights.some(f=>f.id===flight.id));
+  assert.equal((await call("/personnel/directory?purpose=maintenance")).items.find(p=>p.personId===dispatchPeer.id).personId,beforeDirectory.personId);
+  await call(`/admin/accounts/${target.id}`,{method:"DELETE"});
+  assert.equal(db.prepare("select person_id from maintenance_assignments where id=?").get(assignment.id).person_id,dispatchPeer.id);
+  await call(`/admin/accounts/${target.id}`,{method:"PUT",body:{personId:dispatchPeer.id,status:"active",roles:["worker"],scopes:[]}});
+  // Same name is never evidence of ownership; rename never changes ownership.
+  const record=(await asActor("/records",{method:"POST",expected:201,body:{date:"2026-09-01",title:"身份归属",category:"其他",original:"测试",recipients:[dispatchPeer.id]}})).record;
+  await call(`/personnel/${actor.id}`,{method:"PUT",body:{name:"同名人员",reason:"改名不转移归属"}});
+  const otherAccount=(await post("/admin/accounts",{username:"same-name",personId:outside.id,password:"123456",roles:["worker",role.code],scopes:[{module:"info",scopeType:"all"}],mustChangePassword:false})).account;
+  const other=await request("/login",{method:"POST",body:{username:otherAccount.username,password:"123456"}});
+  const edit={date:"2026-09-01",title:"修改标题",category:"其他",original:"测试"};
+  await request(`/records/${record.id}`,{cookie:other.cookie,method:"PUT",body:edit,expected:403});
+  await asActor(`/records/${record.id}`,{method:"PUT",body:edit});
+  await asActor("/records",{method:"POST",body:{...edit,recipients:[]},expected:400});
+  // Restrict info only; personnel and maintenance scope definitions must be preserved.
+  const updatedScopes=scopes.map(s=>s.module==="info"?{module:"info",scopeType:"self"}:s);
+  await call(`/admin/accounts/${account.id}`,{method:"PUT",body:{personId:actor.id,roles:["worker",role.code],scopes:updatedScopes}});
+  await request("/me",{cookie:session.cookie,expected:401});session=await request("/login",{method:"POST",body:{username:account.username,password:"123456"}});
+  await asActor("/records",{method:"POST",body:{...edit,recipients:[dispatchPeer.id]},expected:403});
+  assert.deepEqual((await asActor("/personnel/directory?purpose=maintenance")).items.map(p=>p.personId),[dispatchPeer.id]);
+  const actorRow=(await asActor("/me")).user;
+  assert.equal(personnelAccess.allows({...actorRow,dataScopes:[{module:"personnel",scopeType:"all",validTo:"2020-01-01T00:00:00Z"}]},"personnel",outside.id),false);
+  assert.equal(personnelAccess.allows({...actorRow,dataScopes:[{module:"personnel",scopeType:"all",validFrom:"2099-01-01T00:00:00Z"}]},"personnel",outside.id),false);
+  await call(`/admin/accounts/${account.id}`,{method:"PUT",expected:400,body:{personId:actor.id,roles:["worker",role.code],scopes:[{module:"personnel",scopeType:"specified_teams",scopeId:"not-an-org"}]}});
+  await call(`/personnel/organizations/${team1.id}`,{method:"DELETE",expected:409,body:{reason:"引用保护"}});
+  await call(`/personnel/organizations/${team1.id}`,{method:"PUT",expected:400,body:{name:"改名",parentId:depB.id,reason:"禁止改父级"}});
+  await call(`/personnel/organizations/${team1.id}`,{method:"PUT",body:{name:"标准班组名称",reason:"统一显示"}});
+  assert.equal(db.prepare("select home_team from personnel where id=?").get(actor.id).home_team,"标准班组名称");
+  console.log("通过：稳定身份迁移/幂等/冲突阻断、六模块范围隔离、敏感字段与组织权限、暂存后越权、不可换绑、开户前后派工、同名及改名归属、有效期和目录防泄露。");
+}
