@@ -22,11 +22,6 @@ const defaultSettings = {
   reminderDays: 1,
   overdueDays: 3,
   people: [],
-  rolePermissions: {
-    receiver: { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] },
-    publisher: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "remind"] },
-    admin: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"] }
-  },
   securityNotes: "由后端认证、数据库权限校验、附件访问鉴权和操作日志保障。"
 };
 

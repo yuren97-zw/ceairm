@@ -1008,8 +1008,8 @@ async function initDb() {
   db.prepare("delete from sessions where expires_at<=?").run(now());
   db.prepare("delete from favorites where record_id not in (select id from records)").run();
   for (const column of ["deleted_at", "deleted_by", "delete_reason"]) ensureColumn("personnel", column, "text not null default ''");
-  ensureSuperAccount();
   migratePersonnelFoundation(db, now, randomId);
+  ensureSuperAccount();
   migrateAuthorizationNine(db,{now,randomId,audit,allowReset:process.env.NODE_ENV==='test'||process.env.MUC_AUTHORIZATION_RESET==='1',backupPath:process.env.MUC_AUTHORIZATION_BACKUP||''});
   authorizationProjects.migrate();
   seedRbac();
@@ -1449,15 +1449,15 @@ function normalizeMaintenanceTowAndPrimaryRole() {
       db.prepare(`update ${table} set role=? where role=?`).run(current, legacy);
     }
     for (const row of db.prepare("select * from maintenance_report_entries where role=?").all(legacy)) {
-      const duplicate = db.prepare("select 1 from maintenance_report_entries where batch_id=? and owner_type=? and owner_id=? and role=? and user_id=?")
-        .get(row.batch_id, row.owner_type, row.owner_id, current, row.user_id);
+      const duplicate = db.prepare("select 1 from maintenance_report_entries where batch_id=? and owner_type=? and owner_id=? and role=? and person_id=?")
+        .get(row.batch_id, row.owner_type, row.owner_id, current, row.person_id);
       if (duplicate) db.prepare("delete from maintenance_report_entries where id=?").run(row.id);
       else db.prepare("update maintenance_report_entries set role=? where id=?").run(current, row.id);
     }
     for (const row of db.prepare("select * from maintenance_work_report_entries where role=?").all(legacy)) {
-      const duplicate = db.prepare("select 1 from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").get(row.flight_id, current, row.user_id);
-      if (duplicate) db.prepare("delete from maintenance_work_report_entries where flight_id=? and role=? and user_id=?").run(row.flight_id, legacy, row.user_id);
-      else db.prepare("update maintenance_work_report_entries set role=? where flight_id=? and role=? and user_id=?").run(current, row.flight_id, legacy, row.user_id);
+      const duplicate = db.prepare("select 1 from maintenance_work_report_entries where flight_id=? and role=? and person_id=?").get(row.flight_id, current, row.person_id);
+      if (duplicate) db.prepare("delete from maintenance_work_report_entries where flight_id=? and role=? and person_id=?").run(row.flight_id, legacy, row.person_id);
+      else db.prepare("update maintenance_work_report_entries set role=? where flight_id=? and role=? and person_id=?").run(current, row.flight_id, legacy, row.person_id);
     }
     const normalizeDraftValue = value => {
       if (Array.isArray(value)) return value.map(normalizeDraftValue);
@@ -1620,15 +1620,19 @@ function migrateIncorrectSuperAccountId() {
 
 function ensureSuperAccount() {
   migrateIncorrectSuperAccountId();
+  const superDepartment = db.prepare("select id,name from organization_units where code='DEPT-LINE'").get();
+  const superGroup = db.prepare("select id,name from organization_units where code='GROUP-LINE-CADRE'").get();
   let person = db.prepare("select * from personnel where employee_no=?").get(SUPER_ACCOUNT_ID);
   if (!person) {
     const personId = randomId("person");
-    db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,source_batch_id,data_status,created_at,updated_at)
-      values(?,?,?,?,?,'在职','system_super_account','active',?,?)`)
-      .run(personId, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, "系统管理", "管理员", now(), now());
+    db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,source_batch_id,data_status,department_id,personnel_group_id,administrative_team_id,created_at,updated_at)
+      values(?,?,?,?,?,'在职','system_super_account','active',?,?,null,?,?)`)
+      .run(personId, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, superDepartment?.name || "系统管理", superGroup?.name || "干部", superDepartment?.id || null, superGroup?.id || null, now(), now());
     person = db.prepare("select * from personnel where id=?").get(personId);
-  } else if (person.data_status !== "active" || ["离职", "停职"].includes(person.employment_status)) {
-    db.prepare("update personnel set employment_status='在职',data_status='active',updated_at=? where id=?").run(now(), person.id);
+  } else if (person.data_status !== "active" || ["离职", "停职"].includes(person.employment_status) || !person.department_id || !person.personnel_group_id) {
+    db.prepare(`update personnel set employment_status='在职',data_status='active',department_id=coalesce(department_id,?),personnel_group_id=coalesce(personnel_group_id,?),
+      department=case when trim(coalesce(department,''))='' then ? else department end,home_team=case when trim(coalesce(home_team,''))='' then ? else home_team end,updated_at=? where id=?`)
+      .run(superDepartment?.id || null, superGroup?.id || null, superDepartment?.name || "系统管理", superGroup?.name || "干部", now(), person.id);
     person = db.prepare("select * from personnel where id=?").get(person.id);
   }
 
@@ -1646,8 +1650,8 @@ function ensureSuperAccount() {
       values(?,?,?,'rbac',?,?,'[]','[]',?,?,'维修','active',?,0,1,?,?)`)
       .run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, pass.salt, pass.hash, person.department || "系统管理", person.home_team || "管理员", person.id, now(), now());
   } else {
-    db.prepare(`update users set id=?,username=?,name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category='维修',status='active',person_id=?,updated_at=? where id=?`)
-      .run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, SUPER_ACCOUNT_NAME, person.department || "系统管理", person.home_team || "管理员", person.id, now(), row.id);
+    db.prepare(`update users set id=?,username=?,role='rbac',permissions='[]',allowed_tabs='[]',status='active',person_id=?,updated_at=? where id=?`)
+      .run(SUPER_ACCOUNT_ID, SUPER_ACCOUNT_ID, person.id, now(), row.id);
   }
   db.exec("create unique index if not exists users_person_id_unique on users(person_id) where person_id is not null and trim(person_id)<>''");
 }
@@ -1770,15 +1774,14 @@ function publicRecords(rows, user) {
   if (!rows.length) return { records: [], receipts: [] };
   const ids = rows.map(row => row.id);
   const placeholders = ids.map(() => "?").join(",");
-  const recipientRows = db.prepare(`select rr.record_id,rr.user_id as id,
+  const recipientRows = db.prepare(`select rr.record_id,rr.user_id as id,rr.person_id as personId,
       coalesce(u.name,rr.name) as name,coalesce(u.department,rr.department,'未设置') as department,
       coalesce(u.team,rr.team,'未设置') as team
-    from record_recipients rr join users u on u.id=rr.user_id and (u.status is null or u.status<>'disabled')
+    from record_recipients rr left join users u on u.id=rr.user_id
     where rr.record_id in (${placeholders}) order by rr.record_id,rr.user_id`).all(...ids);
   const receiptRows = db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,
       r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
     from read_receipts r join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-    join users u on u.id=r.user_id and (u.status is null or u.status<>'disabled')
     where r.record_id in (${placeholders})`).all(...ids).map(item => ({ ...item, isOverdue: !!item.isOverdue }));
   const attachmentRows = db.prepare(`select * from attachments where owner_type='record' and owner_id in (${placeholders}) order by created_at`).all(...ids);
   const favoriteRows = db.prepare(`select record_id from favorites where user_id=? and record_id in (${placeholders})`).all(user.id, ...ids);
@@ -1786,7 +1789,7 @@ function publicRecords(rows, user) {
   const receiptsByRecord = groupedRows(receiptRows, "recordId");
   const attachmentsByRecord = groupedRows(attachmentRows, "owner_id");
   const favorites = new Set(favoriteRows.map(item => item.record_id));
-  const canSeeFullFeedback = user.role === "admin" || user.role === "publisher";
+  const canSeeFullFeedback = hasAnyRbac(user, ["info.receipt.manage", "info.stats.read"]);
   const visibleReceipts = canSeeFullFeedback ? receiptRows : receiptRows.filter(item => item.userId === user.id);
   return {
     receipts: visibleReceipts,
@@ -1978,6 +1981,7 @@ function publicMaintenanceAssignment(row) {
     ownerId: row.owner_id,
     flightId: row.flight_id || "",
     personId: row.person_id,
+    userId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: row.role,
@@ -2009,6 +2013,7 @@ function publicMaintenanceHour(row) {
     flightId: row.flight_id || "",
     assignmentId: row.assignment_id,
     personId: row.person_id,
+    userId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: row.role || "",
@@ -2032,6 +2037,7 @@ function publicMaintenanceSortie(row) {
     flightId: row.flight_id || "",
     assignmentId: row.assignment_id,
     personId: row.person_id,
+    userId: row.person_id,
     userName: row.user_name,
     team: row.team || "未设置",
     role: "放行",
@@ -3550,12 +3556,16 @@ function maintenanceReportFilters(params = {}) {
   const signature = ["all", "routineElectronic", "routinePaper", "nonroutineElectronic", "nonroutinePaper"].includes(String(params.signature || "")) ? String(params.signature) : "all";
   const view = maintenanceReportViews.includes(String(params.view || "")) ? String(params.view) : "dashboard";
   const pageSize = Math.min(100, Math.max(10, Number(params.pageSize || 20) || 20));
+  const requestedPersonId = String(params.personId || params.userId || "").trim();
+  const compatiblePersonId = requestedPersonId
+    ? (db.prepare("select person_id from users where id=?").get(requestedPersonId)?.person_id || requestedPersonId)
+    : "";
   return {
     view,
     dateFrom: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateFrom || "")) ? String(params.dateFrom) : monthStart,
     dateTo: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateTo || "")) ? String(params.dateTo) : today,
     team: String(params.team || "").trim(),
-    userId: String(params.userId || "").trim(),
+    userId: compatiblePersonId,
     opportunity: String(params.opportunity || "").trim(),
     nonroutineCategory: maintenanceNonroutineCategories.includes(String(params.nonroutineCategory || "")) ? String(params.nonroutineCategory) : "",
     workType,
@@ -3608,12 +3618,12 @@ function maintenanceReportDataset(params = {}) {
   const resultMatches = (row, includeWorkType = true) => {
     if (!flightById.has(row.flight_id)) return false;
     if (filters.team && row.team !== filters.team) return false;
-    if (filters.userId && row.user_id !== filters.userId) return false;
+    if (filters.userId && row.person_id !== filters.userId) return false;
     if (includeWorkType && filters.workType !== "all" && (row.owner_type === "subtask" ? "nonroutine" : "routine") !== filters.workType) return false;
     const flight = flightById.get(row.flight_id);
     const subtask = row.owner_type === "subtask" ? subtaskById.get(row.owner_id) : null;
     const flightText = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
-    const rowText = [row.user_id, row.user_name, row.team, row.role, row.source, subtask?.title, subtask?.category].join(" ").toLowerCase();
+    const rowText = [row.person_id, row.user_name, row.team, row.role, row.source, subtask?.title, subtask?.category].join(" ").toLowerCase();
     return !filters.search || flightText.includes(filters.search) || rowText.includes(filters.search);
   };
   let hours = hourRows.filter(row => resultMatches(row, true));
@@ -3623,14 +3633,14 @@ function maintenanceReportDataset(params = {}) {
     const eligibilityRows = filters.workType === "all" ? [...hours, ...sorties] : hours;
     const eligible = new Set(eligibilityRows.map(row => row.flight_id));
     if (filters.view === "opportunities") {
-      const assignments = db.prepare("select flight_id,owner_type,user_id,user_name,team,role from maintenance_assignments").all();
+      const assignments = db.prepare("select flight_id,owner_type,person_id,user_name,team,role from maintenance_assignments").all();
       for (const row of assignments) {
         if (!flightById.has(row.flight_id)) continue;
         if (filters.team && row.team !== filters.team) continue;
-        if (filters.userId && row.user_id !== filters.userId) continue;
+        if (filters.userId && row.person_id !== filters.userId) continue;
         if (filters.workType === "routine" && (row.owner_type !== "flight" || row.role === "放行")) continue;
         if (filters.workType === "nonroutine" && row.owner_type !== "subtask") continue;
-        if (filters.search && ![row.user_id, row.user_name, row.team, row.role].some(value => String(value || "").toLowerCase().includes(filters.search))) continue;
+        if (filters.search && ![row.person_id, row.user_name, row.team, row.role].some(value => String(value || "").toLowerCase().includes(filters.search))) continue;
         eligible.add(row.flight_id);
       }
     }
@@ -3648,8 +3658,8 @@ function maintenanceReportDataset(params = {}) {
   const people = new Map();
   const teams = new Map();
   const personFor = row => {
-    if (!people.has(row.user_id)) people.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置", routineHours: 0, nonroutineHours: 0, totalHours: 0, sorties: 0, opportunityIds: new Set(), hourTaskCount: 0 });
-    return people.get(row.user_id);
+    if (!people.has(row.person_id)) people.set(row.person_id, { userId: row.person_id, personId: row.person_id, name: row.user_name, team: row.team || "未设置", routineHours: 0, nonroutineHours: 0, totalHours: 0, sorties: 0, opportunityIds: new Set(), hourTaskCount: 0 });
+    return people.get(row.person_id);
   };
   const teamFor = row => {
     const key = row.team || "未设置";
@@ -3662,14 +3672,14 @@ function maintenanceReportDataset(params = {}) {
     const person = personFor(row);
     person[kind] += value; person.totalHours += value; person.hourTaskCount++; person.opportunityIds.add(row.flight_id);
     const team = teamFor(row);
-    team[kind] += value; team.totalHours += value; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.user_id);
+    team[kind] += value; team.totalHours += value; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.person_id);
   }
   for (const row of sorties) {
     const count = Number(row.sorties || 1);
     const person = personFor(row);
     person.sorties += count; person.opportunityIds.add(row.flight_id);
     const team = teamFor(row);
-    team.sorties += count; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.user_id);
+    team.sorties += count; team.opportunityIds.add(row.flight_id); team.peopleIds.add(row.person_id);
   }
   const round = value => Number(Number(value || 0).toFixed(2));
   const peopleRows = [...people.values()].map(row => ({ ...row, routineHours: round(row.routineHours), nonroutineHours: round(row.nonroutineHours), totalHours: round(row.totalHours), opportunityCount: row.opportunityIds.size, opportunityIds: undefined }));
@@ -3703,18 +3713,18 @@ function maintenanceReportDataset(params = {}) {
     if (row.owner_type === "subtask") item.nonroutineHours += value;
     else item.routineHours += value;
     item.totalHours += value;
-    item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
+    item.participants.set(row.person_id, { userId: row.person_id, personId: row.person_id, name: row.user_name, team: row.team || "未设置" });
   }
   for (const row of wholeSorties) {
     const item = opportunityMap.get(row.flight_id);
     if (!item) continue;
     item.sorties += Number(row.sorties || 1);
-    item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
+    item.participants.set(row.person_id, { userId: row.person_id, personId: row.person_id, name: row.user_name, team: row.team || "未设置" });
     item.releasePeople.add(row.user_name);
   }
-  for (const row of db.prepare("select flight_id,user_id,user_name,team,role from maintenance_assignments").all()) {
+  for (const row of db.prepare("select flight_id,person_id,user_name,team,role from maintenance_assignments").all()) {
     const item = opportunityMap.get(row.flight_id);
-    if (item) item.participants.set(row.user_id, { userId: row.user_id, name: row.user_name, team: row.team || "未设置" });
+    if (item) item.participants.set(row.person_id, { userId: row.person_id, personId: row.person_id, name: row.user_name, team: row.team || "未设置" });
   }
   const opportunities = [...opportunityMap.values()].map(item => ({
     ...item,
@@ -3774,18 +3784,18 @@ function maintenanceNonroutineAuditRow(row, assignments = null, results = null) 
   const people = assignments.map(assignment => {
     const result = byAssignment.get(assignment.id);
     byAssignment.delete(assignment.id);
-    return { userId: assignment.user_id, userName: assignment.user_name, team: assignment.team || "未设置", role: assignment.role,
+    return { userId: assignment.person_id, personId: assignment.person_id, userName: assignment.user_name, team: assignment.team || "未设置", role: assignment.role,
       assignmentStatus: assignment.status, resultHours: result ? Number(result.hours || 0) : null,
       adjustedHours: result?.adjusted_hours == null ? null : Number(result.adjusted_hours),
       finalHours: result ? maintenanceFinalHours(result) : null, resultStatus: result?.status || "" };
   });
-  for (const result of byAssignment.values()) people.push({ userId: result.user_id, userName: result.user_name, team: result.team || "未设置", role: result.role,
+  for (const result of byAssignment.values()) people.push({ userId: result.person_id, personId: result.person_id, userName: result.user_name, team: result.team || "未设置", role: result.role,
     assignmentStatus: "派工记录缺失", resultHours: Number(result.hours || 0), adjustedHours: result.adjusted_hours == null ? null : Number(result.adjusted_hours),
     finalHours: maintenanceFinalHours(result), resultStatus: result.status });
   return { id: row.id, flightId: row.flight_id, date: row.date, flightNo: row.flight_no, aircraftNo: row.aircraft_no,
     aircraftType: row.aircraft_type, opportunity: row.work_kind || row.work_type || "其他", chapter: row.card_no || "", title: row.title,
     category: row.category || "其他", reportExplanation: row.content || "", standardHours: Number(row.standard_hours || 0), status: row.status,
-    assignedCount: new Set(assignments.map(item => item.user_id)).size,
+    assignedCount: new Set(assignments.map(item => item.person_id)).size,
     actualHours: Number(results.reduce((sum, result) => sum + maintenanceFinalHours(result), 0).toFixed(2)),
     hasResults: results.length > 0, people };
 }
@@ -3819,7 +3829,7 @@ function maintenanceNonroutineAuditQuery(filters, { paged = true } = {}) {
     const matches = [];
     for (const table of ["maintenance_assignments", "maintenance_hour_results"]) {
       const parts = [`p.owner_type='subtask'`, "p.owner_id=s.id"];
-      if (filters.userId) { parts.push("p.user_id=?"); values.push(filters.userId); }
+      if (filters.userId) { parts.push("p.person_id=?"); values.push(filters.userId); }
       if (filters.team) { parts.push("p.team=?"); values.push(filters.team); }
       matches.push(`exists(select 1 from ${table} p where ${parts.join(" and ")})`);
     }
@@ -3828,8 +3838,8 @@ function maintenanceNonroutineAuditQuery(filters, { paged = true } = {}) {
   if (filters.search) {
     const pattern = `%${filters.search.replace(/[!%_]/g, character => `!${character}`)}%`;
     conditions.push(`(lower(coalesce(f.flight_no,'') || ' ' || coalesce(f.aircraft_no,'') || ' ' || coalesce(f.work_kind,'') || ' ' || coalesce(f.work_type,'') || ' ' || coalesce(s.card_no,'') || ' ' || coalesce(s.title,'') || ' ' || coalesce(s.category,'') || ' ' || coalesce(s.content,'')) like ? escape '!'
-      or exists(select 1 from maintenance_assignments a left join users u on u.id=a.user_id where a.owner_type='subtask' and a.owner_id=s.id
-        and lower(coalesce(a.user_name,'') || ' ' || coalesce(a.user_id,'') || ' ' || coalesce(u.username,'')) like ? escape '!'))`);
+      or exists(select 1 from maintenance_assignments a left join personnel p on p.id=a.person_id where a.owner_type='subtask' and a.owner_id=s.id
+        and lower(coalesce(a.user_name,'') || ' ' || coalesce(a.person_id,'') || ' ' || coalesce(p.employee_no,'')) like ? escape '!'))`);
     values.push(pattern, pattern);
   }
   const from = `from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where ${conditions.join(" and ")}`;
@@ -3848,8 +3858,8 @@ function maintenanceNonroutineAuditDetail(id, user) {
     from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.id=?`).get(id);
   if (!row) return null;
   if (!maintenanceCanManage(user)) {
-    const assigned = db.prepare("select 1 from maintenance_assignments where owner_type='subtask' and owner_id=? and user_id=?").get(id, user.id);
-    const result = db.prepare("select 1 from maintenance_hour_results where owner_type='subtask' and owner_id=? and user_id=?").get(id, user.id);
+    const assigned = db.prepare("select 1 from maintenance_assignments where owner_type='subtask' and owner_id=? and person_id=?").get(id, user.personId);
+    const result = db.prepare("select 1 from maintenance_hour_results where owner_type='subtask' and owner_id=? and person_id=?").get(id, user.personId);
     if (!assigned && !result) return false;
   }
   return maintenanceNonroutineAuditRow(row);
@@ -3868,13 +3878,13 @@ function maintenanceOpportunityAuditDetail(id) {
     const sortie = sortieByAssignment.get(row.id);
     hourByAssignment.delete(row.id);
     sortieByAssignment.delete(row.id);
-    return { userId: row.user_id, userName: row.user_name, team: row.team || "未设置", role: row.role, assignmentStatus: row.status,
+    return { userId: row.person_id, personId: row.person_id, userName: row.user_name, team: row.team || "未设置", role: row.role, assignmentStatus: row.status,
       resultHours: hour ? Number(hour.hours || 0) : null, adjustedHours: hour?.adjusted_hours == null ? null : Number(hour.adjusted_hours),
       finalHours: hour ? maintenanceFinalHours(hour) : null, resultStatus: hour?.status || sortie?.status || "",
       sorties: sortie ? Number(sortie.sorties || 0) : null };
   });
   for (const row of [...hourByAssignment.values(), ...sortieByAssignment.values()]) {
-    people.push({ userId: row.user_id, userName: row.user_name, team: row.team || "未设置", role: row.role,
+    people.push({ userId: row.person_id, personId: row.person_id, userName: row.user_name, team: row.team || "未设置", role: row.role,
       assignmentStatus: "派工记录缺失", resultHours: row.owner_type === "flight" && row.role !== "放行" ? Number(row.hours || 0) : null,
       adjustedHours: row.adjusted_hours == null ? null : Number(row.adjusted_hours), finalHours: row.role === "放行" ? null : maintenanceFinalHours(row),
       resultStatus: row.status, sorties: row.role === "放行" ? Number(row.sorties || 0) : null });
@@ -6820,7 +6830,7 @@ async function routeRequest(req, res) {
       return send(res, 410, { error: "旧账户接口已移除，请使用纯 RBAC 账户接口" });
     }
     const user = currentUser(req);
-    if(url.pathname.startsWith("/api/maintenance/")){
+    if(user.id && url.pathname.startsWith("/api/maintenance/")){
       let flightId=url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)/)?.[1];
       const subtaskId=url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)/)?.[1];
       const assignmentId=url.pathname.match(/^\/api\/maintenance\/assignments\/([^/]+)/)?.[1];
@@ -7059,7 +7069,7 @@ async function routeRequest(req, res) {
       if (!row) return send(res, 404, { error: "未找到航班任务" });
       const scope = url.searchParams.get("scope") || "dispatch";
       const full = scope === "execute" ? publicMaintenanceFlightForExecution(row, viewer) : publicMaintenanceFlight(row);
-      if (!full || (!maintenanceCanManage(viewer) && !maintenanceTaskTreeAssignments(flightId).some(item => item.user_id === viewer.id))) {
+      if (!full || (!maintenanceCanManage(viewer) && !maintenanceTaskTreeAssignments(flightId).some(item => item.person_id === viewer.personId))) {
         return send(res, 403, { error: "无权查看该维修机会" });
       }
       return send(res, 200, { flight: full, version: maintenanceSyncVersion() });
