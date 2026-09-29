@@ -23,7 +23,8 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import COS from "cos-nodejs-sdk-v5";
-import { createDatabase } from "./db.mjs";
+import { createDatabase, requestQueryStats } from "./db.mjs";
+import { createLoginProtection, loginAddress } from "./login-protection.mjs";
 import { createAuthorizationProjects } from "./authorization-projects.mjs";
 import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./personnel-deletion.mjs";
 
@@ -45,6 +46,16 @@ const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
 const serviceStartedAt = new Date().toISOString();
 const appVersion = process.env.APP_VERSION || "1.0.0";
 const isProduction = process.env.NODE_ENV === "production";
+if (isProduction) {
+  let appOrigin;
+  try { appOrigin = new URL(String(process.env.APP_ORIGIN || "")); } catch {}
+  if (!appOrigin || appOrigin.protocol !== "https:" || appOrigin.origin !== String(process.env.APP_ORIGIN || ""))
+    throw new Error("生产环境必须设置准确的 HTTPS APP_ORIGIN（网页和接口使用同一站点源）");
+  if (process.env.COOKIE_SECURE !== "true")
+    throw new Error("生产环境必须启用安全 Cookie（COOKIE_SECURE=true）");
+  if (process.env.CORS_ORIGIN && process.env.CORS_ORIGIN !== appOrigin.origin)
+    throw new Error("当前版本不支持跨域携带登录 Cookie，请移除跨域 CORS_ORIGIN 配置");
+}
 const cosConfig = {
   secretId: String(process.env.COS_SECRET_ID || "").trim(),
   secretKey: String(process.env.COS_SECRET_KEY || "").trim(),
@@ -53,6 +64,7 @@ const cosConfig = {
 };
 let cosClient = null;
 const sessions = new Map();
+const loginProtection = createLoginProtection();
 const requestContext = new AsyncLocalStorage();
 const requestUser = () => { const req = requestContext.getStore()?.req; return req ? currentUser(req) : null; };
 const maintenanceEventClients = new Set();
@@ -172,8 +184,8 @@ function bumpMaintenanceVersion(flightId = "", eventType = "maintenance.updated"
   return JSON.parse(payload);
 }
 
-function allPeople(module = "maintenance") {
-  const user = requestUser(), scope = user ? personnelAccess.predicate(user,module) : { sql:"1=1",params:[] };
+function allPeople(module = "maintenance", scopeOverride = null) {
+  const user = requestUser(), scope = scopeOverride || (user ? personnelAccess.predicate(user,module) : { sql:"1=1",params:[] });
   const maintenanceEligible=module==="maintenance"?" and g.unit_type='personnel_group' and g.maintenance_eligible=1":"";
   return db.prepare(`select p.*,u.id as account_id,u.username,u.status as account_status,u.function_category,d.name as department_name,g.name as personnel_group_name,at.name as administrative_team_name,wt.name as working_team_name,cs.working_team_id from personnel p
     left join users u on u.person_id=p.id left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units at on at.id=p.administrative_team_id left join capability_current_states cs on cs.person_id=p.id left join organization_units wt on wt.id=cs.working_team_id where p.data_status='active'
@@ -187,6 +199,14 @@ function allPeople(module = "maintenance") {
 }
 
 function allLoginPeople() { return allPeople("info").filter(person => person.hasAccount).map(person => ({...person,id:person.accountId})); }
+
+// Reporting participants may name any currently eligible maintenance person.
+// This does not change dispatch or general personnel-directory scope.
+function maintenanceReportPeople(flightId) {
+  const user = requestUser();
+  if (!user || !hasRbac(user, "maintenance.execute.submit") || !maintenanceCanSubmitReport(user, flightId)) return allPeople();
+  return allPeople("maintenance", { sql: "1=1", params: [] });
+}
 
 function toUser(row) {
   if (!row) return { id: "", username: "", name: "", rbacRoles: [], rbacPermissions: [], dataScopes: [], visibleNavigation: [] };
@@ -307,8 +327,7 @@ function parseCookies(req) {
 
 function sessionCookie(value, maxAge = 604800) {
   const secure = process.env.COOKIE_SECURE === "true";
-  const sameSite = secure ? "None" : "Lax";
-  const parts = [`muc_sid=${encodeURIComponent(value || "")}`, "HttpOnly", `SameSite=${sameSite}`, "Path=/", `Max-Age=${maxAge}`];
+  const parts = [`muc_sid=${encodeURIComponent(value || "")}`, "HttpOnly", "SameSite=Lax", "Path=/", `Max-Age=${maxAge}`];
   if (secure) parts.splice(2, 0, "Secure");
   return parts.join("; ");
 }
@@ -376,17 +395,34 @@ function audit(user, action, targetType, targetId, detail = "") {
 
 function send(res, status, data, headers = {}) {
   const actor=requestUser(), routePath=requestContext.getStore()?.req?.url || "";
-  if(actor && routePath.startsWith("/api/maintenance/") && !personnelAccess.hasAll(actor,"maintenance")) data=redactMaintenanceResponse(data,actor);
+  if(actor && routePath.startsWith("/api/maintenance/") && !personnelAccess.hasAll(actor,"maintenance")) {
+    const report = data?.report, reportFlightId = report?.flight?.id;
+    const executionScope = new URL(routePath, "http://localhost").searchParams.get("scope") === "execute";
+    const executionFlights = executionScope && Array.isArray(data?.flights) ? data.flights : null;
+    const executionFlight = executionScope && data?.flight && !executionFlights ? data.flight : null;
+    data=redactMaintenanceResponse(data,actor);
+    if (report && reportFlightId && maintenanceCanSubmitReport(actor, reportFlightId) && data?.report) {
+      const allowed = new Set(maintenanceReportPeople(reportFlightId).map(p => p.id));
+      data.report = redactMaintenanceResponse(report, actor, allowed);
+    }
+    const restoreExecution = flight => {
+      if (!flight?.id || !maintenanceCanSubmitReport(actor, flight.id)) return null;
+      const allowed = new Set(maintenanceTaskTreeAssignments(flight.id).map(row => row.person_id));
+      return redactMaintenanceResponse(flight, actor, allowed);
+    };
+    if (executionFlights && data?.flights) data.flights = executionFlights.map(restoreExecution).filter(Boolean);
+    if (executionFlight && data?.flight) data.flight = restoreExecution(executionFlight);
+  }
   const body = JSON.stringify(data);
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", ...headers });
   res.end(body);
 }
 
-function redactMaintenanceResponse(value,user) {
- if(Array.isArray(value))return value.filter(item=>!item?.personId || item.personId===user.personId || personnelAccess.allows(user,"maintenance",item.personId)).map(item=>redactMaintenanceResponse(item,user));
+function redactMaintenanceResponse(value,user,allowed = new Set()) {
+ if(Array.isArray(value))return value.filter(item=>!item?.personId || item.personId===user.personId || allowed.has(item.personId) || personnelAccess.allows(user,"maintenance",item.personId)).map(item=>redactMaintenanceResponse(item,user,allowed));
  if(!value || typeof value!=="object")return value;
- if(value.personId && value.personId!==user.personId && !personnelAccess.allows(user,"maintenance",value.personId))return null;
- return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,redactMaintenanceResponse(item,user)]));
+ if(value.personId && value.personId!==user.personId && !allowed.has(value.personId) && !personnelAccess.allows(user,"maintenance",value.personId))return null;
+ return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,redactMaintenanceResponse(item,user,allowed)]));
 }
 function sendText(res, status, body, type = "text/plain; charset=utf-8", headers = {}) {
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": type, "Content-Length": Buffer.byteLength(body), ...headers });
@@ -408,24 +444,43 @@ function securityHeaders(extra = {}) {
 }
 
 function corsHeaders() {
-  const origin = process.env.CORS_ORIGIN;
-  if (!origin) return {};
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Credentials": "true"
-  };
+  // Authenticated browser access is same-origin only. In particular, do not
+  // advertise credentialed CORS for a different frontend origin.
+  return {};
+}
+
+function sameOriginWrite(req) {
+  const configured = String(process.env.APP_ORIGIN || "").trim();
+  const host = String(req.headers.host || "").trim();
+  const expected = configured || (process.env.NODE_ENV !== "production" && host ? `http://${host}` : "");
+  if (!expected) return false;
+  let canonical;
+  try { canonical = new URL(expected).origin; } catch { return false; }
+  const fetchSite = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+  const origin = String(req.headers.origin || "").trim();
+  if (origin) return origin !== "null" && origin === canonical;
+  const referer = String(req.headers.referer || "").trim();
+  if (referer) {
+    try { return new URL(referer).origin === canonical; } catch { return false; }
+  }
+  // Modern browsers emit Fetch Metadata even when Origin is absent. Production
+  // rejects legacy requests that provide no proof of their browser origin.
+  return fetchSite === "same-origin" || (process.env.NODE_ENV !== "production" && !host);
 }
 
 async function bodyJson(req) {
   if(Object.hasOwn(req,"parsedJson"))return req.parsedJson;
   const text = (await bodyBuffer(req, MAX_JSON_BYTES)).toString("utf8");
+  if (text && !/^application\/json(?:\s*;|\s*$)/i.test(String(req.headers["content-type"] || "")))
+    throw Object.assign(new Error("JSON 接口只接受 application/json"), { status: 415 });
   req.parsedJson=text ? JSON.parse(text) : {};
   return req.parsedJson;
 }
 
 async function bodyForm(req) {
+  if (!/^application\/x-www-form-urlencoded(?:\s*;|\s*$)/i.test(String(req.headers["content-type"] || "")))
+    throw Object.assign(new Error("表单接口只接受 application/x-www-form-urlencoded"), { status: 415 });
   const buffer = await bodyBuffer(req, MAX_JSON_BYTES);
   return Object.fromEntries(new URLSearchParams(buffer.toString("utf8")));
 }
@@ -2091,11 +2146,12 @@ function maintenanceWorkReport(flightId) {
   };
 }
 
-function maintenanceTransaction(callback) {
+function maintenanceTransaction(callback, reportFlightId = "") {
   db.exec("begin immediate");
   try {
     if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
     const user=requestUser();
+    const reportPeople = new Set(reportFlightId ? maintenanceReportPeople(reportFlightId).map(p => p.id) : []);
     const snapshot=()=>new Map(PERSON_TABLES.flatMap(table=>db.prepare(`select * from ${table}`).all().map(row=>[table+":"+ (row.id || JSON.stringify([row.flight_id,row.role,row.person_id])),row])));
     const before=user && !personnelAccess.hasAll(user,"maintenance")?snapshot():null;
     const result = callback();
@@ -2104,7 +2160,10 @@ function maintenanceTransaction(callback) {
       for(const key of new Set([...before.keys(),...after.keys()])){
         const old=before.get(key),next=after.get(key);
         if(JSON.stringify(old)===JSON.stringify(next))continue;
-        for(const row of [old,next].filter(Boolean))if(row.person_id!==user.personId && !personnelAccess.allows(user,"maintenance",row.person_id))throw Object.assign(new Error("操作涉及维修范围外人员，整笔操作已取消"),{status:403});
+        for(const row of [old,next].filter(Boolean)) {
+          const reportAllowed = reportPeople.has(row.person_id) && row.flight_id === reportFlightId;
+          if(row.person_id!==user.personId && !reportAllowed && !personnelAccess.allows(user,"maintenance",row.person_id))throw Object.assign(new Error("操作涉及维修范围外人员，整笔操作已取消"),{status:403});
+        }
       }
     }
     db.exec("commit");
@@ -2222,8 +2281,8 @@ function writeMaintenanceReportDraft(flightId, reportType, payload, user, curren
   return version;
 }
 
-function normalizeMaintenanceNonroutineDraft(payload) {
-  const people = new Set(allPeople().map(person => person.id));
+function normalizeMaintenanceNonroutineDraft(flightId, payload) {
+  const people = new Set(maintenanceReportPeople(flightId).map(person => person.id));
   for (const item of (payload?.items || [])) for (const entry of (item.entries || [])) {
     if (!people.has(String(entry.personId || ""))) throw Object.assign(new Error("草稿包含范围外或无效人员"), { status: 403 });
   }
@@ -2284,7 +2343,7 @@ function saveMaintenanceNonroutineDraft(flightId, payload, user) {
   const expectedVersion = payload?.version;
   if (current && Number(expectedVersion) !== Number(current.version || 1)) throw maintenanceReviewError("草稿已被其他人员更新，请刷新后重试", 409);
   if (!current && expectedVersion !== null && expectedVersion !== undefined && Number(expectedVersion) !== 0) throw maintenanceReviewError("草稿版本已变化，请刷新后重试", 409);
-  const normalized = normalizeMaintenanceNonroutineDraft(payload);
+  const normalized = normalizeMaintenanceNonroutineDraft(flightId, payload);
   const version = writeMaintenanceReportDraft(flightId, "nonroutine", normalized, user, current);
   maintenanceLog(user, "save_nonroutine_draft", "flight", flightId, flightId, JSON.stringify({ version, itemCount: normalized.items.length }));
   return maintenanceReportDraft(flightId, "nonroutine");
@@ -2318,7 +2377,7 @@ function applyMaintenanceReleaseSelection(flightId, requestedUserId, user) {
   }
   if (!requested || requested === release.person_id) return release.person_id;
   if (release.person_id !== user.personId) throw maintenanceDispatchError("只有当前放行人员可以调整放行归属");
-  const person = allPeople().find(item => item.id === requested);
+  const person = maintenanceReportPeople(flightId).find(item => item.id === requested);
   if (!person) throw maintenanceDispatchError("新的放行人员不存在或已停用");
   db.prepare("update maintenance_assignments set person_id=?,user_name=?,team=?,modified_at=? where id=?")
     .run(person.id, person.name, person.team || "未设置", now(), release.id);
@@ -2435,7 +2494,7 @@ function saveMaintenanceRoutineDraft(flightId, payload, user) {
       draft: maintenanceReportDraft(flightId, "routine"),
       flight: publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId))
     };
-  });
+  }, flightId);
 }
 
 function assertMaintenanceReportDraftVersion(flightId, reportType, expectedVersion) {
@@ -2621,7 +2680,6 @@ function publicMaintenanceExecutionView(flight, user) {
     overallReady,
     awaitingFinalConfirmation: flight.status === "已提报" && overallReady && !flight.reportFinalizedAt
   };
-  if (!mainVisible) flight.assignments = [];
   return mainVisible || hasSubtaskMine ? flight : null;
 }
 
@@ -4357,7 +4415,8 @@ function setMaintenanceAssignments(ownerType, ownerId, assignments, user) {
 }
 
 function normalizeMaintenanceReportEntries(rawEntries, allowedRoles, { ownerType = "flight", ownerId = "", standardHours = 0, source = "报工补录" } = {}) {
-  const people = new Map(allPeople().map(person => [person.id, person]));
+  const flightId = ownerType === "flight" ? ownerId : db.prepare("select flight_id from maintenance_subtasks where id=?").get(ownerId)?.flight_id;
+  const people = new Map((flightId ? maintenanceReportPeople(flightId) : allPeople()).map(person => [person.id, person]));
   const allowed = new Set(allowedRoles);
   const seen = new Set();
   const entries = [];
@@ -4432,7 +4491,7 @@ function maintenanceReportsView(flightId, user) {
     ? progress.batches.routine.entries
     : routineDraft
       ? routineDraft.entries.map(entry => {
-        const person = allPeople().find(item => item.id === entry.personId);
+        const person = maintenanceReportPeople(flightId).find(item => item.id === entry.personId);
         return {
           ownerType: "flight",
           ownerId: flightId,
@@ -4450,9 +4509,10 @@ function maintenanceReportsView(flightId, user) {
   ]);
   return {
     flight: { id: flight.id, flightNo: flight.flightNo, aircraftNo: flight.aircraftNo, aircraftType: flight.aircraftType, opportunity: flight.workKind, status: flight.status },
-    people: allPeople(),
+    people: maintenanceReportPeople(flightId),
     progress,
     routine: {
+      people: maintenanceReportPeople(flightId),
       roles: routineRoles,
       entries: routineEntries,
       feedback: progress.batches.routine?.feedback ?? routineDraft?.feedback ?? "",
@@ -4526,7 +4586,7 @@ function submitMaintenanceRoutine(flightId, payload, user) {
     reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     maintenanceLog(user, "routine_report_submit", "flight", flightId, flightId, JSON.stringify({ before, after: maintenanceReviewSnapshot(flightId), batchId: batch.id }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  }, flightId);
 }
 
 function normalizeNonroutineReportItems(flightId, rawItems, user, {
@@ -4679,7 +4739,7 @@ function saveMaintenanceNonroutine(flightId, payload, user) {
       itemCount: items.length
     }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  }, flightId);
 }
 
 function submitMaintenanceNonroutine(flightId, payload, user) {
@@ -4695,7 +4755,7 @@ function submitMaintenanceNonroutine(flightId, payload, user) {
     reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     maintenanceLog(user, "nonroutine_report_submit", "flight", flightId, flightId, JSON.stringify({ before, after: maintenanceReviewSnapshot(flightId), batchId: batch.id }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  }, flightId);
 }
 
 function deleteMaintenanceSubtaskForReport(subtask, user) {
@@ -4770,7 +4830,7 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
     const requestedReleaseUserId = String(payload?.releasePersonId || lockedReleaseUserId).trim();
     if (requestedReleaseUserId !== lockedReleaseUserId) throw maintenanceReviewError("放行架次已提报，放行人员不能修改", 409);
     const releasePersonId = lockedReleaseUserId;
-    const releasePerson = allPeople().find(row => row.id === releasePersonId);
+    const releasePerson = maintenanceReportPeople(flightId).find(row => row.id === releasePersonId);
     if (!releasePerson) throw maintenanceDispatchError("最终放行人员不存在或已停用");
     const releaseAssignment = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
     if (!releaseAssignment) throw maintenanceDispatchError("未找到放行派工记录");
@@ -4795,7 +4855,7 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
     const after = { review: maintenanceReviewSnapshot(flightId), progress: maintenanceReportProgress(flightId), releaseOwner: releasePerson.id };
     maintenanceLog(user, finalize ? "report_finalize" : "report_confirmation_save", "flight", flightId, flightId, JSON.stringify({ before, after, originalReleaseReporter: releaseBatch.submittedBy, releaseOwner: releasePerson.id, deletedSubtaskIds: deletedIds }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  }, flightId);
 }
 
 function finalizeMaintenanceReports(flightId, payload, user) {
@@ -6364,6 +6424,8 @@ async function routeRequest(req, res) {
     });
   }
   try {
+    if (["POST","PUT","PATCH","DELETE"].includes(method) && !sameOriginWrite(req))
+      return send(res, 403, { error: "跨站或来源不明的写入请求已拒绝" });
     if(["POST","PUT","DELETE"].includes(method) && String(req.headers["content-type"] || "").includes("application/json"))await bodyJson(req);
     if (method === "OPTIONS") {
       res.writeHead(204, corsHeaders());
@@ -6372,12 +6434,21 @@ async function routeRequest(req, res) {
     }
     if (method === "POST" && url.pathname === "/login") {
       const payload = await bodyForm(req);
+      const address = loginAddress(req, { trustLocalProxy: process.env.TRUST_LOCAL_PROXY === "true" });
+      const allowance = loginProtection.check(payload.username, address);
+      if (!allowance.allowed) {
+        res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8", "Retry-After": String(allowance.retryAfter), "Cache-Control": "no-store" });
+        res.end("登录尝试过于频繁，请稍后再试");
+        return;
+      }
       const row = db.prepare("select * from users where username=?").get(payload.username || "");
       if (!row || !verifyPassword(payload.password || "", row) || (row.status || "active") === "disabled" || isDeletedAccountPerson(row)) {
+        loginProtection.failure(payload.username, address);
         res.writeHead(303, { "Location": `/?login_error=${encodeURIComponent("账号或密码不正确")}`, "Cache-Control": "no-store" });
         res.end();
         return;
       }
+      loginProtection.success(payload.username);
       const { sid } = createLoginSession(row);
       res.writeHead(303, {
         "Location": "/",
@@ -6413,12 +6484,20 @@ async function routeRequest(req, res) {
     }
     if (method === "POST" && url.pathname === "/api/login") {
       const payload = await bodyJson(req);
+      const address = loginAddress(req, { trustLocalProxy: process.env.TRUST_LOCAL_PROXY === "true" });
+      const allowance = loginProtection.check(payload.username, address);
+      if (!allowance.allowed) return send(res, 429, { error: "登录尝试过于频繁，请稍后再试" }, { "Retry-After": String(allowance.retryAfter) });
       const row = db.prepare("select * from users where username=?").get(payload.username || "");
       if (!row || !verifyPassword(payload.password || "", row)) {
+        loginProtection.failure(payload.username, address);
         audit(null, "login_failed", "user", String(payload.username || "guest"), "invalid_credentials");
         return send(res, 401, { error: "账号或密码不正确" });
       }
-      if ((row.status || "active") === "disabled" || isDeletedAccountPerson(row)) return send(res, 403, { error: "账号已停用或人员已删除" });
+      if ((row.status || "active") === "disabled" || isDeletedAccountPerson(row)) {
+        loginProtection.failure(payload.username, address);
+        return send(res, 403, { error: "账号已停用或人员已删除" });
+      }
+      loginProtection.success(payload.username);
       const { sid, user } = createLoginSession(row);
       return send(res, 200, { user }, { "Set-Cookie": sessionCookie(sid) });
     }
@@ -8014,21 +8093,23 @@ async function routeRequest(req, res) {
 async function measuredRoute(req, res) {
   const requestId = crypto.randomBytes(8).toString("hex");
   const started = performance.now();
-  const before = db.queryStats?.() || { count: 0, totalMs: 0, slowCount: 0 };
+  const requestStats = { count: 0, totalMs: 0, slowCount: 0 };
   let statusCode = 200;
+  let finished = false;
   const originalWriteHead = res.writeHead.bind(res);
   res.writeHead = (status, statusMessageOrHeaders, maybeHeaders) => {
     statusCode = Number(status || 200);
     const headers = typeof statusMessageOrHeaders === "object" ? { ...statusMessageOrHeaders } : { ...(maybeHeaders || {}) };
-    const current = db.queryStats?.() || before;
+    const current = requestStats;
     headers["X-Request-Id"] ||= requestId;
-    headers["Server-Timing"] ||= `db;dur=${Math.max(0, current.totalMs - before.totalMs).toFixed(1)}, app;dur=${Math.max(0, performance.now() - started).toFixed(1)}`;
+    headers["Server-Timing"] ||= `db;dur=${current.totalMs.toFixed(1)}, app;dur=${Math.max(0, performance.now() - started).toFixed(1)}`;
     return typeof statusMessageOrHeaders === "string"
       ? originalWriteHead(status, statusMessageOrHeaders, headers)
       : originalWriteHead(status, headers);
   };
   res.once("finish", () => {
-    const after = db.queryStats?.() || before;
+    finished = true;
+    const after = requestStats;
     const durationMs = performance.now() - started;
     if (process.env.REQUEST_LOGS === "1" || durationMs >= 500 || statusCode >= 500) {
       process.stdout.write(`${JSON.stringify({
@@ -8038,13 +8119,26 @@ async function measuredRoute(req, res) {
         path: new URL(req.url, "http://localhost").pathname,
         status: statusCode,
         durationMs: Number(durationMs.toFixed(1)),
-        queryCount: Math.max(0, after.count - before.count),
-        queryMs: Number(Math.max(0, after.totalMs - before.totalMs).toFixed(1)),
-        slowQueries: Math.max(0, after.slowCount - before.slowCount)
+        queryCount: after.count,
+        queryMs: Number(after.totalMs.toFixed(1)),
+        slowQueries: after.slowCount
       })}\n`);
     }
   });
-  return route(req, res);
+  res.once("close", () => {
+    if (finished) return;
+    if ((req.method || "GET") === "GET" && /\/events$/.test(new URL(req.url, "http://localhost").pathname)) return;
+    const after = requestStats;
+    process.stderr.write(`${JSON.stringify({
+      type: "http_request_incomplete", requestId,
+      method: req.method || "GET", path: new URL(req.url, "http://localhost").pathname,
+      durationMs: Number((performance.now() - started).toFixed(1)),
+      queryCount: after.count,
+      queryMs: Number(after.totalMs.toFixed(1)),
+      slowQueries: after.slowCount
+    })}\n`);
+  });
+  return requestQueryStats.run(requestStats, () => route(req, res));
 }
 
 // Fail before initialization writes when a populated pre-v3 database needs review.

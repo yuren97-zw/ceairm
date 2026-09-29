@@ -32,26 +32,74 @@ class MockResponse extends EventEmitter {
   }
 }
 
-async function request(url, { method = "GET", body, cookie = "" } = {}) {
+async function request(url, { method = "GET", body, cookie = "", headers = {} } = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
   req.method = method;
   req.url = url;
-  req.headers = cookie ? { cookie, "content-type": "application/json" } : { "content-type": "application/json" };
+  req.headers = { host: "127.0.0.1:8788", origin: "http://127.0.0.1:8788", "content-type": "application/json", ...(cookie ? { cookie } : {}), ...headers };
   const res = new MockResponse();
   await measuredRoute(req, res);
   const payload = res.body.length ? JSON.parse(res.body.toString("utf8")) : null;
   return { res, payload };
 }
 
-async function requestRaw(url, { method = "GET", body, cookie = "" } = {}) {
+async function requestRaw(url, { method = "GET", body, cookie = "", headers = {} } = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
   req.method = method;
   req.url = url;
-  req.headers = cookie ? { cookie, "content-type": "application/json" } : { "content-type": "application/json" };
+  req.headers = { host: "127.0.0.1:8788", origin: "http://127.0.0.1:8788", "content-type": "application/json", ...(cookie ? { cookie } : {}), ...headers };
   const res = new MockResponse();
   await measuredRoute(req, res);
   return res;
 }
+
+test("unsafe requests reject cross-origin and simple text bodies before writing", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  assert.equal(login.res.statusCode, 200);
+  const cookie = String(login.res.headers["Set-Cookie"] || "").split(";")[0];
+  assert.match(String(login.res.headers["Set-Cookie"]), /SameSite=Lax/);
+  const before = db.prepare("select count(*) as n from maintenance_flights").get().n;
+  const payload = { flightNo: "CSRF-TEST", flightDate: "2026-09-29" };
+  const crossed = await request("/api/maintenance/flights", { method: "POST", cookie, body: payload,
+    headers: { origin: "https://untrusted.example", "content-type": "text/plain" } });
+  assert.equal(crossed.res.statusCode, 403);
+  const unknown = await request("/api/maintenance/flights", { method: "POST", cookie, body: payload,
+    headers: { origin: "null" } });
+  assert.equal(unknown.res.statusCode, 403);
+  const wrongType = await request("/api/maintenance/flights", { method: "POST", cookie, body: payload,
+    headers: { "content-type": "text/plain" } });
+  assert.equal(wrongType.res.statusCode, 415);
+  assert.equal(db.prepare("select count(*) as n from maintenance_flights").get().n, before);
+});
+
+test("API login throttles repeated bad credentials without blocking other accounts", async () => {
+  for (let index = 0; index < 6; index++) {
+    const attempt = await request("/api/login", { method: "POST", body: { username: "no-such-login-test", password: "wrong" } });
+    assert.equal(attempt.res.statusCode, 401);
+  }
+  const blocked = await request("/api/login", { method: "POST", body: { username: "no-such-login-test", password: "wrong" } });
+  assert.equal(blocked.res.statusCode, 429);
+  assert.ok(Number(blocked.res.headers["Retry-After"]) > 0);
+  const real = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  assert.equal(real.res.statusCode, 200);
+});
+
+test("form login uses the same throttling rule", async () => {
+  const form = new URLSearchParams({ username: "no-such-form-test", password: "wrong" }).toString();
+  const attempt = async () => {
+    const req = Readable.from([Buffer.from(form)]);
+    req.method = "POST";
+    req.url = "/login";
+    req.headers = { host: "127.0.0.1:8788", origin: "http://127.0.0.1:8788", "content-type": "application/x-www-form-urlencoded" };
+    const res = new MockResponse();
+    await measuredRoute(req, res);
+    return res;
+  };
+  for (let index = 0; index < 6; index++) assert.equal((await attempt()).statusCode, 303);
+  const blocked = await attempt();
+  assert.equal(blocked.statusCode, 429);
+  assert.ok(Number(blocked.headers["Retry-After"]) > 0);
+});
 
 function maintenancePerson(user) {
   const linkedId = String(user?.personId || "").trim();
@@ -94,6 +142,135 @@ function createMaintenanceTestAccount(template, { id, username = id, name }) {
     values(?,?,?,?,?,'','',?,?)`).run(`scope-${id}`, id, "maintenance", "administrative_team", team?.id || "", stamp, stamp);
   return { ...row, personId };
 }
+
+test("self-scoped participants can report eligible people across teams without widening dispatch", async () => {
+  const adminLogin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const adminCookie = String(adminLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const worker = createMaintenanceTestAccount(template, { id: "candidate-worker", name: "候选测试" });
+  const secondWorker = createMaintenanceTestAccount(template, { id: "candidate-second-worker", name: "第二参与人" });
+  const outsider = createMaintenanceTestAccount(template, { id: "candidate-outsider", name: "未参与人员" });
+  const colleague = createMaintenanceTestAccount(template, { id: "candidate-colleague", name: "无账户跨组人员" });
+  db.prepare("update rbac_user_scopes set scope_type='self',scope_id='' where user_id=?").run(worker.id);
+  db.prepare("update rbac_user_scopes set scope_type='self',scope_id='' where user_id=?").run(secondWorker.id);
+  const otherTeam = db.prepare("select id from organization_units where unit_type='administrative_team' and id<>(select administrative_team_id from personnel where id=?) limit 1").get(worker.personId);
+  assert.ok(otherTeam);
+  db.prepare("update personnel set administrative_team_id=? where id=?").run(otherTeam.id, colleague.personId);
+  db.prepare("delete from rbac_user_roles where user_id=?").run(colleague.id);
+  db.prepare("delete from rbac_user_scopes where user_id=?").run(colleague.id);
+  db.prepare("delete from users where id=?").run(colleague.id);
+  const flight = await request("/api/maintenance/flights", { method: "POST", cookie: adminCookie, body: { date: "2026-09-01", flightNo: "MUCAND", aircraftNo: "BCAND", workKind: "短停", standardHours: 2 } });
+  const flightId = flight.payload.flight.id;
+  const stamp = new Date().toISOString();
+  for (const role of ["放行", "接机"]) db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_by,assigned_at)
+    values(?,'flight',?,?,?,?,?,?,'已派工',?,?)`).run(`candidate-${role}`, flightId, flightId, worker.personId, worker.name, "一组", role, template.id, stamp);
+  db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_by,assigned_at)
+    values(?,'flight',?,?,?,?,?,?,'已派工',?,?)`).run("candidate-second", flightId, flightId, secondWorker.personId, secondWorker.name, "二组", "送机", template.id, stamp);
+  db.prepare("update maintenance_flights set status='已派工' where id=?").run(flightId);
+  const login = await request("/api/login", { method: "POST", body: { username: worker.username, password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"]).split(";")[0];
+  const directory = await request("/api/personnel/directory?purpose=maintenance", { cookie });
+  assert.deepEqual(directory.payload.items.map(p => p.personId), [worker.personId]);
+  const reports = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie });
+  assert.equal(reports.res.statusCode, 200, JSON.stringify(reports.payload));
+  assert.ok(reports.payload.report.people.some(p => p.id === colleague.personId && p.employeeNo && !p.accountId));
+  assert.ok(reports.payload.report.routine.people.some(p => p.id === colleague.personId && p.employeeNo && !p.accountId), JSON.stringify({ candidates: reports.payload.report.routine.people, colleague: db.prepare('select id,data_status,personnel_group_id from personnel where id=?').get(colleague.personId), permissions: login.payload.user.rbacPermissions, scopes: login.payload.user.dataScopes }));
+  const execute = await request("/api/maintenance/flights?scope=execute", { cookie });
+  const visibleFlight = execute.payload.flights.find(item => item.id === flightId);
+  assert.ok(visibleFlight?.assignments.some(item => item.personId === secondWorker.personId));
+  const detail = await request(`/api/maintenance/flights/${flightId}?scope=execute`, { cookie });
+  assert.ok(detail.payload.flight.assignments.some(item => item.personId === secondWorker.personId));
+  const secondLogin = await request("/api/login", { method: "POST", body: { username: secondWorker.username, password: "muc2026" } });
+  const secondCookie = String(secondLogin.res.headers["Set-Cookie"]).split(";")[0];
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie })).res.statusCode, 200);
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/release`, { method: "PUT", cookie: secondCookie, body: {} })).res.statusCode, 400);
+  const outsiderLogin = await request("/api/login", { method: "POST", body: { username: outsider.username, password: "muc2026" } });
+  const outsiderCookie = String(outsiderLogin.res.headers["Set-Cookie"]).split(";")[0];
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: outsiderCookie })).res.statusCode, 400);
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie: outsiderCookie, body: { entries: [] } })).res.statusCode, 400);
+  const entries = [{ role: "接机", personId: worker.personId }, { role: "送机", personId: secondWorker.personId }, { role: "接机", personId: colleague.personId }];
+  const saved = await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie, body: { entries, version: 0 } });
+  assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
+  const updated = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie });
+  assert.ok(updated.payload.report.routine.entries.some(p => p.personId === colleague.personId && p.userName === colleague.name));
+  const version = updated.payload.report.routine.draft.version;
+  const groupId = db.prepare("select personnel_group_id from personnel where id=?").get(colleague.personId).personnel_group_id;
+  db.prepare("update personnel set personnel_group_id=null where id=?").run(colleague.personId);
+  const outside = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  assert.equal(outside.res.statusCode, 400);
+  db.prepare("update personnel set personnel_group_id=? where id=?").run(groupId, colleague.personId);
+  db.prepare("update personnel set employment_status='停职' where id=?").run(colleague.personId);
+  const rejected = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  assert.equal(rejected.res.statusCode, 400, JSON.stringify(rejected.payload));
+  db.prepare("update personnel set employment_status='在职' where id=?").run(colleague.personId);
+  const submitted = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  assert.equal(submitted.res.statusCode, 200, JSON.stringify(submitted.payload));
+  const nonroutineItems = [{ temporary: true, title: "跨范围非例行", category: "其他", standardHours: 2, entries: [{ role: "主做", personId: colleague.personId }] }];
+  const draft = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine/draft`, { method: "PUT", cookie: secondCookie, body: { items: nonroutineItems, version: 0 } });
+  assert.equal(draft.res.statusCode, 200, JSON.stringify(draft.payload));
+  const beforeNonroutine = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie });
+  const savedNonroutine = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine`, { method: "PUT", cookie: secondCookie, body: { mode: "save", items: nonroutineItems, revision: beforeNonroutine.payload.report.nonroutine.revision } });
+  assert.equal(savedNonroutine.res.statusCode, 200, JSON.stringify(savedNonroutine.payload));
+  const formal = db.prepare("select id from maintenance_subtasks where flight_id=?").get(flightId);
+  const latest = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie });
+  const submittedNonroutine = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine`, { method: "PUT", cookie: secondCookie, body: { mode: "submit", items: [{ ...nonroutineItems[0], temporary: false, id: formal.id }], revision: latest.payload.report.nonroutine.revision, draftVersion: latest.payload.report.nonroutine.draft?.version } });
+  assert.equal(submittedNonroutine.res.statusCode, 200, JSON.stringify(submittedNonroutine.payload));
+});
+
+test("dispatch and report picker search includes independent employee numbers", async () => {
+  const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  for (const name of ["renderMaintenanceDispatchPicker", "renderMaintenanceWorkReportPicker"]) {
+    const start = source.indexOf(`function ${name}()`);
+    const end = source.indexOf("\nfunction ", start + 1);
+    const code = source.slice(start, end);
+    assert.match(code, /person\.employeeNo/);
+  }
+});
+
+test("nonroutine-only participant sees peer dispatch in execution list and detail", async () => {
+  const admin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const adminCookie = String(admin.res.headers["Set-Cookie"]).split(";")[0];
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const release = createMaintenanceTestAccount(template, { id: "execute-peer-release", name: "放行同事" });
+  const routine = createMaintenanceTestAccount(template, { id: "execute-peer-routine", name: "例行同事" });
+  const nonroutine = createMaintenanceTestAccount(template, { id: "execute-peer-nonroutine", name: "非例行本人" });
+  const outsider = createMaintenanceTestAccount(template, { id: "execute-peer-outsider", name: "机会外人员" });
+  for (const person of [release, routine, nonroutine, outsider]) {
+    db.prepare("update rbac_user_scopes set scope_type='self',scope_id='' where user_id=?").run(person.id);
+  }
+  const created = await request("/api/maintenance/flights", { method: "POST", cookie: adminCookie, body: {
+    date: "2026-09-02", flightNo: "MUCPEER", aircraftNo: "BPEER", workKind: "短停", standardHours: 2
+  } });
+  assert.equal(created.res.statusCode, 201);
+  const flightId = created.payload.flight.id;
+  const subtaskId = "execute-peer-subtask";
+  const stamp = new Date().toISOString();
+  db.prepare("insert into maintenance_subtasks(id,flight_id,title,category,standard_hours,status,created_at,updated_at) values(?,?,?,?,?,?,?,?)")
+    .run(subtaskId, flightId, "同机非例行", "其他", 1, "已派工", stamp, stamp);
+  const insert = db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_by,assigned_at)
+    values(?,?,?,?,?,?,?,?,'已派工',?,?)`);
+  insert.run("execute-peer-a1", "flight", flightId, flightId, release.personId, release.name, "一组", "放行", template.id, stamp);
+  insert.run("execute-peer-a2", "flight", flightId, flightId, routine.personId, routine.name, "二组", "接机", template.id, stamp);
+  insert.run("execute-peer-a3", "subtask", subtaskId, flightId, nonroutine.personId, nonroutine.name, "三组", "主作", template.id, stamp);
+  db.prepare("update maintenance_flights set status='已派工' where id=?").run(flightId);
+  const login = await request("/api/login", { method: "POST", body: { username: nonroutine.username, password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"]).split(";")[0];
+  for (const suffix of ["?scope=execute", "?scope=execute&view=summary"]) {
+    const listed = await request(`/api/maintenance/flights${suffix}`, { cookie });
+    assert.equal(listed.res.statusCode, 200);
+    const visible = listed.payload.flights.find(item => item.id === flightId);
+    assert.ok(visible);
+    assert.deepEqual(new Set(visible.assignments.map(item => item.personId)), new Set([release.personId, routine.personId]));
+    assert.ok(visible.subtasks.some(item => item.assignments.some(entry => entry.personId === nonroutine.personId)));
+    assert.ok(!visible.assignments.some(item => item.personId === outsider.personId));
+  }
+  const detail = await request(`/api/maintenance/flights/${flightId}?scope=execute`, { cookie });
+  assert.equal(detail.res.statusCode, 200);
+  assert.deepEqual(new Set(detail.payload.flight.assignments.map(item => item.personId)), new Set([release.personId, routine.personId]));
+  const outsiderLogin = await request("/api/login", { method: "POST", body: { username: outsider.username, password: "muc2026" } });
+  const outsiderCookie = String(outsiderLogin.res.headers["Set-Cookie"]).split(";")[0];
+  assert.equal((await request(`/api/maintenance/flights/${flightId}?scope=execute`, { cookie: outsiderCookie })).res.statusCode, 404);
+});
 
 test.after(async () => {
   await db.close?.();

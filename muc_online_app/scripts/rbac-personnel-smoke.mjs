@@ -52,6 +52,8 @@ class MockResponse {
 
 async function request(pathname, { cookie = "", method = "GET", body, expected = 200 } = {}) {
   const headers = {
+    host: "127.0.0.1:8788",
+    origin: "http://127.0.0.1:8788",
     ...(cookie ? { cookie } : {}),
     ...(body === undefined ? {} : { "content-type": "application/json" })
   };

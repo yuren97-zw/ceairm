@@ -98,7 +98,7 @@ test("production restart does not create demo accounts or reset the retained adm
   const code = `const {db}=await import('./server.mjs'); console.log(JSON.stringify({users:db.prepare('select id,username,password_hash,department,team from users').all(),records:db.prepare('select count(*) n from records').get().n})); await db.close?.();`;
   try {
     for (let i = 0; i < 2; i++) {
-      const output = execFileSync(process.execPath, ["--input-type=module", "-e", code], { cwd: fileURLRoot(), encoding: "utf8", env: { ...process.env, NODE_ENV: "production", MUC_NO_LISTEN: "1", DATABASE_URL: "", DB_PATH: dbPath, UPLOAD_DIR: path.join(directory, "uploads") } });
+      const output = execFileSync(process.execPath, ["--input-type=module", "-e", code], { cwd: fileURLRoot(), encoding: "utf8", env: { ...process.env, NODE_ENV: "production", APP_ORIGIN: "https://www.ceairm.com", COOKIE_SECURE: "true", MUC_NO_LISTEN: "1", DATABASE_URL: "", DB_PATH: dbPath, UPLOAD_DIR: path.join(directory, "uploads") } });
       const result = JSON.parse(output.trim().split("\n").at(-1));
       assert.equal(result.users.length, 1);
       assert.equal(result.users[0].id, "54002010");

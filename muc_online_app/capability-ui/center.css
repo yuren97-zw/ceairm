@@ -330,3 +330,9 @@
   .status-summary-records{padding:0 8px}
   .status-summary-record{gap:3px 8px}
 }
+
+@media(max-width:360px){
+  .status-management>.toolbar{grid-template-columns:minmax(0,1fr)}
+  .status-phase-filter{min-width:0}
+  .status-phase-options{position:static;top:auto;right:auto;min-width:0;width:100%;margin-top:4px;box-shadow:0 3px 10px #23415a18}
+}

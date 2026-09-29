@@ -227,7 +227,7 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     } catch (e) { db.exec("rollback"); audit(user,"reject_organization_change","organization",id || "",e.message); throw e; }
   }
   function directory(user, purpose, params = new URLSearchParams()) {
-    const config = { accounts: ["accounts",["accounts.read","accounts.create","accounts.bulk_open"]], info: ["info",["info.create","info.update.own","info.update.any"]], maintenance: ["maintenance",["maintenance.dispatch.view","maintenance.review.view","maintenance.execute.view","maintenance.hours.confirm"]] }[purpose];
+    const config = { accounts: ["accounts",["accounts.read","accounts.create","accounts.bulk_open"]], info: ["info",["info.create","info.update.own","info.update.any"]], maintenance: ["maintenance",["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"]] }[purpose];
     if (!config || !config[1].some(p => hasRbac(user,p))) throw error("没有查询该用途人员目录的权限",403);
     const p = predicate(user,config[0]), q = `%${text(params.get("q"))}%`;
     const size = Math.min(200,Math.max(1,Number(params.get("pageSize")) || 50)), page = Math.max(1,Number(params.get("page")) || 1);

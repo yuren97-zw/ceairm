@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/airline-operations-center}"
+SERVICE_NAME="${SERVICE_NAME:-airline-operations-center}"
+HEALTH_CHECK="${HEALTH_CHECK:-$APP_ROOT/scripts/health-check.sh}"
 TARGET="${1:-}"
 CURRENT="$APP_ROOT/app/current"
 
@@ -11,6 +13,6 @@ fi
 [[ -n "$TARGET" && -d "$TARGET" ]] || { echo "Rollback release not found" >&2; exit 1; }
 
 ln -sfn "$TARGET" "$CURRENT"
-systemctl restart airline-operations-center
-"$APP_ROOT/scripts/health-check.sh"
+systemctl restart "$SERVICE_NAME"
+"$HEALTH_CHECK"
 echo "Rolled back to $TARGET"

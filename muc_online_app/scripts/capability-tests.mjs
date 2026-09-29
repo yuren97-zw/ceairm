@@ -17,7 +17,7 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const base='http://127.0.0.1:'+server.address().port;
 let cookie='';
 async function api(url,body,expected=200){
-  const response=await fetch(base+'/api/'+url,{method:body?'POST':'GET',headers:{...(cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  const response=await fetch(base+'/api/'+url,{method:body?'POST':'GET',headers:{origin:base,...(cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   const value=await response.json();assert.equal(response.status,expected,JSON.stringify(value));return {value,response};
 }
 const suffix='?workspace='+encodeURIComponent(workspace);

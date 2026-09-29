@@ -1,26 +1,58 @@
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import pg from "pg";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
 
 const SUPER_ACCOUNT = "54002010";
 const confirmation = process.env.CONFIRM_SUPER_ACCOUNT_AUTH_MIGRATION;
-const sourcePath = path.resolve(process.env.SOURCE_SQLITE_PATH || "");
+const sourceSqlitePath = process.env.SOURCE_SQLITE_PATH || "";
+const sourceDatabaseUrl = process.env.SOURCE_DATABASE_URL || "";
 const databaseUrl = process.env.DATABASE_URL;
 
 if (confirmation !== "MIGRATE-54002010-AUTH-ONLY") {
   throw new Error("缺少超级账号认证材料迁移确认标记");
 }
-if (!process.env.SOURCE_SQLITE_PATH || sourcePath === path.parse(sourcePath).root) {
-  throw new Error("SOURCE_SQLITE_PATH 无效");
-}
+if (Boolean(sourceSqlitePath) === Boolean(sourceDatabaseUrl))
+  throw new Error("必须且只能提供一个源库：SOURCE_SQLITE_PATH 或 SOURCE_DATABASE_URL");
 if (!databaseUrl) throw new Error("DATABASE_URL 未配置");
+if (sourceDatabaseUrl) {
+  const source = new URL(sourceDatabaseUrl);
+  const target = new URL(databaseUrl);
+  if (source.host === target.host && source.pathname === target.pathname)
+    throw new Error("源库和目标库不能相同");
+}
 
-const source = new DatabaseSync(sourcePath, { readOnly: true });
-const account = source.prepare(`
-  select id,username,name,salt,password_hash,status,credential_version
-  from users where id=? and username=?
-`).get(SUPER_ACCOUNT, SUPER_ACCOUNT);
-source.close();
+let account;
+if (sourceSqlitePath) {
+  const sourcePath = path.resolve(sourceSqlitePath);
+  if (sourcePath === path.parse(sourcePath).root) throw new Error("SOURCE_SQLITE_PATH 无效");
+  const source = new DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    const columns = new Set(source.prepare("pragma table_info(users)").all().map(row => row.name));
+    const credential = columns.has("credential_version") ? "credential_version" : "1 as credential_version";
+    account = source.prepare(`select id,username,name,salt,password_hash,status,${credential}
+      from users where id=? and username=?`).get(SUPER_ACCOUNT, SUPER_ACCOUNT);
+  } finally {
+    source.close();
+  }
+} else {
+  const source = new pg.Client(postgresConnectionOptions(sourceDatabaseUrl));
+  await source.connect();
+  try {
+    await source.query("begin read only");
+    const columns = await source.query("select column_name from information_schema.columns where table_name='users'");
+    const names = new Set(columns.rows.map(row => row.column_name));
+    for (const required of ["id", "username", "name", "salt", "password_hash", "status"])
+      if (!names.has(required)) throw new Error(`源库 users 缺少 ${required}`);
+    const credential = names.has("credential_version") ? "credential_version" : "1 as credential_version";
+    const result = await source.query(`select id,username,name,salt,password_hash,status,${credential}
+      from users where id=$1 and username=$1`, [SUPER_ACCOUNT]);
+    account = result.rows[0];
+    await source.query("rollback");
+  } finally {
+    await source.end();
+  }
+}
 
 if (!account) throw new Error("源库未找到唯一超级账号54002010");
 if (account.status !== "active") throw new Error("源库超级账号不是启用状态");
@@ -28,10 +60,7 @@ if (!String(account.salt || "").trim() || !String(account.password_hash || "").t
   throw new Error("源库超级账号认证材料不完整");
 }
 
-const client = new pg.Client({
-  connectionString: databaseUrl,
-  ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false }
-});
+const client = new pg.Client(postgresConnectionOptions(databaseUrl));
 
 await client.connect();
 try {

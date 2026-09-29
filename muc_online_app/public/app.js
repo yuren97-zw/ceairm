@@ -539,7 +539,7 @@ async function loadPersonnelDirectories() {
     return items.map(p=>({...p,id:purpose==="info"?p.accountId:p.personId,team:p.currentWorkingTeamName||p.administrativeTeamName||"未设置"}));
   };
   state.infoPeople=["info.create","info.update.own","info.update.any"].some(hasRbac)?await load("info"):[];
-  state.maintenancePeople=["maintenance.dispatch.view","maintenance.review.view","maintenance.execute.view","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance"):[];
+  state.maintenancePeople=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance"):[];
   state.personnelDirectory=["accounts.read","accounts.create","accounts.bulk_open"].some(hasRbac)?await load("accounts"):[];
   state.organizations=(await apiRequest("/personnel/organizations")).organizations || [];
 }
@@ -5287,8 +5287,9 @@ async function openMaintenanceSubtaskDialog(flight, subtask = {}) {
   $("#maintenanceTaskDialog").showModal();
 }
 
-function openMaintenanceDispatchDialog(ownerType, ownerId) {
+async function openMaintenanceDispatchDialog(ownerType, ownerId) {
   ensureMaintenanceDialogs();
+  await loadPersonnelDirectories();
   const flight = ownerType === "flight" ? findMaintenanceFlight(ownerId) : findMaintenanceSubtask(ownerId).flight;
   const item = ownerType === "flight" ? flight : findMaintenanceSubtask(ownerId).subtask;
   if (!flight || !item) return;
@@ -5374,13 +5375,13 @@ function renderMaintenanceDispatchPicker() {
   const candidates = draft.people.filter(person => {
     if (activeSelection.has(person.id)) return false;
     const teamMatches = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
-    const searchable = [person.name, person.username, person.id]
+    const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase("zh-CN");
     return teamMatches && (!term || searchable.includes(term));
   }).sort((a, b) => (a.team || "").localeCompare(b.team || "", "zh-CN") || a.name.localeCompare(b.name, "zh-CN"));
-  picker.innerHTML = [...selected.map(person => maintenanceDispatchPersonRow(person, true)), ...candidates.map(person => maintenanceDispatchPersonRow(person, false))].join("") || '<div class="status-line">没有匹配人员。</div>';
+  picker.innerHTML = [...selected.map(person => maintenanceDispatchPersonRow(person, true)), ...candidates.map(person => maintenanceDispatchPersonRow(person, false))].join("") || `<div class="status-line">${draft.people.length ? "没有匹配人员。" : "当前维修数据范围内没有可派工人员，请管理员检查维修数据范围及人员组织配置。"}</div>`;
   const count = $("#maintDispatchSelectedCount");
   const total = draft.availableRoles.reduce((sum, role) => sum + (draft.selections.get(role)?.size || 0), 0);
   if (count) count.textContent = `已选 ${total} 人次`;
@@ -5596,7 +5597,7 @@ function renderMaintenanceWorkReportPicker() {
   const candidates = draft.people.filter(person => {
     if (selectedIds.has(person.id)) return false;
     const teamMatch = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
-    const searchable = [person.name, person.username, person.id]
+    const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase("zh-CN");

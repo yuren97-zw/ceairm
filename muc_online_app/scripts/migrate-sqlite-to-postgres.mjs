@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import pg from "pg";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
 import { preflightCapabilityIntegrity } from "../capability-integrity.mjs";
 
 const { Client } = pg;
@@ -20,7 +21,7 @@ const sqlite = new DatabaseSync(sqlitePath,{readOnly:true});
 if(!sqlite.prepare("pragma table_info(rbac_user_scopes)").all().some(c=>c.name==="module"))throw new Error("先在SQLite副本完成身份与分模块范围迁移，禁止直接导入旧格式");
 const capabilityIntegrity=preflightCapabilityIntegrity(sqlite);
 if(!capabilityIntegrity.ok)throw Object.assign(new Error("能力与人员身份预检未通过，禁止迁移到PostgreSQL"),{details:capabilityIntegrity.issues});
-const client = new Client({ connectionString: databaseUrl, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
+const client = new Client(postgresConnectionOptions(databaseUrl));
 await client.connect();
 for (const schema of schemas) await client.query(schema);
 
