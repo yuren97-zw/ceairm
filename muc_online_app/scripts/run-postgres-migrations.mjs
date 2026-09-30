@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = path.join(root, "migrations");
@@ -9,10 +10,7 @@ const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) throw new Error("DATABASE_URL 未配置");
 
-const client = new pg.Client({
-  connectionString: databaseUrl,
-  ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false }
-});
+const client = new pg.Client(postgresConnectionOptions(databaseUrl));
 
 await client.connect();
 try {

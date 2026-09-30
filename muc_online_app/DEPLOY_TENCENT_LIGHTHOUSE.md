@@ -52,8 +52,15 @@ sudo install -m 0644 deploy/tencent/logrotate-airline-operations-center /etc/log
 ```
 
 根据`.env.example`创建`/opt/airline-operations-center/shared/.env`，权限设为`0640 root:airline`。不得把密钥提交到 Git。
+网页与接口必须同域；生产环境将 `APP_ORIGIN` 配置为实际 HTTPS 站点源（例如 `https://www.ceairm.com`），`COOKIE_SECURE=true`。首次使用空库时设置 `INITIAL_ADMIN_PASSWORD`；若已受控迁移 `54002010` 的认证材料，则不使用该变量重置原密码。不得配置跨域携带登录 Cookie 的前端。
+登录表单和接口均按账号及客户端地址限制连续错误尝试；Nginx 必须覆盖 `X-Real-IP`，并仅在应用只监听本机且只接受受信代理流量时设置 `TRUST_LOCAL_PROXY=true`。限速状态保存在进程内，重启会清空；上线仍需在网关设置访问频率控制和失败登录告警。
+本机回环 PostgreSQL 使用 `PGSSLMODE=disable`；若改用远程数据库，必须使用 `PGSSLMODE=verify-full`，私有 CA 另设 `PGSSLROOTCERT` 的绝对路径。应用与迁移脚本会拒绝远程明文及未验证证书连接，证书主机名须与 `DATABASE_URL` 的主机一致。
 
 ## 首次数据迁移
+
+本次人员能力集成采用**全新业务库**，不导入旧测试人员、航班、授权和报工数据；只保留 `54002010` 的原认证材料。先运行连续迁移并启动一次新库，使超级账号、人员主档和 `system_admin` 全范围初始化完成，再以受控方式运行 `scripts/migrate-super-account-auth.mjs`。源库可以是只读 SQLite（`SOURCE_SQLITE_PATH`）或旧 PostgreSQL（`SOURCE_DATABASE_URL`），两者只能提供一个；目标通过 `DATABASE_URL` 指向**不同的新库**，并要求 `CONFIRM_SUPER_ACCOUNT_AUTH_MIGRATION=MIGRATE-54002010-AUTH-ONLY`。脚本只读取源账号认证字段，并在目标库事务内替换散列、清除旧会话和复核 RBAC；不要把数据库 URL、盐值或散列写入仓库及日志。旧 PostgreSQL 没有 `credential_version` 时按版本 1 处理。迁移后由账号持有人在隔离 HTTPS 页面验证原密码；仅比较散列不能代替实际登录验收。
+
+下面的 SQLite 全量迁移流程仅用于明确需要保留旧业务数据的其他场景，**本次集成不得执行**。
 
 迁移前先复制本机 SQLite 和附件目录到服务器的受限临时目录。执行：
 
@@ -141,6 +148,8 @@ sudo systemctl reload nginx
 sudo certbot renew --dry-run
 ```
 
+证书实际目录由 Certbot 的证书名称决定；本机双域名证书位于 `/etc/letsencrypt/live/ceairm.com/`，部署前须与 Nginx 配置中的路径一致。切换 HTTP 跳转前先确认腾讯云轻量服务器防火墙已放行公网 TCP 443，并从外部完成 HTTPS 登录与同源写入验证；不能只以服务器本机回环测试代替。证书续期使用 `sudo certbot renew --dry-run` 演练。
+
 HTTP 必须 301 跳转到`https://www.ceairm.com`。
 
 确认 HTTPS 在电脑、iPhone 和 Android 均稳定后，再单独评估启用 HSTS；首次上线不直接启用，避免证书或域名配置错误导致长期不可访问。
@@ -154,6 +163,7 @@ HTTP 必须 301 跳转到`https://www.ceairm.com`。
 ```
 
 每次重大变更前创建腾讯云磁盘快照。至少每季度在隔离数据库演练一次恢复。
+恢复演练应先创建由应用数据库角色拥有的空库，再以该角色执行 `pg_restore --exit-on-error --no-owner --no-privileges`；仅由管理员建库后以管理员身份恢复，会让表归属管理员，应用随后无法执行启动迁移。恢复后核对迁移数、人员与账号数，并用正式发布包连接恢复库完成启动和健康检查。
 
 健康检查：
 
@@ -177,5 +187,8 @@ curl https://www.ceairm.com/api/health
 - 发布失败可自动回滚，人工回滚可用。
 - GitHub Release、健康检查版本和`current`目录版本一致，不允许版本漂移。
 - 本地和异地备份均存在，恢复演练通过。
+- 唯一超级账号 `54002010` 可登录、已关联人员主档并拥有全部模块权限。
+- 人员主数据、组织、授权培训、能力矩阵、调配、状态管理、导入中心及定时方案正常。
+- 信息、维修、人员和能力模块的数据范围隔离正常。
 
 生产服务器禁止直接修改当前版本代码，禁止把密钥写入仓库，禁止在未验证备份前删除历史数据。

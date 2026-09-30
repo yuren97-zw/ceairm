@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import COS from "cos-nodejs-sdk-v5";
 import pg from "pg";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
 
 const { Client } = pg;
 const databaseUrl = process.env.DATABASE_URL;
@@ -28,7 +29,7 @@ function putObject(params) {
   });
 }
 
-const client = new Client({ connectionString: databaseUrl, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
+const client = new Client(postgresConnectionOptions(databaseUrl));
 await client.connect();
 try {
   const result = await client.query("select * from attachments where coalesce(storage,'server')<>'cos' order by created_at,id");

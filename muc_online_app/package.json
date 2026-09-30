@@ -7,17 +7,33 @@
     "node": ">=24"
   },
   "scripts": {
+    "build:capability": "node scripts/build-capability.mjs",
+    "test:capability": "node scripts/capability-tests.mjs",
+    "initialize:capability-baseline": "node scripts/initialize-capability-baseline.mjs",
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check db.mjs && node --check public/app.js && node --check scripts/build-web-assets.mjs && node --check scripts/run-postgres-migrations.mjs && node --check scripts/migrate-sqlite-to-postgres.mjs && node --check scripts/migrate-attachments-to-cos.mjs && node --check scripts/reset-production-data.mjs && bash -n deploy/tencent/*.sh",
+    "start:worktree": "node scripts/start-worktree.mjs",
+    "check": "node --check rbac-policy.mjs && node --check authorization-import.mjs && node --check capability-service.mjs && node --check capability-integrity.mjs && node --check authorization-projects.mjs && node --check personnel-deletion.mjs && node --check personnel-identity.mjs && node --check personnel-access.mjs && node --check login-protection.mjs && node --check postgres-connection.mjs && node --check server.mjs && node --check db.mjs && node --check public/app.js && node --check scripts/build-capability.mjs && node --check scripts/build-web-assets.mjs && node --check scripts/run-postgres-migrations.mjs && node --check scripts/migrate-sqlite-to-postgres.mjs && node --check scripts/migrate-attachments-to-cos.mjs && node --check scripts/migrate-super-account-auth.mjs && node --check scripts/reset-production-data.mjs && node --check scripts/preflight-personnel.mjs && node --check scripts/initialize-capability-baseline.mjs && node --check scripts/capability-preview.mjs && node --check scripts/start-worktree.mjs && node --check scripts/reset-8788-test-data.mjs && node --check scripts/sync-authorization-project-categories.mjs && bash -n deploy/tencent/*.sh",
     "test": "node --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs",
     "build:web": "node scripts/build-web-assets.mjs",
     "package:release": "bash deploy/tencent/build-release.sh",
     "migrate": "node scripts/run-postgres-migrations.mjs",
     "migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.mjs",
-    "migrate:attachments-to-cos": "node scripts/migrate-attachments-to-cos.mjs"
+    "migrate:attachments-to-cos": "node scripts/migrate-attachments-to-cos.mjs",
+    "migrate:super-account-auth": "node scripts/migrate-super-account-auth.mjs",
+    "sync:authorization-project-categories": "node scripts/sync-authorization-project-categories.mjs",
+    "test:rbac": "npm run test:rbac:policy && npm run test:rbac:integration",
+    "test:rbac:policy": "node scripts/rbac-permission-matrix-tests.mjs",
+    "test:rbac:integration": "node scripts/rbac-personnel-smoke.mjs",
+    "preflight:personnel": "node scripts/preflight-personnel.mjs",
+    "reset:8788-test-data": "node scripts/reset-8788-test-data.mjs"
   },
   "dependencies": {
     "cos-nodejs-sdk-v5": "^3.0.0",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
   }
 }

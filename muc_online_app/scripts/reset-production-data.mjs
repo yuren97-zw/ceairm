@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import COS from "cos-nodejs-sdk-v5";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
 
 export const BUSINESS_TABLES = [
   "sessions", "favorites", "read_receipts", "record_recipients", "attachments",
@@ -108,7 +109,7 @@ function requireMaintenance() {
 }
 
 function pgEnvironment(url, database) {
-  return { ...process.env, PGHOST: url.hostname, PGPORT: url.port || "5432", PGUSER: decodeURIComponent(url.username), PGPASSWORD: decodeURIComponent(url.password), PGDATABASE: database, PGSSLMODE: process.env.PGSSLMODE || "require" };
+  return { ...process.env, PGHOST: url.hostname, PGPORT: url.port || "5432", PGUSER: decodeURIComponent(url.username), PGPASSWORD: decodeURIComponent(url.password), PGDATABASE: database, PGSSLMODE: process.env.PGSSLMODE || "verify-full" };
 }
 
 async function verifiedBackup(client, url, manifest, directory) {
@@ -120,7 +121,7 @@ async function verifiedBackup(client, url, manifest, directory) {
   try {
     execFileSync("pg_restore", ["--exit-on-error", "--no-owner", "--no-privileges", "--dbname", verificationDb, backup], { env: pgEnvironment(url, verificationDb), stdio: ["ignore", "ignore", "pipe"] });
     const verifyUrl = new URL(url); verifyUrl.pathname = `/${verificationDb}`;
-    const verify = new pg.Client({ connectionString: verifyUrl.toString(), ssl: env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: true } });
+    const verify = new pg.Client(postgresConnectionOptions(verifyUrl.toString(), env));
     await verify.connect();
     try {
       const restored = await inspect(verify);
@@ -173,7 +174,7 @@ async function main() {
   assert(["postgres:", "postgresql:"].includes(url.protocol), "仅支持腾讯云PostgreSQL，不清理本地SQLite");
   assert(process.env.RESET_EXPECTED_HOST === os.hostname(), "须明确指定RESET_EXPECTED_HOST并与当前服务器一致");
   assert(process.env.RESET_EXPECTED_DATABASE === decodeURIComponent(url.pathname.slice(1)), "须明确指定RESET_EXPECTED_DATABASE");
-  const client = new pg.Client({ connectionString: url.toString(), ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: true } });
+  const client = new pg.Client(postgresConnectionOptions(url.toString()));
   await client.connect();
   try {
     const manifestPath = path.join(directory, "manifest.json");

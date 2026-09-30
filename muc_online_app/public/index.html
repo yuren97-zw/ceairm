@@ -390,8 +390,8 @@
       overflow:auto;
     }
     .admin-user-table .admin-user-row{
-      grid-template-columns:.28fr .8fr .8fr .65fr .7fr .65fr .55fr 1.5fr 1.2fr;
-      min-width:980px;
+      grid-template-columns:.75fr 1fr 1.05fr 1.2fr 1fr .55fr .55fr 1.35fr;
+      min-width:1040px;
     }
     .user-batch-toolbar{
       display:flex;
@@ -1489,6 +1489,99 @@
       textarea,
       [contenteditable="true"]{font-size:16px!important}
     }
+    .settings-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+    #personnelAreaNav{padding-bottom:2px}
+    #capabilityHost,#personnelMasterWrap{padding-top:2px}
+    #personnelPanel.module-grid{gap:7px}
+    .personnel-master-grid{display:grid;gap:10px}
+    .personnel-list-panel,.personnel-detail-panel{padding:12px}
+    .personnel-list-panel .module-head{align-items:center}
+    .personnel-list-panel .search{max-width:320px}
+    .personnel-filter-grid{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(4,minmax(120px,1fr)) auto;gap:8px;margin-top:10px}
+    .personnel-filter-grid input,.personnel-filter-grid select{min-width:0}
+    .personnel-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:12px}
+    .personnel-change-log{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+    .personnel-change-log summary{cursor:pointer;font-weight:700}
+    .personnel-table{margin-top:10px;overflow:auto;border:1px solid #edf0f3;border-radius:8px}
+    .authorization-project-settings{min-width:0}
+    .authorization-project-tools,.authorization-project-tools form{display:flex;align-items:end;gap:10px;flex-wrap:wrap}
+    .authorization-project-tools{justify-content:space-between;margin:16px 0}
+    .authorization-project-tools label{display:grid;gap:6px;min-width:200px;max-width:100%}
+    .authorization-project-table{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+    .authorization-project-table table{width:100%;min-width:700px;border-collapse:collapse;text-align:left}
+    .authorization-project-table th,.authorization-project-table td{padding:12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;max-width:320px}
+    .authorization-project-table th{background:#f8fafc;color:var(--muted)}
+    .authorization-project-table small{display:block;color:var(--muted);margin-top:6px}
+    .authorization-category{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;background:#eef2f6;color:#344054;white-space:nowrap}
+    .category-release{background:#e8f5ee;color:#166534}.category-test_run{background:#fff4df;color:#92400e}.category-maintenance{background:#e8f1ff;color:#1d4ed8}.category-special{background:#f3e8ff;color:#7e22ce}.category-third_party{background:#e6f7f7;color:#0f766e}.category-other{background:#f2f4f7;color:#475467}
+    #authorizationProjectDialog{width:min(600px,calc(100vw - 24px))}
+    #authorizationProjectDialog [readonly]{background:#f1f5f9;color:var(--muted)}
+    [data-project-form-error]{color:#b42318}
+    #personnelDeleteDialog{width:min(650px,calc(100vw - 24px))}
+    #personnelDeleteError,.personnel-delete-blockers{color:#b42318}
+    .personnel-delete-blockers{padding:12px;background:#fff4f2;border-radius:10px}
+    .personnel-delete-blockers small{display:block;overflow-wrap:anywhere}
+    .personnel-row{display:grid;grid-template-columns:.75fr .65fr 1.2fr .8fr .6fr .85fr 1fr .45fr;gap:8px;align-items:center;min-width:920px;padding:9px 10px;border-bottom:1px solid #eef2f6;font-size:12px}
+    .personnel-row.head{background:#f8fafc;color:var(--muted);font-weight:700}
+    .personnel-row small{display:block;color:var(--muted);margin-top:2px}
+    .personnel-detail-panel{grid-column:1/-1;margin:0;border:0;border-bottom:1px solid var(--line);background:#fff;padding:0 10px 16px;min-width:0}
+    .personnel-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+    .personnel-detail-head>div:first-child>strong{font-size:17px}
+    .personnel-detail-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);margin:12px 0}
+    .personnel-detail-summary b{min-width:0;overflow-wrap:anywhere}
+    .personnel-detail-summary span{display:grid;gap:4px;padding:11px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-size:12px;background:#fff}
+    .personnel-detail-summary small{color:var(--muted);font-size:11px}
+    .personnel-detail-tabs{display:flex;gap:0;overflow-x:auto;border-bottom:1px solid var(--line);margin:0 0 12px}
+    .personnel-detail-tab{border:0;border-radius:0;background:transparent;padding:11px 14px;margin-bottom:-1px;white-space:nowrap;color:var(--muted)}
+    .personnel-detail-tab.active{color:var(--brand);font-weight:700;border-bottom:3px solid var(--brand)}
+    .personnel-detail-content{min-width:0;padding:0}
+    .authorization-accordion{border-top:1px solid var(--line)}
+    .authorization-category-section{border:0;margin:0;padding:0}
+    .authorization-category-row{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;border-radius:0;border-bottom:1px solid var(--line);background:#fff;padding:13px 0;text-align:left}
+    .authorization-category-row:hover:not(:disabled),.authorization-category-row.expanded{background:#f5f9fc}
+    .authorization-category-row span{display:flex;align-items:center;gap:9px}.authorization-category-row i{width:12px;color:var(--brand);font-style:normal}.authorization-category-row>b{font-size:12px;color:var(--muted)}
+    .authorization-category-row.empty{color:#98a2b3;background:#fafafa}.authorization-category-row:disabled{cursor:default;opacity:.75}
+    .authorization-category-content{padding:2px 0 14px;border-bottom:1px solid var(--line);background:#fbfdff}
+    .personnel-qualification-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+    .personnel-qualification-tools input{flex:1 1 260px;min-width:0}
+    .personnel-qualification-table{overflow-x:auto;border:1px solid var(--line);border-radius:0}
+    .personnel-qualification-table table{width:100%;min-width:820px;border-collapse:collapse;text-align:left}
+    .personnel-qualification-table th,.personnel-qualification-table td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;font-size:12px}
+    .personnel-qualification-table th{background:#f8fafc;color:var(--muted)}
+    .personnel-qualification-table small{display:block;color:var(--muted);margin-top:3px}
+    .third-party-company{border-bottom:1px solid var(--line)}
+    .third-party-company-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;border-left:3px solid var(--company-accent,#7890a2);border-radius:0;background:#f7fafc;padding:11px 12px 11px 9px;text-align:left}
+    .third-party-company-toggle span,.third-party-company-toggle b{color:var(--company-accent,#526b80)}
+    .third-party-company-toggle>strong{color:var(--muted);font-weight:600}
+    .third-party-company-toggle:hover,.third-party-company.expanded>.third-party-company-toggle{background:var(--company-tint,#edf6fc)}
+    .company-tone-0{--company-accent:#3f7899;--company-tint:#f1f7fa}.company-tone-1{--company-accent:#4f7c72;--company-tint:#f1f7f5}.company-tone-2{--company-accent:#8a7041;--company-tint:#faf7f0}.company-tone-3{--company-accent:#75658a;--company-tint:#f7f4f9}.company-tone-4{--company-accent:#64778a;--company-tint:#f3f6f8}.company-tone-5{--company-accent:#6f7d4a;--company-tint:#f6f8f1}
+    .third-party-company-items{padding:8px 0 10px 18px;background:#fff}
+    .third-party-company-items .personnel-qualification-table{margin:0}
+    .authorization-project-name{display:block;font-size:13px;line-height:1.5;color:var(--text)}
+    .authorization-project-code{display:block;margin-top:3px;padding:0;background:transparent;color:var(--muted);font-size:10px;font-weight:400;word-break:break-all}
+    .personnel-qualification-list{display:grid;gap:6px}
+    .personnel-flat-list{gap:0;border-top:1px solid var(--line)}
+    .personnel-flat-list .setting-item{border:0;border-radius:0;border-bottom:1px solid var(--line);box-shadow:none;background:#fff;padding:11px 4px}
+    .personnel-import-grid .setting-list{align-content:start}
+    .personnel-import-history{display:grid;gap:6px}
+    .personnel-import-batch{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center}
+    .rbac-role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:8px}
+    .rbac-role-grid article{display:grid;gap:5px}
+    .rbac-role-grid small{color:var(--muted)}
+    .rbac-permission-tags{display:flex;gap:4px;flex-wrap:wrap}
+    .rbac-permission-tags span{padding:3px 6px;border-radius:999px;background:var(--brand-soft);color:var(--brand);font-size:10px}
+    .rbac-role-card{align-content:start}
+    .rbac-role-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+    .rbac-role-card-head>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+    .rbac-role-card p{margin:0;color:var(--muted);font-size:12px;line-height:1.6}
+    .rbac-role-card .form-actions{margin-top:4px;justify-content:flex-start}
+    .rbac-permission-groups{display:grid;gap:10px;margin-top:10px}
+    .rbac-permission-groups fieldset{border:1px solid var(--line);border-radius:12px;padding:10px;margin:0}
+    .rbac-permission-groups legend{padding:0 6px;font-weight:700;color:var(--text)}
+    .role-form{min-width:min(680px,calc(100vw - 48px))}
+    .role-form .check-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+    @media(max-width:980px){.personnel-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.personnel-filter-grid .search{grid-column:1/-1;max-width:none}}
+    @media(max-width:720px){.personnel-import-batch{grid-template-columns:1fr}.personnel-list-panel .module-head{align-items:stretch}.personnel-list-panel .search{max-width:none}.personnel-filter-grid{grid-template-columns:1fr}.personnel-filter-grid .search{grid-column:auto}.personnel-row{min-width:0;grid-template-columns:1fr 1fr;padding:12px}.personnel-row.head{display:none}.personnel-row>span:nth-child(3),.personnel-row>span:nth-child(6),.personnel-row>span:nth-child(7){grid-column:1/-1}.personnel-row>span:last-child{text-align:right}.personnel-pagination{justify-content:flex-start}.personnel-detail-panel{margin:0;padding:0 12px 14px}.personnel-detail-head{display:grid}.personnel-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.personnel-detail-tab{padding:10px}.authorization-category-content{padding:2px 0 12px}.personnel-qualification-table{border:0;overflow:visible}.personnel-qualification-table table,.personnel-qualification-table tbody,.personnel-qualification-table tr,.personnel-qualification-table td{display:block;min-width:0;width:100%}.personnel-qualification-table thead{display:none}.personnel-qualification-table tr{border:1px solid var(--line);border-radius:0;margin-bottom:8px;padding:8px;background:#fff}.personnel-qualification-table td{display:grid;grid-template-columns:86px 1fr;gap:8px;border:0;padding:5px}.personnel-qualification-table td::before{content:attr(data-label);color:var(--muted);font-weight:700}}
   </style>
 </head>
 <body class="app-booting">
@@ -1504,7 +1597,7 @@
           <label class="login-check"><input id="autoLogin" type="checkbox">自动登录</label>
         </div>
         <div id="loginMessage" class="status-line" hidden></div>
-        <div class="form-actions"><button id="openChangePasswordBtn" class="btn secondary" type="button">修改密码</button><button id="loginSubmit" class="btn" type="submit">登录</button></div>
+        <div class="form-actions"><button id="loginSubmit" class="btn" type="submit">登录</button></div>
       </form>
     </div>
   </section>
@@ -1514,10 +1607,11 @@
     <button class="top-tab" type="button" data-page="infoPage">信息传达</button>
     <button class="top-tab" type="button" data-page="maintenancePage">维修管控</button>
     <button class="top-tab" type="button" data-page="fixedPage">固化项目</button>
+    <button class="top-tab" type="button" data-page="personnelPage">人员与能力</button>
     <button class="top-tab" type="button" data-page="hoursPage">工时统计</button>
     <button class="top-tab" type="button" data-page="attendancePage">考勤管理</button>
     <button class="top-tab" type="button" data-page="settingsPage">系统设置</button>
-    <div class="top-auth"><button id="loginBtn" class="btn secondary" type="button">登录</button><button id="logoutBtn" class="btn secondary" type="button" hidden>退出</button></div>
+    <div class="top-auth"><button id="loginBtn" class="btn secondary" type="button">登录</button><button id="accountPasswordBtn" class="btn secondary" type="button" hidden>修改密码</button><button id="logoutBtn" class="btn secondary" type="button" hidden>退出</button></div>
   </div></nav>
 
   <div id="pullRefreshIndicator" class="pull-refresh-indicator" aria-live="polite" aria-hidden="true"><span id="pullRefreshIcon" class="pull-refresh-indicator-icon" aria-hidden="true">↓</span><span id="pullRefreshText">下拉刷新</span></div>
@@ -1550,16 +1644,16 @@
     <main><div class="wrap"><section id="fixedList" class="grid"></section><div id="fixedEmpty" class="status-line">暂无固化项目。</div></div></main>
   </section>
 
+  <section id="personnelPage" class="page"><main><div id="personnelAreaNav" class="wrap"></div><div id="capabilityHost" class="wrap" hidden></div><div id="personnelMasterWrap" class="wrap"><div id="personnelPanel" class="module-grid"></div></div></main></section>
+
   <section id="hoursPage" class="page"><main><div class="wrap module-grid">
-    <div class="module-head"><div><h1>工时统计</h1><p>按月份、班组、人员汇总工时，保留异常确认和明细核对入口。</p></div><button class="btn secondary" type="button">导出</button></div>
-    <section class="metric-grid"><div class="metric"><span>本月总工时</span><strong>1,286</strong></div><div class="metric"><span>加班工时</span><strong>184</strong></div><div class="metric"><span>夜班工时</span><strong>312</strong></div><div class="metric"><span>待确认</span><strong>9</strong></div></section>
-    <section class="data-panel"><div class="table-row head"><span>人员</span><span>正常</span><span>加班</span><span>夜班</span><span>状态</span></div><div class="table-row"><span>王大伟</span><span>168</span><span>22</span><span>48</span><span class="status-pill">已确认</span></div><div class="table-row"><span>赵威</span><span>160</span><span>18</span><span>36</span><span class="status-pill">待复核</span></div></section>
+    <div class="module-head"><div><h1>工时统计</h1><p>一级页面及 RBAC 权限已预留，业务功能尚未启用。</p></div></div>
+    <section class="data-panel"><strong>功能建设中</strong><div class="status-line">后续接入工时明细、调整、确认和导出时，将分别使用对应的工时权限控制。</div></section>
   </div></main></section>
 
   <section id="attendancePage" class="page"><main><div class="wrap module-grid">
-    <div class="module-head"><div><h1>考勤管理</h1><p>面向排班、请假、迟到缺勤和异常闭环，方便手机端快速查看。</p></div><button class="btn secondary" type="button">导出</button></div>
-    <section class="metric-grid"><div class="metric"><span>出勤率</span><strong>98.6%</strong></div><div class="metric"><span>请假</span><strong>6</strong></div><div class="metric"><span>迟到/缺勤</span><strong>3</strong></div><div class="metric"><span>待处理</span><strong>5</strong></div></section>
-    <section class="data-panel"><div class="table-row head"><span>人员</span><span>日期</span><span>班次</span><span>记录</span><span>状态</span></div><div class="table-row"><span>黄金山</span><span>05-28</span><span>白班</span><span>08:01 / 17:34</span><span class="status-pill">正常</span></div></section>
+    <div class="module-head"><div><h1>考勤管理</h1><p>一级页面及 RBAC 权限已预留，业务功能尚未启用。</p></div></div>
+    <section class="data-panel"><strong>功能建设中</strong><div class="status-line">后续接入考勤记录、异常处理、统计和导出时，将分别使用对应的考勤权限控制。</div></section>
   </div></main></section>
 
   <section id="settingsPage" class="page"><main><div class="wrap"><div id="settingsPanel" class="module-grid"></div></div></main></section>
@@ -1567,7 +1661,7 @@
   <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
 
   <dialog id="entryDialog"><div class="dialog-body"><div class="dialog-head"><h2 id="entryTitleText">新增信息</h2><button class="icon-btn" data-close="entryDialog" type="button">×</button></div><form id="entryForm" class="entry-grid">
-    <input id="entryId" type="hidden"><label class="date-label" for="entryDate">日期<input id="entryDate" type="date" required></label><label>类别<select id="entryCategory"></select></label><label>标题<input id="entryTitle" placeholder="概述原文，作为标题。" required></label><label>原文<textarea id="entryOriginal" required></textarea></label><div><span class="status-line">接收对象</span><div id="recipientPicker" class="recipient-picker"><div class="recipient-tools"><input id="recipientSearch" type="search" placeholder="搜索姓名、班组、工号"><select id="recipientTeamFilter"></select><button id="recipientSelectAll" class="btn secondary" type="button">全选</button><button id="recipientClearAll" class="btn secondary" type="button">清空</button></div><div id="recipientOptions" class="recipient-options"></div></div></div><label>信息等级<select id="entryPriority"><option>普通</option><option>重要</option><option>紧急</option></select></label>
+    <input id="entryId" type="hidden"><label class="date-label" for="entryDate">日期<input id="entryDate" type="date" required></label><label>类别<select id="entryCategory"></select></label><label>标题<input id="entryTitle" placeholder="概述原文，作为标题。" required></label><label>原文<textarea id="entryOriginal" required></textarea></label><div><span class="status-line">接收对象</span><div id="recipientPicker" class="recipient-picker"><div class="recipient-tools"><input id="recipientSearch" type="search" placeholder="搜索姓名、班组、工号"><select id="recipientTeamFilter"></select><button id="recipientSelectAll" class="btn secondary" type="button">选择可发送范围内全部人员</button><button id="recipientClearAll" class="btn secondary" type="button">清空</button></div><div id="recipientOptions" class="recipient-options"></div></div></div><label>信息等级<select id="entryPriority"><option>普通</option><option>重要</option><option>紧急</option></select></label>
     <div><div class="upload-zone" id="recordDrop"><strong>拖入附件或点击选择</strong><div id="recordHint">可分多次选择或拖入。</div></div><input id="recordFiles" class="file-input" type="file" multiple><div id="recordExistingAttachments" class="existing-attachments" hidden></div><div id="recordPending" class="pending-list"></div></div>
     <div class="form-actions"><button class="btn secondary" type="button" data-close="entryDialog">取消</button><button class="btn" type="submit">保存</button></div>
   </form></div></dialog>
@@ -1582,8 +1676,11 @@
 
   <dialog id="userDialog"><div id="userDialogBody" class="dialog-body"></div></dialog>
   <dialog id="userBatchDialog"><div id="userBatchDialogBody" class="dialog-body"></div></dialog>
+  <dialog id="personnelDialog"><div id="personnelDialogBody" class="dialog-body"></div></dialog>
+  <dialog id="personnelDeleteDialog"><div id="personnelDeleteDialogBody" class="dialog-body"></div></dialog>
+  <dialog id="authorizationProjectDialog"><div id="authorizationProjectDialogBody" class="dialog-body"></div></dialog>
+  <dialog id="roleDialog"><div id="roleDialogBody" class="dialog-body"></div></dialog>
   <dialog id="changePasswordDialog"><div class="dialog-body"><div class="dialog-head"><h2>修改密码</h2><button class="icon-btn" data-close="changePasswordDialog" type="button">×</button></div><form id="changePasswordForm" class="entry-grid">
-    <label>账号<input id="changePasswordUser" autocomplete="username" required></label>
     <label>旧密码<input id="changePasswordOld" type="password" autocomplete="current-password" required></label>
     <label>新密码<input id="changePasswordNew" type="password" autocomplete="new-password" required minlength="6"></label>
     <label>确认新密码<input id="changePasswordConfirm" type="password" autocomplete="new-password" required minlength="6"></label>
@@ -1596,7 +1693,8 @@
   <div id="printArea" class="print-area" hidden></div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260923-subtask-import-trend-1"></script>
+  <script src="import-workspace.js?v=20260904-2"></script>
+  <script src="app.js?v=20260926-main-integration-1"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

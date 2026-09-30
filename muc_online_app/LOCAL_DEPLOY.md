@@ -2,6 +2,18 @@
 
 ## 启动方式
 
+### Codex隔离工作树
+
+当前路径位于 `.codex/worktrees` 时，不得直接运行 `npm start`，应执行：
+
+```bash
+npm run start:worktree
+```
+
+该命令固定使用 `127.0.0.1:8788`、`data/rbac-refactor-test.sqlite` 和 `uploads-rbac-test`。服务端会拒绝工作树占用8787或连接默认 `data/muc.sqlite`。
+
+### 主工作树
+
 双击 `start-local.command`，或在终端执行：
 
 ```bash
@@ -25,7 +37,7 @@ public/index.html
 
 ## 测试账号
 
-- 管理员：`54002010 / muc2026`
+- 唯一超级账号：`54002010 / muc2026`（首次登录后请修改密码）
 - 发布者：`publisher / 123456`
 - 接收者：`receiver / 123456`
 
@@ -47,7 +59,7 @@ Control + C
 ## 本地验收清单
 
 - 首页显示 73 条信息。
-- `54002010 / muc2026` 可以登录管理员。
+- `54002010 / muc2026` 可以登录唯一超级账号“赵威”。
 - 收藏后刷新仍保留。
 - 展开原文后生成阅读回执并显示提示。
 - 发布新信息后列表新增记录。

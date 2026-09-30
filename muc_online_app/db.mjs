@@ -1,12 +1,15 @@
 import fs from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { postgresConnectionOptions } from "./postgres-connection.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
+export const requestQueryStats = new AsyncLocalStorage();
 
 function sqliteDatabase(dbPath) {
   const sqlite = new DatabaseSync(dbPath);
@@ -23,6 +26,11 @@ function translateSql(sql) {
   let text = String(sql).trim();
   text = text.replace(/^begin\s+immediate\b/i, "begin");
   text = text.replace(/^insert\s+or\s+ignore\s+into\s+/i, "insert into ");
+  // SQLite preserves mixed-case aliases, while PostgreSQL folds unquoted ones
+  // to lower case. Keep the object keys expected by the shared application.
+  text = text.split(/('(?:''|[^'])*'|"(?:""|[^"])*")/g).map((part, index) => index % 2 ? part :
+    part.replace(/\bas(\s+)([a-z_][A-Za-z0-9_]*)\b/gi, (match, space, alias) =>
+      /^[a-z_]/.test(alias) && /[A-Z]/.test(alias) ? `as${space}"${alias}"` : match)).join("");
   text = replacePlaceholders(text);
   if (/^insert\s+into\s+/i.test(text) && /\s+on\s+conflict\s+do\s+nothing\s*$/i.test(text) === false && /insert\s+or\s+ignore/i.test(String(sql))) {
     text += " on conflict do nothing";
@@ -31,6 +39,8 @@ function translateSql(sql) {
 }
 
 function createPostgresDatabase(databaseUrl) {
+  // Fail before starting the synchronous worker when TLS configuration is unsafe.
+  postgresConnectionOptions(databaseUrl);
   return new PostgresSyncDatabase(databaseUrl);
 }
 
@@ -44,8 +54,14 @@ function instrumentDatabase(database) {
       const durationMs = performance.now() - started;
       stats.count++;
       stats.totalMs += durationMs;
+      const requestStats = requestQueryStats.getStore();
+      if (requestStats) {
+        requestStats.count++;
+        requestStats.totalMs += durationMs;
+      }
       if (durationMs >= 200) {
         stats.slowCount++;
+        if (requestStats) requestStats.slowCount++;
         process.stderr.write(`${JSON.stringify({ type: "slow_query", mode, durationMs: Number(durationMs.toFixed(1)), sql: String(sql).replace(/\s+/g, " ").slice(0, 240) })}\n`);
       }
     }
@@ -137,7 +153,7 @@ export async function createDatabase({ dbPath, databaseUrl = process.env.DATABAS
 
 if (!isMainThread) {
   const { Client } = await import("pg");
-  const client = new Client({ connectionString: workerData.databaseUrl, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
+  const client = new Client(postgresConnectionOptions(workerData.databaseUrl));
   await client.connect();
 
   async function tableInfo(table) {

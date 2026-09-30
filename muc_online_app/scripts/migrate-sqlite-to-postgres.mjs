@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import pg from "pg";
+import { postgresConnectionOptions } from "../postgres-connection.mjs";
+import { preflightCapabilityIntegrity } from "../capability-integrity.mjs";
 
 const { Client } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -11,15 +13,20 @@ const sqlitePath = process.env.SQLITE_PATH || path.join(appDir, "data", "muc.sql
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("请先设置 DATABASE_URL");
 
-const schema = await fs.readFile(path.join(appDir, "migrations", "001_init_postgres.sql"), "utf8");
-const sqlite = new DatabaseSync(sqlitePath);
-const client = new Client({ connectionString: databaseUrl, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
+const migrationFiles = (await fs.readdir(path.join(appDir, "migrations")))
+  .filter(name => /^\d+.*\.sql$/.test(name))
+  .sort();
+const schemas = await Promise.all(migrationFiles.map(name => fs.readFile(path.join(appDir, "migrations", name), "utf8")));
+const sqlite = new DatabaseSync(sqlitePath,{readOnly:true});
+if(!sqlite.prepare("pragma table_info(rbac_user_scopes)").all().some(c=>c.name==="module"))throw new Error("先在SQLite副本完成身份与分模块范围迁移，禁止直接导入旧格式");
+const capabilityIntegrity=preflightCapabilityIntegrity(sqlite);
+if(!capabilityIntegrity.ok)throw Object.assign(new Error("能力与人员身份预检未通过，禁止迁移到PostgreSQL"),{details:capabilityIntegrity.issues});
+const client = new Client(postgresConnectionOptions(databaseUrl));
 await client.connect();
-await client.query(schema);
+for (const schema of schemas) await client.query(schema);
 
 const tables = [
   "users",
-  "people",
   "records",
   "record_recipients",
   "read_receipts",
@@ -42,7 +49,30 @@ const tables = [
   "maintenance_report_entries",
   "maintenance_report_drafts",
   "maintenance_sync_state",
-  "maintenance_logs"
+  "maintenance_logs",
+  "personnel",
+  "organization_units",
+  "personnel_licenses",
+  "capability_catalog",
+  "personnel_authorizations",
+  "personnel_authorization_versions",
+  "course_catalog",
+  "personnel_training_records",
+  "personnel_import_batches",
+  "personnel_import_workspaces",
+  "personnel_import_issues",
+  "personnel_change_logs",
+  "personnel_field_overrides",
+  "master_data_dictionary_values",
+  "rbac_roles",
+  "rbac_permissions",
+  "rbac_role_permissions",
+  "rbac_user_roles",
+  "rbac_user_scopes",
+  "personnel_identity_migrations",
+  "personnel_organization_history",
+  "capability_meta", "capability_current_states", "capability_supports", "capability_deployment_locations", "capability_other_status_options", "capability_status_records",
+  "capability_history", "capability_scenarios", "capability_configuration", "capability_events", "capability_commands"
 ];
 
 function placeholders(count) {

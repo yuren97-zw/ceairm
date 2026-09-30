@@ -9,26 +9,12 @@ const adminStatusFilters = ["全部", "未读", "已读", "超期", "收藏", "�
 const LOGIN_STORAGE_KEY = "muc_saved_login_v1";
 const AUTO_LOGIN_SKIP_KEY = "muc_skip_auto_login_once";
 const MAINTENANCE_RULE_GROUPS_STORAGE_KEY = "muc_maintenance_rule_groups_open_v1";
-const tabOptions = [
-  ["homePage", "首页"],
-  ["infoPage", "信息传达"],
-  ["maintenancePage", "维修管控"],
-  ["fixedPage", "固化项目"],
-  ["hoursPage", "工时统计"],
-  ["attendancePage", "考勤管理"]
-];
-const permissionOptions = [
-  ["view", "查看"],
-  ["create", "发布"],
-  ["edit", "修改"],
-  ["delete", "删除"],
-  ["remind", "催办"],
-  ["fixedManage", "固化项目维护"]
-];
-const roleLabels = { receiver: "接收者", publisher: "发布者", admin: "管理员" };
+const SUPER_ACCOUNT_ID = "54002010";
+const scopeModuleLabels={personnel:"人员与能力",accounts:"登录账户管理",info:"信息传达",maintenance:"维修管控",hours:"工时统计",attendance:"考勤管理"};
+const authorizationCategoryLabels={release:"放行",test_run:"试车",maintenance:"维修",special:"专项",third_party:"三方",other:"其他"};
+const sensitivePersonnelFields=["actualGrade"];
 const statusLabels = { active: "启用", disabled: "停用" };
 const defaultPersonnelFunctionCategories = ["维修", "放行"];
-
 
 const defaultSettings = {
   categories: ["质量问题", "规定要求", "周例会", "日例会", "其他"],
@@ -36,11 +22,6 @@ const defaultSettings = {
   reminderDays: 1,
   overdueDays: 3,
   people: [],
-  rolePermissions: {
-    receiver: { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] },
-    publisher: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "remind"] },
-    admin: { allowedTabs: ["homePage", "infoPage", "maintenancePage", "fixedPage", "hoursPage", "attendancePage"], permissions: ["view", "create", "edit", "delete", "remind", "fixedManage"] }
-  },
   securityNotes: "由后端认证、数据库权限校验、附件访问鉴权和操作日志保障。"
 };
 
@@ -61,11 +42,35 @@ function loadMaintenanceRuleGroupsOpen() {
 
 
 const state = {
-  user: { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] },
+  user: { id: "", username: "", name: "", rbacRoles: [], rbacPermissions: [], dataScopes: [] },
   records: [],
   receipts: [],
   fixedProjects: [],
   users: [],
+  personnel: [],
+  personnelDirectory: [],
+  infoPeople: [], maintenancePeople: [], organizations: [], orgSearch: "",
+  personnelMeta: { total: 0, page: 1, pageSize: 20, facets: {} },
+  personnelImportBatches: [],
+  rbacCatalog: { roles: [], permissions: [] },
+  settingsTab: "accounts",
+  personnelTab: "list",
+  authorizationProjects: { items: [], total: 0, page: 1, pageSize: 20 },
+  authorizationProjectSearch: "",
+  authorizationProjectCategory: "",
+  selectedAuthorizationProjectIds: new Set(),
+  authorizationProjectError: "",
+  personnelSearch: "",
+  personnelFilters: { department: "", homeTeam: "", employmentStatus: "", accountStatus: "" },
+  personnelPage: 1,
+  personnelPageSize: 20,
+  personnelSort: "employeeNo",
+  personnelOrder: "asc",
+  activePersonnelDetail: null,
+  personnelDetailTab: "basic",
+  expandedAuthorizationCategory: "",
+  expandedThirdPartyCompany: "",
+  personnelQualifications: { type: "", items: [], total: 0, page: 1, pageSize: 20, facets: {}, q: "", category: "", status: "", loading: false, error: "" },
   selectedUserIds: new Set(),
   userRoleFilter: "全部",
   settings: clone(defaultSettings),
@@ -73,6 +78,7 @@ const state = {
   recordFiles: [],
   fixedFiles: [],
   selectedRecipientIds: new Set(),
+  allRecipientsInScope: false,
   activePage: "homePage",
   activeSubpage: "infoListSubpage",
   selectedCategories: new Set(),
@@ -168,7 +174,7 @@ const ROUTES = {
 };
 
 function emptyUser() {
-  return { id: "", username: "", name: "", role: "", permissions: [], allowedTabs: [] };
+  return { id: "", username: "", name: "", rbacRoles: [], rbacPermissions: [], dataScopes: [] };
 }
 
 function isLoggedIn() {
@@ -288,6 +294,7 @@ function showLoginPage(message = "") {
   $("#openEntryBtn").hidden = true;
   $("#openFixedBtn").hidden = true;
   $("#loginBtn").hidden = true;
+  $("#accountPasswordBtn").hidden = true;
   $("#logoutBtn").hidden = true;
   fillLoginForm();
   const loginMessage = $("#loginMessage");
@@ -323,11 +330,11 @@ function setLoginBusy(isBusy, message = "") {
 }
 
 function openChangePasswordDialog() {
+  if (!state.user.id) return;
   $("#changePasswordForm").reset();
-  $("#changePasswordUser").value = $("#loginUser").value.trim();
   setChangePasswordBusy(false, "");
   $("#changePasswordDialog").showModal();
-  setTimeout(() => ($("#changePasswordUser").value ? $("#changePasswordOld") : $("#changePasswordUser"))?.focus(), 0);
+  setTimeout(() => $("#changePasswordOld")?.focus(), 0);
 }
 
 function setChangePasswordBusy(isBusy, message = "") {
@@ -345,12 +352,11 @@ function setChangePasswordBusy(isBusy, message = "") {
 
 async function submitChangePassword() {
   if ($("#changePasswordSubmit")?.disabled) return;
-  const username = $("#changePasswordUser").value.trim();
   const oldPassword = $("#changePasswordOld").value;
   const newPassword = $("#changePasswordNew").value;
   const confirmPassword = $("#changePasswordConfirm").value;
-  if (!username || !oldPassword || !newPassword || !confirmPassword) {
-    setChangePasswordBusy(false, "请完整填写账号、旧密码和新密码。");
+  if (!oldPassword || !newPassword || !confirmPassword) {
+    setChangePasswordBusy(false, "请完整填写旧密码和新密码。");
     return;
   }
   if (newPassword.length < 6) {
@@ -363,12 +369,13 @@ async function submitChangePassword() {
   }
   setChangePasswordBusy(true, "正在修改密码...");
   try {
-    await authService.changePassword(username, oldPassword, newPassword);
+    await authService.changePassword(state.user.username, oldPassword, newPassword);
     const saved = savedLogin();
-    if (saved.username === username) localStorage.removeItem(LOGIN_STORAGE_KEY);
+    if (saved.username === state.user.username) localStorage.removeItem(LOGIN_STORAGE_KEY);
     sessionStorage.setItem(AUTO_LOGIN_SKIP_KEY, "1");
     $("#changePasswordDialog").close();
-    $("#loginPass").value = "";
+    state.user = emptyUser();
+    showLoginPage("密码已修改，请使用新密码重新登录。");
     $("#rememberPassword").checked = false;
     $("#autoLogin").checked = false;
     setLoginBusy(false, "密码已修改，请使用新密码登录。");
@@ -400,6 +407,11 @@ async function performLogin() {
     state.loadedData = new Set();
     persistLoginPreference(username, password, rememberPassword, autoLogin);
     sessionStorage.removeItem(AUTO_LOGIN_SKIP_KEY);
+    if (user.mustChangePassword) {
+      setLoginBusy(false, "首次登录或密码重置后，请先修改密码。");
+      openChangePasswordDialog();
+      return;
+    }
     setLoginBusy(true, "登录成功，正在进入系统...");
     await navigate(ROUTES.dashboard);
   } catch (error) {
@@ -436,6 +448,8 @@ async function apiRequest(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data?.error || "接口请求失败");
     error.status = response.status;
+    error.details = data?.errors || data?.issues || [];
+    error.blockers = data?.blockers || [];
     throw error;
   }
   return data;
@@ -479,7 +493,7 @@ async function handleAuthExpired(message = "登录状态已失效，请重新登
   state.loadedData = new Set();
   state.activeSubpage = "infoListSubpage";
   closeOpenMenus();
-  ["entryDialog", "fixedDialog", "userDialog", "feedbackDialog", "changePasswordDialog"].forEach(id => {
+  ["entryDialog", "fixedDialog", "userDialog", "roleDialog", "personnelDialog", "personnelDeleteDialog", "authorizationProjectDialog", "feedbackDialog", "changePasswordDialog"].forEach(id => {
     const dialog = $("#" + id);
     if (dialog?.open) dialog.close();
   });
@@ -514,6 +528,117 @@ async function markRecordReadFromCard(article, record) {
   }
 }
 
+function scopeHasAll(module) {
+  return state.user.id===SUPER_ACCOUNT_ID || (state.user.dataScopes || []).some(s=>s.module===module && s.scopeType==="all" && (!s.validFrom || Date.parse(s.validFrom)<=Date.now()) && (!s.validTo || Date.parse(s.validTo)>=Date.now()));
+}
+
+async function loadPersonnelDirectories() {
+  const load=async purpose=>{
+    const items=[];let page=1,total=1;
+    while(items.length<total){const data=await apiRequest(`/personnel/directory?purpose=${purpose}&page=${page++}&pageSize=200`);total=data.total;items.push(...data.items);if(!data.items.length)break;}
+    return items.map(p=>({...p,id:purpose==="info"?p.accountId:p.personId,team:p.currentWorkingTeamName||p.administrativeTeamName||"未设置"}));
+  };
+  state.infoPeople=["info.create","info.update.own","info.update.any"].some(hasRbac)?await load("info"):[];
+  state.maintenancePeople=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance"):[];
+  state.personnelDirectory=["accounts.read","accounts.create","accounts.bulk_open"].some(hasRbac)?await load("accounts"):[];
+  state.organizations=(await apiRequest("/personnel/organizations")).organizations || [];
+}
+
+function organizationSelects(prefix,person={}) {
+  const labels={department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"};
+  const fields={department:"Department",personnel_group:"PersonnelGroup",administrative_team:"AdministrativeTeam"};
+  return Object.keys(fields).map(type=>{
+    const field=fields[type],selected=person[field[0].toLowerCase()+field.slice(1)+"Id"]||"";
+    return `<label>${labels[type]}<select id="${prefix}${field}Id" data-org-person-select="${prefix}"><option value="">未分配</option>${state.organizations.filter(o=>o.type===type).map(o=>`<option value="${escapeHtml(o.id)}" ${o.id===selected?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label>`;
+  }).join("");
+}
+
+function organizationLabel(org) {
+  const names=[org.name];let row=org;
+  for(let i=0;i<2 && row?.parentId;i++){row=state.organizations.find(o=>o.id===row.parentId);if(row)names.unshift(row.name);}
+  return names.join(" / ");
+}
+
+function organizationSelection(prefix) {
+  return {departmentId:$("#"+prefix+"DepartmentId")?.value||"",personnelGroupId:$("#"+prefix+"PersonnelGroupId")?.value||"",administrativeTeamId:$("#"+prefix+"AdministrativeTeamId")?.value||""};
+}
+
+function scopeDateInput(value) { return value ? new Date(Date.parse(value)+8*3600000).toISOString().slice(0,10) : ""; }
+function moduleScopeRow(module,scope={scopeType:"self"}) {
+  const type=scope.scopeType || "self";
+  const orgType={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
+  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
+}
+function renderModuleScopes(scopes) {
+  return `<section class="data-panel"><strong>分模块数据范围</strong><p>各模块独立授权；同模块多项范围取并集。日期为空表示不限制，未配置模块默认本人。</p>${Object.entries(scopeModuleLabels).map(([module,label])=>`<fieldset><legend>${label}</legend><div data-module-scopes="${module}">${(scopes.filter(s=>s.module===module).length?scopes.filter(s=>s.module===module):[{scopeType:"self"}]).map(s=>moduleScopeRow(module,s)).join("")}</div><button type="button" class="link-btn" data-scope-add="${module}">增加范围</button></fieldset>`).join("")}</section>`;
+}
+function readModuleScopes() {
+  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value}));
+}
+
+function renderOrganizationSettings() {
+  if(!hasRbac("personnel.organization.manage"))return "";
+  const canManage=scopeHasAll("personnel"),query=(state.orgSearch || "").toLowerCase();
+  const rows=state.organizations.filter(o=>[organizationLabel(o)].some(v=>v.toLowerCase().includes(query)));
+  const pages=Math.max(1,Math.ceil(rows.length/20));state.orgPage=Math.min(state.orgPage || 1,pages);
+  return `<section class="data-panel"><h2>正式组织目录</h2><p>部门下建立人员分组；人员分组可选下设行政班组。“未分配”是空归属状态，不是组织节点。</p><form id="organizationSearchForm"><label>搜索组织名称或完整路径<input name="q" value="${escapeHtml(state.orgSearch || "")}"></label><button class="btn secondary">搜索</button></form>${canManage?'<button class="btn" type="button" data-org-create>新增组织</button>':'<p>全局组织维护需要人员模块全部范围。</p>'}<div class="authorization-project-table"><table><thead><tr><th>名称与归属</th><th>类型</th><th>维修调配</th><th>引用数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.slice((state.orgPage-1)*20,state.orgPage*20).map(o=>`<tr><td>${escapeHtml(organizationLabel(o))}</td><td>${{department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}[o.type]}</td><td>${o.type==="personnel_group"?(o.maintenanceEligible?"参与":"不参与"):"—"}</td><td>${o.referenceCount ?? "—"}</td><td>${o.fixed?"预置":"自建"}</td><td>${canManage?`<button class="link-btn" type="button" data-org-edit="${escapeHtml(o.id)}">修改</button>${!o.fixed?`<button class="link-btn danger-text" type="button" data-org-delete="${escapeHtml(o.id)}">删除</button>`:""}`:"只读"}</td></tr>`).join("")}</tbody></table></div><p>共 ${rows.length} 项 · 第 ${state.orgPage}/${pages} 页 <button type="button" class="link-btn" data-org-page="${state.orgPage-1}" ${state.orgPage<=1?"disabled":""}>上一页</button><button type="button" class="link-btn" data-org-page="${state.orgPage+1}" ${state.orgPage>=pages?"disabled":""}>下一页</button></p></section>`;
+}
+function openOrganizationDialog(org=null) {
+  if(!hasRbac("personnel.organization.manage") || !scopeHasAll("personnel"))return;
+  $("#personnelDialogBody").innerHTML=`<div class="dialog-head"><h2>${org?"修改组织":"新增组织"}</h2><button class="icon-btn" data-close="personnelDialog" type="button">×</button></div><form id="organizationForm" class="entry-grid" data-org-id="${escapeHtml(org?.id || "")}"><label>组织名称<input name="name" required value="${escapeHtml(org?.name || "")}"></label><label>类型<select name="type" ${org?"disabled":""}>${Object.entries({department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}).map(([key,label])=>`<option value="${key}" ${org?.type===key?"selected":""}>${label}</option>`).join("")}</select></label><label>父级（部门无需选择）<select name="parentId" ${org?"disabled":""}><option value="">无</option>${state.organizations.filter(o=>["department","personnel_group"].includes(o.type)).map(o=>`<option value="${escapeHtml(o.id)}" ${org?.parentId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label class="login-check" data-maintenance-toggle ${org?.type==="personnel_group"?"":"hidden"}><input name="maintenanceEligible" type="checkbox" ${org?.maintenanceEligible?"checked":""}>参与维修调配</label><label>原因<textarea name="reason" ${org?"required":""}></textarea></label><button class="btn" type="submit">保存</button></form>`;
+  $("#personnelDialog").showModal();
+  refreshOrganizationParentOptions($("#organizationForm"));
+}
+
+function refreshOrganizationParentOptions(form){
+  if(!form)return;
+  const toggle=form.querySelector("[data-maintenance-toggle]");
+  toggle.hidden=form.elements.type.value!=="personnel_group";
+  toggle.style.display=toggle.hidden?"none":"";
+  toggle.querySelector("input").disabled=toggle.hidden;
+  if(form.dataset.orgId)return;
+  const type=form.elements.type.value,parent=form.elements.parentId,current=parent.value;
+  const allowed=type==="administrative_team"?["personnel_group"]:type==="personnel_group"?["department"]:[];
+  parent.disabled=!allowed.length;
+  parent.innerHTML='<option value="">无</option>'+state.organizations.filter(o=>allowed.includes(o.type)).map(o=>`<option value="${escapeHtml(o.id)}" ${o.id===current?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("");
+}
+
+document.addEventListener("change",event=>{
+  if(event.target.matches('#organizationForm select[name="type"]'))refreshOrganizationParentOptions(event.target.form);
+  if(event.target.matches("[data-scope-type]")){
+    const row=event.target.closest("[data-scope-row]"),select=row.querySelector("[data-scope-org]"),type=event.target.value;
+    const orgType={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
+    select.disabled=!orgType;
+    select.innerHTML='<option value="">请选择</option>'+state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}">${escapeHtml(organizationLabel(o))}</option>`).join("");
+  }
+  if(event.target.matches("[data-org-person-select]")){
+    const prefix=event.target.dataset.orgPersonSelect;
+    const selected=state.organizations.find(o=>o.id===event.target.value);
+    if(event.target.id.endsWith("AdministrativeTeamId")&&selected){const parent=state.organizations.find(o=>o.id===selected.parentId);$("#"+prefix+"PersonnelGroupId").value=parent?.id||"";$("#"+prefix+"DepartmentId").value=parent?.parentId||"";}
+    if(event.target.id.endsWith("PersonnelGroupId")){$("#"+prefix+"AdministrativeTeamId").value="";if(selected)$("#"+prefix+"DepartmentId").value=selected.parentId;}
+    if(event.target.id.endsWith("DepartmentId")){$("#"+prefix+"PersonnelGroupId").value="";$("#"+prefix+"AdministrativeTeamId").value="";}
+  }
+});
+document.addEventListener("click",async event=>{
+  const add=event.target.closest("[data-scope-add]");if(add)document.querySelector(`[data-module-scopes="${add.dataset.scopeAdd}"]`).insertAdjacentHTML("beforeend",moduleScopeRow(add.dataset.scopeAdd));
+  event.target.closest("[data-scope-remove]")?.closest("[data-scope-row]")?.remove();
+  if(event.target.closest("[data-org-create]"))openOrganizationDialog();
+  const edit=event.target.closest("[data-org-edit]");if(edit)openOrganizationDialog(state.organizations.find(o=>o.id===edit.dataset.orgEdit));
+  const page=event.target.closest("[data-org-page]");if(page){state.orgPage=Number(page.dataset.orgPage);renderPersonnelPage();}
+  const remove=event.target.closest("[data-org-delete]");if(remove){
+    const org=state.organizations.find(o=>o.id===remove.dataset.orgDelete);
+    if(!confirm(`确认删除 ${organizationLabel(org)}？已引用的组织不能删除。`))return;
+    const reason=prompt("请填写删除原因");if(!reason?.trim())return;
+    try{await apiRequest(`/personnel/organizations/${encodeURIComponent(org.id)}`,{method:"DELETE",body:{reason}});await renderAll();}catch(e){alert(e.message);}
+  }
+});
+document.addEventListener("submit",async event=>{
+  if(event.target.id==="organizationSearchForm"){event.preventDefault();state.orgSearch=new FormData(event.target).get("q");state.orgPage=1;renderPersonnelPage();}
+  if(event.target.id!=="organizationForm")return;
+  event.preventDefault();const id=event.target.dataset.orgId,body=Object.fromEntries(new FormData(event.target));body.maintenanceEligible=event.target.elements.maintenanceEligible.checked;
+  try{await apiRequest(`/personnel/organizations${id?"/"+encodeURIComponent(id):""}`,{method:id?"PUT":"POST",body});$("#personnelDialog").close();await renderAll();}catch(e){alert(e.message);}
+});
+
 const settingsService = {
   async get() {
     const data = await apiRequest("/settings");
@@ -533,22 +658,14 @@ const authService = {
     return this.withSettings(data.user);
   },
   withSettings(user) {
-    const settings = state.settings || defaultSettings;
-    const roleConfig = settings.rolePermissions?.[user.role] || {};
-    const editableTabKeys = new Set(tabOptions.map(([value]) => value));
-    const permissionKeys = new Set(permissionOptions.map(([value]) => value));
-    const tabs = new Set((user.allowedTabs || roleConfig.allowedTabs || []).filter(tab => editableTabKeys.has(tab)));
-    tabs.add("homePage");
-    if (user.role === "admin") tabs.add("settingsPage");
-    const permissions = (user.permissions || roleConfig.permissions || []).filter(permission => permissionKeys.has(permission));
-    return { ...user, permissions, allowedTabs: Array.from(tabs) };
+    return { ...emptyUser(), ...user };
   },
   async login(username, password) {
     const data = await apiRequest("/login", { method: "POST", body: { username, password } });
     return this.withSettings(data.user);
   },
   async changePassword(username, oldPassword, newPassword) {
-    return await apiRequest("/change-password", { method: "POST", body: { username, oldPassword, newPassword } });
+    return await apiRequest("/change-password", { method: "POST", body: { oldPassword, newPassword } });
   },
   async logout() {
     await apiRequest("/logout", { method: "POST" });
@@ -556,9 +673,8 @@ const authService = {
 };
 
 function normalizeRecipients(recipients) {
-  const people = [...(state.settings.people || [])];
-  const ids = (recipients?.length ? recipients : people.map(person => person.id)).map((id, index) => legacyWorkNo(id, index));
-  return ids.map(id => people.find(person => person.id === id)).filter(Boolean);
+  const available = new Map(state.infoPeople.map(person => [person.id, person]));
+  return (recipients || []).map(item => available.get(typeof item === "object" ? item.id : item)).filter(Boolean);
 }
 
 function legacyWorkNo(id, index = 0) {
@@ -575,16 +691,10 @@ function legacyWorkNo(id, index = 0) {
   return String(id || 90000000 + index).slice(0, 64);
 }
 
-function normalizePerson(person, index = 0) {
-  if (!person) return null;
-  return {
-    id: legacyWorkNo(person.id, index),
-    username: String(person.username || person.id || "").trim(),
-    name: String(person.name || "").trim() || "未命名",
-    department: String(person.department || "未设置").trim() || "未设置",
-    team: String(person.team || person.department || "未设置").trim() || "未设置",
-    functionCategory: String(person.functionCategory || "维修").trim() || "维修"
-  };
+function normalizePerson(person) {
+ if(!person?.id)return null;
+ return {...person,id:String(person.id),personId:person.personId || "",accountId:person.accountId || null,
+ username:person.username || "",name:person.name || "",department:person.department || "未设置",team:person.team || person.homeTeam || "未设置",functionCategory:person.functionCategory || "维修"};
 }
 
 function normalizePeople(people) {
@@ -636,7 +746,7 @@ function enrichRecord(record, index = 0) {
     attachments: Array.isArray(record.attachments) ? record.attachments : [],
     favorite: record.favorite === true,
     importedRead: record.importedRead === true || record.importedReadComplete === true,
-    recipients: Array.isArray(record.recipients) && record.recipients.length ? record.recipients.map((item, itemIndex) => typeof item === "object" ? { id: item.id, name: item.name, department: item.department || "未设置", team: item.team || "未设置" } : normalizeRecipients([item])[0]).filter(Boolean) : normalizeRecipients([]),
+    recipients: Array.isArray(record.recipients) && record.recipients.length ? record.recipients.map((item, itemIndex) => typeof item === "object" ? { id: item.id, personId:item.personId,accountId:item.accountId, name: item.name, department: item.department || "未设置", team: item.team || "未设置" } : normalizeRecipients([item])[0]).filter(Boolean) : normalizeRecipients([]),
     deadline,
     priority: record.priority || (index % 7 === 0 ? "重要" : "普通"),
     publishStatus: record.publishStatus || "已发布",
@@ -655,7 +765,7 @@ function enrichRecord(record, index = 0) {
 const recordService = {
   async list() {
     const data = await apiRequest("/records");
-    if (data.settings) state.settings = { ...data.settings, people: normalizePeople(data.settings.people || []) };
+    if (data.settings) state.settings = data.settings;
     state.receipts = data.receipts || [];
     return (data.records || []).map(enrichRecord);
   },
@@ -761,29 +871,92 @@ const auditService = {
 
 const userService = {
   async list() {
-    if (state.user.role !== "admin") return [];
-    const data = await apiRequest("/admin/users");
-    return data.users || [];
+    if (!hasRbac("accounts.read")) return [];
+    const data = await apiRequest("/admin/accounts");
+    return data.accounts || [];
   },
   async create(payload) {
-    const data = await apiRequest("/admin/users", { method: "POST", body: payload });
-    return data.user;
+    const data = await apiRequest("/admin/accounts", { method: "POST", body: payload });
+    return data.account;
   },
   async update(id, payload) {
-    const data = await apiRequest(`/admin/users/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
-    return data.user;
+    const data = await apiRequest(`/admin/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+    return data.account;
   },
   async resetPassword(id, password) {
-    return await apiRequest(`/admin/users/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: { password } });
+    return await apiRequest(`/admin/accounts/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: { password } });
   },
   async remove(id) {
-    return await apiRequest(`/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" });
-  },
-  async batchUpdate(userIds, updates) {
-    return await apiRequest("/admin/users/batch", { method: "PUT", body: { userIds, updates } });
+    return await apiRequest(`/admin/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   async importRows(rows) {
-    return await apiRequest("/admin/users/import", { method: "POST", body: { rows } });
+    return await apiRequest("/admin/accounts/bulk-open", { method: "POST", body: { rows } });
+  }
+};
+
+const personnelService = {
+  async list(options = {}) {
+    const query = new URLSearchParams();
+    Object.entries(options).forEach(([key, value]) => {
+      if (value !== "" && value !== undefined && value !== null) query.set(key, value);
+    });
+    const data = await apiRequest(`/personnel${query.size ? `?${query}` : ""}`);
+    return { items: data.items || data.personnel || [], total: Number(data.total ?? data.personnel?.length ?? 0), page: Number(data.page || 1), pageSize: Number(data.pageSize || 20), facets: data.facets || {} };
+  },
+  async detail(id) {
+    return await apiRequest(`/personnel/${encodeURIComponent(id)}`);
+  },
+  async qualifications(id, options = {}) {
+    const query = new URLSearchParams();
+    Object.entries(options).forEach(([key, value]) => { if (value !== "" && value !== undefined && value !== null) query.set(key, value); });
+    return await apiRequest(`/personnel/${encodeURIComponent(id)}/qualifications?${query}`);
+  },
+  async create(payload) {
+    const data = await apiRequest("/personnel", { method: "POST", body: payload });
+    return data.person;
+  },
+  async update(id, payload) {
+    const data = await apiRequest(`/personnel/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+    return data.person;
+  },
+  async changes(id) {
+    const data = await apiRequest(`/personnel/${encodeURIComponent(id)}/changes`);
+    return data.changes || [];
+  },
+  async updateQualification(personId, kind, recordId, payload) {
+    return await apiRequest(`/personnel/${encodeURIComponent(personId)}/qualifications/${encodeURIComponent(kind)}/${encodeURIComponent(recordId)}`, { method: "PUT", body: payload });
+  },
+  async voidQualification(personId, kind, recordId, reason) {
+    return await apiRequest(`/personnel/${encodeURIComponent(personId)}/qualifications/${encodeURIComponent(kind)}/${encodeURIComponent(recordId)}`, { method: "DELETE", body: { reason } });
+  },
+  async stageImport(type, fileName, rows) {
+    const data = await apiRequest("/personnel/imports", { method: "POST", body: { type, fileName, rows, rowNumbers: rows.map(row => row.sourceRowNumber || null) } });
+    return data.batch;
+  },
+  async confirmImport(id, confirmReplacement=false, workspaceRevision) {
+    return await apiRequest(`/personnel/imports/${encodeURIComponent(id)}/confirm`, { method: "POST", body:{confirmReplacement,workspaceRevision} });
+  },
+  async cancelImport(id) {
+    return await apiRequest(`/personnel/imports/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  },
+  async imports() {
+    const data = await apiRequest("/personnel/imports");
+    return data.batches || [];
+  }
+};
+
+const rbacService = {
+  async catalog() {
+    return await apiRequest("/admin/rbac");
+  },
+  async createRole(payload) {
+    return await apiRequest("/admin/roles", { method: "POST", body: payload });
+  },
+  async updateRole(id, payload) {
+    return await apiRequest(`/admin/roles/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+  },
+  async removeRole(id) {
+    return await apiRequest(`/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 };
 
@@ -1268,47 +1441,40 @@ function inDateRange(value) {
   return state.activeMonth === "全部" || monthLabel(value) === state.activeMonth;
 }
 
-function has(permission) {
-  return state.user.permissions?.includes(permission);
+function hasRbac(permission) {
+  return state.user.rbacPermissions?.includes(permission);
 }
 
 function isRecordOwner(record) {
-  if (!record || !state.user.id) return false;
-  const publisherName = (record.publisher || "").trim();
-  if (publisherName === state.user.name && publisherName !== "发布者") return true;
-  if (publisherName && publisherName !== state.user.name) return false;
-  return record.publisherId === state.user.id || record.createdBy === state.user.id;
+ return !!record && !!state.user.id && (record.publisherId ? record.publisherId===state.user.id : record.createdBy===state.user.id);
 }
 
 function canEditRecord(record) {
-  return has("edit") && canViewRecord(record);
+  return canViewRecord(record) && (hasRbac("info.update.any") || (hasRbac("info.update.own") && isRecordOwner(record)));
 }
 
 function canDeleteRecord(record) {
-  return has("delete") && canViewRecord(record);
+  return canViewRecord(record) && (hasRbac("info.delete.any") || (hasRbac("info.delete.own") && isRecordOwner(record)));
 }
 
 function canVoidRecord(record) {
   if (!record || record.publishStatus === "作废") return false;
-  if (state.user.role === "admin") return true;
-  return state.user.role === "publisher" && isRecordOwner(record);
+  return hasRbac("info.void.any") || (hasRbac("info.void.own") && isRecordOwner(record));
 }
 
 function canRestoreRecord(record) {
-  return state.user.role === "admin" && record?.publishStatus === "作废";
+  return hasRbac("info.restore") && record?.publishStatus === "作废";
 }
 
 function canManageFeedbackRecord(record) {
-  if (state.user.role === "admin") return true;
-  return state.user.role === "publisher" && isRecordOwner(record);
+  return hasRbac("info.receipt.manage") || hasRbac("info.stats.read") || hasRbac("info.remind.any") || ((hasRbac("info.remind.own") || hasRbac("info.update.own")) && isRecordOwner(record));
 }
 
 function canViewRecord(record) {
   if (!state.user.id) return false;
-  if (record?.publishStatus === "作废") return state.user.role === "admin";
-  if (state.user.role === "admin") return true;
-  if (state.user.role === "publisher") return isRecipient(record) || isRecordOwner(record);
-  return isRecipient(record);
+  if (!hasRbac("info.read")) return false;
+  if (record?.publishStatus === "作废") return hasRbac("info.restore") || hasRbac("info.void.any");
+  return isRecipient(record) || isRecordOwner(record) || scopeHasAll("info");
 }
 
 function canTrackPersonalRead(record) {
@@ -1322,18 +1488,17 @@ function canFilterReadState(record) {
 function canView(tab) {
   if (!isLoggedIn()) return false;
   if (tab === "homePage") return true;
-  if (tab === "settingsPage") return state.user.role === "admin";
-  return state.user.allowedTabs?.includes(tab);
+  return (state.user.visibleNavigation || []).includes(tab);
 }
 
 function canOpenSettings() {
-  return state.user.role === "admin";
+  return ["accounts.read", "roles.read", "settings.manage"].some(hasRbac);
 }
 
 function canViewSubpage(subpage) {
   if (!isLoggedIn()) return false;
   if (subpage === "infoListSubpage") return true;
-  if (subpage === "statsSubpage") return state.user.role === "publisher" || state.user.role === "admin";
+  if (subpage === "statsSubpage") return hasRbac("info.stats.read");
   return false;
 }
 
@@ -1446,11 +1611,10 @@ function titleMeta(record) {
 function canManageAttachmentUi(owner, ownerType) {
   if (!isLoggedIn()) return false;
   if (ownerType === "record") {
-    if (owner?.publishStatus === "作废") return state.user.role === "admin";
-    if (state.user.role === "admin") return true;
-    return canEditRecord(owner) || (has("create") && isRecordOwner(owner));
+    if (owner?.publishStatus === "作废") return hasRbac("info.restore") || hasRbac("info.void.any");
+    return canEditRecord(owner) || (hasRbac("info.create") && isRecordOwner(owner));
   }
-  if (ownerType === "fixedProject") return has("fixedManage");
+  if (ownerType === "fixedProject") return hasRbac("fixed.manage");
   return false;
 }
 
@@ -1483,16 +1647,20 @@ function removeAttachmentFromState(attachmentId, ownerType, ownerId) {
 }
 
 function renderShell() {
+  if (capabilityModule) capabilityModule.setActive(isLoggedIn() && state.activePage === "personnelPage" && personnelArea === "capability");
   if (!isLoggedIn()) {
+    capabilityModule?.destroy(); capabilityModule = null; capabilityGeneration++; personnelArea = null;
+    const oldHost = document.getElementById("capabilityHost"); if (oldHost?.shadowRoot) oldHost.replaceWith(Object.assign(document.createElement("div"), { id: "capabilityHost", hidden: true }));
     showLoginPage();
     $("#pager").hidden = true;
     return;
   }
   hideLoginPage();
   $("#loginBtn").hidden = true;
+  $("#accountPasswordBtn").hidden = false;
   $("#logoutBtn").hidden = false;
-  $("#openEntryBtn").hidden = !has("create");
-  $("#openFixedBtn").hidden = !has("fixedManage");
+  $("#openEntryBtn").hidden = !hasRbac("info.create");
+  $("#openFixedBtn").hidden = !hasRbac("fixed.manage");
   if (!canView(state.activePage)) state.activePage = "homePage";
   $$(".subtab").forEach(tab => { tab.hidden = !canViewSubpage(tab.dataset.subpage); });
   $$(".top-tab").forEach(tab => {
@@ -1539,7 +1707,7 @@ function renderCategoryControls() {
 }
 
 function renderStatusControls() {
-  const filters = state.user.role === "admin" ? adminStatusFilters : state.user.role === "publisher" ? publisherStatusFilters : receiverStatusFilters;
+  const filters = hasRbac("info.restore") || hasRbac("info.void.any") ? adminStatusFilters : hasRbac("info.create") ? publisherStatusFilters : receiverStatusFilters;
   if (!filters.includes(state.statusFilter)) state.statusFilter = "全部";
   $("#statusChips").innerHTML = filters.map(filter => {
     const active = state.statusFilter === filter && !(filter === "全部" && state.activeMonth !== "全部");
@@ -1577,7 +1745,7 @@ function renderHome() {
 
 function statusPass(record) {
   const filter = state.statusFilter;
-  if (record.publishStatus === "作废") return state.user.role === "admin" && (filter === "全部" || filter === "作废");
+  if (record.publishStatus === "作废") return canViewRecord(record) && (filter === "全部" || filter === "作废");
   if (filter === "作废") return false;
   if (filter === "全部") return record.publishStatus !== "已撤回" || canManageFeedbackRecord(record);
   if (filter === "收藏") return favoriteService.isFavorite(record.id);
@@ -1611,7 +1779,7 @@ function renderPager(total) {
 
 function recordMetaLine(record, publisherLine = "") {
   const parts = [`<span>${escapeHtml(formatDisplayDateOnly(record.date))}</span>`];
-  if (["publisher", "admin"].includes(state.user.role)) {
+  if (hasRbac("info.create") || hasRbac("info.stats.read")) {
     parts.push(`<span class="publisher">${escapeHtml(record.publisher || "未知")}</span>`);
   }
   if (publisherLine) parts.push(publisherLine);
@@ -1628,7 +1796,7 @@ function renderRecords() {
   $("#cards").innerHTML = pageItems.map(record => {
     const metrics = recordMetrics(record);
     const canManageFeedback = record.publishStatus !== "作废" && canManageFeedbackRecord(record);
-    const publisherLine = state.user.role === "admin" && canManageFeedback ? `<span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span>` : "";
+    const publisherLine = hasRbac("info.stats.read") && canManageFeedback ? `<span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span>` : "";
     const menu = state.user.id ? `<div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">
       <button class="item-btn" type="button" data-favorite="${escapeHtml(record.id)}">${favoriteService.isFavorite(record.id) ? "取消收藏" : "收藏"}</button>
       ${canEditRecord(record) ? `<button class="item-btn" type="button" data-edit-record="${escapeHtml(record.id)}">修改</button>` : ""}
@@ -1688,7 +1856,7 @@ function clearAllDeferredReclassify() {
 }
 
 function renderStats() {
-  const teams = ["全部", ...Array.from(new Set(normalizePeople(state.settings.people || []).map(person => person.team).filter(Boolean)))];
+  const teams = ["全部", ...Array.from(new Set(normalizePeople(state.infoPeople || []).map(person => person.team).filter(Boolean)))];
   if (!teams.includes(state.statsTeam)) state.statsTeam = "全部";
   const options = statsOptions();
   const data = statsService.filtered(state.records, state.receipts, options);
@@ -1769,14 +1937,7 @@ function scheduleMaintenanceFlightSearchRender(input) {
   }, 300);
 }
 
-function roleDefaults(role) {
-  return state.settings.rolePermissions?.[role] || state.settings.rolePermissions?.receiver || { allowedTabs: ["homePage", "infoPage", "maintenancePage"], permissions: ["view"] };
-}
-
-function displayTabLabels(tabs = []) {
-  const labels = new Map(tabOptions);
-  return tabs.filter(tab => labels.has(tab)).map(tab => labels.get(tab)).join("、");
-}
+const scopeLabels={self:"本人",administrative_team:"本行政班组",personnel_group:"所属人员分组",department:"所属部门",specified_teams:"指定行政班组",specified_groups:"指定人员分组",all:"全部数据"};
 
 function checkedGroup(name, options, selected = []) {
   const set = new Set(selected);
@@ -1797,95 +1958,60 @@ function functionCategoryOptions(selected = "维修") {
 }
 
 function renderUserManagement() {
-  const roleFilterOptions = [["全部", "全部"], ...Object.entries(roleLabels)];
-  const rows = (state.users || []).filter(user => state.userRoleFilter === "全部" || user.role === state.userRoleFilter);
+  const roleFilterOptions = [["全部", "全部角色"], ...(state.rbacCatalog.roles || []).map(role => [role.code, role.name])];
+  const rows = (state.users || []).filter(user => state.userRoleFilter === "全部" || (user.rbacRoles || []).some(role => role.code === state.userRoleFilter));
   const rowIds = new Set(rows.map(user => user.id));
   state.selectedUserIds = new Set([...state.selectedUserIds].filter(id => rowIds.has(id)));
   const selectedCount = state.selectedUserIds.size;
   const allChecked = rows.length > 0 && rows.every(user => state.selectedUserIds.has(user.id));
-  return `<div class="data-panel setting-list user-admin-card"><div class="module-head"><div><strong>登录用户管理</strong><div class="status-line">新增账号、配置角色权限、重置密码和启用/停用。</div></div><button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button></div>
-    <div class="import-box"><label>Excel / CSV 批量导入用户<input id="userImportFile" type="file" accept=".xlsx,.xls,.csv"></label><button id="userImportBtn" class="btn secondary" type="button">导入用户</button><div id="userImportResult" class="status-line">列名：账号、姓名、班组、角色、初始密码、页签权限、功能权限、状态、人员职能类别。</div></div>
-    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><div class="user-toolbar-right"><span id="userBatchCount" class="status-line">已选择 ${selectedCount} 个账号</span><button id="openUserBatchBtn" class="btn secondary" type="button" ${selectedCount ? "" : "disabled"}>批量修改</button></div></div>
-    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span><input id="userSelectAll" type="checkbox" ${allChecked ? "checked" : ""} aria-label="全选当前列表"></span><span>账号</span><span>姓名</span><span>角色</span><span>班组</span><span>职能类别</span><span>状态</span><span>页签</span><span>操作</span></div>${rows.map(user => `<div class="user-row admin-user-row"><span><input type="checkbox" data-user-select="${escapeHtml(user.id)}" ${state.selectedUserIds.has(user.id) ? "checked" : ""} aria-label="选择 ${escapeHtml(user.username)}"></span><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}</span><span>${escapeHtml(roleLabels[user.role] || user.role)}</span><span>${escapeHtml(user.team || "未设置")}</span><span>${escapeHtml(user.functionCategory || "维修")}</span><span>${escapeHtml(statusLabels[user.status] || user.status || "启用")}</span><span>${escapeHtml(displayTabLabels(user.allowedTabs))}</span><span class="user-actions"><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn" type="button" data-toggle-user="${escapeHtml(user.id)}">${user.status === "disabled" ? "启用" : "停用"}</button>${user.id !== state.user.id && user.id !== "54002010" ? `<button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">删除</button>` : ""}</span></div>`).join("") || '<div class="status-line">当前角色下暂无账号。</div>'}</div></div>`;
+  return `<div class="data-panel setting-list user-admin-card"><div class="module-head"><div><strong>登录账户管理</strong><div class="status-line">人员身份只从人员主数据读取；访问能力只由 RBAC 角色和数据范围决定。</div></div>${hasRbac("accounts.create") ? '<button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button>' : ""}</div>
+    ${hasRbac("accounts.bulk_open") ? '<div class="import-box"><label>Excel / CSV 批量开通账户<input id="userImportFile" type="file" accept=".xlsx,.xls,.csv"></label><button id="userImportBtn" class="btn secondary" type="button">校验并批量开通</button><div id="userImportResult" class="status-line">列名：员工工号、登录账号、初始密码、账户状态、角色，以及人员与能力范围、登录账户管理范围、信息传达范围、维修管控范围、工时统计范围、考勤管理范围。范围空白默认本人；指定范围写“指定行政班组:航线维修车间 / 二车间 / 一组”或“指定人员分组:航线维修车间 / 二车间”，多选用“|”。可附加各模块“范围开始日期”“范围结束日期”列，按北京时间 YYYY-MM-DD 解释。只能新开账户，不覆盖已有账户。</div></div>' : ""}
+    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label></div>
+    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span>账号</span><span>人员</span><span>部门/班组</span><span>RBAC 角色</span><span>数据范围</span><span>状态</span><span>首次改密</span><span>操作</span></div>${rows.map(user => {
+      const locked = user.id === SUPER_ACCOUNT_ID;
+      const roles = (user.rbacRoles || []).map(role => role.name || role.code).join("、") || "未配置";
+      const scopes = (user.dataScopes || []).map(scope => `${scopeModuleLabels[scope.module] || ""}：${scopeLabels[scope.scopeType]}${scope.scopeId ? " · "+(state.organizations.find(o=>o.id===scope.scopeId)?.name || "未配置组织") : ""}`).join("；") || "未配置";
+      const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
+      return `<div class="user-row admin-user-row"><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}<small>${escapeHtml(user.employeeNo || "")}</small></span><span>${escapeHtml(user.department || "未设置")}<small>${escapeHtml(user.team || "未设置")}</small></span><span>${escapeHtml(roles)}</span><span>${escapeHtml(scopes)}</span><span>${escapeHtml(statusLabels[user.status] || user.status)}</span><span>${user.mustChangePassword ? "是" : "否"}</span><span class="user-actions">${actions}</span></div>`;
+    }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}</div></div>`;
 }
 
 function openUserDialog(user = null) {
   const isEdit = !!user;
-  const defaults = roleDefaults(user?.role || "receiver");
-  const allowedTabs = user?.allowedTabs || defaults.allowedTabs;
-  const permissions = user?.permissions || defaults.permissions;
+  if (user?.id === SUPER_ACCOUNT_ID || user?.personDeleted) return;
+  const linkedPersonnel = state.personnelDirectory.filter(person => !person.accountId || person.accountId === user?.id);
+  if(user && !linkedPersonnel.some(p=>p.personId===user.personId))linkedPersonnel.push({id:user.personId,personId:user.personId,employeeNo:user.employeeNo,name:user.name,department:user.department,homeTeam:user.team});
+  const selectedRoleCodes = (user?.rbacRoles || []).map(role => role.code || role);
+  const assignableRoles = (state.rbacCatalog.roles || []).filter(role => role.code !== "system_admin");
+  const baseRoles = assignableRoles.filter(role => ["worker","dispatcher","manager"].includes(role.code));
+  const supplementalRoles = assignableRoles.filter(role => !["worker","dispatcher","manager"].includes(role.code));
+  const selectedScopeTypes = (user?.dataScopes || []).map(scope => scope.scopeType);
   $("#userDialogBody").innerHTML = `<div class="dialog-head"><h2>${isEdit ? "编辑账号" : "新增账号"}</h2><button class="icon-btn" data-close="userDialog" type="button">×</button></div><form id="userForm" class="entry-grid">
     <input id="userId" type="hidden" value="${escapeHtml(user?.id || "")}">
-    <label>账号<input id="userUsername" value="${escapeHtml(user?.username || "")}" ${isEdit ? "disabled" : ""} required></label>
-    <label>姓名<input id="userName" value="${escapeHtml(user?.name || "")}" required></label>
-    <label>班组<input id="userTeam" value="${escapeHtml(user?.team || "")}" placeholder="例如：一班"></label>
-    <label>人员职能类别<select id="userFunctionCategory">${functionCategoryOptions(user?.functionCategory || "维修")}</select></label>
-    ${isEdit ? "" : '<label>初始密码<input id="userPassword" value="123456" required></label>'}
-    <label>角色<select id="userRole"><option value="receiver">接收者</option><option value="publisher">发布者</option><option value="admin">管理员</option></select></label>
+    <label>登录账号<input id="userUsername" value="${escapeHtml(user?.username || "")}" ${isEdit ? "disabled" : ""} required></label>
+    <label>关联人员 *<select id="userPersonId" required ${isEdit ? "disabled" : ""}><option value="">请选择人员</option>${linkedPersonnel.map(person => `<option value="${escapeHtml(person.id)}" ${user?.personId === person.id ? "selected" : ""}>${escapeHtml(person.employeeNo)} · ${escapeHtml(person.name)} · ${escapeHtml(person.department)} / ${escapeHtml(person.homeTeam)}</option>`).join("")}</select></label>
+    ${isEdit ? "" : '<label>初始密码<input id="userPassword" type="password" minlength="6" required></label>'}
     <label>状态<select id="userStatus"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-    <div><span class="status-line">可访问页签</span>${checkedGroup("userTabs", tabOptions, allowedTabs)}</div>
-    <div><span class="status-line">功能权限</span>${checkedGroup("userPerms", permissionOptions, permissions)}</div>
+    <label class="login-check"><input id="userMustChangePassword" type="checkbox" ${!isEdit || user?.mustChangePassword ? "checked" : ""}>下次登录必须修改密码</label>
+    <div><span class="status-line">基础角色（必须且只能选一项）</span><div class="check-grid">${baseRoles.map(role => `<label class="check-option"><input type="radio" name="userBaseRole" value="${escapeHtml(role.code)}" ${selectedRoleCodes.includes(role.code) ? "checked" : ""}><span>${escapeHtml(role.name)}</span></label>`).join("")}</div></div>
+    <div><span class="status-line">附加角色（按需多选）</span>${checkedGroup("userRbacRoles", supplementalRoles.map(role => [role.code, role.name]), selectedRoleCodes)}</div>
+    ${renderModuleScopes(user?.dataScopes || [])}
     <div class="form-actions"><button class="btn secondary" type="button" data-close="userDialog">取消</button><button class="btn" type="submit">保存</button></div>
   </form>`;
-  $("#userRole").value = user?.role || "receiver";
   $("#userStatus").value = user?.status || "active";
   $("#userDialog").showModal();
-}
-
-function openUserBatchDialog() {
-  const selectedUsers = state.users.filter(user => state.selectedUserIds.has(user.id));
-  if (!selectedUsers.length) return;
-  const defaults = roleDefaults("receiver");
-  $("#userBatchDialogBody").innerHTML = `<div class="dialog-head"><h2>批量修改账号</h2><button class="icon-btn" data-close="userBatchDialog" type="button">×</button></div><form id="userBatchForm" class="entry-grid">
-    <div class="status-line">已选择 ${selectedUsers.length} 个账号。仅勾选“应用”的项目会被修改；页签和功能权限将完整替换。</div>
-    <label class="batch-apply"><input id="batchApplyRole" type="checkbox">应用角色<select id="batchRole"><option value="receiver">接收者</option><option value="publisher">发布者</option><option value="admin">管理员</option></select></label>
-    <label class="batch-apply"><input id="batchApplyStatus" type="checkbox">应用状态<select id="batchStatus"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-    <label class="batch-apply"><input id="batchApplyTeam" type="checkbox">应用班组<input id="batchTeam" placeholder="例如：一班"></label>
-    <label class="batch-apply"><input id="batchApplyFunctionCategory" type="checkbox">应用职能类别<select id="batchFunctionCategory">${functionCategoryOptions()}</select></label>
-    <div class="batch-section"><label class="login-check"><input id="batchApplyTabs" type="checkbox">应用可访问页签</label>${checkedGroup("batchTabs", tabOptions, defaults.allowedTabs)}</div>
-    <div class="batch-section"><label class="login-check"><input id="batchApplyPerms" type="checkbox">应用功能权限</label>${checkedGroup("batchPerms", permissionOptions, defaults.permissions)}</div>
-    <div class="form-actions"><button class="btn secondary" type="button" data-close="userBatchDialog">取消</button><button class="btn" type="submit">保存批量修改</button></div>
-  </form>`;
-  $("#batchRole").value = "receiver";
-  $("#userBatchDialog").showModal();
-}
-
-function applyRoleDefaults() {
-  const defaults = roleDefaults($("#userRole").value);
-  $$('input[name="userTabs"]').forEach(input => { input.checked = defaults.allowedTabs.includes(input.value); });
-  $$('input[name="userPerms"]').forEach(input => { input.checked = defaults.permissions.includes(input.value); });
-}
-
-function applyBatchRoleDefaults() {
-  const defaults = roleDefaults($("#batchRole").value);
-  $$('input[name="batchTabs"]').forEach(input => { input.checked = defaults.allowedTabs.includes(input.value); });
-  $$('input[name="batchPerms"]').forEach(input => { input.checked = defaults.permissions.includes(input.value); });
 }
 
 function userPayloadFromForm() {
   return {
     username: $("#userUsername")?.value.trim(),
-    name: $("#userName").value.trim(),
-    team: $("#userTeam").value.trim() || "未设置",
-    functionCategory: $("#userFunctionCategory").value,
-    department: "未设置",
+    personId: $("#userPersonId")?.value || "",
     password: $("#userPassword")?.value || undefined,
-    role: $("#userRole").value,
     status: $("#userStatus").value,
-    allowedTabs: selectedChecks("userTabs"),
-    permissions: selectedChecks("userPerms")
+    mustChangePassword: $("#userMustChangePassword")?.checked === true,
+    roles: [...selectedChecks("userBaseRole"), ...selectedChecks("userRbacRoles")],
+    scopes: readModuleScopes()
   };
-}
-
-function batchUserUpdatesFromForm() {
-  const updates = {};
-  if ($("#batchApplyRole")?.checked) updates.role = $("#batchRole").value;
-  if ($("#batchApplyStatus")?.checked) updates.status = $("#batchStatus").value;
-  if ($("#batchApplyTeam")?.checked) updates.team = $("#batchTeam").value.trim() || "未设置";
-  if ($("#batchApplyFunctionCategory")?.checked) updates.functionCategory = $("#batchFunctionCategory").value;
-  if ($("#batchApplyTabs")?.checked) updates.allowedTabs = selectedChecks("batchTabs");
-  if ($("#batchApplyPerms")?.checked) updates.permissions = selectedChecks("batchPerms");
-  return updates;
 }
 
 function syncUserSelectionUi() {
@@ -1899,17 +2025,564 @@ function syncUserSelectionUi() {
   if (all) all.checked = boxes.length > 0 && boxes.every(box => box.checked);
 }
 
+function settingsTabOptions() {
+  return [
+    ["accounts", "登录账户管理", hasRbac("accounts.read")],
+    ["roles", "角色与权限", hasRbac("roles.read")],
+    ["general", "通用设置", hasRbac("settings.manage")]
+  ].filter(([, , visible]) => visible);
+}
+
+function personnelTabOptions() {
+  return [
+    ["list", "人员列表", hasRbac("personnel.list.view")],
+    ["imports", "导入中心", hasRbac("personnel.import.view")],
+    ["quality", "数据质量", hasRbac("personnel.quality.view")],
+    ["changes", "变更记录", hasRbac("personnel.audit.view")],
+    ["settings", "后台设置", hasRbac("personnel.qualification.manage") || hasRbac("personnel.organization.manage")]
+  ].filter(([, , visible]) => visible);
+}
+
+function qualificationActions(kind, recordId) {
+  return hasRbac("personnel.qualification.manage") ? `<span class="actions"><button class="link-btn" type="button" data-edit-qualification="${kind}:${escapeHtml(recordId)}">修改</button><button class="link-btn danger-text" type="button" data-void-qualification="${kind}:${escapeHtml(recordId)}">作废</button></span>` : "";
+}
+
+async function refreshPersonnel({ keepDetail = false } = {}) {
+  if (!hasRbac("personnel.list.view")) return;
+  const result = await personnelService.list({
+    q: state.personnelSearch,
+    ...state.personnelFilters,
+    page: state.personnelPage,
+    pageSize: state.personnelPageSize,
+    sort: state.personnelSort,
+    order: state.personnelOrder
+  });
+  state.personnel = result.items;
+  state.personnelMeta = result;
+  if (!keepDetail) { state.activePersonnelDetail = null; state.expandedAuthorizationCategory = ""; }
+}
+
+function invalidatePersonnelSearch() {
+  clearTimeout(state.personnelSearchTimer);
+  state.personnelSearchTimer = null;
+  state.personnelSearchSequence = Number(state.personnelSearchSequence || 0) + 1;
+  const status = $("#personnelSearchStatus"), results = $("#personnelResults");
+  if (status) status.textContent = "";
+  if (results) results.removeAttribute("aria-busy");
+}
+
+function schedulePersonnelSearch(delay = 350) {
+  clearTimeout(state.personnelSearchTimer);
+  if (state.personnelSearchComposing) return;
+  state.personnelSearchTimer = setTimeout(runPersonnelSearch, delay);
+}
+
+async function runPersonnelSearch() {
+  clearTimeout(state.personnelSearchTimer);
+  state.personnelSearchTimer = null;
+  const sequence = Number(state.personnelSearchSequence || 0) + 1;
+  state.personnelSearchSequence = sequence;
+  state.personnelPage = 1;
+  const status = $("#personnelSearchStatus"), results = $("#personnelResults");
+  if (status) status.textContent = "正在搜索…";
+  if (results) results.setAttribute("aria-busy", "true");
+  try {
+    const result = await personnelService.list({ q: state.personnelSearch, ...state.personnelFilters, page: 1, pageSize: state.personnelPageSize, sort: state.personnelSort, order: state.personnelOrder });
+    if (sequence !== state.personnelSearchSequence) return;
+    state.personnel = result.items;
+    state.personnelMeta = result;
+    state.activePersonnelDetail = null;
+    state.expandedAuthorizationCategory = "";
+    resetPersonnelQualifications();
+    renderPersonnelSearchResults();
+    const currentStatus = $("#personnelSearchStatus");
+    if (currentStatus) currentStatus.textContent = "";
+  } catch (error) {
+    if (sequence !== state.personnelSearchSequence) return;
+    const currentStatus = $("#personnelSearchStatus");
+    if (currentStatus) currentStatus.textContent = `搜索失败：${error.message}`;
+  } finally {
+    if (sequence === state.personnelSearchSequence) $("#personnelResults")?.removeAttribute("aria-busy");
+  }
+}
+
+function personnelDeleteButton(person) {
+  return state.user.id === SUPER_ACCOUNT_ID && person.employeeNo !== SUPER_ACCOUNT_ID
+    ? `<button class="link-btn danger-text" type="button" data-delete-personnel="${escapeHtml(person.id)}">删除人员</button>` : "";
+}
+
+function personnelDeletionBlockers(blockers) {
+  return blockers.length ? `<div class="personnel-delete-blockers"><strong>请先处理以下维修派工</strong><ul>${blockers.map(task => `<li>${escapeHtml(task.date || "")} · ${escapeHtml(task.flightNo || task.flightId)} · ${escapeHtml(task.taskName)} · ${escapeHtml(task.role)} · ${escapeHtml(task.status)}<small>任务编号：${escapeHtml(task.ownerId)}</small></li>`).join("")}</ul></div>` : "";
+}
+
+async function openPersonnelDeletionDialog(id) {
+  if (state.user.id !== SUPER_ACCOUNT_ID) return;
+  const impact = await apiRequest(`/personnel/${encodeURIComponent(id)}/deletion-preview`);
+  $("#personnelDeleteDialogBody").innerHTML = `<div class="dialog-head"><h2>删除人员</h2><button class="icon-btn" type="button" data-close="personnelDeleteDialog" aria-label="关闭">×</button></div>
+    <p><strong>${escapeHtml(impact.person.name)}</strong> · 工号 ${escapeHtml(impact.person.employeeNo)}</p>
+    <p>关联账户：${impact.accounts.map(account => escapeHtml(account.username)).join("、") || "未开通账户"}</p>
+    <p>保留资质记录（含已作废）：执照 ${impact.counts.licenses} 条、授权 ${impact.counts.authorizations} 条、培训 ${impact.counts.training} 条。</p>
+    <p class="status-line">安全删除后，此人从正常人员列表和业务人员选择器移除，关联账户停用并立即退出登录。历史资质、信息回执和维修记录保留。工号继续占用，重新导入不会恢复，本页面不提供恢复操作。</p>
+    <div id="personnelDeleteBlockers">${personnelDeletionBlockers(impact.blockers)}</div>
+    ${impact.protectedIdentity ? '<p role="alert">唯一超级管理员不能删除自身人员记录。</p>' : ""}
+    ${impact.alreadyDeleted ? '<p role="status">该人员已经删除，无需重复操作。</p>' : ""}
+    <form id="personnelDeleteForm" class="entry-grid" data-person-id="${escapeHtml(id)}" data-employee-no="${escapeHtml(impact.person.employeeNo)}">
+    <label>输入目标工号确认 *<input name="employeeNo" required inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off"></label>
+    <label>删除原因 *<textarea name="reason" required></textarea></label><p id="personnelDeleteError" role="alert"></p>
+    <div class="form-actions"><button class="btn secondary" type="button" data-close="personnelDeleteDialog">取消</button><button class="btn danger" type="submit" ${impact.canDelete ? "" : "disabled"}>确认删除人员</button></div></form>`;
+  $("#personnelDeleteDialog").showModal();
+}
+
+document.addEventListener("click", async event => {
+  const button = event.target.closest("[data-delete-personnel]");
+  if (!button) return;
+  try { await openPersonnelDeletionDialog(button.dataset.deletePersonnel); }
+  catch (error) { alert(error.message); }
+});
+
+document.addEventListener("submit", async event => {
+  const form = event.target;
+  if (form.id !== "personnelDeleteForm") return;
+  event.preventDefault();
+  if (state.user.id !== SUPER_ACCOUNT_ID) return;
+  const fields = new FormData(form), employeeNo = String(fields.get("employeeNo") || "").trim(), reason = String(fields.get("reason") || "").trim();
+  const errorBox = $("#personnelDeleteError"), button = form.querySelector('[type="submit"]');
+  if (employeeNo !== form.dataset.employeeNo || !reason) { errorBox.textContent = "请正确输入目标工号，并填写删除原因。"; return; }
+  button.disabled = true;
+  try {
+    await apiRequest(`/personnel/${encodeURIComponent(form.dataset.personId)}`, { method: "DELETE", body: { employeeNo, reason } });
+    $("#personnelDeleteDialog").close();
+    state.activePersonnelDetail = null;
+    state.expandedAuthorizationCategory = "";
+    state.personnelPage = 1;
+    await renderAll();
+  } catch (error) {
+    errorBox.textContent = error.message;
+    if (Array.isArray(error.blockers) && error.blockers.length) $("#personnelDeleteBlockers").innerHTML = personnelDeletionBlockers(error.blockers);
+  } finally { button.disabled = false; }
+});
+
+function qualificationTabType(tab) { return ({ licenses: "license", authorizations: "authorization", training: "training" })[tab] || ""; }
+
+function thirdPartyProjectName(item) {
+  const company = String(item.thirdPartyCompany || "").trim(), name = String(item.projectName || "未命名项目").trim();
+  if (!company || !name.startsWith(company)) return name;
+  return name.slice(company.length).replace(/^[\s\-_—–:：·]+/, "") || name;
+}
+
+function thirdPartyCompanyTone(company = "") {
+  return [...String(company)].reduce((sum, character) => sum + character.codePointAt(0), 0) % 6;
+}
+
+function renderQualificationItems(type, items, projectNameFor = item => item.projectName || "未命名项目") {
+  if (!items.length) return '<div class="status-line personnel-qualification-empty">没有符合当前条件的记录。</div>';
+  if (type === "authorization") return `<div class="personnel-qualification-table"><table><thead><tr><th>项目名称/项目代码</th><th>授权类型/单位</th><th>授权日期/有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td data-label="项目"><strong class="authorization-project-name">${escapeHtml(projectNameFor(item))}</strong><code class="authorization-project-code">${escapeHtml(item.projectCode)}</code></td><td data-label="类型/单位"><strong>${escapeHtml(item.authorizationType || "—")}</strong><small>${escapeHtml(item.authorizationUnit || "—")}</small></td><td data-label="日期/有效期">${escapeHtml(item.authorizedAt || "—")}<small>至 ${escapeHtml(item.authorizationExpiresAt || "未提供")}</small></td><td data-label="状态">${escapeHtml(item.authorizationStatus || "待核实")}</td><td data-label="操作">${qualificationActions("authorization", item.id)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="personnel-qualification-list personnel-flat-list">${items.map(item => type === "license" ? `<article class="setting-item"><b>${escapeHtml(item.licenseType || "未分类")}</b><span>${escapeHtml(item.licenseNo || "无号码")} · ${escapeHtml(item.isValid || "待核实")} · 有效期至 ${escapeHtml(item.expiresAt || "未提供")}</span>${qualificationActions("license", item.id)}</article>` : `<article class="setting-item"><b>${escapeHtml(item.courseName || "未命名课程")}</b><span>${escapeHtml(item.courseCode || "未编码")} · ${escapeHtml(item.completedAt || item.startedAt || "日期未提供")} · ${escapeHtml(item.qualificationStatus || item.trainingResult || "待核实")}</span>${qualificationActions("training", item.id)}</article>`).join("")}</div>`;
+}
+
+function renderThirdPartyAuthorizationGroups(items) {
+  const grouped = new Map();
+  items.forEach(item => { const company = String(item.thirdPartyCompany || "").trim() || "公司待配置"; if (!grouped.has(company)) grouped.set(company, []); grouped.get(company).push(item); });
+  return `<div class="third-party-company-groups">${[...grouped.entries()].sort(([a],[b]) => a.localeCompare(b, "zh-Hans-CN")).map(([company, companyItems]) => {
+    const expanded = state.expandedThirdPartyCompany === company;
+    return `<section class="third-party-company company-tone-${thirdPartyCompanyTone(company)} ${expanded ? "expanded" : ""}"><button type="button" class="third-party-company-toggle" data-third-party-company-toggle="${escapeHtml(company)}" aria-expanded="${expanded}"><span>${expanded ? "▾" : "▸"} <b>${escapeHtml(company)}</b></span><strong>${companyItems.length}条</strong></button>${expanded ? `<div class="third-party-company-items">${renderQualificationItems("authorization", companyItems, thirdPartyProjectName)}</div>` : ""}</section>`;
+  }).join("")}</div>`;
+}
+
+function renderAuthorizationCategoryPanel(detail) {
+  const counts = detail.authorizationCategoryCounts || {}, qstate = state.personnelQualifications;
+  return `<div class="authorization-accordion">${Object.entries(authorizationCategoryLabels).map(([key, label]) => {
+    const count = Number(counts[key] || 0), expanded = state.expandedAuthorizationCategory === key;
+    if (!expanded) return `<button type="button" class="authorization-category-row ${count ? "" : "empty"}" data-authorization-category-toggle="${key}" aria-expanded="false" ${count ? "" : "disabled"}><span><i>▸</i><strong>${label}</strong></span><b>${count}条</b></button>`;
+    return `<section class="authorization-category-section"><button type="button" class="authorization-category-row expanded" data-authorization-category-toggle="${key}" aria-expanded="true"><span><i>▾</i><strong>${label}</strong></span><b>${count}条</b></button><div class="authorization-category-content"><form id="personnelQualificationSearchForm" class="personnel-qualification-tools"><input name="q" value="${escapeHtml(qstate.q || "")}" placeholder="搜索项目名称或项目代码"><select data-personnel-qualification-status><option value="">全部授权状态</option>${(qstate.facets?.statuses || []).map(value => `<option value="${escapeHtml(value)}" ${qstate.status === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select><button class="btn secondary" type="submit">搜索</button></form>${qstate.loading ? '<div class="status-line" role="status">正在读取全部明细…</div>' : qstate.error ? `<div role="alert">${escapeHtml(qstate.error)} <button class="link-btn" type="button" data-personnel-qualification-retry>重试</button></div>` : key === "third_party" ? renderThirdPartyAuthorizationGroups(qstate.items || []) : renderQualificationItems("authorization", qstate.items || [])}</div></section>`;
+  }).join("")}</div>`;
+}
+
+function renderPersonnelDetail() {
+  const detail = state.activePersonnelDetail;
+  if (!detail?.person) return "";
+  const person = detail.person, changes = detail.changes || [], tab = state.personnelDetailTab, type = qualificationTabType(tab), qstate = state.personnelQualifications;
+  const counts = detail.qualificationCounts || { license: person.licenseCount || 0, authorization: person.authorizationCount || 0, training: person.trainingCount || 0 };
+  const tabs = [["basic","基本资料"],["licenses",`执照（${counts.license}）`],["authorizations",`授权（${counts.authorization}）`],["training",`培训（${counts.training}）`],["changes",`变更记录（${changes.length}）`]];
+  const englishLabel = detail.qualificationVisible ? (detail.englishLevels || []).join("、") || "未提供" : "无查看权限";
+  let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b></span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span>${hasRbac("personnel.sensitive.view") ? `<span><small>实际岗级</small><b>${escapeHtml(person.actualGrade || "未设置")}</b></span>` : ""}</div>`;
+  if (tab === "changes") content = `<div class="personnel-flat-list">${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
+  if (tab === "authorizations") content = detail.qualificationVisible ? renderAuthorizationCategoryPanel(detail) : '<div class="status-line">当前账号没有查看授权明细的权限。</div>';
+  if (type) {
+    if (!detail.qualificationVisible) content = '<div class="status-line">当前账号没有查看执照、授权和培训明细的权限。</div>';
+    else if (type !== "authorization") {
+      const statusTool = "";
+      const pages = Math.max(1, Math.ceil(Number(qstate.total || 0) / Number(qstate.pageSize || 20)));
+      content = `<form id="personnelQualificationSearchForm" class="personnel-qualification-tools"><input name="q" value="${escapeHtml(qstate.q || "")}" placeholder="${type === "license" ? "搜索执照号码或类型" : "搜索课程名称或课程代码"}">${statusTool}<button class="btn secondary" type="submit">搜索</button></form>${qstate.loading ? '<div class="status-line" role="status">正在读取明细…</div>' : qstate.error ? `<div role="alert">${escapeHtml(qstate.error)} <button class="link-btn" type="button" data-personnel-qualification-retry>重试</button></div>` : renderQualificationItems(type, qstate.items || [])}<div class="personnel-pagination"><span>共 ${qstate.total || 0} 条 · 第 ${qstate.page || 1} / ${pages} 页</span><label>每页 <select data-personnel-qualification-page-size>${[20,50,100].map(value => `<option value="${value}" ${Number(qstate.pageSize) === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><button class="btn secondary" type="button" data-personnel-qualification-page="${Number(qstate.page || 1)-1}" ${Number(qstate.page || 1)<=1 ? "disabled" : ""}>上一页</button><button class="btn secondary" type="button" data-personnel-qualification-page="${Number(qstate.page || 1)+1}" ${Number(qstate.page || 1)>=pages ? "disabled" : ""}>下一页</button></div>`;
+    }
+  }
+  return `<section class="personnel-detail-panel"><div class="personnel-detail-head"><div><strong>${escapeHtml(person.name)}</strong><div class="status-line">工号 ${escapeHtml(person.employeeNo)} · ${escapeHtml(person.departmentName||"未分类")} · 人员分组 ${escapeHtml(person.personnelGroupName||"未分配")} · 行政班组 ${escapeHtml(person.administrativeTeamName||"无")} · 当前工作班组 ${escapeHtml(person.currentWorkingTeamName||"无")}</div></div><div class="actions">${(hasRbac("personnel.profile.update") || hasRbac("personnel.organization.manage") || hasRbac("personnel.lifecycle.manage")) ? `<button class="btn secondary" data-edit-personnel="${escapeHtml(person.id)}" type="button">修改资料</button>` : ""}${personnelDeleteButton(person)}<button class="link-btn" data-close-personnel-detail type="button">关闭</button></div></div><nav class="personnel-detail-tabs">${tabs.map(([key,label]) => `<button type="button" class="personnel-detail-tab ${tab === key ? "active" : ""}" data-personnel-detail-tab="${key}">${label}</button>`).join("")}</nav><div class="personnel-detail-content">${content}</div></section>`;
+}
+
+function renderPersonnelMaster() {
+  const meta = state.personnelMeta || {};
+  const facets = meta.facets || {};
+  const departments = facets.departments || [];
+  const teams = facets.homeTeams || [];
+  return `<section class="personnel-master-grid">
+    <div id="personnelMetrics" class="metric-grid">${renderPersonnelMetrics()}</div>
+    <section class="data-panel personnel-list-panel"><div class="module-head"><div><strong>人员列表</strong><div class="status-line">工号是唯一业务识别源；其他模块只读取此处的人员资料。</div></div></div>
+      <div class="personnel-filter-grid"><input id="personnelSearch" class="search" value="${escapeHtml(state.personnelSearch)}" placeholder="${hasRbac("personnel.qualification.view") ? "搜索工号、姓名、职位或授权项目" : "搜索工号、姓名或职位"}"><select data-personnel-filter="department"><option value="">全部部门</option>${departments.map(value => `<option ${state.personnelFilters.department === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select><select data-personnel-filter="homeTeam"><option value="">全部班组</option>${teams.map(value => `<option ${state.personnelFilters.homeTeam === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select><select data-personnel-filter="employmentStatus"><option value="">全部在职状态</option>${["在职","停职","离职"].map(value => `<option ${state.personnelFilters.employmentStatus === value ? "selected" : ""}>${value}</option>`).join("")}</select><select data-personnel-filter="accountStatus"><option value="">全部账户状态</option><option value="linked" ${state.personnelFilters.accountStatus === "linked" ? "selected" : ""}>已开通</option><option value="unlinked" ${state.personnelFilters.accountStatus === "unlinked" ? "selected" : ""}>未开通</option></select><button class="btn secondary" data-personnel-clear-filters type="button">清空筛选</button></div>
+      <div id="personnelSearchStatus" class="status-line" role="status" aria-live="polite"></div>
+      <div id="personnelResults" class="personnel-table">${renderPersonnelRows()}</div>
+      <div id="personnelPagination" class="personnel-pagination">${renderPersonnelPagination()}</div>
+    </section>
+  </section>`;
+}
+
+function renderPersonnelMetrics() {
+  const meta = state.personnelMeta || {}, facets = meta.facets || {};
+  return `<div class="metric"><span>人员总数</span><strong>${facets.total ?? meta.total ?? 0}</strong></div><div class="metric"><span>在职人员</span><strong>${facets.active ?? 0}</strong></div><div class="metric"><span>已开通账户</span><strong>${facets.linked ?? 0}</strong></div><div class="metric"><span>未开通账户</span><strong>${Math.max(0, Number(facets.total || 0) - Number(facets.linked || 0))}</strong></div>`;
+}
+
+function renderPersonnelRows() {
+  const rows = state.personnel || [];
+  return `<div class="personnel-row head"><span>工号</span><span>姓名</span><span>正式组织/当前班组</span><span>职位</span><span>状态</span><span>执照/授权/培训</span><span>账户</span><span></span></div>${rows.map(person => `<div class="personnel-row"><span>${escapeHtml(person.employeeNo)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.departmentName||"待分类")} / ${escapeHtml(person.personnelGroupName||"未分配")}<small>行政：${escapeHtml(person.administrativeTeamName||"—")} · 当前：${escapeHtml(person.currentWorkingTeamName||"—")} · ${{complete:"完整",unclassified:"待分类",group_unassigned:"待分组",review_required:"待复核"}[person.organizationStatus]||"待复核"}</small></span><span>${escapeHtml(person.position || "未设置")}</span><span>${escapeHtml(person.employmentStatus)}</span><span>${person.licenseCount ?? "—"} / ${person.authorizationCount ?? "—"} / ${person.trainingCount ?? "—"}</span><span>${person.hasAccount ? "已开通" : "未开通"}</span><span>${hasRbac("personnel.detail.view") ? `<button class="link-btn" type="button" data-personnel-detail="${escapeHtml(person.id)}">${state.activePersonnelDetail?.person?.id === person.id ? "收起" : "查看"}</button>` : ""}${personnelDeleteButton(person)}</span></div>${state.activePersonnelDetail?.person?.id === person.id ? renderPersonnelDetail() : ""}`).join("") || '<div class="status-line">暂无人员主数据，请先导入人员基本信息。</div>'}`;
+}
+
+function renderPersonnelPagination() {
+  const meta = state.personnelMeta || {}, totalPages = Math.max(1, Math.ceil(Number(meta.total || 0) / state.personnelPageSize));
+  return `<span>共 ${meta.total || 0} 人 · 第 ${meta.page || 1} / ${totalPages} 页</span><label>每页 <select id="personnelPageSize">${[20,50,100].map(value => `<option value="${value}" ${state.personnelPageSize === value ? "selected" : ""}>${value}</option>`).join("")}</select></label><button class="btn secondary" data-personnel-page="prev" ${state.personnelPage <= 1 ? "disabled" : ""}>上一页</button><button class="btn secondary" data-personnel-page="next" ${state.personnelPage >= totalPages ? "disabled" : ""}>下一页</button>`;
+}
+
+function renderPersonnelSearchResults() {
+  const metrics = $("#personnelMetrics"), results = $("#personnelResults"), pagination = $("#personnelPagination");
+  if (metrics) metrics.innerHTML = renderPersonnelMetrics();
+  if (results) results.innerHTML = renderPersonnelRows();
+  if (pagination) pagination.innerHTML = renderPersonnelPagination();
+}
+
+function renderPersonnelQuality() {
+  const facets = state.personnelMeta?.facets || {};
+  const pending = state.personnelImportBatches.filter(item => item.status === "pending");
+  const failedRows = state.personnelImportBatches.reduce((sum, item) => sum + Number(item.summary?.errors || 0), 0);
+  return `<section class="personnel-master-grid"><div class="metric-grid"><div class="metric"><span>工号异常</span><strong>0</strong></div><div class="metric"><span>待确认导入</span><strong>${pending.length}</strong></div><div class="metric"><span>导入异常行</span><strong>${failedRows}</strong></div><div class="metric"><span>未开通账户</span><strong>${Math.max(0, Number(facets.total || 0) - Number(facets.linked || 0))}</strong></div></div><section class="data-panel"><strong>数据质量规则</strong><div class="status-line">工号必须为8位数字且唯一；执照、授权和培训必须匹配已有人员；有异常的导入批次不会部分生效。</div></section></section>`;
+}
+
+function openPersonnelDialog(person) {
+  if (!person || !(hasRbac("personnel.profile.update") || hasRbac("personnel.organization.manage") || hasRbac("personnel.lifecycle.manage"))) return;
+  const protectedIdentity = false;
+  const fields = [
+    ["personName", "姓名", person.name, protectedIdentity],
+    ["personPosition", "职位", person.position, false],
+    ["personActualGrade", "实际岗级", person.actualGrade, false]
+  ];
+  $("#personnelDialogBody").innerHTML = `<div class="dialog-head"><h2>修改人员资料</h2><button class="icon-btn" data-close="personnelDialog" type="button">×</button></div><form id="personnelForm" class="entry-grid"><input id="personId" type="hidden" value="${escapeHtml(person.id)}"><label>员工工号<input value="${escapeHtml(person.employeeNo)}" disabled><small>工号是唯一识别源，创建后不可修改。</small></label>${fields.map(([id,label,value,disabled,type]) => `<label>${label}<input id="${id}" type="${type || "text"}" value="${escapeHtml(value ?? "")}" ${disabled ? "disabled" : ""}></label>`).join("")}<label class="login-check"><input id="personIsInstructor" type="checkbox" ${person.isInstructor ? "checked" : ""}>教员</label><label>在职状态<select id="personEmploymentStatus" ${protectedIdentity ? "disabled" : ""}>${["在职","停职","离职"].map(value => `<option ${person.employmentStatus === value ? "selected" : ""}>${value}</option>`).join("")}</select>${protectedIdentity ? "<small>唯一超级管理员的姓名和在职状态受保护。</small>" : ""}</label><label>修改原因<textarea id="personChangeReason" required placeholder="请说明人工修正原因"></textarea></label><div class="form-actions"><button class="btn secondary" data-close="personnelDialog" type="button">取消</button><button class="btn" type="submit">保存修改</button></div></form>`;
+  const mapping={personName:"name",personPosition:"position",personActualGrade:"actualGrade",personIsInstructor:"isInstructor"};
+  for(const [id,key] of Object.entries(mapping)){
+    const input=$("#"+id);if(!input)continue;
+    if((sensitivePersonnelFields.includes(key)&&!hasRbac("personnel.sensitive.view"))||!hasRbac("personnel.profile.update"))input.closest("label")?.remove();
+  }
+  if(!hasRbac("personnel.lifecycle.manage"))$("#personEmploymentStatus")?.closest("label")?.remove();
+  if(hasRbac("personnel.organization.manage")){
+    $("#personnelForm").insertAdjacentHTML("afterbegin",organizationSelects("person",person));
+  }
+  $("#personnelDialog").showModal();
+}
+
+function personnelPayloadFromForm() {
+ const payload={reason:$("#personChangeReason")?.value.trim()};
+ const fields={personName:"name",personPosition:"position",personActualGrade:"actualGrade",personEmploymentStatus:"employmentStatus"};
+ for(const [id,key] of Object.entries(fields)){const el=$("#"+id);if(el&&!el.disabled)payload[key]=el.value.trim();}
+ if($("#personIsInstructor"))payload.isInstructor=$("#personIsInstructor").checked;
+ if($("#personDepartmentId"))Object.assign(payload,organizationSelection("person"));
+ return payload;
+}
+
+function qualificationRecord(kind, recordId) {
+  return state.personnelQualifications.type === kind ? (state.personnelQualifications.items || []).find(item => item.id === recordId) : null;
+}
+
+function openQualificationDialog(kind, item) {
+  if (!item || !hasRbac("personnel.qualification.manage")) return;
+  const definitions = {
+    license: [["licenseNo", "执照号码"], ["licenseType", "执照类型"], ["expiresAt", "执照有效期"], ["isValid", "是否有效"], ["remark", "备注"]],
+    authorization: [["authorizationStatus", "授权状态"], ["authorizationExpiresAt", "授权有效期"]],
+    training: [["courseName", "课程名称"], ["completedAt", "完成时间"], ["trainingResult", "培训结果"], ["attendanceStatus", "出席情况"], ["qualificationStatus", "合格情况"]]
+  };
+  $("#personnelDialogBody").innerHTML = `<div class="dialog-head"><h2>修改${{license:"执照",authorization:"授权",training:"培训"}[kind]}记录</h2><button class="icon-btn" data-close="personnelDialog" type="button">×</button></div><form id="qualificationForm" class="entry-grid"><input id="qualificationKind" type="hidden" value="${kind}"><input id="qualificationRecordId" type="hidden" value="${escapeHtml(item.id)}">${definitions[kind].map(([field,label]) => `<label>${label}<input data-qualification-field="${field}" value="${escapeHtml(item[field] || "")}"></label>`).join("")}<label>修改原因<textarea id="qualificationReason" required></textarea></label><div class="form-actions"><button class="btn secondary" data-close="personnelDialog" type="button">取消</button><button class="btn" type="submit">保存</button></div></form>`;
+  if (kind === "authorization") $("#qualificationForm").insertAdjacentHTML("afterbegin", `<label>项目名称<input value="${escapeHtml(item.projectName)}" readonly><small>名称和分类由“授权项目设置”统一维护，不在单条授权中修改。</small></label><label>项目代码<input value="${escapeHtml(item.projectCode)}" readonly></label><label>项目分类<input value="${escapeHtml(item.categoryLabel || "待分类")}" readonly></label>`);
+  $("#personnelDialog").showModal();
+}
+
+async function reloadActivePersonnelDetail() {
+  const personId = state.activePersonnelDetail?.person?.id;
+  if (!personId) return;
+  state.activePersonnelDetail = await personnelService.detail(personId);
+  state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
+  const type = qualificationTabType(state.personnelDetailTab);
+  if (type && (type !== "authorization" || state.expandedAuthorizationCategory)) await loadPersonnelQualifications(type, { keepFilters: true });
+  await refreshPersonnel({ keepDetail: true });
+  renderPersonnelPage();
+}
+
+function resetPersonnelQualifications(type = "") {
+  state.personnelQualifications = { type, items: [], total: 0, page: 1, pageSize: 20, facets: {}, q: "", category: "", status: "", loading: false, error: "" };
+}
+
+async function loadPersonnelQualifications(type, { page, keepFilters = true } = {}) {
+  const personId = state.activePersonnelDetail?.person?.id;
+  if (!personId || !type || !state.activePersonnelDetail?.qualificationVisible) return;
+  if (!keepFilters || state.personnelQualifications.type !== type) resetPersonnelQualifications(type);
+  const current = state.personnelQualifications;
+  current.loading = true; current.error = ""; if (page) current.page = page;
+  renderPersonnelPage();
+  try {
+    if (type === "authorization") {
+      const query = { type, page: 1, pageSize: 100, q: current.q, category: current.category, status: current.status };
+      const first = await personnelService.qualifications(personId, query);
+      const pageCount = Math.ceil(Number(first.total || 0) / 100);
+      const remaining = pageCount > 1
+        ? await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => personnelService.qualifications(personId, { ...query, page: index + 2 })))
+        : [];
+      const items = [first, ...remaining].flatMap(result => result.items || []);
+      Object.assign(current, first, { items, type, page: 1, pageSize: Math.max(100, items.length), loading: false, error: "" });
+    } else {
+      const result = await personnelService.qualifications(personId, { type, page: current.page, pageSize: current.pageSize, q: current.q, category: "", status: "" });
+      Object.assign(current, result, { type, loading: false, error: "" });
+    }
+  } catch (error) { current.items = []; current.total = 0; current.loading = false; current.error = error.message; }
+  renderPersonnelPage();
+}
+
+document.addEventListener("submit", event => {
+  if (event.target.id !== "personnelQualificationSearchForm") return;
+  event.preventDefault();
+  state.personnelQualifications.q = String(new FormData(event.target).get("q") || "").trim();
+  state.personnelQualifications.page = 1;
+  loadPersonnelQualifications(state.personnelQualifications.type, { keepFilters: true });
+});
+
+function renderPersonnelChanges() {
+  return `<section class="data-panel setting-list"><strong>人员主数据变更记录</strong><div class="status-line">选择人员并打开详情，可查看该人员的字段级修改前后值。Excel导入操作保留在“导入中心”的批次记录中。</div>${state.personnelImportBatches.slice(0,20).map(batch => `<div class="setting-item"><b>${escapeHtml(batch.fileName || "未命名文件")}</b><span>${escapeHtml(batch.importType)} · ${escapeHtml(batch.status)} · ${escapeHtml(batch.createdAt || "")}</span></div>`).join("") || '<div class="status-line">暂无变更记录。</div>'}</section>`;
+}
+
+async function refreshAuthorizationProjects(page = state.authorizationProjects.page) {
+  if (!hasRbac("personnel.qualification.manage")) return;
+  try {
+    const query = new URLSearchParams({ q: state.authorizationProjectSearch, category: state.authorizationProjectCategory, page, pageSize: 20 });
+    state.authorizationProjects = await apiRequest(`/personnel/authorization-projects?${query}`);
+    const visibleIds = new Set(state.authorizationProjects.items.map(item => item.id));
+    state.selectedAuthorizationProjectIds = new Set([...state.selectedAuthorizationProjectIds].filter(id => visibleIds.has(id)));
+    state.authorizationProjectError = "";
+  } catch (error) {
+    state.authorizationProjectError = error.message;
+    state.authorizationProjects = { items: [], total: 0, page: 1, pageSize: 20 };
+  }
+}
+
+function renderAuthorizationProjects() {
+  if (!hasRbac("personnel.qualification.manage")) return "";
+  const { items, total, page, pageSize } = state.authorizationProjects;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return `<section class="data-panel authorization-project-settings"><h2>授权项目设置</h2>
+    <p class="status-line">项目分类固定为放行、试车、维修、专项、三方、其他。分类只影响展示和能力统计，不改变人员授权状态或RBAC权限。</p>
+    <div class="authorization-project-tools"><form id="authorizationProjectSearchForm"><label>搜索代码、名称或三方公司<input name="q" value="${escapeHtml(state.authorizationProjectSearch)}" placeholder="输入项目代码、标准名称或公司"></label><label>项目分类<select name="category"><option value="">全部分类</option>${Object.entries(authorizationCategoryLabels).map(([key,label]) => `<option value="${key}" ${state.authorizationProjectCategory === key ? "selected" : ""}>${label}</option>`).join("")}</select></label><button class="btn secondary" type="submit">搜索</button><button class="btn secondary" type="button" data-project-reset>重置</button></form><span class="actions"><button class="btn secondary" type="button" data-project-bulk ${state.selectedAuthorizationProjectIds.size ? "" : "disabled"}>批量修改分类（${state.selectedAuthorizationProjectIds.size}）</button><button class="btn" type="button" data-project-create>新增项目</button></span></div>
+    ${state.authorizationProjectError ? `<p role="alert">${escapeHtml(state.authorizationProjectError)} <button class="link-btn" data-project-page="${page}" type="button">重试</button></p>` : ""}
+    <div class="authorization-project-table"><table><thead><tr><th><span class="sr-only">选择</span></th><th>项目代码</th><th>项目名称</th><th>分类</th><th>三方公司</th><th>引用记录数</th><th>分类来源</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(project => `<tr><td><input type="checkbox" aria-label="选择 ${escapeHtml(project.projectName)}" data-project-select="${escapeHtml(project.id)}" ${state.selectedAuthorizationProjectIds.has(project.id) ? "checked" : ""}></td><td>${escapeHtml(project.projectCode)}</td><td>${project.configured ? escapeHtml(project.projectName) : `<strong>待配置</strong><small>候选名称：${escapeHtml(project.candidateNames.join("、") || "无历史名称，请填写标准名称")}</small>`}</td><td><span class="authorization-category category-${escapeHtml(project.category)}">${escapeHtml(project.categoryLabel)}</span></td><td>${escapeHtml(project.thirdPartyCompany || "—")}</td><td>${project.referenceCount}</td><td>${project.categorySource === "xlsx_initial" ? "Excel初始化" : project.categorySource === "manual" ? "人工修改" : "历史迁移"}</td><td>${escapeHtml(formatDisplayDate(project.categoryUpdatedAt || project.updatedAt))}</td><td><span class="actions"><button class="link-btn" type="button" data-project-edit="${escapeHtml(project.id)}">修改</button><button class="link-btn danger-text" type="button" data-project-delete="${escapeHtml(project.id)}">删除</button></span></td></tr>`).join("") || '<tr><td colspan="9">暂无匹配项目。</td></tr>'}</tbody></table></div>
+    <div class="personnel-pagination"><span>共 ${total} 项 · 第 ${page} / ${pages} 页 · 每页 ${pageSize} 项</span><button class="btn secondary" type="button" data-project-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button class="btn secondary" type="button" data-project-page="${page + 1}" ${page >= pages ? "disabled" : ""}>下一页</button></div></section>`;
+}
+
+function openAuthorizationProjectDialog(project = null) {
+  if (!hasRbac("personnel.qualification.manage")) return;
+  $("#authorizationProjectDialogBody").innerHTML = `<div class="dialog-head"><h2>${project ? "修改授权项目" : "新增授权项目"}</h2><button class="icon-btn" data-close="authorizationProjectDialog" type="button" aria-label="关闭">×</button></div>
+    <form id="authorizationProjectForm" class="entry-grid" data-project-id="${escapeHtml(project?.id || "")}">
+    <label>项目代码 *<input name="projectCode" required value="${escapeHtml(project?.projectCode || "")}" ${project ? "readonly" : ""}><small>区分大小写；去除首尾空格后必须唯一，创建后不可修改。</small></label>
+    ${project && !project.configured ? `<p>历史候选名称：${escapeHtml(project.candidateNames.join("、") || "无")}</p>` : ""}
+    <label>项目名称 *<input name="projectName" required value="${escapeHtml(project?.projectName || "")}"></label>
+    <label>项目分类 *<select name="category" data-project-category required><option value="">请选择</option>${Object.entries(authorizationCategoryLabels).map(([key,label]) => `<option value="${key}" ${project?.category === key ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <label data-third-party-company-field ${project?.category === "third_party" ? "" : "hidden"}>三方公司 *<input name="thirdPartyCompany" value="${escapeHtml(project?.thirdPartyCompany || "")}" ${project?.category === "third_party" ? "required" : ""} placeholder="例如：大韩航空"><small>用于三方授权二级分组，不从项目名称猜测。</small></label>
+    ${project ? '<label>修改原因 *<textarea name="reason" required placeholder="说明标准名称调整或确认的原因"></textarea></label>' : ""}
+    <p class="status-line">保存后所有关联人员授权统一显示此名称。不会改变授权状态、有效期，也不需要重新登录。</p>
+    <p data-project-form-error role="alert"></p><div class="form-actions"><button class="btn secondary" data-close="authorizationProjectDialog" type="button">取消</button><button class="btn" type="submit">保存</button></div></form>`;
+  $("#authorizationProjectDialog").showModal();
+}
+
+function openAuthorizationProjectBulkDialog() {
+  if (!state.selectedAuthorizationProjectIds.size) return;
+  $("#authorizationProjectDialogBody").innerHTML = `<div class="dialog-head"><h2>批量修改项目分类</h2><button class="icon-btn" data-close="authorizationProjectDialog" type="button" aria-label="关闭">×</button></div><form id="authorizationProjectBulkForm" class="entry-grid"><p>已选择 <strong>${state.selectedAuthorizationProjectIds.size}</strong> 个项目。保存后能力统计将按新分类重新分组。</p><label>目标分类 *<select name="category" data-project-category required><option value="">请选择</option>${Object.entries(authorizationCategoryLabels).map(([key,label]) => `<option value="${key}">${label}</option>`).join("")}</select></label><label data-third-party-company-field hidden>三方公司 *<input name="thirdPartyCompany" placeholder="本批项目将统一归入该公司"><small>不同公司请分批处理。</small></label><label>修改原因 *<textarea name="reason" required></textarea></label><label class="check"><input type="checkbox" name="confirmed" required>我已确认批量修改范围</label><p data-project-form-error role="alert"></p><div class="form-actions"><button class="btn secondary" data-close="authorizationProjectDialog" type="button">取消</button><button class="btn" type="submit">确认修改</button></div></form>`;
+  $("#authorizationProjectDialog").showModal();
+}
+
+async function refreshAfterProjectChange() {
+  await refreshAuthorizationProjects();
+  if (state.activePersonnelDetail) await reloadActivePersonnelDetail();
+  renderPersonnelPage();
+}
+
+document.addEventListener("click", async event => {
+  if (!hasRbac("personnel.qualification.manage")) return;
+  if (event.target.closest("[data-project-create]")) { openAuthorizationProjectDialog(); return; }
+  if (event.target.closest("[data-project-bulk]")) { openAuthorizationProjectBulkDialog(); return; }
+  const selected = event.target.closest("[data-project-select]");
+  if (selected) {
+    if (selected.checked) state.selectedAuthorizationProjectIds.add(selected.dataset.projectSelect); else state.selectedAuthorizationProjectIds.delete(selected.dataset.projectSelect);
+    renderPersonnelPage(); return;
+  }
+  const edit = event.target.closest("[data-project-edit]");
+  if (edit) { openAuthorizationProjectDialog(state.authorizationProjects.items.find(item => item.id === edit.dataset.projectEdit)); return; }
+  const page = event.target.closest("[data-project-page]"), reset = event.target.closest("[data-project-reset]");
+  if (page || reset) {
+    if (reset) { state.authorizationProjectSearch = ""; state.authorizationProjectCategory = ""; state.selectedAuthorizationProjectIds.clear(); }
+    await refreshAuthorizationProjects(reset ? 1 : Number(page.dataset.projectPage));
+    renderPersonnelPage(); return;
+  }
+  const remove = event.target.closest("[data-project-delete]");
+  if (!remove) return;
+  const project = state.authorizationProjects.items.find(item => item.id === remove.dataset.projectDelete);
+  if (!project) return;
+  if (!confirm(`确认删除授权项目？\n项目代码：${project.projectCode}\n项目名称：${project.projectName || "待配置"}\n引用记录数：${project.referenceCount}（含已作废）\n已引用项目不能删除；不会删除人员授权记录。`)) return;
+  remove.disabled = true;
+  try { await apiRequest(`/personnel/authorization-projects/${encodeURIComponent(project.id)}`, { method: "DELETE" }); }
+  catch (error) { alert(error.message); }
+  finally { await refreshAfterProjectChange(); }
+});
+
+document.addEventListener("submit", async event => {
+  const form = event.target;
+  if (!["authorizationProjectSearchForm", "authorizationProjectForm", "authorizationProjectBulkForm"].includes(form.id)) return;
+  event.preventDefault();
+  if (!hasRbac("personnel.qualification.manage")) return;
+  const data = new FormData(form);
+  if (form.id === "authorizationProjectSearchForm") {
+    state.authorizationProjectSearch = String(data.get("q") || "").trim();
+    state.authorizationProjectCategory = String(data.get("category") || "");
+    await refreshAuthorizationProjects(1); renderPersonnelPage(); return;
+  }
+  if (form.id === "authorizationProjectBulkForm") {
+    const button = form.querySelector('[type="submit"]'); button.disabled = true;
+    try {
+      await apiRequest("/personnel/authorization-projects/categories", { method: "PUT", body: { projectIds: [...state.selectedAuthorizationProjectIds], category: String(data.get("category") || ""), thirdPartyCompany: String(data.get("thirdPartyCompany") || "").trim(), reason: String(data.get("reason") || "").trim() } });
+      state.selectedAuthorizationProjectIds.clear(); $("#authorizationProjectDialog").close(); await refreshAfterProjectChange();
+    } catch (error) { form.querySelector("[data-project-form-error]").textContent = error.message; }
+    finally { button.disabled = false; }
+    return;
+  }
+  const id = form.dataset.projectId, button = form.querySelector('[type="submit"]');
+  const payload = { projectName: String(data.get("projectName") || "").trim(), category: String(data.get("category") || ""), thirdPartyCompany: String(data.get("thirdPartyCompany") || "").trim() };
+  if (id) payload.reason = String(data.get("reason") || "").trim();
+  else payload.projectCode = String(data.get("projectCode") || "").trim();
+  button.disabled = true;
+  try {
+    await apiRequest(`/personnel/authorization-projects${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: payload });
+    $("#authorizationProjectDialog").close();
+    await refreshAfterProjectChange();
+  } catch (error) { form.querySelector("[data-project-form-error]").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+document.addEventListener("change", event => {
+  const select = event.target.closest("[data-project-category]");
+  if (!select) return;
+  const form = select.closest("form"), field = form?.querySelector("[data-third-party-company-field]"), input = field?.querySelector("input");
+  if (!field || !input) return;
+  const thirdParty = select.value === "third_party";
+  field.hidden = !thirdParty;
+  input.required = thirdParty;
+  if (!thirdParty) input.value = "";
+});
+
+let personnelArea = null;
+let capabilityModule = null;
+let capabilityLoading = false;
+let capabilityGeneration = 0;
+function renderPersonnelArea() {
+  const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
+  const masterAllowed = personnelTabOptions().length > 0;
+  if (!personnelArea || (personnelArea === "capability" && !capabilityAllowed) || (personnelArea === "master" && !masterAllowed)) personnelArea = capabilityAllowed ? "capability" : "master";
+  document.getElementById("personnelAreaNav").innerHTML = `<div class="settings-tabs">${capabilityAllowed ? `<button type="button" class="chip ${personnelArea === "capability" ? "active" : ""}" data-personnel-area="capability">能力配置</button>` : ""}${masterAllowed ? `<button type="button" class="chip ${personnelArea === "master" ? "active" : ""}" data-personnel-area="master">主数据管理</button>` : ""}</div>`;
+  const host = document.getElementById("capabilityHost");
+  host.hidden = personnelArea !== "capability";
+  document.getElementById("personnelMasterWrap").hidden = personnelArea !== "master";
+  const active = personnelArea === "capability" && state.activePage === "personnelPage";
+  capabilityModule?.setActive(active);
+  if (active && !capabilityModule && !capabilityLoading) {
+    capabilityLoading = true; const generation = capabilityGeneration; host.textContent = "正在加载能力配置…";
+    import("/capability/module.js").then(module => {
+      if (generation !== capabilityGeneration) return;
+      host.textContent = "";
+      capabilityModule = module.mountCapability(host, { masterTabs: personnelTabOptions().map(([key]) => key), exportWorkbook: buildXlsxWorkbook, async onMaster(tab, personId) { if (!masterAllowed) { alert("当前账号没有主数据管理权限"); return; } personnelArea = "master"; state.personnelTab = tab; if (personId) { try { state.activePersonnelDetail = await personnelService.detail(personId); state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : []; } catch(error) { alert(error.message); } } renderPersonnelPage(); } });
+      capabilityModule.setActive(personnelArea === "capability" && state.activePage === "personnelPage");
+    }).catch(error => { if (generation === capabilityGeneration) host.textContent = `能力配置加载失败：${error.message}。请检查模块构建。`; }).finally(() => { capabilityLoading = false; });
+  }
+  return personnelArea === "master";
+}
+document.addEventListener("click", event => { const area = event.target.closest("[data-personnel-area]"); if (area) { invalidatePersonnelSearch(); personnelArea = area.dataset.personnelArea; renderPersonnelPage(); } });
+
+function renderPersonnelPage() {
+  const panel = $("#personnelPanel");
+  if (!panel || !canView("personnelPage")) return;
+  if (!renderPersonnelArea()) return;
+  const tabs = personnelTabOptions();
+  if (!tabs.some(([key]) => key === state.personnelTab)) state.personnelTab = tabs[0]?.[0] || "list";
+  const content = state.personnelTab === "list" ? renderPersonnelMaster()
+    : state.personnelTab === "imports" ? renderPersonnelImports()
+      : state.personnelTab === "quality" ? renderPersonnelQuality()
+        : state.personnelTab === "settings" ? renderOrganizationSettings()+renderAuthorizationProjects() : renderPersonnelChanges();
+  panel.innerHTML = `<div class="settings-tabs">${tabs.map(([key,label]) => `<button class="chip ${state.personnelTab === key ? "active" : ""}" data-personnel-tab="${key}" type="button">${label}</button>`).join("")}</div>${content}`;
+}
+
+function renderPersonnelImports() {
+  const types = [["personnel", "人员基本信息", "标准列：员工工号、员工姓名、部门、人员分组、行政班组、职位、是否教员、实际岗级、用工状态。"], ["license", "执照信息", "必须包含已有人员的员工工号"], ["authorization", "授权信息", "标准列：工号、姓名、项目代码、项目名称、授权类型、授权单位、授权日期、授权有效期、授权状态。项目名称和日期可空；其余必填。项目须先配置。每次替换文件内人员全部授权，必须上传各人员完整清单。"], ["training", "培训信息", "人员工号、课程代码、课程名称"]];
+  return `<section class="settings-grid personnel-import-grid"><div class="data-panel setting-list manual-personnel-card"><strong>单独录入人员</strong><form id="manualPersonnelForm" class="entry-grid"><label>员工工号 *<input id="manualEmployeeNo" inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" required></label><label>姓名 *<input id="manualPersonName" required></label>${hasRbac("personnel.organization.manage") ? organizationSelects("manual") : ""}<label>职位<input id="manualPosition"></label><label>实际岗级<input id="manualActualGrade"></label><label class="login-check"><input id="manualIsInstructor" type="checkbox">教员</label><label>在职状态<select id="manualEmploymentStatus"><option>在职</option><option>停职</option><option>离职</option></select></label><div class="form-actions"><button class="btn" type="submit" ${hasRbac("personnel.profile.create") ? "" : "disabled"}>保存人员</button></div><div id="manualPersonnelResult" class="status-line">工号必须为8位数字，姓名为必填项，保存后可继续开通登录账户。</div></form></div>${types.map(([type, label, hint]) => `<div class="data-panel setting-list"><strong>${label}</strong><label>选择 Excel 文件<input id="personnelImportFile-${type}" type="file" accept=".xlsx"></label><span class="status-line">${hint}</span><button class="btn secondary" type="button" data-personnel-import="${type}" ${hasRbac("personnel.import.execute") ? "" : "disabled"}>检查并暂存</button><div id="personnelImportResult-${type}" class="status-line"></div></div>`).join("")}
+    <div class="data-panel setting-list user-admin-card"><strong>导入历史</strong><div class="personnel-import-history">${state.personnelImportBatches.map(batch => `<div class="setting-item personnel-import-batch"><span><b>${escapeHtml({ personnel: "人员", license: "执照", authorization: "授权", training: "培训" }[batch.importType] || batch.importType)}</b> · ${escapeHtml(batch.fileName || "未命名文件")}</span><span>${escapeHtml(batch.status)} · 总计 ${batch.summary?.total || 0} · 错误 ${batch.summary?.errors || 0} · 警告 ${batch.summary?.warnings || 0}</span>${batch.importType==="authorization"&&batch.summary?.replacement?`<span class="status-line">将替换所列人员全部授权：${batch.summary.replacement.personCount}人 · 旧${batch.summary.replacement.oldCount}条 → 新${batch.summary.replacement.newCount}条 · 不再保留${batch.summary.replacement.removedCount}条（跨授权单位）</span>`:""}${batch.summary?.errors ? `<span style="color:#b42318">存在${batch.summary.errors}条错误，无法生效；请打开处理区查看并修正。</span>` : ""}${hasRbac("personnel.import.execute") ? `<button class="btn secondary" type="button" data-process-import="${escapeHtml(batch.id)}">检查与处理 / 查看替换差异</button>` : ""}${batch.status === "pending" && hasRbac("personnel.import.execute") ? `<span class="actions"><button class="link-btn" data-confirm-personnel-import="${escapeHtml(batch.id)}" type="button" ${batch.summary?.errors ? "disabled" : ""}>确认生效</button><button class="link-btn danger-text" data-cancel-personnel-import="${escapeHtml(batch.id)}" type="button">取消</button></span>` : ""}</div>`).join("") || '<div class="status-line">暂无导入记录。</div>'}</div></div>
+  </section>`;
+}
+
+function renderRbacCatalog() {
+  const permissionMap = new Map((state.rbacCatalog.permissions || []).map(permission => [permission.code, permission]));
+  const canManage = hasRbac("roles.manage");
+  const isSuperAdmin = state.user.id === SUPER_ACCOUNT_ID;
+  return `<section class="data-panel setting-list"><div class="module-head"><div><strong>角色与权限</strong><div class="status-line">通过中文权限项组合角色；人员资质不会自动授予系统权限。</div></div>${canManage ? '<button class="btn" type="button" data-create-role>新增角色</button>' : ""}</div><div class="rbac-role-grid">${(state.rbacCatalog.roles || []).map(role => {
+    const permissionNames = (role.permissions || []).map(code => permissionMap.get(code)?.name).filter(Boolean);
+    const canEdit = canManage && (!role.systemRole || (isSuperAdmin && role.code !== "system_admin"));
+    const lockedHint = role.code === "system_admin" ? '<div class="status-line">系统管理员固定拥有全部权限</div>' : "";
+    return `<article class="setting-item rbac-role-card"><div class="rbac-role-card-head"><div><strong>${escapeHtml(role.name)}</strong><span class="status-pill">${role.systemRole ? "系统预置" : "自定义"}</span></div><span class="status-line">${role.assignedUserCount || 0} 个账户使用</span></div><p>${escapeHtml(role.description || "暂无说明")}</p><div class="rbac-permission-tags">${permissionNames.map(name => `<span>${escapeHtml(name)}</span>`).join("")}</div>${lockedHint}${canEdit ? `<div class="form-actions"><button class="link-btn" type="button" data-edit-role="${escapeHtml(role.id)}">编辑角色与权限</button>${role.systemRole ? "" : `<button class="link-btn danger-text" type="button" data-delete-role="${escapeHtml(role.id)}">删除</button>`}</div>` : ""}</article>`;
+  }).join("") || '<div class="status-line">暂无角色目录。</div>'}</div></section>`;
+}
+
+const rbacModuleLabels = {
+  personnel: "人员与能力",
+  accounts: "账户与权限",
+  settings: "系统设置",
+  info: "信息传达",
+  maintenance: "维修管控",
+  fixed: "固化项目",
+  hours: "工时统计",
+  attendance: "考勤管理"
+};
+
+function openRoleDialog(role = null) {
+  const selected = new Set(role?.permissions || []);
+  const grouped = new Map();
+  (state.rbacCatalog.permissions || []).forEach(permission => {
+    if (!grouped.has(permission.module)) grouped.set(permission.module, []);
+    grouped.get(permission.module).push(permission);
+  });
+  $("#roleDialogBody").innerHTML = `<div class="dialog-head"><div><h2>${role ? "编辑角色" : "新增角色"}</h2>${role?.systemRole ? `<div class="status-line">仅超级管理员54002010可受控调整；系统编码与角色类型保持不变，且角色不能删除。当前影响 ${role.assignedUserCount || 0} 个账户。</div>` : ""}</div><button class="icon-btn" data-close="roleDialog" type="button">×</button></div><form id="roleForm" class="entry-grid role-form"><input id="roleId" type="hidden" value="${escapeHtml(role?.id || "")}"><label>角色名称<input id="roleName" value="${escapeHtml(role?.name || "")}" maxlength="60" required></label><label>角色说明<textarea id="roleDescription" rows="3" maxlength="300" placeholder="说明该角色的适用对象和职责">${escapeHtml(role?.description || "")}</textarea></label><div><strong>选择权限</strong><div class="status-line">至少选择一项且必须满足权限依赖；保存后受影响账户需重新登录。</div><div class="rbac-permission-groups">${[...grouped.entries()].map(([module, permissions]) => `<fieldset><legend>${escapeHtml(rbacModuleLabels[module] || "其他权限")}</legend><div class="check-grid">${permissions.map(permission => `<label class="check-option"><input type="checkbox" name="rolePermissions" value="${escapeHtml(permission.code)}" ${selected.has(permission.code) ? "checked" : ""}><span>${escapeHtml(permission.name)}</span></label>`).join("")}</div></fieldset>`).join("")}</div></div><div class="form-actions"><button class="btn secondary" type="button" data-close="roleDialog">取消</button><button class="btn" type="submit">保存角色</button></div></form>`;
+  $("#roleDialog").showModal();
+}
+
+function renderGeneralSettings() {
+  const settings = state.settings;
+  return `<section class="settings-grid"><div class="data-panel setting-list"><strong>分类设置</strong><textarea id="settingsCategories" rows="5">${escapeHtml((settings.categories || []).join("\n"))}</textarea><span class="status-line">每行一个分类，保存后会同步到发布表单和筛选。</span></div>
+    <div class="data-panel setting-list"><strong>超期门限</strong><label>信息超期门限天数<input id="settingsOverdueDays" type="number" min="1" max="60" value="${escapeHtml(settings.overdueDays || 3)}"></label><label>即将超期提醒天数<input id="settingsReminderDays" type="number" min="1" max="60" value="${escapeHtml(settings.reminderDays || 1)}"></label></div>
+    <div class="data-panel setting-list user-admin-card"><strong>信息批量导入</strong><div class="import-box"><label>Excel / CSV 导入信息<input id="settingsBatchImportFile" type="file" accept=".xlsx,.xls,.csv,.txt"></label><button id="settingsBatchImportBtn" class="btn secondary" type="button">批量导入信息</button><div id="settingsBatchImportResult" class="status-line">列名：日期、类别、标题、原文、发布者。</div></div></div></section><div class="form-actions"><button id="saveSettingsBtn" class="btn" type="button">保存设置</button></div>`;
+}
+
 function renderSettings() {
   if (!canOpenSettings()) return;
-  const settings = state.settings;
-  const peopleRows = normalizePeople(settings.people || []);
-  $("#settingsPanel").innerHTML = `<section class="settings-grid">
-    <div class="data-panel setting-list"><strong>分类设置</strong><textarea id="settingsCategories" rows="5">${escapeHtml((settings.categories || []).join("\n"))}</textarea><span class="status-line">每行一个分类，保存后会同步到发布表单和筛选。</span></div>
-    <div class="data-panel setting-list"><strong>超期门限</strong><label>信息超期门限天数<input id="settingsOverdueDays" type="number" min="1" max="60" value="${escapeHtml(settings.overdueDays || 3)}"></label><label>即将超期提醒天数<input id="settingsReminderDays" type="number" min="1" max="60" value="${escapeHtml(settings.reminderDays || 1)}"></label><span class="status-line">以发布时间为起点，每24小时为一天；只有日期时按当天12:00计算。</span></div>
-    <div class="data-panel setting-list"><strong>人员列表</strong><span class="status-line">人员信息由“登录用户管理”的启用账号自动同步，不再单独录入或导入。</span><div class="user-table people-table"><div class="user-row head"><span>账号</span><span>姓名</span><span>班组</span><span>状态</span><span></span><span></span><span></span></div>${peopleRows.map(person => `<div class="user-row"><span>${escapeHtml(person.username || person.id)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.team || "未设置")}</span><span>启用</span><span></span><span></span><span></span></div>`).join("") || '<div class="status-line">暂无启用账号。</div>'}</div></div>
-    <div class="data-panel setting-list"><strong>信息批量导入</strong><div class="import-box"><label>Excel / CSV 导入信息<input id="settingsBatchImportFile" type="file" accept=".xlsx,.xls,.csv,.txt"></label><button id="settingsBatchImportBtn" class="btn secondary" type="button">批量导入信息</button><div id="settingsBatchImportResult" class="status-line">列名：日期、类别、标题、原文、发布者。导入后默认推送全员并标记已读。</div></div></div>
-    ${renderUserManagement()}
-  </section><div class="form-actions"><button id="saveSettingsBtn" class="btn" type="button">保存设置</button></div>`;
+  const tabs = settingsTabOptions();
+  if (!tabs.some(([key]) => key === state.settingsTab)) state.settingsTab = tabs[0]?.[0] || "accounts";
+  const content = state.settingsTab === "accounts" ? `<section class="settings-grid">${renderUserManagement()}</section>`
+        : state.settingsTab === "roles" ? renderRbacCatalog()
+          : renderGeneralSettings();
+  $("#settingsPanel").innerHTML = `<div class="settings-tabs">${tabs.map(([key, label]) => `<button class="chip ${state.settingsTab === key ? "active" : ""}" type="button" data-settings-tab="${key}">${label}</button>`).join("")}</div>${content}`;
 }
 
 function renderEntryOptions() {
@@ -1922,6 +2595,7 @@ function selectedRecipientIds() {
 }
 
 function setRecipientSelection(ids) {
+  state.allRecipientsInScope = false;
   state.selectedRecipientIds = new Set(ids);
   syncRecipientCheckboxes();
 }
@@ -1937,7 +2611,7 @@ function visibleRecipientIds() {
 }
 
 function renderRecipientPicker() {
-  const people = normalizePeople(state.settings.people || []);
+  const people = normalizePeople(state.infoPeople || []);
   const teams = ["全部", ...Array.from(new Set(people.map(person => person.team).filter(Boolean)))];
   const currentTeam = $("#recipientTeamFilter")?.value || "全部";
   const currentSearch = ($("#recipientSearch")?.value || "").trim().toLowerCase();
@@ -1969,7 +2643,7 @@ function renderFixedProjects() {
   $("#fixedEmpty").hidden = !!items.length;
   $("#fixedList").innerHTML = items.map(project => `<article class="card fixed-card" data-fixed-id="${escapeHtml(project.id)}">
     <div class="card-row"><span class="tag cat-规定">ATA ${escapeHtml(project.ata)}</span><h2 class="title">${escapeHtml(project.title)}${project.attachments?.length ? '<span class="title-meta"><span class="badge attachment-badge">附件</span></span>' : ""}</h2>
-    <div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">${has("fixedManage") ? `<button class="item-btn" type="button" data-edit-fixed="${escapeHtml(project.id)}">修改</button><button class="item-btn delete" type="button" data-delete-fixed="${escapeHtml(project.id)}">删除</button>` : ""}</div></div></div>
+    <div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">${hasRbac("fixed.manage") ? `<button class="item-btn" type="button" data-edit-fixed="${escapeHtml(project.id)}">修改</button><button class="item-btn delete" type="button" data-delete-fixed="${escapeHtml(project.id)}">删除</button>` : ""}</div></div></div>
     <div class="card-row secondary"><span>更新 ${escapeHtml((project.updatedAt || "").slice(0, 10))}</span><span>·</span><button class="link-btn" type="button" data-toggle-panel>展开</button><span>·</span><button class="link-btn" type="button" data-print-fixed="${escapeHtml(project.id)}">打印</button></div>
     <div class="fixed-panel" hidden><div class="rich-view">${sanitizeRichHtml(project.contentHtml || "<p>暂无内容</p>")}</div>${project.references ? `<div class="references"><strong>参考资料：</strong>\n${escapeHtml(project.references)}</div>` : ""}${renderAttachments(project, "fixedProject")}</div>
   </article>`).join("");
@@ -2065,12 +2739,13 @@ function normalizeMaintenanceRoleForMenu(value, roles) {
 }
 
 function canManageMaintenance() {
-  return state.user.role === "admin" || state.user.role === "publisher";
+  return hasRbac("maintenance.dispatch.view") || hasRbac("maintenance.review.view");
 }
 
 function maintenanceAllowedTabs() {
-  if (canManageMaintenance()) return maintenanceTabs;
-  return maintenanceTabs.filter(([key]) => ["execute", "data"].includes(key));
+  return maintenanceTabs.filter(([key]) => key === "dispatch" ? canManageMaintenance()
+    : ["execute", "data"].includes(key) ? hasRbac("maintenance.execute.view")
+      : key === "hours" && ["maintenance.stats.self.view", "maintenance.stats.manage.view"].some(hasRbac));
 }
 
 function maintenanceTitle(flight) {
@@ -2181,7 +2856,7 @@ function maintenanceStatusBadge(status, dispatchTarget = "", reviewFlightId = ""
     const description = segmented ? `已提报：${flight.reportProgress.segments.map(segment => `${segment.label}${segment.status}`).join("，")}` : status;
     return `<button class="status-badge status-action ${cls} ${segmented ? "execute-report-status" : ""}" type="button" data-maint-dispatch="${escapeHtml(dispatchTarget)}" title="${status === "已提报" ? "调整尚未提报类别的人员" : "点击派工"}" aria-label="${escapeHtml(description)}">${segmented ? maintenanceReportProgressHtml(flight, true) : escapeHtml(status)}</button>`;
   }
-  if (reviewFlightId && canManageMaintenance() && ["待复核", "已确认"].includes(status)) {
+  if (reviewFlightId && hasRbac("maintenance.review.view") && ["待复核", "已确认"].includes(status)) {
     return `<button class="status-badge status-action ${cls}" type="button" data-maint-review="${escapeHtml(reviewFlightId)}" data-maint-review-focus="${escapeHtml(reviewFocus)}" title="查看并复核任务树">${escapeHtml(status)}</button>`;
   }
   if (status === "已提报" && item?.reportProgress?.segments?.length) {
@@ -2195,8 +2870,8 @@ function maintenanceSubtaskCard(flight, item) {
   const confirmed = flight.status === "已确认" || Boolean(flight.archivedAt);
   const pendingReview = !confirmed && flight.status === "待复核";
   const protectedDelete = confirmed || pendingReview;
-  const canDelete = canManageMaintenance() && (!confirmed || state.user.role === "admin");
-  return `<article class="maintenance-subtask" ${canManageMaintenance() ? `data-maint-edit-target="subtask:${escapeHtml(item.id)}" title="双击修改"` : ""}>
+  const canDelete = hasRbac("maintenance.content.manage") && (!confirmed || hasRbac("maintenance.archive.modify"));
+  return `<article class="maintenance-subtask" ${hasRbac("maintenance.content.manage") ? `data-maint-edit-target="subtask:${escapeHtml(item.id)}" title="双击修改"` : ""}>
     <div class="maintenance-subtask-main">
       <strong>${escapeHtml(item.title || "未填写标题")}</strong>
       <span>${escapeHtml(item.category || "-")} · ${escapeHtml(maintenanceStandardHoursLabel(item.standardHours))} · ${escapeHtml(maintenanceAssignees(item, "subtask"))}</span>
@@ -2252,8 +2927,8 @@ function maintenanceFlightCard(flight) {
     : new Set();
   const confirmedDelete = flight.status === "已确认" || Boolean(flight.archivedAt);
   const protectedDelete = confirmedDelete || flight.status === "待复核";
-  const canDelete = canManageMaintenance() && (!confirmedDelete || state.user.role === "admin");
-  return `<article class="maintenance-card maintenance-flight-card ${expanded ? "expanded" : "collapsed"}" data-maint-dispatch-card="${escapeHtml(flight.id)}" ${canManageMaintenance() ? `data-maint-edit-target="flight:${escapeHtml(flight.id)}" title="单击展开，双击修改"` : ""}>
+  const canDelete = hasRbac("maintenance.opportunity.delete") && (!confirmedDelete || hasRbac("maintenance.archive.modify"));
+  return `<article class="maintenance-card maintenance-flight-card ${expanded ? "expanded" : "collapsed"}" data-maint-dispatch-card="${escapeHtml(flight.id)}" ${hasRbac("maintenance.opportunity.update") ? `data-maint-edit-target="flight:${escapeHtml(flight.id)}" title="单击展开，双击修改"` : ""}>
     <div class="maintenance-card-head">
       <div class="maintenance-flight-identity">
         ${maintenanceFlightPrimaryHtml(flight)}
@@ -2283,10 +2958,10 @@ function maintenanceFlightCard(flight) {
 function maintenanceAssignmentsForMe() {
   const groups = (state.maintenanceFlights || []).map((flight, index) => {
     const mainAssignments = (flight.assignments || []);
-    const mine = mainAssignments.filter(assignment => assignment.userId === state.user.id && ["已派工", "已提报"].includes(assignment.status));
+    const mine = mainAssignments.filter(assignment => assignment.personId === state.user.personId && ["已派工", "已提报"].includes(assignment.status));
     const subtasks = [];
     (flight.subtasks || []).forEach(item => {
-      (item.assignments || []).filter(assignment => assignment.userId === state.user.id && ["已派工", "已提报"].includes(assignment.status))
+      (item.assignments || []).filter(assignment => assignment.personId === state.user.personId && ["已派工", "已提报"].includes(assignment.status))
         .forEach(assignment => subtasks.push({ item, ownerType: "subtask", assignment }));
     });
     return { flight, mainAssignments, mine, subtasks, index };
@@ -2431,7 +3106,7 @@ function renderMaintenanceDispatch() {
         ${maintenanceOpportunityMenuHtml()}
         <input id="maintenanceFlightSearch" class="search" type="search" placeholder="航班 / 机号 / 人员" value="${escapeHtml(state.maintenanceFlightSearch)}" aria-label="搜索航班、机号、机位、机型或人员">
       </div>
-      <div class="actions"><input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><input id="maintenanceSubtaskImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn secondary" type="button" data-maint-subtask-import>导入附加工作</button><button class="btn" type="button" data-maint-create-flight>新建维修机会</button></div>
+      <div class="actions">${hasRbac("maintenance.opportunity.import") ? '<input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><input id="maintenanceSubtaskImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn secondary" type="button" data-maint-subtask-import>导入附加工作</button>' : ""}${hasRbac("maintenance.opportunity.create") ? '<button class="btn" type="button" data-maint-create-flight>新建维修机会</button>' : ""}</div>
     </div>
     <div class="maintenance-dispatch-board">${renderColumn("left", state.maintenanceLeftStatuses)}${renderColumn("right", state.maintenanceRightStatuses)}</div>
     ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
@@ -2449,10 +3124,10 @@ function renderMaintenanceExecute() {
     const seen = new Set();
     const people = (entries || []).reduce((result, entry) => {
       const person = typeof entry === "string"
-        ? { userId: "", userName: entry }
-        : { userId: entry?.userId || "", userName: entry?.userName || entry?.name || "" };
+        ? { personId: "", userName: entry }
+        : { personId: entry?.personId || "", userName: entry?.userName || entry?.name || "" };
       if (!person.userName) return result;
-      const key = person.userId || `name:${person.userName}`;
+      const key = person.personId || `name:${person.userName}`;
       if (seen.has(key)) return result;
       seen.add(key);
       result.push(person);
@@ -2461,8 +3136,8 @@ function renderMaintenanceExecute() {
     if (!people.length) return "-";
     return people.map((person, index) => {
       const isSelf = highlightSelf && (
-        (person.userId && person.userId === state.user?.id)
-        || (!person.userId && person.userName === state.user?.name)
+        (person.personId && person.personId === state.user?.id)
+        || (!person.personId && person.userName === state.user?.name)
       );
       return `${index ? "、" : ""}<span class="execute-person-name${isSelf ? " is-self" : ""}">${escapeHtml(person.userName)}</span>`;
     }).join("");
@@ -2583,6 +3258,7 @@ function renderMaintenanceExecute() {
 
 function renderMaintenanceHours() {
   const rules = state.maintenanceRules || [];
+  const canManageRules = hasRbac("maintenance.rules.manage");
   const ruleByKey = new Map(rules.map(rule => [`${rule.rule_type}:${rule.name}`, rule]));
   const standardRules = maintenanceOpportunityOptions.map(name => ruleByKey.get(`workType:${name}`)).filter(Boolean);
   const nonroutineCombinations = [
@@ -2627,7 +3303,7 @@ function renderMaintenanceHours() {
   return `<section class="data-panel maintenance-panel maintenance-rule-settings">
     <div class="panel-title"><div><strong>工时规则</strong><span>维护标准工时与人员分配比例。</span></div></div>
     <div class="maintenance-rule-groups">${groupHtml}</div>
-    <div class="actions maintenance-rule-save"><button class="btn" type="button" data-maint-save-rules>保存工时规则</button></div>
+    ${canManageRules ? '<div class="actions maintenance-rule-save"><button class="btn" type="button" data-maint-save-rules>保存工时规则</button></div>' : ""}
   </section>`;
 }
 
@@ -2644,10 +3320,10 @@ function maintenanceRatioLabel(value) {
 function maintenanceDataComparisonCard(kind, comparison = {}) {
   const labels = {
     team: ["组内权重", "暂无班组数据", "当前账号尚未配置有效班组。"],
-    workshop: ["个人排名", "不在车间统计范围", "车间统计仅包含一组、二组、三组和四组。"],
+    group: ["人员分组个人排名", "不在人员分组统计范围", "仅统计同一正式人员分组内的可参与维修调配人员。"],
     teamRanking: ["班组排名", "不在班组排名范围", "班组排名仅包含一组、二组、三组和四组。"]
   };
-  const [title, empty, explanation] = labels[kind] || labels.workshop;
+  const [title, empty, explanation] = labels[kind] || labels.group;
   if (!comparison.available) {
     return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">${title}</span><strong class="maintenance-comparison-empty">${empty}</strong><p>${explanation}</p></article>`;
   }
@@ -2658,7 +3334,7 @@ function maintenanceDataComparisonCard(kind, comparison = {}) {
   if (kind === "teamRanking") {
     return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">班组排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.teamCount || 4)} 个班组</span></div><p>${escapeHtml(comparison.team || "班组")} · <b>${maintenanceHoursLabel(comparison.totalHours)} 小时</b></p><p>${gap}</p></article>`;
   }
-  return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">个人排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.memberCount || 0)} 人</span></div><p>超过 <b>${maintenanceHoursLabel(comparison.exceededPercent)}%</b> 车间成员</p><p>${gap}</p></article>`;
+  return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">人员分组内排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.memberCount || 0)} 人</span></div><p>超过 <b>${maintenanceHoursLabel(comparison.exceededPercent)}%</b> 同组成员</p><p>${gap}</p></article>`;
 }
 
 function maintenanceTrendDayNumber(value) {
@@ -2755,11 +3431,11 @@ function maintenanceCompositionView(composition = {}, period = "day", date = "")
 }
 
 function renderMaintenanceData() {
-  const personal = state.maintenancePersonalStats || { metrics: {}, period: {}, trend: [], composition: {}, teamComparison: {}, workshopComparison: {}, teamRanking: {} };
+  const personal = state.maintenancePersonalStats || { metrics: {}, period: {}, trend: [], composition: {}, teamComparison: {}, groupComparison: {}, teamRanking: {} };
   const view = state.maintenanceDataView || "personal";
   const monthText = String(personal.period?.month || state.maintenanceMonth || "").replace("-", "年") + "月";
-  const toolbar = `<div class="maintenance-data-toolbar"><div class="maintenance-data-subtabs" role="tablist">${[["personal", "个人"], ["team", "班组"], ["workshop", "车间"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${view === key}" class="${view === key ? "active" : ""}" data-maint-data-view="${key}">${label}</button>`).join("")}</div><label class="maintenance-data-month"><span>统计月份</span><input id="maintenanceDataMonth" type="month" value="${escapeHtml(state.maintenanceMonth || "")}"></label></div>`;
-  if (view !== "personal") return `<section class="maintenance-data-dashboard">${toolbar}<div class="maintenance-data-placeholder"><strong>${view === "team" ? "班组数据" : "车间数据"}</strong><span>页面结构已预留，后续继续设计。</span></div></section>`;
+  const toolbar = `<div class="maintenance-data-toolbar"><div class="maintenance-data-subtabs" role="tablist">${[["personal", "个人"], ["team", "班组"], ["group", "人员分组"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${view === key}" class="${view === key ? "active" : ""}" data-maint-data-view="${key}">${label}</button>`).join("")}</div><label class="maintenance-data-month"><span>统计月份</span><input id="maintenanceDataMonth" type="month" value="${escapeHtml(state.maintenanceMonth || "")}"></label></div>`;
+  if (view !== "personal") return `<section class="maintenance-data-dashboard">${toolbar}<div class="maintenance-data-placeholder"><strong>${view === "team" ? "班组数据" : "人员分组数据"}</strong><span>页面结构已预留，后续继续设计。</span></div></section>`;
   const metrics = personal.metrics || {};
   const compositionPeriod = state.maintenanceCompositionPeriod === "month" ? "month" : "day";
   const chartView = state.maintenanceDataChartView === "trend" ? "trend" : "composition";
@@ -2775,7 +3451,7 @@ function renderMaintenanceData() {
       <article class="personal-metric-card"><span>本月工时</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="all" data-detail-period="month"><strong>${maintenanceHoursLabel(metrics.monthHours)}<small>小时</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingHours(metrics.pendingMonthHours, { period: "month" })}</article>
       <article class="personal-metric-card"><span>月度放行架次</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="sortie"><strong>${escapeHtml(metrics.monthSorties || 0)}<small>架次</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingSorties(metrics.pendingMonthSorties)}</article>
     </section>
-    <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("workshop", personal.workshopComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
+    <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("group", personal.groupComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
     <section class="maintenance-chart-card maintenance-insights-card">${chartTabs}${chartBody}</section>
   </section>`;
 }
@@ -3202,7 +3878,7 @@ function renderMaintenance() {
 }
 
 function syncPeopleScopedState() {
-  const teams = new Set(["全部", ...normalizePeople(state.settings.people || []).map(person => person.team).filter(Boolean)]);
+  const teams = new Set(["全部", ...normalizePeople(state.infoPeople || []).map(person => person.team).filter(Boolean)]);
   if (!teams.has(state.statsTeam)) state.statsTeam = "全部";
 }
 
@@ -3226,7 +3902,17 @@ async function loadActivePageData({ force = true } = {}) {
   }
   if (page === "settingsPage" && (force || !loaded.has("users"))) {
     state.users = await userService.list();
+    state.rbacCatalog = hasRbac("roles.read") ? await rbacService.catalog() : { roles: [], permissions: [] };
     loaded.add("users");
+  }
+  if (page === "personnelPage" && (force || !loaded.has("personnel"))) {
+    await loadPersonnelDirectories();
+    if (hasRbac("personnel.list.view")) await refreshPersonnel({ keepDetail: true });
+    else { state.personnel = []; state.personnelMeta = { total: 0, page: 1, pageSize: 20, facets: {} }; }
+    state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : [];
+    if (hasRbac("personnel.qualification.manage") && state.personnelTab === "settings") await refreshAuthorizationProjects();
+    else state.authorizationProjects = { items: [], total: 0, page: 1, pageSize: 20 };
+    loaded.add("personnel");
   }
   if (page === "maintenancePage" && (force || !loaded.has(`maintenance:${state.maintenanceTab}`))) {
     await maintenanceService.load();
@@ -3247,6 +3933,8 @@ function renderActivePage() {
     renderFixedProjects();
   } else if (state.activePage === "maintenancePage") {
     renderMaintenance();
+  } else if (state.activePage === "personnelPage") {
+    renderPersonnelPage();
   }
 }
 
@@ -3278,12 +3966,16 @@ function pullRefreshScrollTop() {
   return Math.max(0, window.scrollY || document.scrollingElement?.scrollTop || 0);
 }
 
-function pullRefreshBlocked(target) {
+function pullRefreshBlocked(event) {
   if (!isLoggedIn() || !document.body.classList.contains("app-ready")) return true;
   if (document.body.classList.contains("pull-refresh-settling")) return true;
   if (document.querySelector("dialog[open]")) return true;
-  if (!(target instanceof Element)) return false;
-  return !!target.closest("input,textarea,select,button,a,[contenteditable='true'],[role='textbox'],.rich-editor,.viewer-content");
+  const capabilityRoot = $("#capabilityHost")?.shadowRoot;
+  if (capabilityRoot?.querySelector(".overlay,.compact-overlay")) return true;
+  const path = event?.composedPath?.() || [event?.target];
+  return path.some(node => node instanceof Element && (
+    node.matches("input,textarea,select,button,a,[contenteditable='true'],[role='textbox'],.rich-editor,.viewer-content,.overlay,.compact-overlay,.modal,.priority-project-settings")
+  ));
 }
 
 function setPullRefreshVisual(offset, text = "下拉刷新") {
@@ -3331,7 +4023,7 @@ async function performPullRefresh() {
 }
 
 function handlePullRefreshStart(event) {
-  if (pullRefreshGesture.refreshing || event.touches.length !== 1 || pullRefreshScrollTop() > 0 || pullRefreshBlocked(event.target)) return;
+  if (pullRefreshGesture.refreshing || event.touches.length !== 1 || pullRefreshScrollTop() > 0 || pullRefreshBlocked(event)) return;
   const touch = event.touches[0];
   pullRefreshGesture.tracking = true;
   pullRefreshGesture.startX = touch.clientX;
@@ -3401,7 +4093,7 @@ function resetRecordForm() {
   state.recordFiles.length = 0;
   renderPending(state.recordFiles, $("#recordPending"));
   renderExistingRecordAttachments(null);
-  setRecipientSelection(normalizePeople(state.settings.people || []).map(person => person.id));
+  setRecipientSelection(normalizePeople(state.infoPeople || []).map(person => person.id));
   renderEntryOptions();
   $("#entryDate").value = inputDateValue();
 }
@@ -3851,6 +4543,7 @@ function entryPayload(existing) {
     title: $("#entryTitle").value.trim(),
     original: $("#entryOriginal").value.trim(),
     publisher: existing?.publisher || state.user.name,
+    allInScope: state.allRecipientsInScope,
     recipients: selectedRecipients.length ? normalizeRecipients(selectedRecipients) : [],
     deadline: calculateDeadline(date),
     priority: $("#entryPriority").value,
@@ -3878,7 +4571,7 @@ function openFeedback(record) {
   $("#feedbackTitle").textContent = `反馈明细：${record.title}`;
   const rows = feedbackRows(record);
   const statusOptions = ["未读", "已读", "已超期", "超期已读"];
-  if (state.user.role === "admin" && record.publishStatus !== "作废") {
+  if (hasRbac("info.receipt.manage") && record.publishStatus !== "作废") {
     $("#feedbackBody").innerHTML = `<div class="feedback-tools"><button class="btn secondary" type="button" data-feedback-select-all>全选</button><button class="btn secondary" type="button" data-feedback-clear>取消选择</button><select id="feedbackBulkStatus">${statusOptions.map(status => `<option>${status}</option>`).join("")}</select><button class="btn" type="button" data-feedback-bulk>批量修改</button></div><div class="feedback-table feedback-admin"><div class="feedback-row head"><span>选择</span><span>姓名</span><span>部门/班组</span><span>状态</span><span>阅读时间</span><span>提醒</span></div>${rows.map(row => `<div class="feedback-row"><span><input type="checkbox" data-feedback-user="${escapeHtml(row.person.id)}"></span><span>${escapeHtml(row.person.name)}</span><span>${escapeHtml(row.person.department)} / ${escapeHtml(row.person.team)}</span><span><select data-feedback-status="${escapeHtml(row.person.id)}">${statusOptions.map(status => `<option value="${status}" ${status === row.status ? "selected" : ""}>${status}</option>`).join("")}</select></span><span>${escapeHtml(row.receipt?.readAt ? formatDisplayDate(row.receipt.readAt) : "-")}</span><span>${escapeHtml(row.receipt?.remindCount || 0)}</span></div>`).join("")}</div>`;
   } else {
     $("#feedbackBody").innerHTML = `<div class="feedback-table"><div class="feedback-row head"><span>姓名</span><span>部门/班组</span><span>状态</span><span>阅读时间</span><span>提醒</span></div>${rows.map(row => `<div class="feedback-row"><span>${escapeHtml(row.person.name)}</span><span>${escapeHtml(row.person.department)} / ${escapeHtml(row.person.team)}</span><span>${escapeHtml(row.status)}</span><span>${escapeHtml(row.receipt?.readAt ? formatDisplayDate(row.receipt.readAt) : "-")}</span><span>${escapeHtml(row.receipt?.remindCount || 0)}</span></div>`).join("")}</div>`;
@@ -4594,12 +5287,13 @@ async function openMaintenanceSubtaskDialog(flight, subtask = {}) {
   $("#maintenanceTaskDialog").showModal();
 }
 
-function openMaintenanceDispatchDialog(ownerType, ownerId) {
+async function openMaintenanceDispatchDialog(ownerType, ownerId) {
   ensureMaintenanceDialogs();
+  await loadPersonnelDirectories();
   const flight = ownerType === "flight" ? findMaintenanceFlight(ownerId) : findMaintenanceSubtask(ownerId).flight;
   const item = ownerType === "flight" ? flight : findMaintenanceSubtask(ownerId).subtask;
   if (!flight || !item) return;
-  const people = normalizePeople(state.settings.people || []);
+  const people = normalizePeople(state.maintenancePeople || []);
   const opportunity = flight.workKind || flight.workType || "其他";
   const availableRoles = maintenanceRolesForOwner(ownerType, opportunity, item.category || "");
   const lockedRoles = maintenanceLockedDispatchRoles(flight, ownerType);
@@ -4609,13 +5303,13 @@ function openMaintenanceDispatchDialog(ownerType, ownerId) {
   (item.assignments || []).forEach(row => {
     const role = normalizeMaintenanceRoleForMenu(row.role, availableRoles);
     const selected = selections.get(role);
-    if (!selected || selected.has(row.userId)) return;
+    if (!selected || selected.has(row.personId)) return;
     if (role === "放行") {
       selected.clear();
       selectionOrder.get(role).clear();
     }
-    selected.add(row.userId);
-    selectionOrder.get(role).set(row.userId, nextOrder++);
+    selected.add(row.personId);
+    selectionOrder.get(role).set(row.personId, nextOrder++);
   });
   state.maintenanceDispatchDraft = {
     people,
@@ -4681,13 +5375,13 @@ function renderMaintenanceDispatchPicker() {
   const candidates = draft.people.filter(person => {
     if (activeSelection.has(person.id)) return false;
     const teamMatches = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
-    const searchable = [person.name, person.username, person.id]
+    const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase("zh-CN");
     return teamMatches && (!term || searchable.includes(term));
   }).sort((a, b) => (a.team || "").localeCompare(b.team || "", "zh-CN") || a.name.localeCompare(b.name, "zh-CN"));
-  picker.innerHTML = [...selected.map(person => maintenanceDispatchPersonRow(person, true)), ...candidates.map(person => maintenanceDispatchPersonRow(person, false))].join("") || '<div class="status-line">没有匹配人员。</div>';
+  picker.innerHTML = [...selected.map(person => maintenanceDispatchPersonRow(person, true)), ...candidates.map(person => maintenanceDispatchPersonRow(person, false))].join("") || `<div class="status-line">${draft.people.length ? "没有匹配人员。" : "当前维修数据范围内没有可派工人员，请管理员检查维修数据范围及人员组织配置。"}</div>`;
   const count = $("#maintDispatchSelectedCount");
   const total = draft.availableRoles.reduce((sum, role) => sum + (draft.selections.get(role)?.size || 0), 0);
   if (count) count.textContent = `已选 ${total} 人次`;
@@ -4701,7 +5395,7 @@ function maintenanceAssignmentsFromForm() {
     const order = draft.selectionOrder.get(role) || new Map();
     return [...(draft.selections.get(role) || [])]
       .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
-      .map(userId => ({ userId, role }));
+      .map(personId => ({ personId, role }));
   });
 }
 
@@ -4736,8 +5430,8 @@ function initializeMaintenanceWorkSelections(contexts) {
     const role = context.ownerType === "subtask" ? (maintenanceRoleAliases[item.role] || item.role) : item.role;
     const key = `${context.key}|${role}`;
     if (!selections.has(key)) return;
-    selections.get(key).add(item.userId);
-    selectionOrder.get(key).set(item.userId, nextOrder++);
+    selections.get(key).add(item.personId);
+    selectionOrder.get(key).set(item.personId, nextOrder++);
   }));
   return { selections, selectionOrder, nextOrder };
 }
@@ -4748,11 +5442,11 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
   const { report } = await maintenanceService.getReports(flightId);
   const contexts = [];
   if (reportType === "routine" && report.routine.roles.length) {
-    const releaseUserId = report.routine.draft?.releaseUserId || report.release?.userId || "";
-    const releasePerson = (report.people || []).find(person => person.id === releaseUserId);
-    const releaseEntry = releaseUserId ? [{
+    const releasePersonId = report.routine.draft?.releasePersonId || report.release?.personId || "";
+    const releasePerson = (report.people || []).find(person => person.id === releasePersonId);
+    const releaseEntry = releasePersonId ? [{
       role: "放行",
-      userId: releaseUserId,
+      personId: releasePersonId,
       userName: releasePerson?.name || report.release?.userName || "",
       team: releasePerson?.team || report.release?.team || ""
     }] : [];
@@ -4810,7 +5504,7 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
     feedback: reportType === "nonroutine" || isCreateNonroutine ? "" : report.routine.feedback || "",
     draftVersion: reportType === "routine" ? report.routine.draft?.version ?? 0 : report.nonroutine.draft?.version ?? 0,
     nonroutineRevision: report.nonroutine?.revision || "",
-    releaseUserId: report.release?.userId || "",
+    releasePersonId: report.release?.personId || "",
     releaseEditable: reportType === "routine" && Boolean(report.releaseEditable),
     lockedRelease: report.progress?.batches?.release?.entries?.[0] || report.release || null,
     deletedSubtaskIds: new Set(),
@@ -4903,7 +5597,7 @@ function renderMaintenanceWorkReportPicker() {
   const candidates = draft.people.filter(person => {
     if (selectedIds.has(person.id)) return false;
     const teamMatch = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
-    const searchable = [person.name, person.username, person.id]
+    const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase("zh-CN");
@@ -4964,7 +5658,7 @@ function renderMaintenanceWorkReportDialog() {
 function maintenanceWorkReportEntries(context = maintenanceWorkActiveContext(), { includeRelease = false } = {}) {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft || !context) return [];
-  return context.roles.filter(role => includeRelease || role !== "放行").flatMap(role => [...(draft.selections.get(`${context.key}|${role}`) || [])].map(userId => ({ role, userId })));
+  return context.roles.filter(role => includeRelease || role !== "放行").flatMap(role => [...(draft.selections.get(`${context.key}|${role}`) || [])].map(personId => ({ role, personId })));
 }
 
 function maintenanceWorkReleaseUserId() {
@@ -5038,7 +5732,7 @@ async function saveMaintenanceRoutineDraft() {
     await maintenanceService.saveRoutineDraft(draft.report.flight.id, {
       entries: maintenanceWorkReportEntries(),
       feedback: draft.feedback,
-      releaseUserId: maintenanceWorkReleaseUserId() || draft.releaseUserId,
+      releasePersonId: maintenanceWorkReleaseUserId() || draft.releasePersonId,
       version: draft.draftVersion
     });
     closeDialog($("#maintenanceWorkReportDialog"));
@@ -5076,7 +5770,7 @@ async function submitMaintenanceWorkReport() {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft || draft.busy) return;
   draft.feedback = $("#maintWorkReportFeedback")?.value ?? draft.feedback ?? "";
-  draft.releaseUserId = maintenanceWorkReleaseUserId() || draft.releaseUserId;
+  draft.releasePersonId = maintenanceWorkReleaseUserId() || draft.releasePersonId;
   draft.busy = true;
   draft.message = draft.reportType === "finalize" ? "正在校验并提交待复核数据..." : "正在提交并锁定报工...";
   renderMaintenanceWorkReportDialog();
@@ -5084,7 +5778,7 @@ async function submitMaintenanceWorkReport() {
     if (draft.reportType === "routine") await maintenanceService.submitReport(draft.report.flight.id, "routine", {
       entries: maintenanceWorkReportEntries(),
       feedback: draft.feedback,
-      releaseUserId: draft.releaseUserId,
+      releasePersonId: draft.releasePersonId,
       version: draft.report.progress?.batches?.routine?.version ?? null,
       draftVersion: draft.draftVersion
     });
@@ -5109,13 +5803,13 @@ async function saveMaintenanceReportConfirmation() {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft || draft.reportType !== "finalize" || draft.busy) return;
   draft.feedback = $("#maintWorkReportFeedback")?.value ?? draft.feedback ?? "";
-  draft.releaseUserId = maintenanceWorkReleaseUserId() || draft.releaseUserId;
+  draft.releasePersonId = maintenanceWorkReleaseUserId() || draft.releasePersonId;
   draft.busy = true;
   draft.message = "正在保存报工确认内容...";
   renderMaintenanceWorkReportDialog();
   try {
     await maintenanceService.saveReportConfirmation(draft.report.flight.id, {
-      releaseUserId: draft.releaseUserId,
+      releasePersonId: draft.releasePersonId,
       routineEntries: draft.contexts.find(item => item.ownerType === "flight") ? maintenanceWorkReportEntries(draft.contexts.find(item => item.ownerType === "flight")) : [],
       nonroutineItems: maintenanceNonroutinePayload(),
       deletedSubtaskIds: [...draft.deletedSubtaskIds],
@@ -5138,7 +5832,7 @@ function maintenanceReviewTaskDraft(task) {
   const selections = new Map(task.roles.map(item => [item.role, new Set()]));
   (task.assignments || []).forEach(item => {
     if (!selections.has(item.role)) selections.set(item.role, new Set());
-    selections.get(item.role).add(item.userId);
+    selections.get(item.role).add(item.personId);
   });
   return { ...task, selections, changed: false };
 }
@@ -5203,7 +5897,7 @@ async function openMaintenanceReviewDialog(flightId, focusKey = "") {
     routineElectronicSigned: review.flight.routineElectronicSigned ?? null,
     nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned ?? null,
     newSubtasks: [],
-    canEdit: !review.flight.requiresChangeReason || state.user.role === "admin",
+    canEdit: hasRbac("maintenance.review.submit") && (!review.flight.requiresChangeReason || hasRbac("maintenance.archive.modify")),
     activeTaskKey: "",
     activeRole: "",
     team: "全部班组",
@@ -5218,8 +5912,8 @@ async function openMaintenanceReviewDialog(flightId, focusKey = "") {
   requestAnimationFrame(() => document.querySelector(`[data-maint-review-task="${CSS.escape(focusKey)}"]`)?.scrollIntoView({ block: "start" }));
 }
 
-function maintenanceReviewPerson(task, role, userId) {
-  return (task.assignments || []).find(item => item.role === role && item.userId === userId) || null;
+function maintenanceReviewPerson(task, role, personId) {
+  return (task.assignments || []).find(item => item.role === role && item.personId === personId) || null;
 }
 
 function maintenanceReviewCalculatedHours(task, role) {
@@ -5236,9 +5930,9 @@ function maintenanceReviewRoleHtml(task, roleInfo, peopleById) {
   const hours = maintenanceReviewCalculatedHours(task, role);
   const isSortie = roleInfo.metricType === "sorties" || role === "放行";
   const active = draft.activeTaskKey === maintenanceReviewTaskKey(task) && draft.activeRole === role;
-  const people = selected.map(userId => {
-    const person = peopleById.get(userId) || { name: "未知人员", team: "未设置" };
-    const saved = maintenanceReviewPerson(task, role, userId);
+  const people = selected.map(personId => {
+    const person = peopleById.get(personId) || { name: "未知人员", team: "未设置" };
+    const saved = maintenanceReviewPerson(task, role, personId);
     const feedbackState = saved ? (saved.feedback === "后台复核调整" ? "后台复核调整" : saved.status || "-") : "后台复核调整";
     const reportTime = saved?.submittedAt ? ` · ${formatDisplayDate(saved.submittedAt)}` : "";
     const resultText = isSortie
@@ -5315,7 +6009,7 @@ function maintenanceReviewPayload() {
   return draft.tasks.map(task => ({
     ownerType: task.ownerType,
     ownerId: task.ownerId,
-    assignments: [...task.selections.entries()].flatMap(([role, ids]) => [...ids].map(userId => ({ userId, role })))
+    assignments: [...task.selections.entries()].flatMap(([role, ids]) => [...ids].map(personId => ({ personId, role })))
   }));
 }
 
@@ -5328,7 +6022,7 @@ function maintenanceReviewNewSubtaskPayload() {
     category: task.category || "工卡指令",
     standardHours: Number(task.standardHours || 0),
     reportExplanation: String(task.reportExplanation || "").trim(),
-    assignments: [...task.selections.entries()].flatMap(([role, ids]) => [...ids].map(userId => ({ userId, role })))
+    assignments: [...task.selections.entries()].flatMap(([role, ids]) => [...ids].map(personId => ({ personId, role })))
   }));
 }
 
@@ -5414,7 +6108,8 @@ function openMaintenanceArchiveDeleteDialog(targetType, targetId) {
   const flight = targetType === "subtask" ? found?.flight : findMaintenanceFlight(targetId);
   const subtask = targetType === "subtask" ? found?.subtask : null;
   const confirmed = flight?.status === "已确认" || Boolean(flight?.archivedAt);
-  if (!flight || (confirmed && state.user.role !== "admin") || !canManageMaintenance()) return;
+  const allowed = targetType === "subtask" ? hasRbac("maintenance.content.manage") : hasRbac("maintenance.opportunity.delete");
+  if (!flight || (confirmed && !hasRbac("maintenance.archive.modify")) || !allowed) return;
   ensureMaintenanceDialogs();
   state.maintenanceArchiveDeleteDraft = { targetType, flight, subtask, reason: "", busy: false, message: "" };
   renderMaintenanceArchiveDeleteDialog();
@@ -5450,14 +6145,14 @@ async function submitMaintenanceArchiveDelete() {
 }
 
 function importRecipientPeople() {
-  const people = normalizePeople(state.settings.people || []);
+  const people = normalizePeople(state.infoPeople || []);
   const byId = new Map(people.map(person => [person.id, person]));
   return Array.from(byId.values());
 }
 
 function isFullRecipientRecord(record, people) {
   const recipientIds = new Set((record.recipients || []).map(person => person.id));
-  const settingPeople = normalizePeople(state.settings.people || []);
+  const settingPeople = normalizePeople(state.infoPeople || []);
   const settingIds = settingPeople.map(person => person.id).filter(Boolean);
   if (!settingIds.length) return false;
   return settingIds.every(id => recipientIds.has(id));
@@ -5701,7 +6396,9 @@ function parseSheetRows(sheetFile, shared, decoder, parser, styles = { styleForm
       const ref = cell.getAttribute("r") || "", column = (ref.match(/[A-Z]+/) || ["A"])[0].split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
       row[column] = xlsxCellDisplayValue(cell, shared, styles, date1904);
     });
-    rows.push(row.map(value => value || ""));
+    const values = row.map(value => value || "");
+    values.sourceRowNumber = Number(rowNode.getAttribute("r")) || rows.length + 1;
+    rows.push(values);
   });
   return rows;
 }
@@ -5762,50 +6459,12 @@ function peopleFromRows(rows) {
 }
 
 function userRowsFromRows(rows) {
-  const filtered = rows.map(row => row.map(cell => String(cell ?? "").trim())).filter(row => row.some(Boolean));
-  if (!filtered.length) return { rows: [], skipped: 0 };
-  const headers = filtered[0].map(normalizeHeader);
-  const indexOf = names => headers.findIndex(header => names.includes(header));
-  const usernameIndex = indexOf(["账号", "用户名", "登录账号"]);
-  const nameIndex = indexOf(["姓名", "名称"]);
-  const teamIndex = indexOf(["班组", "组别"]);
-  const roleIndex = indexOf(["角色"]);
-  const passwordIndex = indexOf(["初始密码", "密码"]);
-  const tabsIndex = indexOf(["页签权限", "页签"]);
-  const permsIndex = indexOf(["功能权限", "权限"]);
-  const statusIndex = indexOf(["状态"]);
-  const functionCategoryIndex = indexOf(["人员职能类别", "职能类别"]);
-  const hasHeader = usernameIndex >= 0;
-  let skipped = 0;
-  const rowsOut = (hasHeader ? filtered.slice(1) : filtered).map(row => {
-    const item = hasHeader ? {
-      username: row[usernameIndex],
-      name: row[nameIndex],
-      team: row[teamIndex],
-      role: row[roleIndex],
-      password: row[passwordIndex],
-      allowedTabs: row[tabsIndex],
-      permissions: row[permsIndex],
-      status: row[statusIndex],
-      functionCategory: row[functionCategoryIndex]
-    } : {
-      username: row[0],
-      name: row[1],
-      team: row[2],
-      role: row[3],
-      password: row[4],
-      allowedTabs: row[5],
-      permissions: row[6],
-      status: row[7],
-      functionCategory: row[8]
-    };
-    if (!String(item.username || "").trim()) {
-      skipped++;
-      return null;
-    }
-    return item;
-  }).filter(Boolean);
-  return { rows: rowsOut, skipped };
+ const filtered=rows.map(row=>row.map(cell=>String(cell ?? "").trim())).filter(row=>row.some(Boolean));
+ if(!filtered.length)return {rows:[],skipped:0};
+ const headers=filtered[0].map(normalizeHeader);
+ if(!headers.includes("员工工号") || !headers.includes("登录账号"))throw new Error("必须包含员工工号和登录账号列");
+ if(headers.includes("数据范围"))throw new Error("请改用六个分模块范围列，旧数据范围列不再支持");
+ return {rows:filtered.slice(1).map((row,index)=>({rowNumber:index+2,...Object.fromEntries(headers.map((h,i)=>[h,row[i] || ""]))})),skipped:0};
 }
 
 async function userRowsFromFile(file) {
@@ -5818,21 +6477,46 @@ async function userRowsFromFile(file) {
 async function importUserFile() {
   const input = $("#userImportFile"), result = $("#userImportResult"), file = input?.files?.[0];
   if (!file) {
-    result.textContent = "请选择用户 Excel 或 CSV 文件。";
+    result.textContent = "请选择账户 Excel 或 CSV 文件。";
     return;
   }
   try {
     const parsed = await userRowsFromFile(file);
     if (!parsed.rows.length) {
-      result.textContent = "未识别到有效账号，请检查列名：账号、姓名、班组、角色、初始密码、页签权限、功能权限、状态。";
+      result.textContent = "文件中没有可开通的账户记录。";
       return;
     }
     const response = await userService.importRows(parsed.rows);
     await renderAll();
     const next = $("#userImportResult");
-    if (next) next.textContent = `新增 ${response.created} 个，更新 ${response.updated} 个，跳过 ${response.skipped + parsed.skipped} 行。`;
+    if (next) next.textContent = `账户开通完成：新增 ${response.created} 个，更新 ${response.updated} 个。`;
   } catch (error) {
-    result.textContent = error.message;
+    const issues = (error.details || []).slice(0, 5).map(item => `第 ${item.rowNumber} 行：${item.detail}`).join(" ");
+    result.textContent = `${error.message}${issues ? ` ${issues}` : ""}`;
+  }
+}
+
+async function stagePersonnelImport(type) {
+  const input = $(`#personnelImportFile-${type}`), result = $(`#personnelImportResult-${type}`), file = input?.files?.[0];
+  if (!file) {
+    if (result) result.textContent = "请选择 Excel 文件。";
+    return;
+  }
+  try {
+    if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("请使用 xlsx 格式文件");
+    if (result) result.textContent = "正在检查文件...";
+    const rows = await parseXlsx(file);
+    const batch = await personnelService.stageImport(type, file.name, rows);
+    state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : [batch, ...state.personnelImportBatches];
+    renderPersonnelPage();
+    const next = $(`#personnelImportResult-${type}`);
+    if (next) {
+      const issuePreview = (batch.issues || []).map(issue => `第 ${issue.rowNumber} 行：${issue.detail}`).join("\n");
+      next.style.whiteSpace = "pre-wrap";
+      next.textContent = `已暂存 ${batch.summary.total} 行，错误 ${batch.summary.errors}，警告 ${batch.summary.warnings}。${batch.summary.errors ? "请修复文件后重新导入。" : "可在导入历史中确认生效。"}${issuePreview ? ` ${issuePreview}` : ""}`;
+    }
+  } catch (error) {
+    if (result) result.textContent = error.message;
   }
 }
 
@@ -5860,7 +6544,7 @@ async function importPeopleFile() {
 }
 
 async function importBatchRecords() {
-  if (state.user.role !== "admin") return;
+  if (!hasRbac("info.create")) return;
   const file = $("#settingsBatchImportFile")?.files?.[0];
   const result = $("#settingsBatchImportResult");
   if (!file) {
@@ -6590,7 +7274,7 @@ $("#subpageMenuBtn").addEventListener("click", event => {
   toggleSubpageMenu();
 });
 $("#loginBtn").addEventListener("click", () => showLoginPage());
-$("#openChangePasswordBtn").addEventListener("click", openChangePasswordDialog);
+$("#accountPasswordBtn").addEventListener("click", openChangePasswordDialog);
 $("#logoutBtn").addEventListener("click", async () => {
   sessionStorage.setItem(AUTO_LOGIN_SKIP_KEY, "1");
   stopMaintenanceSync();
@@ -6744,15 +7428,18 @@ $("#recipientTeamFilter").addEventListener("change", () => renderRecipientPicker
 $("#recipientOptions").addEventListener("change", event => {
   const input = event.target.closest("input[data-recipient]");
   if (!input) return;
+  state.allRecipientsInScope = false;
   if (input.checked) state.selectedRecipientIds.add(input.dataset.recipient);
   else state.selectedRecipientIds.delete(input.dataset.recipient);
 });
 $("#recipientSelectAll").addEventListener("click", () => {
-  visibleRecipientIds().forEach(id => state.selectedRecipientIds.add(id));
+  state.allRecipientsInScope = true;
+  state.infoPeople.forEach(person => state.selectedRecipientIds.add(person.id));
   syncRecipientCheckboxes();
 });
 $("#recipientClearAll").addEventListener("click", () => {
-  visibleRecipientIds().forEach(id => state.selectedRecipientIds.delete(id));
+  state.allRecipientsInScope = false;
+  state.selectedRecipientIds.clear();
   syncRecipientCheckboxes();
 });
 $("#entryDate").closest("label").addEventListener("click", event => {
@@ -6847,6 +7534,180 @@ document.addEventListener("toggle", event => {
 }, true);
 
 document.addEventListener("click", async event => {
+  const personnelTab = event.target.closest("[data-personnel-tab]");
+  if (personnelTab) {
+    invalidatePersonnelSearch();
+    state.personnelTab = personnelTab.dataset.personnelTab;
+    state.activePersonnelDetail = null;
+    state.expandedAuthorizationCategory = "";
+    resetPersonnelQualifications();
+    if (state.personnelTab === "settings") await refreshAuthorizationProjects();
+    renderPersonnelPage();
+    return;
+  }
+  const settingsTab = event.target.closest("[data-settings-tab]");
+  if (settingsTab) {
+    state.settingsTab = settingsTab.dataset.settingsTab;
+    state.activePersonnelDetail = null;
+    state.expandedAuthorizationCategory = "";
+    renderSettings();
+    return;
+  }
+  if (event.target.closest("[data-create-role]")) {
+    openRoleDialog();
+    return;
+  }
+  const editRole = event.target.closest("[data-edit-role]");
+  if (editRole) {
+    const role = (state.rbacCatalog.roles || []).find(item => item.id === editRole.dataset.editRole);
+    if (role) openRoleDialog(role);
+    return;
+  }
+  const deleteRole = event.target.closest("[data-delete-role]");
+  if (deleteRole) {
+    const role = (state.rbacCatalog.roles || []).find(item => item.id === deleteRole.dataset.deleteRole);
+    if (!role) return;
+    if (!confirm(role.assignedUserCount
+      ? `角色“${role.name}”仍有 ${role.assignedUserCount} 个账户使用。继续检查删除条件吗？`
+      : `确定删除角色“${role.name}”吗？`)) return;
+    try {
+      await rbacService.removeRole(role.id);
+      state.rbacCatalog = await rbacService.catalog();
+      renderSettings();
+    } catch (error) { alert(error.message); }
+    return;
+  }
+  const personnelDetail = event.target.closest("[data-personnel-detail]");
+  if (personnelDetail) {
+    if (state.activePersonnelDetail?.person?.id === personnelDetail.dataset.personnelDetail) {
+      state.activePersonnelDetail = null; state.expandedAuthorizationCategory = ""; resetPersonnelQualifications(); renderPersonnelPage(); return;
+    }
+    try {
+      state.activePersonnelDetail = await personnelService.detail(personnelDetail.dataset.personnelDetail);
+      state.personnelDetailTab = "basic"; state.expandedAuthorizationCategory = ""; resetPersonnelQualifications();
+      try { state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personnelDetail.dataset.personnelDetail) : []; }
+      catch { state.activePersonnelDetail.changes = []; }
+      renderPersonnelPage();
+    } catch (error) { alert(error.message); }
+    return;
+  }
+  const detailTab = event.target.closest("[data-personnel-detail-tab]");
+  if (detailTab) {
+    const leavingAuthorizations = state.personnelDetailTab === "authorizations" && detailTab.dataset.personnelDetailTab !== "authorizations";
+    state.personnelDetailTab = detailTab.dataset.personnelDetailTab;
+    if (leavingAuthorizations) state.expandedAuthorizationCategory = "";
+    const type = qualificationTabType(state.personnelDetailTab);
+    if (type === "authorization") renderPersonnelPage();
+    else if (type) await loadPersonnelQualifications(type, { keepFilters: state.personnelQualifications.type === type });
+    else renderPersonnelPage();
+    return;
+  }
+  const authorizationCategory = event.target.closest("[data-authorization-category-toggle]");
+  if (authorizationCategory) {
+    const category = authorizationCategory.dataset.authorizationCategoryToggle;
+    if (!Number(state.activePersonnelDetail?.authorizationCategoryCounts?.[category] || 0)) return;
+    if (state.expandedAuthorizationCategory === category) { state.expandedAuthorizationCategory = ""; state.expandedThirdPartyCompany = ""; renderPersonnelPage(); return; }
+    const reopeningSameCategory = state.personnelQualifications.type === "authorization" && state.personnelQualifications.category === category;
+    state.expandedAuthorizationCategory = category;
+    state.expandedThirdPartyCompany = "";
+    if (!reopeningSameCategory) { resetPersonnelQualifications("authorization"); state.personnelQualifications.category = category; }
+    await loadPersonnelQualifications("authorization", { keepFilters: true });
+    return;
+  }
+  const thirdPartyCompany = event.target.closest("[data-third-party-company-toggle]");
+  if (thirdPartyCompany) {
+    const company = thirdPartyCompany.dataset.thirdPartyCompanyToggle;
+    state.expandedThirdPartyCompany = state.expandedThirdPartyCompany === company ? "" : company;
+    renderPersonnelPage();
+    return;
+  }
+  const qualificationPage = event.target.closest("[data-personnel-qualification-page]");
+  if (qualificationPage) { await loadPersonnelQualifications(state.personnelQualifications.type, { page: Number(qualificationPage.dataset.personnelQualificationPage), keepFilters: true }); return; }
+  if (event.target.closest("[data-personnel-qualification-retry]")) { await loadPersonnelQualifications(state.personnelQualifications.type, { keepFilters: true }); return; }
+  const editPersonnel = event.target.closest("[data-edit-personnel]");
+  if (editPersonnel) {
+    const person = state.activePersonnelDetail?.person?.id === editPersonnel.dataset.editPersonnel
+      ? state.activePersonnelDetail.person
+      : state.personnel.find(item => item.id === editPersonnel.dataset.editPersonnel);
+    openPersonnelDialog(person);
+    return;
+  }
+  const editQualification = event.target.closest("[data-edit-qualification]");
+  if (editQualification) {
+    const [kind, recordId] = editQualification.dataset.editQualification.split(":");
+    openQualificationDialog(kind, qualificationRecord(kind, recordId));
+    return;
+  }
+  const voidQualification = event.target.closest("[data-void-qualification]");
+  if (voidQualification) {
+    const [kind, recordId] = voidQualification.dataset.voidQualification.split(":");
+    const reason = prompt("请填写作废原因。作废后记录不再参与人员能力统计，但会保留审计历史。", "");
+    if (!reason) return;
+    try {
+      await personnelService.voidQualification(state.activePersonnelDetail.person.id, kind, recordId, reason);
+      await reloadActivePersonnelDetail();
+    } catch (error) { alert(error.message); }
+    return;
+  }
+  if (event.target.closest("[data-close-personnel-detail]")) {
+    state.activePersonnelDetail = null;
+    state.expandedAuthorizationCategory = "";
+    resetPersonnelQualifications();
+    renderPersonnelPage();
+    return;
+  }
+  if (event.target.closest("[data-personnel-clear-filters]")) {
+    invalidatePersonnelSearch();
+    state.personnelSearch = "";
+    state.personnelFilters = { department: "", homeTeam: "", employmentStatus: "", accountStatus: "" };
+    state.personnelPage = 1;
+    await refreshPersonnel();
+    renderPersonnelPage();
+    return;
+  }
+  const personnelPageButton = event.target.closest("[data-personnel-page]");
+  if (personnelPageButton) {
+    invalidatePersonnelSearch();
+    state.personnelPage += personnelPageButton.dataset.personnelPage === "next" ? 1 : -1;
+    await refreshPersonnel({ keepDetail: true });
+    renderPersonnelPage();
+    return;
+  }
+  const personnelImport = event.target.closest("[data-personnel-import]");
+  if (personnelImport) {
+    await stagePersonnelImport(personnelImport.dataset.personnelImport);
+    return;
+  }
+  const processImport=event.target.closest("[data-process-import]");
+  if(processImport){await openImportWorkspace(processImport.dataset.processImport);return;}
+  const confirmPersonnelImport = event.target.closest("[data-confirm-personnel-import]");
+  if (confirmPersonnelImport) {
+    const batch=state.personnelImportBatches.find(b=>b.id===confirmPersonnelImport.dataset.confirmPersonnelImport);
+    if(batch?.importType==="authorization"||batch?.summary?.workspaceRevision){await openImportWorkspace(batch.id);return;}
+    const replacing=batch?.importType==="authorization", preview=batch?.summary?.replacement;
+    if(replacing&&!preview){alert("缺少授权替换预览，请重新上传检查");return;}
+    const message=replacing?`将替换所列人员全部授权，包含其所有授权单位。\n涉及 ${preview.personCount} 人；旧授权 ${preview.oldCount} 条；新授权 ${preview.newCount} 条；旧清单中不再保留 ${preview.removedCount} 条。\n文件未出现的人员保持不变。请确认上传的是这些人员的完整授权清单。`:"确认让这个导入批次生效吗？数据将写入航线运行中心人员主数据库。";
+    if(!confirm(message))return;
+    try {
+      const confirmedResult = await personnelService.confirmImport(confirmPersonnelImport.dataset.confirmPersonnelImport,replacing);
+      if (confirmedResult.capabilitySync === "pending") alert(`主数据已成功写入；能力看板正在等待刷新。\n${confirmedResult.capabilitySyncMessage || "系统将自动重试。"}`);
+      await refreshPersonnel();
+      state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : state.personnelImportBatches.map(batch => batch.id === confirmPersonnelImport.dataset.confirmPersonnelImport ? { ...batch, status: "confirmed" } : batch);
+      state.settings = await settingsService.get();
+      renderPersonnelPage();
+    } catch (error) { alert([error.message, ...(error.details || []).map(issue => `第 ${issue.rowNumber} 行：${issue.detail}`)].join("\n")); }
+    return;
+  }
+  const cancelPersonnelImport = event.target.closest("[data-cancel-personnel-import]");
+  if (cancelPersonnelImport) {
+    if (!confirm("确定取消这个尚未生效的导入批次吗？")) return;
+    try {
+      await personnelService.cancelImport(cancelPersonnelImport.dataset.cancelPersonnelImport);
+      state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : state.personnelImportBatches.map(batch => batch.id === cancelPersonnelImport.dataset.cancelPersonnelImport ? { ...batch, status: "cancelled" } : batch);
+      renderPersonnelPage();
+    } catch (error) { alert(error.message); }
+    return;
+  }
   const feedbackRecordId = $("#feedbackDialog")?.dataset.recordId;
   const feedbackRecord = feedbackRecordId ? state.records.find(item => item.id === feedbackRecordId) : null;
   if (event.target.closest("[data-feedback-select-all]") && feedbackRecord) {
@@ -6920,7 +7781,6 @@ document.addEventListener("click", async event => {
   if (event.target.id === "settingsBatchImportBtn") importBatchRecords();
   if (event.target.id === "openUserCreateBtn") openUserDialog();
   if (event.target.id === "userImportBtn") await importUserFile();
-  if (event.target.id === "openUserBatchBtn") openUserBatchDialog();
   const editUser = event.target.closest("[data-edit-user]");
   if (editUser) {
     const user = state.users.find(item => item.id === editUser.dataset.editUser);
@@ -6939,7 +7799,7 @@ document.addEventListener("click", async event => {
   if (deleteUser) {
     const user = state.users.find(item => item.id === deleteUser.dataset.deleteUser);
     if (!user) return;
-    if (!confirm(`确定删除账号 ${user.username} 吗？该人员会同步从接收对象、统计、收藏和阅读记录中移除。`)) return;
+    if (!confirm(`确定停用账号 ${user.username} 吗？账号将无法登录，但历史接收、阅读、收藏和业务关系会保留。`)) return;
     await userService.remove(user.id);
     await renderAll();
   }
@@ -6963,6 +7823,11 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("input", event => {
+  if (event.target.id === "personnelSearch") {
+    state.personnelSearch = event.target.value;
+    if (!event.isComposing && !state.personnelSearchComposing) schedulePersonnelSearch();
+    return;
+  }
   if (event.target.id === "maintWorkReportFeedback") {
     if (state.maintenanceWorkReportDraft) state.maintenanceWorkReportDraft.feedback = event.target.value;
     return;
@@ -7055,6 +7920,25 @@ document.addEventListener("input", event => {
     if (state.maintenanceArchiveDeleteDraft) state.maintenanceArchiveDeleteDraft.reason = event.target.value;
     return;
   }
+});
+
+document.addEventListener("compositionstart", event => {
+  if (event.target.id !== "personnelSearch") return;
+  state.personnelSearchComposing = true;
+  clearTimeout(state.personnelSearchTimer);
+});
+
+document.addEventListener("compositionend", event => {
+  if (event.target.id !== "personnelSearch") return;
+  state.personnelSearchComposing = false;
+  state.personnelSearch = event.target.value;
+  schedulePersonnelSearch();
+});
+
+document.addEventListener("keydown", event => {
+  if (event.target.id !== "personnelSearch" || event.key !== "Enter" || event.isComposing || state.personnelSearchComposing) return;
+  event.preventDefault();
+  runPersonnelSearch();
 });
 
 document.addEventListener("compositionstart", event => {
@@ -7180,23 +8064,83 @@ document.addEventListener("submit", event => {
     })().catch(error => alert(error.message));
     return;
   }
-  if (event.target.id === "userBatchForm") {
+  if (event.target.id === "manualPersonnelForm") {
+    event.preventDefault();
+    (async () => {
+      const result = $("#manualPersonnelResult");
+      try {
+        const payload = {
+          employeeNo: $("#manualEmployeeNo").value.trim(),
+          name: $("#manualPersonName").value.trim(),
+          ...(hasRbac("personnel.organization.manage")?organizationSelection("manual"):{}),
+          position: $("#manualPosition").value.trim(),
+          actualGrade: $("#manualActualGrade").value.trim(),
+          isInstructor: $("#manualIsInstructor").checked,
+          employmentStatus: $("#manualEmploymentStatus").value
+        };
+        if (!payload.employeeNo || !payload.name) throw new Error("工号和姓名为必填项");
+        if (!/^\d{8}$/.test(payload.employeeNo)) throw new Error("工号必须为8位数字");
+        const person = await personnelService.create(payload);
+        await refreshPersonnel();
+        event.target.reset();
+        if (result) result.textContent = `已新增：${person.employeeNo} · ${person.name}`;
+      } catch (error) {
+        if (result) result.textContent = error.message;
+      }
+    })();
+    return;
+  }
+  if (event.target.id === "roleForm") {
     event.preventDefault();
     (async () => {
       try {
-        const userIds = [...state.selectedUserIds];
-        const updates = batchUserUpdatesFromForm();
-        if (!userIds.length) throw new Error("请先选择账号");
-        if (!Object.keys(updates).length) throw new Error("请至少勾选一个要应用的修改项");
-        if (!confirm(`确定批量修改 ${userIds.length} 个账号吗？`)) return;
-        const result = await userService.batchUpdate(userIds, updates);
-        $("#userBatchDialog").close();
-        state.selectedUserIds.clear();
+        const id = $("#roleId").value;
+        const payload = {
+          name: $("#roleName").value.trim(),
+          description: $("#roleDescription").value.trim(),
+          permissions: selectedChecks("rolePermissions")
+        };
+        if (!payload.permissions.length) throw new Error("请至少选择一项权限");
+        const result = id ? await rbacService.updateRole(id, payload) : await rbacService.createRole(payload);
+        $("#roleDialog").close();
+        if (result.sessionRevoked) {
+          await handleAuthExpired("当前账户的角色权限已更新，请重新登录。");
+          return;
+        }
         await renderAll();
-        alert(`批量修改完成：已处理 ${result.updated || 0} 个账号${result.skippedProtected ? `，保护项跳过 ${result.skippedProtected} 项` : ""}${result.skipped ? `，不存在 ${result.skipped} 个` : ""}。`);
-      } catch (error) {
-        alert(error.message);
-      }
+      } catch (error) { alert(error.message); }
+    })();
+    return;
+  }
+  if (event.target.id === "personnelForm") {
+    event.preventDefault();
+    (async () => {
+      try {
+        const personId = $("#personId").value;
+        const payload = personnelPayloadFromForm();
+        if (!payload.reason) throw new Error("请填写修改原因");
+        await personnelService.update(personId, payload);
+        $("#personnelDialog").close();
+        await refreshPersonnel({ keepDetail: true });
+        state.activePersonnelDetail = await personnelService.detail(personId);
+        state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
+        renderPersonnelPage();
+      } catch (error) { alert(error.message); }
+    })();
+    return;
+  }
+  if (event.target.id === "qualificationForm") {
+    event.preventDefault();
+    (async () => {
+      try {
+        const kind = $("#qualificationKind").value, recordId = $("#qualificationRecordId").value;
+        const payload = { reason: $("#qualificationReason").value.trim() };
+        $$('[data-qualification-field]').forEach(input => { payload[input.dataset.qualificationField] = input.value.trim(); });
+        if (!payload.reason) throw new Error("请填写修改原因");
+        await personnelService.updateQualification(state.activePersonnelDetail.person.id, kind, recordId, payload);
+        $("#personnelDialog").close();
+        await reloadActivePersonnelDetail();
+      } catch (error) { alert(error.message); }
     })();
     return;
   }
@@ -7206,6 +8150,9 @@ document.addEventListener("submit", event => {
     try {
       const id = $("#userId").value;
       const payload = userPayloadFromForm();
+      if (!payload.personId) throw new Error("请选择关联人员");
+      if (!payload.roles.length) throw new Error("请至少选择一个 RBAC 角色");
+      if (!payload.scopes.length) throw new Error("请至少选择一个数据范围");
       if (id) await userService.update(id, payload);
       else await userService.create(payload);
       $("#userDialog").close();
@@ -7218,6 +8165,34 @@ document.addEventListener("submit", event => {
 });
 
 document.addEventListener("change", async event => {
+  if (event.target.matches("[data-personnel-qualification-status]")) {
+    state.personnelQualifications.status = event.target.value;
+    state.personnelQualifications.page = 1;
+    await loadPersonnelQualifications("authorization", { keepFilters: true });
+    return;
+  }
+  if (event.target.matches("[data-personnel-qualification-page-size]")) {
+    state.personnelQualifications.pageSize = Number(event.target.value) || 20;
+    state.personnelQualifications.page = 1;
+    await loadPersonnelQualifications(state.personnelQualifications.type, { keepFilters: true });
+    return;
+  }
+  if (event.target.matches("[data-personnel-filter]")) {
+    invalidatePersonnelSearch();
+    state.personnelFilters[event.target.dataset.personnelFilter] = event.target.value;
+    state.personnelPage = 1;
+    await refreshPersonnel();
+    renderPersonnelPage();
+    return;
+  }
+  if (event.target.id === "personnelPageSize") {
+    invalidatePersonnelSearch();
+    state.personnelPageSize = Number(event.target.value) || 20;
+    state.personnelPage = 1;
+    await refreshPersonnel();
+    renderPersonnelPage();
+    return;
+  }
   if (event.target.id === "maintSubCategory") {
     if (event.target.value === "拖机") {
       const chapter = $("#maintSubChapter");
@@ -7471,10 +8446,6 @@ document.addEventListener("change", async event => {
     syncUserSelectionUi();
     return;
   }
-  if (event.target.id === "batchRole") {
-    applyBatchRoleDefaults();
-    return;
-  }
   const feedbackStatus = event.target.closest("select[data-feedback-status]");
   if (feedbackStatus) {
     (async () => {
@@ -7491,9 +8462,6 @@ document.addEventListener("change", async event => {
       }
     })();
     return;
-  }
-  if (event.target.id === "userRole") {
-    applyRoleDefaults();
   }
   if (event.target.id === "statsTeamSelect") {
     state.statsTeam = event.target.value;
@@ -7569,6 +8537,13 @@ async function init() {
         await navigate(ROUTES.login, { replace: true });
         return;
       }
+    }
+    if (state.user.mustChangePassword) {
+      setAppMode("locked");
+      $("#loginPage").hidden = false;
+      setLoginBusy(false, "首次登录或密码重置后，请先修改密码。");
+      openChangePasswordDialog();
+      return;
     }
     if (isLoggedIn()) await navigate(ROUTES.dashboard, { replace: true });
     else await navigate(ROUTES.login, { replace: true });
