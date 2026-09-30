@@ -26,6 +26,11 @@ function translateSql(sql) {
   let text = String(sql).trim();
   text = text.replace(/^begin\s+immediate\b/i, "begin");
   text = text.replace(/^insert\s+or\s+ignore\s+into\s+/i, "insert into ");
+  // SQLite preserves mixed-case aliases, while PostgreSQL folds unquoted ones
+  // to lower case. Keep the object keys expected by the shared application.
+  text = text.split(/('(?:''|[^'])*'|"(?:""|[^"])*")/g).map((part, index) => index % 2 ? part :
+    part.replace(/\bas(\s+)([a-z_][A-Za-z0-9_]*)\b/gi, (match, space, alias) =>
+      /^[a-z_]/.test(alias) && /[A-Z]/.test(alias) ? `as${space}"${alias}"` : match)).join("");
   text = replacePlaceholders(text);
   if (/^insert\s+into\s+/i.test(text) && /\s+on\s+conflict\s+do\s+nothing\s*$/i.test(text) === false && /insert\s+or\s+ignore/i.test(String(sql))) {
     text += " on conflict do nothing";

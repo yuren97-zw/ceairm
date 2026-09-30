@@ -400,6 +400,8 @@ function send(res, status, data, headers = {}) {
     const executionScope = new URL(routePath, "http://localhost").searchParams.get("scope") === "execute";
     const executionFlights = executionScope && Array.isArray(data?.flights) ? data.flights : null;
     const executionFlight = executionScope && data?.flight && !executionFlights ? data.flight : null;
+    const involvedSubtaskDetail = status === 200 && /^\/api\/maintenance\/subtasks\/[^/]+\/hour-audit$/.test(routePath)
+      && Array.isArray(data?.detail?.people) ? data.detail : null;
     data=redactMaintenanceResponse(data,actor);
     if (report && reportFlightId && maintenanceCanSubmitReport(actor, reportFlightId) && data?.report) {
       const allowed = new Set(maintenanceReportPeople(reportFlightId).map(p => p.id));
@@ -412,6 +414,12 @@ function send(res, status, data, headers = {}) {
     };
     if (executionFlights && data?.flights) data.flights = executionFlights.map(restoreExecution).filter(Boolean);
     if (executionFlight && data?.flight) data.flight = restoreExecution(executionFlight);
+    if (involvedSubtaskDetail && data?.detail) {
+      // The endpoint has already checked participation. Show the complete
+      // assignment for that task without expanding the caller's data scope.
+      const participants = new Set(involvedSubtaskDetail.people.map(person => person.personId));
+      data.detail = redactMaintenanceResponse(involvedSubtaskDetail, actor, participants);
+    }
   }
   const body = JSON.stringify(data);
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", ...headers });
