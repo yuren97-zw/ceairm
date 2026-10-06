@@ -20,7 +20,9 @@ const capabilityV2 = [
 const personnelV2 = [
   ["personnel.list.view", "查看人员列表", "personnel"],
   ["personnel.detail.view", "查看人员详情", "personnel"],
-  ["personnel.sensitive.view", "查看人员敏感信息", "personnel"],
+  ["personnel.actual_grade.view", "查看他人实际岗级", "personnel"],
+  ["personnel.actual_grade.manage", "维护实际岗级", "personnel"],
+  ["personnel.actual_grade.export", "导出实际岗级", "personnel"],
   ["personnel.profile.create", "单独录入人员", "personnel"],
   ["personnel.profile.update", "维护人员一般资料", "personnel"],
   ["personnel.qualification.view", "查看执照授权培训", "personnel"],
@@ -68,7 +70,7 @@ const existing = [
   ["info.restore", "恢复信息", "info"], ["info.remind.own", "催办自己发布的信息", "info"],
   ["info.remind.any", "催办任意信息", "info"], ["info.receipt.manage", "管理阅读回执", "info"],
   ["info.stats.read", "查看信息统计", "info"], ["info.export", "导出信息数据", "info"],
-  ["maintenance.archive.modify", "修改已归档维修数据", "maintenance"], ["maintenance.rules.manage", "维护维修规则", "maintenance"],
+  ["maintenance.archive.modify", "修改已归档维修数据", "maintenance"], ["maintenance.rules.view", "查看维修工时规则", "maintenance"], ["maintenance.rules.manage", "维护维修规则", "maintenance"],
   ["maintenance.hours.confirm", "确认工时架次", "maintenance"],
   ["maintenance.export", "导出维修数据", "maintenance"],
   ["fixed.read", "查看固化项目", "fixed"], ["fixed.manage", "维护固化项目", "fixed"],
@@ -101,6 +103,9 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
   "capability.scenario.apply": ["capability.scenario.view", "capability.allocation.submit"],
   "capability.report.export": ["capability.report.view"],
   "personnel.profile.update": ["personnel.detail.view"],
+  "personnel.actual_grade.view": ["personnel.detail.view"],
+  "personnel.actual_grade.manage": ["personnel.actual_grade.view", "personnel.profile.update"],
+  "personnel.actual_grade.export": ["personnel.actual_grade.view"],
   "personnel.qualification.manage": ["personnel.qualification.view", "personnel.detail.view"],
   "personnel.organization.manage": ["personnel.list.view", "personnel.detail.view"],
   "personnel.import.execute": ["personnel.import.view"],
@@ -111,7 +116,7 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
 
 const worker = ["info.read", "maintenance.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const manager = [...dispatcher, "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export"];
+const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),
@@ -123,10 +128,13 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_maintenance_import: ["maintenance.dispatch.view", "maintenance.opportunity.import"],
   addon_maintenance_delete: ["maintenance.dispatch.view", "maintenance.opportunity.delete"],
   addon_maintenance_export: ["maintenance.stats.manage.view", "maintenance.export"],
-  addon_maintenance_rules: ["maintenance.stats.manage.view", "maintenance.rules.manage"],
+  addon_maintenance_rules: ["maintenance.stats.manage.view", "maintenance.rules.view", "maintenance.rules.manage"],
   addon_archive_modify: ["maintenance.review.view", "maintenance.review.submit", "maintenance.archive.modify"],
   addon_info_advanced: ["info.read", "info.update.any", "info.delete.any", "info.void.any", "info.restore", "info.remind.any"],
   addon_personnel_import: ["personnel.import.view", "personnel.import.execute"],
+  addon_actual_grade_view: ["personnel.detail.view", "personnel.actual_grade.view"],
+  addon_actual_grade_manage: ["personnel.detail.view", "personnel.profile.update", "personnel.actual_grade.view", "personnel.actual_grade.manage"],
+  addon_actual_grade_export: ["personnel.detail.view", "personnel.actual_grade.view", "personnel.actual_grade.export"],
   addon_organization_manage: ["personnel.list.view", "personnel.detail.view", "personnel.organization.manage"],
   addon_qualification_manage: ["personnel.detail.view", "personnel.qualification.view", "personnel.qualification.manage"],
   addon_personnel_lifecycle: ["personnel.list.view", "personnel.detail.view", "personnel.lifecycle.manage"],
@@ -146,6 +154,7 @@ export const RBAC_ROLE_NAMES = {
   addon_maintenance_export: "附加：维修导出", addon_maintenance_rules: "附加：维修规则",
   addon_archive_modify: "附加：归档修正", addon_info_advanced: "附加：信息高级管理",
   addon_personnel_import: "附加：人员数据导入", addon_organization_manage: "附加：组织管理",
+  addon_actual_grade_view: "附加：实际岗级查看", addon_actual_grade_manage: "附加：实际岗级维护", addon_actual_grade_export: "附加：实际岗级导出",
   addon_qualification_manage: "附加：资质维护", addon_personnel_lifecycle: "附加：人员生命周期管理", addon_capability_config: "附加：能力规则配置",
   addon_scenario_apply: "附加：方案应用", addon_account_role_manage: "附加：账号角色管理",
   addon_system_settings: "附加：系统配置"
@@ -167,6 +176,9 @@ export const RBAC_ROLE_DESCRIPTIONS = {
   addon_archive_modify: "修正已归档维修数据。",
   addon_info_advanced: "修改、删除、作废和恢复他人发布的信息。",
   addon_personnel_import: "执行人员、执照、授权和培训导入。",
+  addon_actual_grade_view: "在人员数据范围内查看他人的实际岗级。",
+  addon_actual_grade_manage: "在人员数据范围内查看并维护实际岗级。",
+  addon_actual_grade_export: "在人员数据范围内导出实际岗级；仅在导出功能明确包含该字段时生效。",
   addon_organization_manage: "维护部门、人员分组和行政班组。",
   addon_qualification_manage: "维护执照、授权和培训记录。",
   addon_personnel_lifecycle: "管理人员停职和离职状态。",
@@ -195,7 +207,7 @@ export function accountRoleCombinationErrors(codes, { superAccount = false } = {
 
 export const NAVIGATION_NODES = [
   { id: "infoPage", anyOf: ["info.read"] },
-  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view"] },
+  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"] },
   { id: "fixedPage", anyOf: ["fixed.read"] },
   { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"] },
   { id: "hoursPage", anyOf: ["hours.read"] },

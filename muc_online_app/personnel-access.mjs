@@ -2,6 +2,7 @@ import { SCOPE_MODULES, migrateIdentity } from "./personnel-identity.mjs";
 
 export const MODULE_LABELS = { personnel: "人员与能力", accounts: "登录账户管理", info: "信息传达", maintenance: "维修管控", hours: "工时统计", attendance: "考勤管理" };
 export const SENSITIVE_FIELDS = ["actualGrade"];
+export const ACTUAL_GRADE_MASK = "***";
 export const ORGANIZATION_FIELDS = ["department", "personnelGroup", "administrativeTeam", "departmentId", "personnelGroupId", "administrativeTeamId"];
 export const FIXED_ORGANIZATIONS = [
   { code:"DEPT-LINE", name:"航线维修车间", type:"department", parentCode:"" },
@@ -65,6 +66,20 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     const p = predicate(user, module);
     return !!db.prepare(`select 1 from personnel p where p.id=? and (${p.sql})`).get(personId || "", ...p.params);
   }
+  function canViewActualGrade(user, personId) {
+    if (!user?.id || !personId) return false;
+    if (isSuper(user) || (user.personId && user.personId === personId)) return true;
+    return hasRbac(user, "personnel.actual_grade.view") && allows(user, "personnel", personId);
+  }
+  function canManageActualGrade(user, personId = "") {
+    if (!user?.id) return false;
+    if (isSuper(user)) return true;
+    if (!hasRbac(user, "personnel.actual_grade.manage")) return false;
+    return !personId || allows(user, "personnel", personId);
+  }
+  function canExportActualGrade(user) {
+    return isSuper(user) || (hasRbac(user, "personnel.actual_grade.view") && hasRbac(user, "personnel.actual_grade.export"));
+  }
   function requirePerson(user, module, personId, active = false) {
     const p = predicate(user, module);
     const row = db.prepare(`select p.* from personnel p where p.id=? and (${p.sql})${active ? " and p.data_status='active'" : ""}`).get(personId || "", ...p.params);
@@ -99,7 +114,9 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
   }
   function redact(user, row) {
     const value = { ...row };
-    if (!hasRbac(user, "personnel.sensitive.view")) for (const field of SENSITIVE_FIELDS) delete value[field];
+    const gradeVisible = canViewActualGrade(user, value.personId || value.id);
+    value.actualGrade = gradeVisible ? String(value.actualGrade || "") : null;
+    value.actualGradeMasked = !gradeVisible;
     if (!hasRbac(user, "personnel.qualification.view")) for (const field of ["licenseCount","authorizationCount","trainingCount"]) delete value[field];
     delete value.account;
     return value;
@@ -163,7 +180,10 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     if (existing && profileKeys.length) permission(user,"personnel.profile.update");
     if (existing && keys.includes("employmentStatus")) permission(user,"personnel.lifecycle.manage");
     if (keys.some(k => ORGANIZATION_FIELDS.includes(k))) permission(user,"personnel.organization.manage");
-    if (keys.some(k => SENSITIVE_FIELDS.includes(k))) permission(user,"personnel.sensitive.view");
+    if (keys.some(k => SENSITIVE_FIELDS.includes(k))) {
+      if (text(payload.actualGrade) === ACTUAL_GRADE_MASK) throw error("遮罩值不能保存为实际岗级");
+      if (!canManageActualGrade(user, existing?.id || "")) throw error("当前账号没有维护实际岗级的权限", 403, { permission: "personnel.actual_grade.manage" });
+    }
     const org = organizationPayload(payload,existing || {});
     if (!allowsProposed(user,"personnel",{ ...existing,...org })) throw error("目标组织不在可维护范围内",403);
     return org;
@@ -238,7 +258,7 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     const items = db.prepare(`select p.id as personId,p.employee_no as employeeNo,p.name,d.name as department,g.id as personnelGroupId,g.name as personnelGroupName,g.maintenance_eligible as maintenanceEligible,t.id as administrativeTeamId,t.name as administrativeTeamName,wt.id as currentWorkingTeamId,wt.name as currentWorkingTeamName,p.position_code as position,u.id as accountId,u.status as accountStatus ${from} where ${where} order by p.employee_no limit ? offset ?`).all(...args,size,(page-1)*size).map(item=>({...item,maintenanceEligible:!!item.maintenanceEligible}));
     return {items,total,page,pageSize:size};
   }
-  return { isSuper, permission, activeScopes, hasAll, predicate, allows, requirePerson, normalizeScopes, redact, organizations, organizationPayload, allowsProposed, checkMutation, saveOrganization, orgReferences, mutateOrganization, directory };
+  return { isSuper, permission, activeScopes, hasAll, predicate, allows, requirePerson, canViewActualGrade, canManageActualGrade, canExportActualGrade, normalizeScopes, redact, organizations, organizationPayload, allowsProposed, checkMutation, saveOrganization, orgReferences, mutateOrganization, directory };
 }
 
 export function preflightOrganizations(db) {
