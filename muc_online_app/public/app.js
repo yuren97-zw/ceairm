@@ -60,6 +60,7 @@ const state = {
   authorizationProjectCategory: "",
   selectedAuthorizationProjectIds: new Set(),
   authorizationProjectError: "",
+  authorizationProjectImportResult: "",
   personnelSearch: "",
   personnelFilters: { department: "", homeTeam: "", employmentStatus: "", accountStatus: "" },
   personnelPage: 1,
@@ -2486,9 +2487,10 @@ function renderAuthorizationProjects() {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   return `<section class="data-panel authorization-project-settings"><h2>授权项目设置</h2>
     <p class="status-line">项目分类固定为放行、试车、维修、专项、三方、其他。分类只影响展示和能力统计，不改变人员授权状态或RBAC权限。</p>
-    <div class="authorization-project-tools"><form id="authorizationProjectSearchForm"><label>搜索代码、名称或三方公司<input name="q" value="${escapeHtml(state.authorizationProjectSearch)}" placeholder="输入项目代码、标准名称或公司"></label><label>项目分类<select name="category"><option value="">全部分类</option>${Object.entries(authorizationCategoryLabels).map(([key,label]) => `<option value="${key}" ${state.authorizationProjectCategory === key ? "selected" : ""}>${label}</option>`).join("")}</select></label><button class="btn secondary" type="submit">搜索</button><button class="btn secondary" type="button" data-project-reset>重置</button></form><span class="actions"><button class="btn secondary" type="button" data-project-bulk ${state.selectedAuthorizationProjectIds.size ? "" : "disabled"}>批量修改分类（${state.selectedAuthorizationProjectIds.size}）</button><button class="btn" type="button" data-project-create>新增项目</button></span></div>
+    <div class="authorization-project-tools"><form id="authorizationProjectSearchForm"><label>搜索代码、名称或三方公司<input name="q" value="${escapeHtml(state.authorizationProjectSearch)}" placeholder="输入项目代码、标准名称或公司"></label><label>项目分类<select name="category"><option value="">全部分类</option>${Object.entries(authorizationCategoryLabels).map(([key,label]) => `<option value="${key}" ${state.authorizationProjectCategory === key ? "selected" : ""}>${label}</option>`).join("")}</select></label><button class="btn secondary" type="submit">搜索</button><button class="btn secondary" type="button" data-project-reset>重置</button></form><span class="actions"><a class="btn secondary" href="/templates/authorization-project-import-template.xlsx" download="授权项目批量导入模板.xlsx">下载模板</a><input type="file" accept=".xlsx" data-project-import-file hidden><button class="btn secondary" type="button" data-project-import>批量导入</button><button class="btn secondary" type="button" data-project-bulk ${state.selectedAuthorizationProjectIds.size ? "" : "disabled"}>批量修改分类（${state.selectedAuthorizationProjectIds.size}）</button><button class="btn" type="button" data-project-create>新增项目</button></span></div>
+    ${state.authorizationProjectImportResult ? `<p class="status-line" role="status">${escapeHtml(state.authorizationProjectImportResult)}</p>` : ""}
     ${state.authorizationProjectError ? `<p role="alert">${escapeHtml(state.authorizationProjectError)} <button class="link-btn" data-project-page="${page}" type="button">重试</button></p>` : ""}
-    <div class="authorization-project-table"><table><thead><tr><th><span class="sr-only">选择</span></th><th>项目代码</th><th>项目名称</th><th>分类</th><th>三方公司</th><th>引用记录数</th><th>分类来源</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(project => `<tr><td><input type="checkbox" aria-label="选择 ${escapeHtml(project.projectName)}" data-project-select="${escapeHtml(project.id)}" ${state.selectedAuthorizationProjectIds.has(project.id) ? "checked" : ""}></td><td>${escapeHtml(project.projectCode)}</td><td>${project.configured ? escapeHtml(project.projectName) : `<strong>待配置</strong><small>候选名称：${escapeHtml(project.candidateNames.join("、") || "无历史名称，请填写标准名称")}</small>`}</td><td><span class="authorization-category category-${escapeHtml(project.category)}">${escapeHtml(project.categoryLabel)}</span></td><td>${escapeHtml(project.thirdPartyCompany || "—")}</td><td>${project.referenceCount}</td><td>${project.categorySource === "xlsx_initial" ? "Excel初始化" : project.categorySource === "manual" ? "人工修改" : "历史迁移"}</td><td>${escapeHtml(formatDisplayDate(project.categoryUpdatedAt || project.updatedAt))}</td><td><span class="actions"><button class="link-btn" type="button" data-project-edit="${escapeHtml(project.id)}">修改</button><button class="link-btn danger-text" type="button" data-project-delete="${escapeHtml(project.id)}">删除</button></span></td></tr>`).join("") || '<tr><td colspan="9">暂无匹配项目。</td></tr>'}</tbody></table></div>
+    <div class="authorization-project-table"><table><thead><tr><th><span class="sr-only">选择</span></th><th>项目代码</th><th>项目名称</th><th>分类</th><th>三方公司</th><th>引用记录数</th><th>分类来源</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(project => `<tr><td><input type="checkbox" aria-label="选择 ${escapeHtml(project.projectName)}" data-project-select="${escapeHtml(project.id)}" ${state.selectedAuthorizationProjectIds.has(project.id) ? "checked" : ""}></td><td>${escapeHtml(project.projectCode)}</td><td>${project.configured ? escapeHtml(project.projectName) : `<strong>待配置</strong><small>候选名称：${escapeHtml(project.candidateNames.join("、") || "无历史名称，请填写标准名称")}</small>`}</td><td><span class="authorization-category category-${escapeHtml(project.category)}">${escapeHtml(project.categoryLabel)}</span></td><td>${escapeHtml(project.thirdPartyCompany || "—")}</td><td>${project.referenceCount}</td><td>${project.categorySource === "xlsx_initial" ? "Excel初始化" : project.categorySource === "xlsx_import" ? "Excel导入" : project.categorySource === "manual" ? "人工修改" : "历史迁移"}</td><td>${escapeHtml(formatDisplayDate(project.categoryUpdatedAt || project.updatedAt))}</td><td><span class="actions"><button class="link-btn" type="button" data-project-edit="${escapeHtml(project.id)}">修改</button><button class="link-btn danger-text" type="button" data-project-delete="${escapeHtml(project.id)}">删除</button></span></td></tr>`).join("") || '<tr><td colspan="9">暂无匹配项目。</td></tr>'}</tbody></table></div>
     <div class="personnel-pagination"><span>共 ${total} 项 · 第 ${page} / ${pages} 页 · 每页 ${pageSize} 项</span><button class="btn secondary" type="button" data-project-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button class="btn secondary" type="button" data-project-page="${page + 1}" ${page >= pages ? "disabled" : ""}>下一页</button></div></section>`;
 }
 
@@ -2522,6 +2524,7 @@ async function refreshAfterProjectChange() {
 document.addEventListener("click", async event => {
   if (!hasRbac("personnel.qualification.manage")) return;
   if (event.target.closest("[data-project-create]")) { openAuthorizationProjectDialog(); return; }
+  if (event.target.closest("[data-project-import]")) { document.querySelector("[data-project-import-file]")?.click(); return; }
   if (event.target.closest("[data-project-bulk]")) { openAuthorizationProjectBulkDialog(); return; }
   const selected = event.target.closest("[data-project-select]");
   if (selected) {
@@ -2581,6 +2584,8 @@ document.addEventListener("submit", async event => {
 });
 
 document.addEventListener("change", event => {
+  const importFile = event.target.closest("[data-project-import-file]");
+  if (importFile) { importAuthorizationProjectFile(importFile.files?.[0]); return; }
   const select = event.target.closest("[data-project-category]");
   if (!select) return;
   const form = select.closest("form"), field = form?.querySelector("[data-third-party-company-field]"), input = field?.querySelector("input");
@@ -6688,6 +6693,41 @@ async function parseXlsxWorkbook(file) {
 async function parseXlsx(file) {
   const sheets = await parseXlsxWorkbook(file);
   return sheets[0]?.rows || [];
+}
+
+function authorizationProjectRowsFromRows(rows) {
+  const populated = rows.filter(row => row.some(cell => String(cell ?? "").trim()));
+  if (!populated.length) return [];
+  const headers = populated[0].map(normalizeHeader);
+  const required = ["项目代码", "项目名称", "项目分类", "三方公司", "修改原因"];
+  const missing = required.filter(header => !headers.includes(header));
+  if (missing.length) throw new Error(`模板缺少列：${missing.join("、")}`);
+  return populated.slice(1).map((row, index) => ({
+    rowNumber: Number(row.sourceRowNumber) || index + 2,
+    projectCode: String(row[headers.indexOf("项目代码")] ?? "").trim(),
+    projectName: String(row[headers.indexOf("项目名称")] ?? "").trim(),
+    category: String(row[headers.indexOf("项目分类")] ?? "").trim(),
+    thirdPartyCompany: String(row[headers.indexOf("三方公司")] ?? "").trim(),
+    reason: String(row[headers.indexOf("修改原因")] ?? "").trim()
+  }));
+}
+
+async function importAuthorizationProjectFile(file) {
+  if (!file) return;
+  state.authorizationProjectImportResult = "正在校验并导入授权项目…";
+  renderPersonnelPage();
+  try {
+    if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("请使用 xlsx 格式文件");
+    const rows = authorizationProjectRowsFromRows(await parseXlsx(file));
+    if (!rows.length) throw new Error("Excel中没有可导入的授权项目");
+    const result = await apiRequest("/personnel/authorization-projects/import", { method: "POST", body: { rows } });
+    state.authorizationProjectImportResult = `导入完成：新增 ${result.created} 项，更新 ${result.updated} 项，未变化 ${result.unchanged} 项。`;
+    await refreshAuthorizationProjects(1);
+  } catch (error) {
+    const issues = (error.details || []).slice(0, 8).map(item => `第${item.rowNumber}行：${item.detail}`).join("；");
+    state.authorizationProjectImportResult = `${error.message}${issues ? `。${issues}` : ""}`;
+  }
+  renderPersonnelPage();
 }
 
 function peopleFromRows(rows) {

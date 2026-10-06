@@ -6803,6 +6803,7 @@ async function routeRequest(req, res) {
         return send(res, 403, { error: "没有维护授权项目的权限" });
       }
       const id = projectRoute[1] ? routeParam(projectRoute[1]) : "";
+      if (method === "POST" && id === "import") return send(res, 200, authorizationProjects.importRows(await bodyJson(req), manager));
       if (method === "POST" && !id) return send(res, 201, { project: authorizationProjects.create(await bodyJson(req), manager) });
       if (method === "PUT" && id === "categories") return send(res, 200, authorizationProjects.updateCategories(await bodyJson(req), manager));
       if (method === "PUT" && id) return send(res, 200, { project: authorizationProjects.update(id, await bodyJson(req), manager) });
