@@ -14,7 +14,7 @@ import {
 } from "./rbac-policy.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
-import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS } from "./personnel-access.mjs";
+import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS, CADRE_GROUP_CODE } from "./personnel-access.mjs";
 import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
@@ -186,16 +186,20 @@ function bumpMaintenanceVersion(flightId = "", eventType = "maintenance.updated"
 
 function allPeople(module = "maintenance", scopeOverride = null) {
   const user = requestUser(), scope = scopeOverride || (user ? personnelAccess.predicate(user,module) : { sql:"1=1",params:[] });
-  const maintenanceEligible=module==="maintenance"?" and g.unit_type='personnel_group' and g.maintenance_eligible=1":"";
-  return db.prepare(`select p.*,u.id as account_id,u.username,u.status as account_status,u.function_category,d.name as department_name,g.name as personnel_group_name,at.name as administrative_team_name,wt.name as working_team_name,cs.working_team_id from personnel p
+  const maintenanceEligible=module==="maintenance"?` and d.unit_type='department' and d.status='active' and g.unit_type='personnel_group' and g.status='active' and (g.maintenance_eligible=1 or g.code='${CADRE_GROUP_CODE}')`:"";
+  return db.prepare(`select p.*,u.id as account_id,u.username,u.status as account_status,u.function_category,d.name as department_name,g.code as personnel_group_code,g.name as personnel_group_name,g.maintenance_eligible,at.name as administrative_team_name,wt.name as working_team_name,cs.working_team_id from personnel p
     left join users u on u.person_id=p.id left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units at on at.id=p.administrative_team_id left join capability_current_states cs on cs.person_id=p.id left join organization_units wt on wt.id=cs.working_team_id where p.data_status='active'
     and p.employment_status not in ('离职','停职') and (${scope.sql})${maintenanceEligible} order by p.employee_no`).all(...scope.params).map(row => ({
       id: row.id, personId:row.id, accountId:row.account_id || null, employeeNo:row.employee_no,
       username:row.username||"",name:row.name,department:row.department_name||"未设置",personnelGroup:row.personnel_group_name||"",administrativeTeam:row.administrative_team_name||"",
-      personnelGroupId:row.personnel_group_id,administrativeTeamId:row.administrative_team_id,teamId:row.working_team_id||row.administrative_team_id,
+      departmentId:row.department_id,personnelGroupId:row.personnel_group_id,personnelGroupCode:row.personnel_group_code||"",maintenanceEligible:!!row.maintenance_eligible,administrativeTeamId:row.administrative_team_id,teamId:row.working_team_id||row.administrative_team_id,
       team:row.working_team_name||row.administrative_team_name||"未设置",functionCategory:normalizeFunctionCategory(row.function_category),
       hasAccount:!!row.account_id && row.account_status !== "disabled"
     }));
+}
+
+function maintenanceCapabilityPeople(scopeOverride = null) {
+  return allPeople("maintenance", scopeOverride).filter(person => person.maintenanceEligible && person.personnelGroupCode !== CADRE_GROUP_CODE);
 }
 
 function allLoginPeople() { return allPeople("info").filter(person => person.hasAccount).map(person => ({...person,id:person.accountId})); }
@@ -319,6 +323,12 @@ function routeParam(value) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function timestampAfter(value = "") {
+  const current = Date.parse(value);
+  const next = Number.isFinite(current) ? Math.max(Date.now(), current + 1) : Date.now();
+  return new Date(next).toISOString();
 }
 
 function parseCookies(req) {
@@ -1947,6 +1957,37 @@ function maintenanceCanManage(user) {
   return hasAnyRbac(user, ["maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"]);
 }
 
+function maintenanceUserDepartment(user) {
+  if (!user?.personId) return { id: "", name: "" };
+  const row = db.prepare("select department_id,department from personnel where id=? and data_status='active'").get(user.personId);
+  return { id: String(row?.department_id || "").trim(), name: String(row?.department || "").trim() };
+}
+
+function maintenanceSharesCreatorDepartment(user, creatorId) {
+  if (!user?.id || !creatorId) return false;
+  if (user.id === creatorId || personnelAccess.hasAll(user, "maintenance")) return true;
+  const viewerDepartment = maintenanceUserDepartment(user);
+  if (!viewerDepartment.id && !viewerDepartment.name) return false;
+  const creator = db.prepare(`select p.department_id,p.department from users u
+    join personnel p on p.id=u.person_id
+    where u.id=? and p.data_status='active'`).get(creatorId);
+  if (!creator) return false;
+  const creatorDepartmentId = String(creator.department_id || "").trim();
+  if (viewerDepartment.id && creatorDepartmentId) return viewerDepartment.id === creatorDepartmentId;
+  return !viewerDepartment.id && !creatorDepartmentId && viewerDepartment.name === String(creator.department || "").trim();
+}
+
+function maintenanceSharedUnassignedRouteAllowed(user, flight, method, url) {
+  if (!flight || flight.status !== "未派工" || !hasRbac(user, "maintenance.dispatch.view")) return false;
+  if (!maintenanceSharesCreatorDepartment(user, flight.created_by)) return false;
+  const detailRoute = method === "GET"
+    && /^\/api\/maintenance\/flights\/[^/]+$/.test(url.pathname)
+    && (url.searchParams.get("scope") || "dispatch") === "dispatch";
+  const dispatchRoute = method === "POST"
+    && /^\/api\/maintenance\/(?:flights|subtasks)\/[^/]+\/dispatch$/.test(url.pathname);
+  return detailRoute || dispatchRoute;
+}
+
 function maintenanceCanExecute(user, write = false) {
   return maintenanceHasAccess(user) && hasRbac(user, write ? "maintenance.execute.submit" : "maintenance.execute.view");
 }
@@ -1994,17 +2035,24 @@ function maintenanceDispatchError(message) {
   return error;
 }
 
+function maintenanceDispatchConflict(message = "航班已被更新，请刷新后重试") {
+  const error = new Error(message);
+  error.status = 409;
+  error.details = { code: "maintenance_dispatch_stale" };
+  return error;
+}
+
 function normalizeMaintenanceAssignments(ownerType, owner, assignments) {
   const allowed = maintenanceRolesForOwner(ownerType, owner);
   const aliases = { "航后机内": "例行机内", "航后起落架": "例行L/G", "航后发动机": "例行发动机", "航后外部": "例行机外", "航后电子": "例行电子" };
-  const people = new Map(allPeople().map(person => [person.id, person]));
+  const people = new Map(allPeople("maintenance").map(person => [person.id, person]));
   const seen = new Set();
   const normalized = [];
   const releaseUsers = new Set();
   for (const item of assignments) {
     const personId = String(item.personId || "").trim();
     const person = people.get(personId);
-    if (!person) throw maintenanceDispatchError("派工人员不存在或已停用");
+    if (!person) throw maintenanceDispatchError("派工人员不存在、已停用或不在当前维修管控范围");
     const rawRole = String(item.role || "").trim();
     const role = ownerType === "subtask" ? normalizeMaintenanceSubtaskRole(rawRole) : (aliases[rawRole] || rawRole);
     if (!allowed.includes(role)) throw maintenanceDispatchError(`${ownerType === "subtask" ? "非例行" : "当前维修机会"}不支持“${role || "未设置"}”类别`);
@@ -2880,12 +2928,22 @@ function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
     params.push(user.personId);
   } else if (!personnelAccess.hasAll(user, "maintenance")) {
     const scoped = personnelAccess.predicate(user, "maintenance", "visible_person");
+    const viewerDepartment = maintenanceUserDepartment(user);
+    const sharedDepartmentSql = scope === "dispatch" && hasRbac(user, "maintenance.dispatch.view") && (viewerDepartment.id || viewerDepartment.name)
+      ? ` or (maintenance_flights.status='未派工' and exists (
+          select 1 from users creator_user
+          join personnel creator_person on creator_person.id=creator_user.person_id
+          where creator_user.id=maintenance_flights.created_by and creator_person.data_status='active'
+            and (creator_person.department_id=? or (?='' and coalesce(creator_person.department_id,'')='' and trim(coalesce(creator_person.department,''))=?))
+        ))`
+      : "";
     conditions.push(`(created_by=? or exists (
       select 1 from maintenance_assignments visible_assignment
       join personnel visible_person on visible_person.id=visible_assignment.person_id
       where visible_assignment.flight_id=maintenance_flights.id and (${scoped.sql})
-    ))`);
+    )${sharedDepartmentSql})`);
     params.push(user.id, ...scoped.params);
+    if (sharedDepartmentSql) params.push(viewerDepartment.id, viewerDepartment.id, viewerDepartment.name);
   }
   if (filters.dateFrom) { conditions.push("date>=?"); params.push(filters.dateFrom); }
   if (filters.dateTo) { conditions.push("date<=?"); params.push(filters.dateTo); }
@@ -4278,7 +4336,9 @@ function maintenancePersonalStats(params, user) {
     };
   };
 
-  const activeMembers = allPeople("maintenance");
+  // Rankings use the capability-participating population, while the actual
+  // maintenance rows above intentionally continue to include cadres.
+  const activeMembers = maintenanceCapabilityPeople();
   const monthTotals = new Map();
   for (const row of allHours) {
     if (!String(row.date || "").startsWith(bounds.month)) continue;
@@ -4292,10 +4352,21 @@ function maintenancePersonalStats(params, user) {
   teamComparison.team = currentPerson?.team || "未设置";
   teamComparison.contributionPercent = teamTotal ? Number((teamComparison.ownHours / teamTotal * 100).toFixed(1)) : 0;
 
-  const groupMembers = currentPerson?.personnelGroupId ? activeMembers.filter(member => member.personnelGroupId===currentPerson.personnelGroupId) : [];
-  const groupComparison = maintenancePersonalComparison(groupMembers, monthTotals, user.personId);
-  groupComparison.available = !!currentPerson?.personnelGroupId && groupMembers.some(member => member.id === user.personId);
-  groupComparison.personnelGroup=currentPerson?.personnelGroup||"未分配";
+  const departmentMembers = currentPerson?.departmentId ? activeMembers.filter(member => member.departmentId===currentPerson.departmentId) : [];
+  const fullDepartmentMembers = currentPerson?.departmentId
+    ? maintenanceCapabilityPeople({sql:"p.department_id=?",params:[currentPerson.departmentId]})
+    : [];
+  const scopedDepartmentIds = new Set(departmentMembers.map(member=>member.id));
+  const departmentScopeComplete = !!currentPerson?.departmentId
+    && fullDepartmentMembers.every(member=>scopedDepartmentIds.has(member.id));
+  const comparisonMembers = departmentScopeComplete ? departmentMembers : [];
+  const departmentComparison = maintenancePersonalComparison(comparisonMembers, monthTotals, user.personId);
+  departmentComparison.available = departmentScopeComplete && comparisonMembers.some(member=>member.id===user.personId);
+  departmentComparison.department=currentPerson?.department||"未分配";
+  departmentComparison.reason=currentPerson ? (departmentScopeComplete?"":"incomplete_scope") : "not_participant";
+  // Compatibility alias for older clients. Its semantics now match the
+  // department-wide comparison and it can be removed after clients migrate.
+  const groupComparison = {...departmentComparison};
 
   const rankingTeams=organizationLanes(db).filter(team=>team.organizationId);
   const teamRanking = { available: rankingTeams.some(team=>team.organizationId===currentPerson?.teamId), team: currentPerson?.team || "未设置", teamCount: rankingTeams.length };
@@ -4328,6 +4399,7 @@ function maintenancePersonalStats(params, user) {
       pendingMonthSorties: sumSorties(monthPendingSorties)
     },
     teamComparison,
+    departmentComparison,
     groupComparison,
     teamRanking,
     trend,
@@ -4455,11 +4527,14 @@ function invalidateMaintenanceReportCategory(flightId, reportType, user, reason 
   return true;
 }
 
-function setMaintenanceAssignments(ownerType, ownerId, assignments, user) {
+function setMaintenanceAssignments(ownerType, ownerId, assignments, user, expectedUpdatedAt) {
   return maintenanceTransaction(() => {
     const owner = maintenanceOwner(ownerType, ownerId);
     if (!owner) return null;
     const flightId = ownerType === "flight" ? owner.id : owner.flight_id;
+    const flightBefore = db.prepare("select updated_at from maintenance_flights where id=?").get(flightId);
+    if (!String(expectedUpdatedAt || "").trim()) throw maintenanceDispatchError("缺少航班更新时间，请刷新后重试");
+    if (!flightBefore || flightBefore.updated_at !== expectedUpdatedAt) throw maintenanceDispatchConflict();
     const normalizedAssignments = normalizeMaintenanceAssignments(ownerType, owner, assignments);
     const allowedRoles = maintenanceRolesForOwner(ownerType, owner);
     const submitted = reportType => {
@@ -4508,6 +4583,9 @@ function setMaintenanceAssignments(ownerType, ownerId, assignments, user) {
       });
     }
     reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
+    const latestUpdatedAt = db.prepare("select updated_at from maintenance_flights where id=?").get(flightId)?.updated_at || flightBefore.updated_at;
+    db.prepare("update maintenance_flights set updated_by=?,updated_at=? where id=?")
+      .run(user.id, timestampAfter(latestUpdatedAt), flightId);
     maintenanceLog(user, "dispatch", ownerType, ownerId, flightId, JSON.stringify({
       editableRoles: allowedRoles.filter(role => !lockedRoles.has(role)),
       lockedRoles: [...lockedRoles],
@@ -7098,8 +7176,15 @@ async function routeRequest(req, res) {
         if(flight){
           const assigned=db.prepare("select person_id from maintenance_assignments where flight_id=?").all(flightId);
           const own=assigned.some(a=>a.person_id===user.personId);
-          if(!personnelAccess.hasAll(user,"maintenance") && !own && flight.created_by!==user.id && !assigned.some(a=>personnelAccess.allows(user,"maintenance",a.person_id)) && !dataScopeAllowsUser(user,flight.created_by,"maintenance"))return send(res,404,{error:"未找到维修机会"});
-          if(!["GET","OPTIONS"].includes(method) && /(?:dispatch|review|archive)|^DELETE$/.test(url.pathname+" "+method) && assigned.some(a=>!personnelAccess.allows(user,"maintenance",a.person_id)))return send(res,403,{error:"任务包含维修管理范围外人员，不能修改"});
+          const isDispatchRequest=method==="POST" && /^\/api\/maintenance\/(?:flights|subtasks)\/[^/]+\/dispatch$/.test(url.pathname);
+          let staleSharedDispatch=false;
+          if(isDispatchRequest && hasRbac(user,"maintenance.assignment.manage") && maintenanceSharesCreatorDepartment(user,flight.created_by)){
+            const expectedUpdatedAt=String((await bodyJson(req)).expectedUpdatedAt||"");
+            staleSharedDispatch=!!expectedUpdatedAt && expectedUpdatedAt!==flight.updated_at;
+          }
+          const sharedUnassigned=maintenanceSharedUnassignedRouteAllowed(user,flight,method,url);
+          if(!personnelAccess.hasAll(user,"maintenance") && !own && flight.created_by!==user.id && !assigned.some(a=>personnelAccess.allows(user,"maintenance",a.person_id)) && !dataScopeAllowsUser(user,flight.created_by,"maintenance") && !sharedUnassigned && !staleSharedDispatch)return send(res,404,{error:"未找到维修机会"});
+          if(!["GET","OPTIONS"].includes(method) && /(?:dispatch|review|archive)|^DELETE$/.test(url.pathname+" "+method) && assigned.some(a=>!personnelAccess.allows(user,"maintenance",a.person_id)) && !staleSharedDispatch)return send(res,403,{error:"任务包含维修管理范围外人员，不能修改"});
         }
       }
     }
@@ -7482,7 +7567,7 @@ async function routeRequest(req, res) {
       const owner = maintenanceOwner(ownerType, ownerId);
       if (!owner) return send(res, 404, { error: "未找到任务" });
       assertMaintenanceTreeDirectEditAllowed(ownerType === "flight" ? owner.id : owner.flight_id);
-      const flight = setMaintenanceAssignments(ownerType, ownerId, Array.isArray(p.assignments) ? p.assignments : [], manager);
+      const flight = setMaintenanceAssignments(ownerType, ownerId, Array.isArray(p.assignments) ? p.assignments : [], manager, String(p.expectedUpdatedAt || ""));
       if (!flight) return send(res, 404, { error: "未找到任务" });
       const assigned = ownerType === "flight" ? flight.assignments : (flight.subtasks || []).find(item => item.id === ownerId)?.assignments || [];
       if (!assigned.length) return send(res, 400, { error: "请选择派工人员" });

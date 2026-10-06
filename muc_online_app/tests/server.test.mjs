@@ -15,7 +15,7 @@ process.env.COS_SECRET_KEY = "test-secret-key";
 process.env.COS_BUCKET = "test-bucket-1234567890";
 process.env.COS_REGION = "ap-shanghai";
 
-const { measuredRoute, parseRangeHeader, cosSignedUrl, attachmentDisposition, db } = await import("../server.mjs");
+const { measuredRoute, parseRangeHeader, cosSignedUrl, attachmentDisposition, db, capabilityService } = await import("../server.mjs");
 
 class MockResponse extends EventEmitter {
   headers = {};
@@ -503,6 +503,198 @@ test("maintenance summaries paginate and full details remain available", async (
   assert.equal(detail.res.statusCode, 200);
   assert.equal(detail.payload.flight.id, ids[0]);
   assert.equal(detail.payload.flight.summary, undefined);
+});
+
+test("same-department dispatchers share unassigned flights while personnel scope and stale saves remain protected", async () => {
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const creator = createMaintenanceTestAccount(template, { id: "shared-flight-creator", name: "同部门录入人" });
+  const dispatcher = createMaintenanceTestAccount(template, { id: "shared-flight-dispatcher", name: "同部门派工人" });
+  const outsideCandidate = createMaintenanceTestAccount(template, { id: "shared-flight-candidate", name: "范围外候选人" });
+  const otherDepartment = createMaintenanceTestAccount(template, { id: "shared-flight-other-dept", name: "其他部门派工人" });
+  const accountIds = [creator.id, dispatcher.id, outsideCandidate.id, otherDepartment.id];
+  const personIds = [creator.personId, dispatcher.personId, outsideCandidate.personId, otherDepartment.personId];
+  const organizationIds = ["test-dept-shared-other", "test-group-shared-other", "test-team-shared-other", "test-team-shared-peer"];
+  let flightId = "";
+  try {
+    const stamp = new Date().toISOString();
+    const dispatcherRole = db.prepare("select id from rbac_roles where code='dispatcher'").get();
+    for (const account of [creator, dispatcher, outsideCandidate, otherDepartment]) {
+      db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(account.id, dispatcherRole.id, stamp);
+    }
+    const creatorOrg = db.prepare("select department_id,personnel_group_id,administrative_team_id from personnel where id=?").get(creator.personId);
+    db.prepare("insert into organization_units(id,code,name,unit_type,parent_id,status,maintenance_eligible,created_at,updated_at) values(?,?,?,?,?,'active',0,?,?)")
+      .run(organizationIds[0], "TEST-DEPT-SHARED-OTHER", "其他维修部", "department", null, stamp, stamp);
+    db.prepare("insert into organization_units(id,code,name,unit_type,parent_id,status,maintenance_eligible,created_at,updated_at) values(?,?,?,?,?,'active',1,?,?)")
+      .run(organizationIds[1], "TEST-GROUP-SHARED-OTHER", "其他维修组", "personnel_group", organizationIds[0], stamp, stamp);
+    db.prepare("insert into organization_units(id,code,name,unit_type,parent_id,status,maintenance_eligible,created_at,updated_at) values(?,?,?,?,?,'active',0,?,?)")
+      .run(organizationIds[2], "TEST-TEAM-SHARED-OTHER", "其他部门一组", "administrative_team", organizationIds[1], stamp, stamp);
+    db.prepare("insert into organization_units(id,code,name,unit_type,parent_id,status,maintenance_eligible,created_at,updated_at) values(?,?,?,?,?,'active',0,?,?)")
+      .run(organizationIds[3], "TEST-TEAM-SHARED-PEER", "同部门二组", "administrative_team", creatorOrg.personnel_group_id, stamp, stamp);
+    db.prepare("update personnel set administrative_team_id=?,home_team=?,updated_at=? where id=?")
+      .run(organizationIds[3], "同部门二组", stamp, outsideCandidate.personId);
+    db.prepare("update rbac_user_scopes set scope_id=? where user_id=? and module='maintenance'")
+      .run(organizationIds[3], outsideCandidate.id);
+    db.prepare("update personnel set department_id=?,personnel_group_id=?,administrative_team_id=?,department=?,home_team=?,updated_at=? where id=?")
+      .run(organizationIds[0], organizationIds[1], organizationIds[2], "其他维修部", "其他部门一组", stamp, otherDepartment.personId);
+    db.prepare("update rbac_user_scopes set scope_id=? where user_id=? and module='maintenance'")
+      .run(organizationIds[2], otherDepartment.id);
+
+    const login = async account => {
+      const response = await request("/api/login", { method: "POST", body: { username: account.username, password: "muc2026" } });
+      assert.equal(response.res.statusCode, 200);
+      return String(response.res.headers["Set-Cookie"] || response.res.headers["set-cookie"] || "").split(";")[0];
+    };
+    const creatorCookie = await login(creator);
+    const dispatcherCookie = await login(dispatcher);
+    const peerDispatcherCookie = await login(outsideCandidate);
+    const otherDepartmentCookie = await login(otherDepartment);
+    const created = await request("/api/maintenance/flights", {
+      method: "POST",
+      cookie: creatorCookie,
+      body: { date: "2026-10-06", flightNo: "SHARED-DEPT", aircraftNo: "B-SHARED", aircraftType: "A320", workKind: "航后", standardHours: 2 }
+    });
+    assert.equal(created.res.statusCode, 201, JSON.stringify(created.payload));
+    flightId = created.payload.flight.id;
+
+    const sharedList = await request("/api/maintenance/flights?scope=dispatch&view=summary&dateFrom=2026-10-06&dateTo=2026-10-06", { cookie: dispatcherCookie });
+    assert.equal(sharedList.res.statusCode, 200);
+    assert.ok(sharedList.payload.flights.some(item => item.id === flightId));
+    const hiddenList = await request("/api/maintenance/flights?scope=dispatch&view=summary&dateFrom=2026-10-06&dateTo=2026-10-06", { cookie: otherDepartmentCookie });
+    assert.equal(hiddenList.res.statusCode, 200);
+    assert.ok(!hiddenList.payload.flights.some(item => item.id === flightId));
+    assert.equal((await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}?scope=dispatch`, { cookie: otherDepartmentCookie })).res.statusCode, 404);
+
+    const detail = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}?scope=dispatch`, { cookie: dispatcherCookie });
+    assert.equal(detail.res.statusCode, 200);
+    const expectedUpdatedAt = detail.payload.flight.updatedAt;
+    const rejected = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/dispatch`, {
+      method: "POST", cookie: dispatcherCookie,
+      body: { expectedUpdatedAt, assignments: [{ personId: outsideCandidate.personId, role: "例行机内" }] }
+    });
+    assert.equal(rejected.res.statusCode, 400);
+    assert.match(rejected.payload.error, /维修管控范围/);
+    assert.equal(db.prepare("select count(*) as total from maintenance_assignments where flight_id=?").get(flightId).total, 0);
+    assert.equal(db.prepare("select updated_at from maintenance_flights where id=?").get(flightId).updated_at, expectedUpdatedAt);
+
+    const assigned = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/dispatch`, {
+      method: "POST", cookie: dispatcherCookie,
+      body: { expectedUpdatedAt, assignments: [{ personId: dispatcher.personId, role: "例行机内" }] }
+    });
+    assert.equal(assigned.res.statusCode, 200, JSON.stringify(assigned.payload));
+    assert.notEqual(assigned.payload.flight.updatedAt, expectedUpdatedAt);
+    const stale = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/dispatch`, {
+      method: "POST", cookie: peerDispatcherCookie,
+      body: { expectedUpdatedAt, assignments: [{ personId: outsideCandidate.personId, role: "例行机内" }] }
+    });
+    assert.equal(stale.res.statusCode, 409);
+    assert.equal(stale.payload.code, "maintenance_dispatch_stale");
+    assert.equal(db.prepare("select count(*) as total from maintenance_assignments where flight_id=? and person_id=?").get(flightId, dispatcher.personId).total, 1);
+  } finally {
+    if (flightId) {
+      db.prepare("delete from maintenance_assignments where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_subtasks where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_logs where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_flights where id=?").run(flightId);
+    }
+    for (const id of accountIds) {
+      db.prepare("delete from sessions where user_id=?").run(id);
+      db.prepare("delete from rbac_user_scopes where user_id=?").run(id);
+      db.prepare("delete from rbac_user_roles where user_id=?").run(id);
+      db.prepare("delete from users where id=?").run(id);
+    }
+    for (const id of personIds) db.prepare("delete from personnel where id=?").run(id);
+    for (const id of [...organizationIds].reverse()) db.prepare("delete from organization_units where id=?").run(id);
+  }
+});
+
+test("cadres are dispatchable and reportable but remain outside capability and department ranking populations", async () => {
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const dispatcher = createMaintenanceTestAccount(template, { id: "cadre-policy-dispatcher", name: "干部派工测试调度" });
+  const cadre = createMaintenanceTestAccount(template, { id: "cadre-policy-worker", name: "干部派工测试人员" });
+  let flightId = "";
+  try {
+    const stamp = new Date().toISOString();
+    const dispatcherRole = db.prepare("select id from rbac_roles where code='dispatcher'").get();
+    db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(dispatcher.id, dispatcherRole.id, stamp);
+    const departmentId = db.prepare("select department_id from personnel where id=?").get(dispatcher.personId).department_id;
+    const cadreGroup = db.prepare("select id,maintenance_eligible from organization_units where code='GROUP-LINE-CADRE'").get();
+    assert.equal(Number(cadreGroup.maintenance_eligible), 0);
+    db.prepare("update personnel set department_id=?,personnel_group_id=?,administrative_team_id=null,department='维修部',home_team='',updated_at=? where id=?")
+      .run(departmentId, cadreGroup.id, stamp, cadre.personId);
+    for (const account of [dispatcher, cadre]) db.prepare("update rbac_user_scopes set scope_type='department',scope_id='' where user_id=? and module='maintenance'").run(account.id);
+
+    const login = async account => {
+      const response = await request("/api/login", { method: "POST", body: { username: account.username, password: "muc2026" } });
+      assert.equal(response.res.statusCode, 200);
+      return { cookie:String(response.res.headers["Set-Cookie"] || response.res.headers["set-cookie"] || "").split(";")[0], user:response.payload.user };
+    };
+    const dispatchLogin = await login(dispatcher);
+    const cadreLogin = await login(cadre);
+    const adminLogin = await request("/api/login", { method:"POST", body:{username:"54002010",password:"muc2026"} });
+    assert.equal(adminLogin.res.statusCode, 200);
+    const dispatchDirectory = await request("/api/personnel/directory?purpose=maintenance_dispatch&pageSize=200", { cookie: dispatchLogin.cookie });
+    assert.equal(dispatchDirectory.res.statusCode, 200);
+    assert.ok(dispatchDirectory.payload.items.some(person => person.personId === cadre.personId));
+    const capabilityDirectory = await request("/api/personnel/directory?purpose=maintenance&pageSize=200", { cookie: dispatchLogin.cookie });
+    assert.ok(!capabilityDirectory.payload.items.some(person => person.personId === cadre.personId));
+
+    const created = await request("/api/maintenance/flights", {
+      method:"POST", cookie:dispatchLogin.cookie,
+      body:{date:"2026-10-06",flightNo:"CADRE-POLICY",aircraftNo:"B-CADRE",aircraftType:"A320",workKind:"短停",standardHours:1}
+    });
+    assert.equal(created.res.statusCode, 201, JSON.stringify(created.payload));
+    flightId = created.payload.flight.id;
+    const assigned = await request(`/api/maintenance/flights/${flightId}/dispatch`, {
+      method:"POST", cookie:dispatchLogin.cookie,
+      body:{expectedUpdatedAt:created.payload.flight.updatedAt,assignments:[{personId:cadre.personId,role:"接机"}]}
+    });
+    assert.equal(assigned.res.statusCode, 200, JSON.stringify(assigned.payload));
+    assert.equal(db.prepare("select person_id from maintenance_assignments where flight_id=?").get(flightId).person_id, cadre.personId);
+
+    db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,status,created_at,updated_at)
+      values(?,'flight',?,?,?,?,?,?,?,?,?,'已确认',?,?)`).run(`cadre-hours-${flightId}`,flightId,flightId,`cadre-assignment-${flightId}`,cadre.personId,cadre.name,"干部","接机","维修机会",1.25,stamp,stamp);
+    const cadreStats = await request("/api/maintenance/stats/personal?month=2026-10", { cookie:cadreLogin.cookie });
+    assert.equal(cadreStats.res.statusCode, 200);
+    assert.equal(cadreStats.payload.metrics.monthHours, 1.25);
+    assert.equal(cadreStats.payload.departmentComparison.available, false);
+    assert.equal(cadreStats.payload.departmentComparison.reason, "not_participant");
+
+    const dispatcherStats = await request("/api/maintenance/stats/personal?month=2026-10", { cookie:dispatchLogin.cookie });
+    const expectedDepartmentPopulation = Number(db.prepare(`select count(*) as n from personnel p
+      join organization_units d on d.id=p.department_id
+      join organization_units g on g.id=p.personnel_group_id
+      where p.department_id=? and p.data_status='active' and p.employment_status not in ('离职','停职')
+        and d.unit_type='department' and d.status='active' and g.unit_type='personnel_group' and g.status='active'
+        and g.maintenance_eligible=1 and g.code<>'GROUP-LINE-CADRE'`).get(departmentId).n);
+    assert.equal(dispatcherStats.payload.departmentComparison.available, true);
+    assert.equal(dispatcherStats.payload.departmentComparison.memberCount, expectedDepartmentPopulation);
+    const dispatcherTeamId=db.prepare("select administrative_team_id from personnel where id=?").get(dispatcher.personId).administrative_team_id;
+    db.prepare("update rbac_user_scopes set scope_type='administrative_team',scope_id=? where user_id=? and module='maintenance'").run(dispatcherTeamId,dispatcher.id);
+    const partialStats = await request("/api/maintenance/stats/personal?month=2026-10", { cookie:dispatchLogin.cookie });
+    assert.equal(partialStats.payload.departmentComparison.available, false);
+    assert.equal(partialStats.payload.departmentComparison.reason, "incomplete_scope");
+
+    capabilityService.syncMaster();
+    const spaces = capabilityService.spaces(adminLogin.payload.user);
+    const departmentSpace = spaces.find(item => item.id === `department:${departmentId}`);
+    assert.ok(departmentSpace);
+    assert.ok(!capabilityService.snapshot(adminLogin.payload.user, departmentSpace.id).people.some(person => person.id === cadre.personId));
+  } finally {
+    if (flightId) {
+      db.prepare("delete from maintenance_hour_results where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_assignments where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_logs where flight_id=?").run(flightId);
+      db.prepare("delete from maintenance_flights where id=?").run(flightId);
+    }
+    for (const account of [dispatcher, cadre]) {
+      db.prepare("delete from sessions where user_id=?").run(account.id);
+      db.prepare("delete from rbac_user_scopes where user_id=?").run(account.id);
+      db.prepare("delete from rbac_user_roles where user_id=?").run(account.id);
+      db.prepare("delete from users where id=?").run(account.id);
+      db.prepare("delete from capability_current_states where person_id=?").run(account.personId);
+      db.prepare("delete from personnel where id=?").run(account.personId);
+    }
+  }
 });
 
 test("flight import rejects shifted columns before inserting any rows and normalizes dates", async () => {

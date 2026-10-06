@@ -14,7 +14,7 @@ const stamp=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
 const trim=v=>String(v??'').trim();
 const valid=v=>['是','有效','true','1'].includes(trim(v).toLowerCase());
-const workspace=p=>p.department_id&&p.department_status==='active'&&p.department_type==='department'&&p.group_type==='personnel_group'&&p.group_status==='active'&&Number(p.maintenance_eligible)===1?`department:${p.department_id}`:null;
+const workspace=p=>p.group_code!=='GROUP-LINE-CADRE'&&p.department_id&&p.department_status==='active'&&p.department_type==='department'&&p.group_type==='personnel_group'&&p.group_status==='active'&&Number(p.maintenance_eligible)===1?`department:${p.department_id}`:null;
 function date(value,optional=false){if(!value&&optional)return '';if(!/^\d{4}-\d{2}-\d{2}$/.test(value||'')||!Number.isFinite(Date.parse(value))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw fail('日期无效');return value;}
 const assertNumber=v=>{if(!Number.isSafeInteger(v)||v<0||v>10000)throw fail('目标必须为0至10000的整数');};
 
@@ -58,6 +58,13 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     if(!scenarioColumns.has('conflict_payload'))db.exec('alter table capability_scenarios add column conflict_payload text');
     if(!scenarioColumns.has('applied_at'))db.exec('alter table capability_scenarios add column applied_at text');
     db.exec('create index if not exists capability_scenarios_due_idx on capability_scenarios(schedule_status,effective_at)');
+    const cadre=db.prepare("select id from organization_units where code='GROUP-LINE-CADRE' and unit_type='personnel_group'").get();
+    if(cadre){
+      const at=stamp();
+      db.prepare("update capability_supports set ended_at=? where ended_at is null and person_id in (select id from personnel where personnel_group_id=?)").run(at,cadre.id);
+      db.prepare("update capability_status_records set phase='ENDED',updated_at=? where phase in ('ACTIVE','PLANNED') and data_status='active' and person_id in (select id from personnel where personnel_group_id=?)").run(at,cadre.id);
+      db.prepare("update capability_current_states set status='ON_DUTY',working_group=null,working_team_id=null,administrative_group=null,administrative_team_id=null,record_id=null,updated_at=? where person_id in (select id from personnel where personnel_group_id=?)").run(at,cadre.id);
+    }
     const invalidLocations=db.prepare("select id from capability_status_records where kind='DEPLOYED' and trim(coalesce(label,''))='' limit 1").get();
     if(invalidLocations)throw fail('存在空派驻地点记录，无法建立标准地点目录',409);
     const legacyLocations=db.prepare("select workspace,trim(label) as name,min(created_at) as created_at from capability_status_records where kind='DEPLOYED' and deployment_location_id is null group by workspace,trim(label)").all();
@@ -140,10 +147,10 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
   function requirePermission(actor,permission){if(!hasRbac(actor,permission))throw fail('没有此能力配置权限',403);}
   function requireAnyPermission(actor,permissions){if(!permissions.some(permission=>hasRbac(actor,permission)))throw fail('没有此能力配置页面的查看权限',403);}
   const isSuper=actor=>actor?.id===superAccountId;
-  function organizationIssues(actor){return source().filter(p=>eligible(p)&&readable(actor,p)&&(!p.personnel_group_id||(Number(p.maintenance_eligible)===1&&!organizationReady(p)))).map(p=>({personId:p.id,employeeNo:p.employee_no,name:p.name,reason:!p.personnel_group_id?'未分配人员分组':'组织不存在、已停用或类型不正确'}));}
-  function nonParticipants(actor){const rows=source().filter(p=>readable(actor,p));const disabled=rows.filter(p=>eligible(p)&&p.personnel_group_id&&Number(p.maintenance_eligible)!==1);return {cadreName:db.prepare("select name from organization_units where code='GROUP-LINE-CADRE'").get()?.name||'不参与调配',cadre:disabled.filter(p=>p.group_code==='GROUP-LINE-CADRE').length,groupDisabled:disabled.filter(p=>p.group_code!=='GROUP-LINE-CADRE').length,unclassified:rows.filter(p=>eligible(p)&&!p.personnel_group_id).length,unavailable:rows.filter(p=>p.data_status==='active'&&!eligible(p)).length,deleted:rows.filter(p=>p.data_status==='deleted').length,total:rows.filter(p=>!eligible(p)||!organizationReady(p)).length};}
+  function organizationIssues(actor){return source().filter(p=>eligible(p)&&p.group_code!=='GROUP-LINE-CADRE'&&readable(actor,p)&&(!p.personnel_group_id||(Number(p.maintenance_eligible)===1&&!organizationReady(p)))).map(p=>({personId:p.id,employeeNo:p.employee_no,name:p.name,reason:!p.personnel_group_id?'未分配人员分组':'组织不存在、已停用或类型不正确'}));}
+  function nonParticipants(actor){const rows=source().filter(p=>readable(actor,p));const disabled=rows.filter(p=>eligible(p)&&p.personnel_group_id&&(p.group_code==='GROUP-LINE-CADRE'||Number(p.maintenance_eligible)!==1));return {cadreName:db.prepare("select name from organization_units where code='GROUP-LINE-CADRE'").get()?.name||'不参与调配',cadre:disabled.filter(p=>p.group_code==='GROUP-LINE-CADRE').length,groupDisabled:disabled.filter(p=>p.group_code!=='GROUP-LINE-CADRE').length,unclassified:rows.filter(p=>eligible(p)&&!p.personnel_group_id).length,unavailable:rows.filter(p=>p.data_status==='active'&&!eligible(p)).length,deleted:rows.filter(p=>p.data_status==='deleted').length,total:rows.filter(p=>!eligible(p)||!organizationReady(p)).length};}
   function spaces(actor){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);return [...new Map(source().filter(p=>eligible(p)&&organizationReady(p)&&readable(actor,p)).map(p=>[workspace(p),{id:workspace(p),name:p.department_name}])).values()];}
-  function context(actor,space){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);const all=source().filter(p=>eligible(p)&&organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));const visible=all.filter(p=>readable(actor,p));const historyScope=source().filter(p=>organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));if(!visible.length&&!historyScope.some(p=>readable(actor,p)))throw fail('没有该范围的访问权限',403);return {all,visible,complete:historyScope.length>0&&historyScope.every(p=>readable(actor,p))};}
+  function context(actor,space){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);const all=source().filter(p=>eligible(p)&&organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));const visible=all.filter(p=>readable(actor,p));const historyScope=source().filter(p=>p.group_code!=='GROUP-LINE-CADRE'&&organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));if(!visible.length&&!historyScope.some(p=>readable(actor,p)))throw fail('没有该范围的访问权限',403);return {all,visible,complete:historyScope.length>0&&historyScope.every(p=>readable(actor,p))};}
   function location(space,id,{active=false}={}){const row=db.prepare('select * from capability_deployment_locations where id=? and workspace=?').get(id,space);if(!row)throw fail('派驻地点不存在或不属于当前工作范围',404);if(active&&row.status!=='active')throw fail('派驻地点已停用，请重新选择',409);return row;}
   function locations(space){return db.prepare(`select l.*,
     (select count(*) from capability_status_records r where r.deployment_location_id=l.id) as reference_count,

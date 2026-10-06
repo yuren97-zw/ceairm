@@ -40,6 +40,17 @@ try{
   assert.equal(s.capabilityVersion,s.revision);assert.ok(Number.isInteger(s.masterDataVersion));assert.equal(s.dataVersion,`${s.masterDataVersion}:${s.capabilityVersion}`);
   assert.equal(db.prepare('select source_marker from capability_meta where id=1').get().source_marker,'center-master-v1');
   const initial=structuredClone(s);
+  const cadreGroup=db.prepare("select * from organization_units where code='GROUP-LINE-CADRE'").get();
+  const excludedCadreId='capability-excluded-cadre',excludedAt=new Date().toISOString();
+  db.prepare("update organization_units set maintenance_eligible=1 where id=?").run(cadreGroup.id);
+  db.prepare('insert into personnel(id,employee_no,name,department,home_team,department_id,personnel_group_id,administrative_team_id,employment_status,data_status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)').run(excludedCadreId,'78999998','干部能力排除测试','航线维修车间','',cadreGroup.parent_id,cadreGroup.id,null,'在职','active',excludedAt,excludedAt);
+  service.syncMaster();s=await snapshot();
+  assert.ok(!s.people.some(person=>person.id===excludedCadreId));
+  assert.ok(!db.prepare('select 1 from capability_current_states where person_id=?').get(excludedCadreId));
+  assert.equal(service.nonParticipants(actor).cadre>=1,true);
+  db.prepare('delete from personnel where id=?').run(excludedCadreId);
+  db.prepare("update organization_units set maintenance_eligible=0 where id=?").run(cadreGroup.id);
+  service.syncMaster();s=await snapshot();
   if(process.env.CAPABILITY_BASELINE){
     assert.equal(s.people.length,134);
     assert.deepEqual(GROUPS.map(g=>s.stats[g].administrative.length),[28,31,31,31]);

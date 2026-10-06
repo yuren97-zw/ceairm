@@ -3,10 +3,11 @@ import { SCOPE_MODULES, migrateIdentity } from "./personnel-identity.mjs";
 export const MODULE_LABELS = { personnel: "人员与能力", accounts: "登录账户管理", info: "信息传达", maintenance: "维修管控", hours: "工时统计", attendance: "考勤管理" };
 export const SENSITIVE_FIELDS = ["actualGrade"];
 export const ACTUAL_GRADE_MASK = "***";
+export const CADRE_GROUP_CODE = "GROUP-LINE-CADRE";
 export const ORGANIZATION_FIELDS = ["department", "personnelGroup", "administrativeTeam", "departmentId", "personnelGroupId", "administrativeTeamId"];
 export const FIXED_ORGANIZATIONS = [
   { code:"DEPT-LINE", name:"航线维修车间", type:"department", parentCode:"" },
-  { code:"GROUP-LINE-CADRE", legacyCode:"CAT-LINE-CADRE", name:"干部", type:"personnel_group", parentCode:"DEPT-LINE", maintenanceEligible:0 },
+  { code:CADRE_GROUP_CODE, legacyCode:"CAT-LINE-CADRE", name:"干部", type:"personnel_group", parentCode:"DEPT-LINE", maintenanceEligible:0 },
   { code:"GROUP-LINE-SPECIAL", name:"特殊班组", type:"personnel_group", parentCode:"DEPT-LINE", maintenanceEligible:1 },
   { code:"GROUP-LINE-1", legacyCode:"WS-LINE-1", name:"一车间", type:"personnel_group", parentCode:"DEPT-LINE", maintenanceEligible:1 },
   { code:"GROUP-LINE-2", legacyCode:"WS-LINE-2", name:"二车间", type:"personnel_group", parentCode:"DEPT-LINE", maintenanceEligible:1 },
@@ -122,7 +123,7 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     return value;
   }
   function organizations(user) {
-    const rows = db.prepare("select id,code,name,unit_type as type,parent_id as parentId,status,maintenance_eligible as maintenanceEligible,updated_at as updatedAt from organization_units order by unit_type,name").all().map(({code,...row})=>({...row,maintenanceEligible:!!row.maintenanceEligible,fixed:FIXED_CODES.has(code)}));
+    const rows = db.prepare("select id,code,name,unit_type as type,parent_id as parentId,status,maintenance_eligible as maintenanceEligible,updated_at as updatedAt from organization_units order by unit_type,name").all().map(({code,...row})=>({...row,maintenanceEligible:!!row.maintenanceEligible,fixed:FIXED_CODES.has(code),capabilityEligibilityLocked:code===CADRE_GROUP_CODE}));
     if (SCOPE_MODULES.some(m => hasAll(user, m))) return rows;
     const ids = new Set();
     for (const module of SCOPE_MODULES) {
@@ -209,7 +210,8 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
       if (id && !old) throw error("未找到组织",404);
       if(method==="DELETE"&&old&&FIXED_CODES.has(old.code))throw error("预置组织不可删除",403);
       if(method!=="DELETE"&&Object.hasOwn(payload,"code"))throw error("组织代码由后台自动管理，请勿提交代码");
-      if(payload.maintenanceEligible!==undefined&&typeof payload.maintenanceEligible!=="boolean")throw error("维修调配开关必须为布尔值");
+      if(payload.maintenanceEligible!==undefined&&typeof payload.maintenanceEligible!=="boolean")throw error("能力调配开关必须为布尔值");
+      if(old?.code===CADRE_GROUP_CODE&&payload.maintenanceEligible===true)throw error("干部组不参与能力调配和能力统计",409);
       if (method === "DELETE") {
         const references = orgReferences(id);
         if (references) throw error("组织已被引用，不能删除",409,{references});
@@ -220,7 +222,7 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
         if (old) {
           if ((payload.type !== undefined && payload.type !== old.unit_type) || (payload.parentId !== undefined && text(payload.parentId) !== text(old.parent_id))) throw error("组织类型和父级创建后不可修改");
           if (db.prepare("select 1 from organization_units where id<>? and unit_type=? and coalesce(parent_id,'')=? and name=?").get(id,old.unit_type,text(old.parent_id),name)) throw error("同父级组织名称重复",409);
-          const maintenanceEligible=old.unit_type==="personnel_group"?(payload.maintenanceEligible===undefined?Number(old.maintenance_eligible||0):(payload.maintenanceEligible?1:0)):0;
+          const maintenanceEligible=old.unit_type==="personnel_group"?(old.code===CADRE_GROUP_CODE?0:(payload.maintenanceEligible===undefined?Number(old.maintenance_eligible||0):(payload.maintenanceEligible?1:0))):0;
           if(old.unit_type==="personnel_group"&&Number(old.maintenance_eligible||0)===1&&!maintenanceEligible){
             const activeAssignments=Number(db.prepare("select count(*) as n from maintenance_assignments a join maintenance_flights f on f.id=a.flight_id join personnel p on p.id=a.person_id where p.personnel_group_id=? and coalesce(f.archived_at,'')='' and coalesce(a.status,'')<>'已确认'").get(id).n);
             const activeAllocations=Number(db.prepare("select count(*) as n from capability_current_states s join personnel p on p.id=s.person_id where p.personnel_group_id=? and s.working_team_id is not null").get(id).n);
@@ -247,11 +249,14 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     } catch (e) { db.exec("rollback"); audit(user,"reject_organization_change","organization",id || "",e.message); throw e; }
   }
   function directory(user, purpose, params = new URLSearchParams()) {
-    const config = { accounts: ["accounts",["accounts.read","accounts.create","accounts.bulk_open"]], info: ["info",["info.create","info.update.own","info.update.any"]], maintenance: ["maintenance",["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"]] }[purpose];
+    const maintenancePermissions=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"];
+    const config = { accounts: ["accounts",["accounts.read","accounts.create","accounts.bulk_open"]], info: ["info",["info.create","info.update.own","info.update.any"]], maintenance: ["maintenance",maintenancePermissions], maintenance_dispatch:["maintenance",maintenancePermissions] }[purpose];
     if (!config || !config[1].some(p => hasRbac(user,p))) throw error("没有查询该用途人员目录的权限",403);
     const p = predicate(user,config[0]), q = `%${text(params.get("q"))}%`;
     const size = Math.min(200,Math.max(1,Number(params.get("pageSize")) || 50)), page = Math.max(1,Number(params.get("page")) || 1);
-    const where = `p.data_status='active' and p.employment_status not in ('离职','停职') and (${p.sql}) and (p.employee_no like ? or p.name like ? or d.name like ? or coalesce(t.name,g.name,'') like ?)${purpose === "info" ? " and u.id is not null and coalesce(u.status,'active')<>'disabled'" : ""}${purpose === "maintenance" ? " and g.unit_type='personnel_group' and g.maintenance_eligible=1" : ""}`;
+    const capabilityEligibility=" and d.unit_type='department' and d.status='active' and g.unit_type='personnel_group' and g.status='active' and g.maintenance_eligible=1 and g.code<>'GROUP-LINE-CADRE'";
+    const dispatchEligibility=" and d.unit_type='department' and d.status='active' and g.unit_type='personnel_group' and g.status='active' and (g.maintenance_eligible=1 or g.code='GROUP-LINE-CADRE')";
+    const where = `p.data_status='active' and p.employment_status not in ('离职','停职') and (${p.sql}) and (p.employee_no like ? or p.name like ? or d.name like ? or coalesce(t.name,g.name,'') like ?)${purpose === "info" ? " and u.id is not null and coalesce(u.status,'active')<>'disabled'" : ""}${purpose === "maintenance" ? capabilityEligibility : purpose === "maintenance_dispatch" ? dispatchEligibility : ""}`;
     const args = [...p.params,q,q,q,q];
     const from = "from personnel p left join users u on u.person_id=p.id left join organization_units d on d.id=p.department_id left join organization_units g on g.id=p.personnel_group_id left join organization_units t on t.id=p.administrative_team_id left join capability_current_states cs on cs.person_id=p.id left join organization_units wt on wt.id=cs.working_team_id";
     const total = Number(db.prepare(`select count(*) as n ${from} where ${where}`).get(...args).n);
@@ -340,6 +345,16 @@ export function ensureSpecialPersonnelGroup(db, now, randomId) {
   return db.prepare("select * from organization_units where id=?").get(id);
 }
 
+// Cadres may be assigned maintenance work, but never participate in the
+// capability workspace. This repair is deliberately idempotent for existing
+// databases where the old shared switch may have been enabled.
+export function ensureCadreCapabilityPolicy(db, now) {
+  const cadre=db.prepare("select id from organization_units where code=? and unit_type='personnel_group'").get(CADRE_GROUP_CODE);
+  if(!cadre)return;
+  const at=now();
+  db.prepare("update organization_units set maintenance_eligible=0,updated_at=? where id=? and maintenance_eligible<>0").run(at,cadre.id);
+}
+
 // Identity conversion and organization/range resolution must succeed or roll back together.
 export function migratePersonnelFoundation(db, now, randomId) {
   db.exec("begin immediate");
@@ -347,6 +362,7 @@ export function migratePersonnelFoundation(db, now, randomId) {
     const report = migrateIdentity(db, { withinTransaction: true });
     migrateOrganizations(db, now, randomId, { withinTransaction: true });
     ensureSpecialPersonnelGroup(db, now, randomId);
+    ensureCadreCapabilityPolicy(db, now);
     db.exec("commit");
     return report;
   } catch (e) { db.exec("rollback"); throw e; }
