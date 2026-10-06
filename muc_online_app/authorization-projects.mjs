@@ -8,6 +8,7 @@ export const PROJECT_CATEGORIES = Object.freeze({
   third_party: "三方",
   other: "其他"
 });
+const PROJECT_CATEGORY_BY_LABEL = Object.freeze(Object.fromEntries(Object.entries(PROJECT_CATEGORIES).map(([key, label]) => [label, key])));
 
 // One-time reviewed mapping for the 39 third-party projects present when the
 // category catalog was introduced. Runtime grouping never guesses a company
@@ -148,6 +149,63 @@ export function createAuthorizationProjects({ db, now, randomId, audit }) {
       return { updated: rows.filter(row => row.project_category !== projectCategory || (row.third_party_company || "") !== company).length, category: projectCategory, categoryLabel: PROJECT_CATEGORIES[projectCategory], thirdPartyCompany: company };
     });
   }
+  function importRows(payload, user) {
+    checkPayload(payload);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!rows.length) throw fail("Excel中没有可导入的授权项目");
+    if (rows.length > 5000) throw fail("单次最多导入5000个授权项目");
+    const issues = [], seen = new Map();
+    const prepared = rows.map((source, index) => {
+      const rowNumber = Number(source?.rowNumber) || index + 2;
+      const projectCode = String(source?.projectCode || "").trim();
+      const projectName = String(source?.projectName || "").trim();
+      const categoryValue = String(source?.category || "").trim();
+      const projectCategory = PROJECT_CATEGORY_BY_LABEL[categoryValue] || categoryValue;
+      const company = String(source?.thirdPartyCompany || "").trim();
+      const reason = String(source?.reason || "").trim();
+      const issue = detail => issues.push({ rowNumber, detail });
+      if (!projectCode) issue("项目代码不能为空");
+      if (!projectName) issue("项目名称不能为空");
+      if (!validCategory(projectCategory)) issue(`项目分类“${categoryValue || "（空）"}”无效，请填写放行、试车、维修、专项、三方或其他`);
+      if (projectCategory === "third_party" && !company) issue("三方项目必须填写三方公司");
+      if (projectCategory !== "third_party" && company) issue("非三方项目不能填写三方公司");
+      if (projectCode && seen.has(projectCode)) issue(`项目代码与第${seen.get(projectCode)}行重复`);
+      else if (projectCode) seen.set(projectCode, rowNumber);
+      return { rowNumber, projectCode, projectName, projectCategory, company, reason };
+    });
+    const plans = prepared.map(row => {
+      const existing = getByCode(row.projectCode);
+      const company = row.projectCategory === "third_party" ? row.company : "";
+      const changed = !!existing && (existing.project_name !== row.projectName || existing.project_category !== row.projectCategory || (existing.third_party_company || "") !== company || existing.status !== "active");
+      if (changed && !row.reason) issues.push({ rowNumber: row.rowNumber, detail: "已有项目内容发生变化时必须填写修改原因" });
+      return { ...row, company, existing, changed };
+    });
+    if (issues.length) throw fail("授权项目导入校验失败，整批未生效", 400, { issues });
+    return transaction(() => {
+      const stamp = now();
+      let created = 0, updated = 0, unchanged = 0;
+      for (const row of plans) {
+        // Re-read under the catalog write lock so concurrent creates cannot turn an
+        // intended insert into a partial import.
+        const current = getByCode(row.projectCode);
+        if (!row.existing && current) throw fail(`项目代码“${row.projectCode}”在导入期间已被创建，请重新导入`, 409, { issues: [{ rowNumber: row.rowNumber, detail: "项目代码已存在" }] });
+        if (row.existing && (!current || current.updated_at !== row.existing.updated_at)) throw fail(`项目代码“${row.projectCode}”在导入期间已发生变化，请重新导入`, 409, { issues: [{ rowNumber: row.rowNumber, detail: "项目资料已发生变化" }] });
+        if (!current) {
+          const id = randomId("cap");
+          db.prepare("insert into capability_catalog(id,project_code,project_name,project_category,third_party_company,category_source,category_updated_by,category_updated_at,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,'active',?,?)")
+            .run(id, row.projectCode, row.projectName, row.projectCategory, row.company, "xlsx_import", user?.id || "", stamp, stamp, stamp);
+          audit(user, "import_create_authorization_project", "authorizationProject", id, JSON.stringify({ projectCode: row.projectCode, projectName: row.projectName, category: row.projectCategory, thirdPartyCompany: row.company, rowNumber: row.rowNumber }));
+          created++;
+        } else if (row.changed) {
+          db.prepare("update capability_catalog set project_name=?,project_category=?,third_party_company=?,category_source='xlsx_import',category_updated_by=?,category_updated_at=?,status='active',updated_at=? where id=?")
+            .run(row.projectName, row.projectCategory, row.company, user?.id || "", stamp, stamp, current.id);
+          audit(user, "import_update_authorization_project", "authorizationProject", current.id, JSON.stringify({ projectCode: row.projectCode, previousName: current.project_name, projectName: row.projectName, previousCategory: current.project_category, category: row.projectCategory, previousThirdPartyCompany: current.third_party_company || "", thirdPartyCompany: row.company, reason: row.reason, rowNumber: row.rowNumber }));
+          updated++;
+        } else unchanged++;
+      }
+      return { total: plans.length, created, updated, unchanged };
+    });
+  }
   function remove(id, user) {
     try {
       return transaction(() => {
@@ -168,5 +226,5 @@ export function createAuthorizationProjects({ db, now, randomId, audit }) {
   function dictionaries() {
     return db.prepare("select * from capability_catalog order by project_code").all().map(row => ({ category: "authorization_project", code: row.project_code, value: displayName(row), status: configured(row) ? "active" : "pending", sourceBatchId: "", updatedAt: row.updated_at }));
   }
-  return { migrate, list, create, update, updateCategories, remove, getByCode, configured, dictionaries, lock };
+  return { migrate, list, create, update, updateCategories, importRows, remove, getByCode, configured, dictionaries, lock };
 }

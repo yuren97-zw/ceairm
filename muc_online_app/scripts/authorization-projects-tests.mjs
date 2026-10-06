@@ -27,6 +27,29 @@ export async function testAuthorizationProjects({ request, cookie, db, authoriza
   assert.equal(thirdParty.thirdPartyCompany, "测试航空");
   await call(`${base}/${thirdParty.id}`, { method: "DELETE" });
   await call(base, { method: "POST", expected: 400, body: null });
+  const importExisting = await create("IMPORT-EXISTING", "导入前名称", "maintenance");
+  const imported = await call(`${base}/import`, { method: "POST", body: { rows: [
+    { rowNumber: 2, projectCode: "IMPORT-NEW", projectName: "批量新增项目", category: "放行", thirdPartyCompany: "", reason: "" },
+    { rowNumber: 3, projectCode: importExisting.projectCode, projectName: "导入后名称", category: "专项", thirdPartyCompany: "", reason: "统一目录" },
+    { rowNumber: 4, projectCode: project.projectCode, projectName: project.projectName, category: project.category, thirdPartyCompany: "", reason: "" }
+  ] } });
+  assert.deepEqual(imported, { total: 3, created: 1, updated: 1, unchanged: 1 });
+  assert.equal(authorizationProjects.getByCode("IMPORT-NEW").project_category, "release");
+  assert.equal(authorizationProjects.getByCode(importExisting.projectCode).project_name, "导入后名称");
+  assert.equal(authorizationProjects.getByCode(importExisting.projectCode).category_source, "xlsx_import");
+  const importSnapshot = snapshot("capability_catalog");
+  const invalidImport = await call(`${base}/import`, { method: "POST", expected: 400, body: { rows: [
+    { rowNumber: 7, projectCode: "IMPORT-ROLLBACK", projectName: "不应写入", category: "维修" },
+    { rowNumber: 9, projectCode: importExisting.projectCode, projectName: "无原因修改", category: "维修" },
+    { rowNumber: 11, projectCode: "BAD-THIRD", projectName: "缺少公司", category: "三方" }
+  ] } });
+  assert.equal(invalidImport.issues.length, 2);
+  assert.deepEqual(snapshot("capability_catalog"), importSnapshot);
+  assert.equal(authorizationProjects.getByCode("IMPORT-ROLLBACK"), undefined);
+  await call(`${base}/import`, { method: "POST", expected: 400, body: { rows: [
+    { rowNumber: 2, projectCode: "DUPLICATE", projectName: "重复一", category: "其他" },
+    { rowNumber: 5, projectCode: "DUPLICATE", projectName: "重复二", category: "其他" }
+  ] } });
   await call(`${base}/${project.id}`, { method: "PUT", expected: 400, body: [] });
   const lower = await create("test-code", "大小写不同代码");
   await call(`${base}/${lower.id}`, { method: "DELETE" });
@@ -132,6 +155,7 @@ export async function testAuthorizationProjects({ request, cookie, db, authoriza
     }
     if (index !== 2) {
       await request(base, { cookie: session.cookie, method: "POST", expected: 403, body: { projectCode: "DENIED", projectName: "禁止", category: "other" } });
+      await request(`${base}/import`, { cookie: session.cookie, method: "POST", expected: 403, body: { rows: [{ projectCode: "DENIED-IMPORT", projectName: "禁止", category: "其他" }] } });
       await request(`${base}/${project.id}`, { cookie: session.cookie, method: "PUT", expected: 403, body: { projectName: "禁止", reason: "禁止" } });
       await request(`${base}/${project.id}`, { cookie: session.cookie, method: "DELETE", expected: 403 });
     } else {
@@ -144,7 +168,7 @@ export async function testAuthorizationProjects({ request, cookie, db, authoriza
   await call(`${base}/categories`, { method: "PUT", body: { projectIds: [project.id], category: "special", reason: "批量分类测试" } });
   assert.equal((await call(`${base}?category=special`)).items.some(item => item.id === project.id), true);
   const actions = db.prepare("select action from audit_logs where target_type='authorizationProject'").all().map(row => row.action);
-  for (const action of ["create_authorization_project", "update_authorization_project", "bulk_update_authorization_project_category", "delete_authorization_project", "reject_delete_authorization_project"]) assert.ok(actions.includes(action));
+  for (const action of ["create_authorization_project", "update_authorization_project", "bulk_update_authorization_project_category", "import_create_authorization_project", "import_update_authorization_project", "delete_authorization_project", "reject_delete_authorization_project"]) assert.ok(actions.includes(action));
   const failureService = createAuthorizationProjects({ db, now: () => new Date().toISOString(), randomId: () => "rollback-test", audit: () => { throw new Error("audit test failure"); } });
   assert.throws(() => failureService.create({ projectCode: "ROLLBACK", projectName: "不应写入", category: "other" }, {}), /audit test failure/);
   assert.equal(authorizationProjects.getByCode("ROLLBACK"), undefined);

@@ -26,6 +26,16 @@
 
 `personnel_authorizations.project_name` 仅作为导入来源信息保留；当前展示通过 `project_code` 左关联 `capability_catalog`。`authorization_project` 通用字典也从该目录生成；旧字典行不再读取或追加。
 
+## 授权项目目录批量导入
+
+“授权项目设置”提供 Excel 模板下载和批量导入。第一张工作表使用以下五列：`项目代码、项目名称、项目分类、三方公司、修改原因`。
+
+- 项目分类只能填写放行、试车、维修、专项、三方、其他；三方项目必须填写三方公司，其他分类必须留空。
+- 按项目代码新增或更新。已有项目的名称、分类或三方公司发生变化时必须填写修改原因；完全相同的项目自动跳过。
+- 文件内项目代码不能重复，单批最多5000项。任一行错误时整批回滚，不会部分生效。
+- 导入不会删除目录项目，也不会修改、替换或删除任何人员授权记录。
+- `POST /api/personnel/authorization-projects/import`：提交 `{ rows: [{ rowNumber, projectCode, projectName, category, thirdPartyCompany, reason }] }`，仅 `personnel.qualification.manage` 可执行。
+
 ## 迁移与接口
 
 启动时执行幂等目录补齐：保留现有目录名称；缺失代码仅有一个非空历史名称时补建标准项；名称冲突或全空时补建 `pending` 项，列出历史候选名称，交管理员确认。人员页面显示“待配置名称（代码）”。不删除人员、账户或授权记录。
