@@ -573,7 +573,7 @@ test("same-department dispatchers share unassigned flights while personnel scope
     });
     assert.equal(rejected.res.statusCode, 400);
     assert.match(rejected.payload.error, /维修管控范围/);
-    assert.equal(db.prepare("select count(*) as total from maintenance_assignments where flight_id=?").get(flightId).total, 0);
+    assert.equal(Number(db.prepare("select count(*) as total from maintenance_assignments where flight_id=?").get(flightId).total), 0);
     assert.equal(db.prepare("select updated_at from maintenance_flights where id=?").get(flightId).updated_at, expectedUpdatedAt);
 
     const assigned = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/dispatch`, {
@@ -588,7 +588,7 @@ test("same-department dispatchers share unassigned flights while personnel scope
     });
     assert.equal(stale.res.statusCode, 409);
     assert.equal(stale.payload.code, "maintenance_dispatch_stale");
-    assert.equal(db.prepare("select count(*) as total from maintenance_assignments where flight_id=? and person_id=?").get(flightId, dispatcher.personId).total, 1);
+    assert.equal(Number(db.prepare("select count(*) as total from maintenance_assignments where flight_id=? and person_id=?").get(flightId, dispatcher.personId).total), 1);
   } finally {
     if (flightId) {
       db.prepare("delete from maintenance_assignments where flight_id=?").run(flightId);
@@ -692,6 +692,7 @@ test("cadres are dispatchable and reportable but remain outside capability and d
       db.prepare("delete from rbac_user_roles where user_id=?").run(account.id);
       db.prepare("delete from users where id=?").run(account.id);
       db.prepare("delete from capability_current_states where person_id=?").run(account.personId);
+      db.prepare("delete from capability_history where person_id=?").run(account.personId);
       db.prepare("delete from personnel where id=?").run(account.personId);
     }
   }
