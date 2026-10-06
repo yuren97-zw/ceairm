@@ -206,13 +206,16 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
   }
   function ensurePerson(actor,space,id){const p=source().find(p=>p.id===id&&workspace(p)===space&&eligible(p)&&organizationReady(p)&&readable(actor,p));if(!p)throw fail('未找到可操作人员，或人员组织尚未核实',404);return p;}
   function ensureRecordedPerson(actor,space,id){const p=source().find(p=>p.id===id&&eligible(p)&&readable(actor,p));const state=getState(id);if(!p||state?.workspace!==space)throw fail('未找到可操作人员',404);return p;}
-  function personAuthorizations(actor,space,personId,requestedCategory=''){
+  function personAuthorizations(actor,space,personId,requestedCategory='',requestedQuery=''){
     assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);if(!hasRbac(actor,'personnel.qualification.view'))throw fail('没有查看授权明细的权限',403);ensureRecordedPerson(actor,space,personId);
     const categories=['release','test_run','maintenance','special','third_party','other'],categoryValue=trim(requestedCategory);if(categoryValue&&!categories.includes(categoryValue))throw fail('授权项目分类无效');
-    const base=`from personnel_authorizations a join capability_catalog c on c.project_code=a.project_code where a.person_id=? and coalesce(a.data_status,'active')='active' and trim(a.authorization_status)='有效' and c.status='active' and c.project_category in ('release','test_run','maintenance','special','third_party','other')`;
-    const counts=Object.assign(Object.fromEntries(categories.map(key=>[key,0])),Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count ${base} group by c.project_category`).all(personId).map(row=>[row.category,Number(row.count)])));
+    const query=trim(requestedQuery);if(query.length>100)throw fail('搜索关键词过长');
+    const pattern=`%${query.toLowerCase().replace(/[\\%_]/g,'\\$&')}%`;
+    const base=`from personnel_authorizations a join capability_catalog c on c.project_code=a.project_code where a.person_id=? and coalesce(a.data_status,'active')='active' and trim(a.authorization_status)='有效' and c.status='active' and c.project_category in ('release','test_run','maintenance','special','third_party','other')${query?" and (lower(c.project_name) like ? escape '\\' or lower(c.project_code) like ? escape '\\')":''}`;
+    const params=query?[personId,pattern,pattern]:[personId];
+    const counts=Object.assign(Object.fromEntries(categories.map(key=>[key,0])),Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count ${base} group by c.project_category`).all(...params).map(row=>[row.category,Number(row.count)])));
     if(!categoryValue)return {counts};
-    const items=db.prepare(`select a.id,c.project_code as projectCode,c.project_name as projectName,c.project_category as category,coalesce(c.third_party_company,'') as thirdPartyCompany,a.authorization_type as authorizationType,a.authorization_unit as authorizationUnit,a.authorized_at as authorizedAt,a.authorization_expires_at as authorizationExpiresAt,a.authorization_status as authorizationStatus ${base} and c.project_category=? order by c.third_party_company,c.project_name,c.project_code,a.authorization_type,a.authorization_unit`).all(personId,categoryValue);
+    const items=db.prepare(`select a.id,c.project_code as projectCode,c.project_name as projectName,c.project_category as category,coalesce(c.third_party_company,'') as thirdPartyCompany,a.authorization_type as authorizationType,a.authorization_unit as authorizationUnit,a.authorized_at as authorizedAt,a.authorization_expires_at as authorizationExpiresAt,a.authorization_status as authorizationStatus ${base} and c.project_category=? order by c.third_party_company,c.project_name,c.project_code,a.authorization_type,a.authorization_unit`).all(...params,categoryValue);
     return {counts,items};
   }
   function ensureTarget(actor,space,group){if(group!==null&&!GROUPS.includes(group))throw fail('工作班组无效');const ctx=context(actor,space);const members=ctx.all.filter(p=>adminGroup(p)===group||getState(p.id)?.workingGroup===group);if(members.some(p=>!readable(actor,p))||(!members.length&&!ctx.complete))throw fail('没有目标班组完整调配权限',403);}

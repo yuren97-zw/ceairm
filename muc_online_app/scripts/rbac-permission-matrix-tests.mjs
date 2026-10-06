@@ -41,6 +41,11 @@ for (const permission of ["info.create", "personnel.profile.update", "personnel.
   assert(has("manager", permission), `管理者缺少 ${permission}`);
 for (const permission of ["maintenance.review.submit", "personnel.import.execute", "personnel.lifecycle.manage", "capability.config.manage", "capability.scenario.apply", "roles.manage"])
   assert(!has("manager", permission), `管理者不应默认拥有 ${permission}`);
+for (const permission of ["personnel.actual_grade.view", "personnel.actual_grade.manage", "personnel.actual_grade.export"])
+  assert(!has("manager", permission), `管理者不应默认拥有实际岗级专项权限 ${permission}`);
+assert(has("addon_actual_grade_view", "personnel.actual_grade.view"));
+assert(has("addon_actual_grade_manage", "personnel.actual_grade.manage"));
+assert(has("addon_actual_grade_export", "personnel.actual_grade.export"));
 
 assert.deepEqual(visibleNavigation([...role("addon_capability_readonly")]), ["personnelPage"]);
 assert.deepEqual(visibleNavigation([...role("worker")]), ["infoPage", "maintenancePage"]);

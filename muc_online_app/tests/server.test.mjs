@@ -143,6 +143,96 @@ function createMaintenanceTestAccount(template, { id, username = id, name }) {
   return { ...row, personId };
 }
 
+test("maintenance hour rules are hidden from workers and dispatchers unless explicitly authorized", async () => {
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const worker = createMaintenanceTestAccount(template, { id: "hour-rule-worker", name: "规则工作者" });
+  const dispatcher = createMaintenanceTestAccount(template, { id: "hour-rule-dispatcher", name: "规则派工人" });
+  const manager = createMaintenanceTestAccount(template, { id: "hour-rule-manager", name: "规则管理者" });
+  const assignRole = (id, code) => {
+    const roleId = db.prepare("select id from rbac_roles where code=?").get(code).id;
+    db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(id, roleId, new Date().toISOString());
+  };
+  assignRole(dispatcher.id, "dispatcher");
+  assignRole(manager.id, "manager");
+  const login = async account => {
+    const response = await request("/api/login", { method: "POST", body: { username: account.username, password: "muc2026" } });
+    assert.equal(response.res.statusCode, 200);
+    return String(response.res.headers["Set-Cookie"]).split(";")[0];
+  };
+  const workerCookie = await login(worker);
+  const dispatcherCookie = await login(dispatcher);
+  const managerCookie = await login(manager);
+  assert.equal((await request("/api/maintenance/rules", { cookie: workerCookie })).res.statusCode, 403);
+  assert.equal((await request("/api/maintenance/rules", { cookie: dispatcherCookie })).res.statusCode, 403);
+  assert.equal((await request("/api/maintenance/rules", { cookie: managerCookie })).res.statusCode, 200);
+  assert.equal((await request("/api/maintenance/rules", { method: "PUT", cookie: managerCookie, body: { rules: [] } })).res.statusCode, 403);
+  assignRole(worker.id, "addon_maintenance_rules");
+  const authorizedCookie = await login(worker);
+  assert.equal((await request("/api/maintenance/rules", { cookie: authorizedCookie })).res.statusCode, 200);
+  const authorizedRules = (await request("/api/maintenance/rules", { cookie: authorizedCookie })).payload.rules;
+  assert.equal((await request("/api/maintenance/rules", { method: "PUT", cookie: authorizedCookie, body: { rules: authorizedRules } })).res.statusCode, 200);
+});
+
+test("read-only personnel authorization overview searches within current personnel scope", async () => {
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const viewer = createMaintenanceTestAccount(template, { id: "auth-overview-viewer", name: "授权查询甲" });
+  const empty = createMaintenanceTestAccount(template, { id: "auth-overview-empty", name: "无授权人员" });
+  const outsider = createMaintenanceTestAccount(template, { id: "auth-overview-outsider", name: "授权范围外" });
+  const otherTeam = db.prepare("select id from organization_units where unit_type='administrative_team' and id<>(select administrative_team_id from personnel where id=?) limit 1").get(viewer.personId);
+  assert.ok(otherTeam);
+  db.prepare("update personnel set administrative_team_id=? where id=?").run(otherTeam.id, outsider.personId);
+  const managerRole = db.prepare("select id from rbac_roles where code='manager'").get().id;
+  db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(viewer.id, managerRole, new Date().toISOString());
+  const viewerTeam = db.prepare("select administrative_team_id from personnel where id=?").get(viewer.personId).administrative_team_id;
+  db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,'','',?,?)")
+    .run("auth-overview-personnel-scope", viewer.id, "personnel", "specified_teams", viewerTeam, new Date().toISOString(), new Date().toISOString());
+  const project = { project_code: "WX-AUTH-OVERVIEW", project_name: "授权检索测试机型", project_category: "release" };
+  const stamp = new Date().toISOString();
+  db.prepare("insert into capability_catalog(id,project_code,project_name,project_category,created_at,updated_at) values(?,?,?,?,?,?)")
+    .run("auth-overview-project", project.project_code, project.project_name, project.project_category, stamp, stamp);
+  const insert = db.prepare(`insert into personnel_authorizations(id,person_id,employee_no,project_code,project_name,authorization_type,authorization_unit,authorization_status,created_at,updated_at)
+    values(?,?,?,?,?,?,?,'有效',?,?)`);
+  insert.run("auth-overview-in", viewer.personId, db.prepare("select employee_no from personnel where id=?").get(viewer.personId).employee_no, project.project_code, project.project_name, "放行", "测试单位", stamp, stamp);
+  insert.run("auth-overview-out", outsider.personId, db.prepare("select employee_no from personnel where id=?").get(outsider.personId).employee_no, project.project_code, project.project_name, "放行", "测试单位", stamp, stamp);
+  db.prepare(`insert into personnel_authorizations(id,person_id,employee_no,project_code,project_name,authorization_type,authorization_unit,authorization_status,created_at,updated_at)
+    values(?,?,?,?,?,?,?,'待核实',?,?)`).run("auth-overview-pending", viewer.personId,
+    db.prepare("select employee_no from personnel where id=?").get(viewer.personId).employee_no,
+    project.project_code, project.project_name, "放行", "待核实单位", stamp, stamp);
+  const login = async account => {
+    const response = await request("/api/login", { method: "POST", body: { username: account.username, password: "muc2026" } });
+    assert.equal(response.res.statusCode, 200);
+    return String(response.res.headers["Set-Cookie"]).split(";")[0];
+  };
+  const cookie = await login(viewer);
+  const overview = await request("/api/personnel/authorizations/overview?pageSize=100", { cookie });
+  assert.equal(overview.res.statusCode, 200);
+  const emptyResult = await request(`/api/personnel/authorizations/overview?q=${encodeURIComponent(empty.name)}`, { cookie });
+  assert.equal(emptyResult.payload.items.find(item => item.personId === empty.personId)?.displayCount, 0);
+  const viewerResult = await request(`/api/personnel/authorizations/overview?q=${encodeURIComponent(viewer.name)}`, { cookie });
+  assert.equal(viewerResult.payload.items.find(item => item.personId === viewer.personId)?.displayCount, 1);
+  assert.ok(!overview.payload.items.some(item => item.personId === outsider.personId));
+  for (const query of [viewer.name, db.prepare("select employee_no from personnel where id=?").get(viewer.personId).employee_no.slice(-4), project.project_name, project.project_code]) {
+    const response = await request(`/api/personnel/authorizations/overview?q=${encodeURIComponent(query)}`, { cookie });
+    assert.equal(response.res.statusCode, 200);
+    assert.ok(response.payload.items.some(item => item.personId === viewer.personId));
+    assert.ok(!response.payload.items.some(item => item.personId === outsider.personId));
+  }
+  const filtered = await request(`/api/personnel/authorizations/overview?q=${encodeURIComponent(project.project_code)}&category=release&onlyWith=true`, { cookie });
+  assert.equal(filtered.payload.items.find(item => item.personId === viewer.personId)?.displayCount, 1);
+  const pending = await request("/api/personnel/authorizations/overview?status=待核实", { cookie });
+  assert.equal(pending.payload.items.find(item => item.personId === viewer.personId)?.displayCount, 1);
+  assert.ok(!pending.payload.items.some(item => item.personId === empty.personId));
+  const allStatuses = await request(`/api/personnel/authorizations/overview?q=${encodeURIComponent(viewer.name)}&status=all`, { cookie });
+  assert.equal(allStatuses.payload.items.find(item => item.personId === viewer.personId)?.displayCount, 2);
+  const detail = await request(`/api/personnel/${viewer.personId}/qualifications?type=authorization&q=${encodeURIComponent(project.project_code)}&status=有效`, { cookie });
+  assert.equal(detail.payload.total, 1);
+  const byUnit = await request(`/api/personnel/${viewer.personId}/qualifications?type=authorization&q=${encodeURIComponent("待核实单位")}`, { cookie });
+  assert.equal(byUnit.payload.total, 1);
+  assert.equal((await request(`/api/personnel/${outsider.personId}/qualifications?type=authorization`, { cookie })).res.statusCode, 404);
+  const workerCookie = await login(empty);
+  assert.equal((await request("/api/personnel/authorizations/overview", { cookie: workerCookie })).res.statusCode, 403);
+});
+
 test("self-scoped participants can report eligible people across teams without widening dispatch", async () => {
   const adminLogin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const adminCookie = String(adminLogin.res.headers["Set-Cookie"]).split(";")[0];
@@ -173,6 +263,9 @@ test("self-scoped participants can report eligible people across teams without w
   assert.deepEqual(directory.payload.items.map(p => p.personId), [worker.personId]);
   const reports = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie });
   assert.equal(reports.res.statusCode, 200, JSON.stringify(reports.payload));
+  assert.equal(reports.payload.report.canSubmit, true);
+  assert.equal(reports.payload.report.defaults.towStandardHours, Number(db.prepare("select value from maintenance_hour_rules where rule_type='nonroutineCategoryHours' and name='拖机'").get().value));
+  assert.equal((await request("/api/maintenance/rules", { cookie })).res.statusCode, 403);
   assert.ok(reports.payload.report.people.some(p => p.id === colleague.personId && p.employeeNo && !p.accountId));
   assert.ok(reports.payload.report.routine.people.some(p => p.id === colleague.personId && p.employeeNo && !p.accountId), JSON.stringify({ candidates: reports.payload.report.routine.people, colleague: db.prepare('select id,data_status,personnel_group_id from personnel where id=?').get(colleague.personId), permissions: login.payload.user.rbacPermissions, scopes: login.payload.user.dataScopes }));
   const execute = await request("/api/maintenance/flights?scope=execute", { cookie });
@@ -183,11 +276,31 @@ test("self-scoped participants can report eligible people across teams without w
   const secondLogin = await request("/api/login", { method: "POST", body: { username: secondWorker.username, password: "muc2026" } });
   const secondCookie = String(secondLogin.res.headers["Set-Cookie"]).split(";")[0];
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie })).res.statusCode, 200);
+  assert.equal((await request("/api/maintenance/rules", { cookie: secondCookie })).res.statusCode, 403);
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/release`, { method: "PUT", cookie: secondCookie, body: {} })).res.statusCode, 400);
   const outsiderLogin = await request("/api/login", { method: "POST", body: { username: outsider.username, password: "muc2026" } });
   const outsiderCookie = String(outsiderLogin.res.headers["Set-Cookie"]).split(";")[0];
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: outsiderCookie })).res.statusCode, 400);
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie: outsiderCookie, body: { entries: [], version: 0 } })).res.statusCode, 400);
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie: outsiderCookie, body: { entries: [] } })).res.statusCode, 400);
+  const viewer = createMaintenanceTestAccount(template, { id: "candidate-view-only", name: "只读参与人" });
+  const viewerRoleId = "candidate-view-only-role";
+  db.prepare("delete from rbac_user_roles where user_id=?").run(viewer.id);
+  db.prepare("insert into rbac_roles(id,code,name,created_at,updated_at) values(?,?,?,?,?)")
+    .run(viewerRoleId, viewerRoleId, "维修执行只读", stamp, stamp);
+  const assignViewerPermission = db.prepare(`insert into rbac_role_permissions(role_id,permission_id)
+    select ?,id from rbac_permissions where code=?`);
+  for (const permission of ["maintenance.view", "maintenance.execute.view"]) assignViewerPermission.run(viewerRoleId, permission);
+  db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(viewer.id, viewerRoleId, stamp);
+  db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_by,assigned_at)
+    values(?,'flight',?,?,?,?,?,?,'已派工',?,?)`).run("candidate-viewer", flightId, flightId, viewer.personId, viewer.name, "一组", "勤务", template.id, stamp);
+  const viewerLogin = await request("/api/login", { method: "POST", body: { username: viewer.username, password: "muc2026" } });
+  const viewerCookie = String(viewerLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const viewerReport = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: viewerCookie });
+  assert.equal(viewerReport.res.statusCode, 200);
+  assert.equal(viewerReport.payload.report.canSubmit, false);
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie: viewerCookie, body: { entries: [], version: 0 } })).res.statusCode, 403);
+  assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie: viewerCookie, body: { entries: [] } })).res.statusCode, 403);
   const entries = [{ role: "接机", personId: worker.personId }, { role: "送机", personId: secondWorker.personId }, { role: "接机", personId: colleague.personId }];
   const saved = await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie, body: { entries, version: 0 } });
   assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
@@ -225,6 +338,18 @@ test("dispatch and report picker search includes independent employee numbers", 
     const code = source.slice(start, end);
     assert.match(code, /person\.employeeNo/);
   }
+});
+
+test("every execution report dialog uses participant report data without loading full hour rules", async () => {
+  const source = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function openMaintenanceWorkReportDialog(");
+  const end = source.indexOf("\nfunction maintenanceWorkActiveContext(", start);
+  const dialog = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(dialog, /maintenanceService\.getReports\(flightId\)/);
+  assert.match(dialog, /report\.defaults\?\.towStandardHours/);
+  assert.doesNotMatch(dialog, /ensureMaintenanceRules\(|\/maintenance\/rules/);
+  assert.match(source.slice(source.indexOf("const mainWorkHtml ="), source.indexOf("const flightCardHtml =")), /hasRbac\("maintenance\.execute\.submit"\)/);
 });
 
 test("nonroutine-only participant sees peer dispatch in execution list and detail", async () => {
@@ -993,6 +1118,106 @@ test("maintenance report separates data grains, signatures and selective export"
   assert.equal(exportResponse.body.subarray(0, 2).toString(), "PK");
 });
 
+test("maintenance report options and every report view stay within current maintenance scope", async () => {
+  const adminLogin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const adminCookie = String(adminLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const manager = createMaintenanceTestAccount(template, { id: "report-scope-manager", name: "范围管理者" });
+  const colleague = createMaintenanceTestAccount(template, { id: "report-scope-colleague", name: "历史范围甲" });
+  const outsider = createMaintenanceTestAccount(template, { id: "report-scope-outsider", name: "范围外乙" });
+  const teams = db.prepare("select id,name from organization_units where unit_type='administrative_team' order by code").all();
+  assert.ok(teams.length >= 2);
+  const ownTeam = db.prepare("select administrative_team_id from personnel where id=?").get(manager.personId).administrative_team_id;
+  const otherTeam = teams.find(team => team.id !== ownTeam);
+  db.prepare("update personnel set administrative_team_id=?,home_team=? where id=?").run(otherTeam.id, otherTeam.name, outsider.personId);
+  const dispatcherRole = db.prepare("select id from rbac_roles where code='dispatcher'").get().id;
+  db.prepare("delete from rbac_user_roles where user_id=?").run(manager.id);
+  db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(manager.id, dispatcherRole, new Date().toISOString());
+  const managerLogin = await request("/api/login", { method: "POST", body: { username: manager.username, password: "muc2026" } });
+  const managerCookie = String(managerLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const outsiderLogin = await request("/api/login", { method: "POST", body: { username: outsider.username, password: "muc2026" } });
+  const outsiderCookie = String(outsiderLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const createFlight = async number => {
+    const response = await request("/api/maintenance/flights", { method: "POST", cookie: adminCookie,
+      body: { date: "2026-11-11", flightNo: number, aircraftNo: `B-${number}`, workKind: "航后" } });
+    assert.equal(response.res.statusCode, 201);
+    db.prepare("update maintenance_flights set status='已确认' where id=?").run(response.payload.flight.id);
+    return response.payload.flight.id;
+  };
+  const mixedId = await createFlight("MUSCOPE1");
+  const outsideId = await createFlight("MUSCOPE2");
+  const stamp = new Date().toISOString();
+  const subtaskId = `scope-subtask-${mixedId}`;
+  db.prepare("insert into maintenance_subtasks(id,flight_id,title,category,status,created_at,updated_at) values(?,?,'混合任务','其他','已确认',?,?)").run(subtaskId, mixedId, stamp, stamp);
+  const assignment = db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_at)
+    values(?,?,?,?,?,?,?,'接机','已确认',?)`);
+  const hour = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,status,created_at,updated_at)
+    values(?,?,?,?,?,?,?,?,?,'维修机会',?,'已确认',?,?)`);
+  for (const [index, person, flightId, ownerType, ownerId, team, value] of [
+    [1, colleague, mixedId, "flight", mixedId, "一组", 1],
+    [2, outsider, mixedId, "flight", mixedId, "二组", 2],
+    [3, colleague, mixedId, "subtask", subtaskId, "一组", 1.5],
+    [4, outsider, mixedId, "subtask", subtaskId, "二组", 3],
+    [5, outsider, outsideId, "flight", outsideId, "二组", 4]
+  ]) {
+    const assignmentId = `report-scope-assignment-${index}`;
+    assignment.run(assignmentId, ownerType, ownerId, flightId, person.personId, person.name, team, stamp);
+    hour.run(`report-scope-hour-${index}`, ownerType, ownerId, flightId, assignmentId, person.personId, person.name, team, "接机", value, stamp, stamp);
+  }
+  db.prepare("update personnel set employment_status='离职' where id=?").run(colleague.personId);
+  const query = "dateFrom=2026-11-11&dateTo=2026-11-11&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4";
+  const options = await request(`/api/maintenance/report/options?${query}`, { cookie: managerCookie });
+  assert.equal(options.res.statusCode, 200);
+  assert.deepEqual(options.payload.people.map(person => person.personId), [colleague.personId]);
+  assert.deepEqual(options.payload.teams, ["一组"]);
+  const employeeNo = db.prepare("select employee_no from personnel where id=?").get(colleague.personId).employee_no;
+  assert.equal(options.payload.people[0].employeeNo, employeeNo);
+  const adminReport = await request(`/api/maintenance/report?${query}&view=dashboard`, { cookie: adminCookie });
+  assert.equal(adminReport.payload.summary.totalHours, 11.5);
+  const dashboard = await request(`/api/maintenance/report?${query}&view=dashboard`, { cookie: managerCookie });
+  assert.equal(dashboard.res.statusCode, 200);
+  assert.equal(dashboard.payload.summary.totalHours, 2.5);
+  assert.equal(dashboard.payload.summary.opportunityCount, 1);
+  const people = await request(`/api/maintenance/report?${query}&view=people`, { cookie: managerCookie });
+  assert.deepEqual(people.payload.rows.map(person => person.personId), [colleague.personId]);
+  const searched = await request(`/api/maintenance/report?${query}&view=people&search=${employeeNo.slice(-4)}`, { cookie: managerCookie });
+  assert.equal(searched.payload.rows.length, 1);
+  const outsideFilter = await request(`/api/maintenance/report?${query}&view=people&personId=${outsider.personId}`, { cookie: managerCookie });
+  assert.equal(outsideFilter.payload.pagination.total, 0);
+  const outsideSearch = await request(`/api/maintenance/report?${query}&view=people&search=${encodeURIComponent(outsider.name)}`, { cookie: managerCookie });
+  assert.equal(outsideSearch.payload.pagination.total, 0);
+  const opportunities = await request(`/api/maintenance/report?${query}&view=opportunities`, { cookie: managerCookie });
+  assert.deepEqual(opportunities.payload.rows.map(row => row.id), [mixedId]);
+  assert.equal(opportunities.payload.rows[0].totalHours, 2.5);
+  assert.deepEqual(opportunities.payload.rows[0].participants.map(row => row.personId), [colleague.personId]);
+  const nonroutine = await request(`/api/maintenance/report?${query}&view=nonroutine`, { cookie: managerCookie });
+  assert.equal(nonroutine.res.statusCode, 200, JSON.stringify(nonroutine.payload));
+  assert.equal(nonroutine.payload.rows[0].actualHours, 1.5);
+  assert.deepEqual(nonroutine.payload.rows[0].people.map(row => row.personId), [colleague.personId]);
+  const nonroutineEmployeeSearch = await request(`/api/maintenance/report?${query}&view=nonroutine&search=${employeeNo.slice(-4)}`, { cookie: managerCookie });
+  assert.equal(nonroutineEmployeeSearch.payload.pagination.total, 1);
+  const nonroutineOutside = await request(`/api/maintenance/report?${query}&view=nonroutine&personId=${outsider.personId}`, { cookie: managerCookie });
+  assert.equal(nonroutineOutside.payload.pagination.total, 0);
+  const nonroutineSearch = await request(`/api/maintenance/report?${query}&view=nonroutine&search=${encodeURIComponent(outsider.name)}`, { cookie: managerCookie });
+  assert.equal(nonroutineSearch.payload.pagination.total, 0);
+  const nonroutineDetail = await request(`/api/maintenance/subtasks/${subtaskId}/hour-audit`, { cookie: managerCookie });
+  assert.deepEqual(nonroutineDetail.payload.detail.people.map(row => row.personId), [colleague.personId]);
+  const detail = await request(`/api/maintenance/flights/${mixedId}/report-detail`, { cookie: managerCookie });
+  assert.equal(detail.payload.detail.totalHours, 2.5);
+  assert.deepEqual(detail.payload.detail.people.map(row => row.personId), [colleague.personId]);
+  assert.equal((await request(`/api/maintenance/flights/${outsideId}/report-detail`, { cookie: managerCookie })).res.statusCode, 404);
+  const exportResponse = await requestRaw(`/api/maintenance/report/export.xlsx?${query}&sections=people,opportunities,nonroutine`, { cookie: managerCookie });
+  assert.equal(exportResponse.statusCode, 200);
+  assert.ok(!exportResponse.body.includes(Buffer.from(outsider.name)));
+  assert.equal((await request(`/api/maintenance/report/options?${query}`, { cookie: outsiderCookie })).res.statusCode, 403);
+  assert.equal((await request(`/api/maintenance/report?${query}`, { cookie: outsiderCookie })).res.statusCode, 403);
+  db.prepare("update personnel set administrative_team_id=?,home_team=? where id=?").run(otherTeam.id, otherTeam.name, colleague.personId);
+  const afterTransfer = await request(`/api/maintenance/report/options?${query}`, { cookie: managerCookie });
+  assert.equal(afterTransfer.payload.people.length, 0);
+  const afterTransferReport = await request(`/api/maintenance/report?${query}&view=dashboard`, { cookie: managerCookie });
+  assert.equal(afterTransferReport.payload.summary.totalHours, 0);
+});
+
 test("nonroutine audit keeps each task and its full assignment hours with scoped detail access", async () => {
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
@@ -1075,4 +1300,42 @@ test("nonroutine audit keeps each task and its full assignment hours with scoped
   const opportunityExport = await requestRaw(`/api/maintenance/report/export.xlsx?view=opportunities&dateFrom=2026-09-10&dateTo=2026-09-10&status=%E5%B7%B2%E7%A1%AE%E8%AE%A4&personId=${workers[0].personId}&sections=opportunities`, { cookie });
   assert.equal(opportunityExport.statusCode, 200);
   assert.ok(opportunityExport.body.includes(Buffer.from("维修机会核对")));
+});
+
+test("login and current session expose only the linked person's own position and grade", async () => {
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const first = createMaintenanceTestAccount(template, { id: "home-identity-first", name: "首页身份甲" });
+  const second = createMaintenanceTestAccount(template, { id: "home-identity-second", name: "首页身份乙" });
+  db.prepare("update personnel set position_code=?,actual_grade=? where id=?").run("工程师", "GRADE-OWN", first.personId);
+  db.prepare("update personnel set position_code=?,actual_grade=? where id=?").run("主管", "GRADE-OTHER", second.personId);
+  const firstLogin = await request("/api/login", { method: "POST", body: { username: first.username, password: "muc2026" } });
+  assert.equal(firstLogin.res.statusCode, 200);
+  assert.ok(!firstLogin.payload.user.rbacPermissions.includes("personnel.actual_grade.view"));
+  assert.equal(firstLogin.payload.user.employeeNo, db.prepare("select employee_no from personnel where id=?").get(first.personId).employee_no);
+  assert.equal(firstLogin.payload.user.position, "工程师");
+  assert.equal(firstLogin.payload.user.actualGrade, "GRADE-OWN");
+  assert.equal(firstLogin.payload.user.actualGradeMasked, false);
+  assert.ok(!JSON.stringify(firstLogin.payload).includes("GRADE-OTHER"));
+  const cookie = String(firstLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const current = await request("/api/me", { cookie });
+  assert.equal(current.res.statusCode, 200);
+  assert.equal(current.payload.user.actualGrade, "GRADE-OWN");
+  assert.equal(current.payload.user.actualGradeMasked, false);
+  const administrator = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const administratorCookie = String(administrator.res.headers["Set-Cookie"]).split(";")[0];
+  const accounts = await request("/api/admin/accounts", { cookie: administratorCookie });
+  assert.equal(accounts.res.statusCode, 200);
+  const listed = accounts.payload.accounts.find(account => account.id === second.id);
+  assert.ok(listed);
+  assert.ok(!("position" in listed));
+  assert.ok(!("actualGrade" in listed));
+  const unlinked = { ...template, id: "home-identity-unlinked", username: "home-identity-unlinked", name: "仅登录账户", person_id: null, role: "receiver", status: "active" };
+  db.prepare(`insert into users(${Object.keys(unlinked).join(",")}) values(${Object.keys(unlinked).map(() => "?").join(",")})`).run(...Object.values(unlinked));
+  const unlinkedLogin = await request("/api/login", { method: "POST", body: { username: unlinked.username, password: "muc2026" } });
+  assert.equal(unlinkedLogin.res.statusCode, 200);
+  assert.equal(unlinkedLogin.payload.user.personId, "");
+  assert.equal(unlinkedLogin.payload.user.employeeNo, "");
+  assert.equal(unlinkedLogin.payload.user.position, "");
+  assert.equal(unlinkedLogin.payload.user.actualGrade, "");
+  assert.equal(unlinkedLogin.payload.user.actualGradeMasked, false);
 });

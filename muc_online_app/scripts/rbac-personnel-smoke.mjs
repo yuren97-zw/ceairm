@@ -220,11 +220,38 @@ try {
   assert.ok(rbac.data.permissions.some(permission => permission.code === "hours.read"));
   assert.ok(rbac.data.permissions.some(permission => permission.code === "attendance.read"));
   const managerRole = rbac.data.roles.find(role => role.code === "manager");
+  const availableAccount = await request(`/admin/accounts/availability?personId=${encodeURIComponent(person.id)}&username=70000001`, { cookie: admin.cookie });
+  assert.equal(availableAccount.data.available, true);
+  assert.equal(availableAccount.data.suggestedUsername, "70000001");
+  assert.equal(availableAccount.data.personAvailable, true);
+  assert.equal(availableAccount.data.usernameAvailable, true);
+  const duplicateSuperUsername = await request(`/admin/accounts/availability?personId=${encodeURIComponent(person.id)}&username=54002010`, { cookie: admin.cookie });
+  assert.equal(duplicateSuperUsername.data.available, false);
+  assert.equal(duplicateSuperUsername.data.personAvailable, true);
+  assert.equal(duplicateSuperUsername.data.usernameAvailable, false);
+  assert.ok(duplicateSuperUsername.data.conflicts.includes("USERNAME_TAKEN"));
   const publisherAccount = await request("/admin/accounts", {
     cookie: admin.cookie,
     method: "POST",
     expected: 201,
     body: { personId: person.id, username: "publisher-test", password: "123456", status: "active", mustChangePassword: false, roles: [managerRole.code], scopes: [{ module:"info", scopeType: "all", scopeId: "" }] }
+  });
+  const linkedAccount = await request(`/admin/accounts/availability?personId=${encodeURIComponent(person.id)}&username=another-account`, { cookie: admin.cookie });
+  assert.equal(linkedAccount.data.available, false);
+  assert.equal(linkedAccount.data.personAvailable, false);
+  assert.equal(linkedAccount.data.usernameAvailable, true);
+  assert.ok(linkedAccount.data.conflicts.includes("PERSON_LINKED"));
+  await request("/admin/accounts", {
+    cookie: admin.cookie,
+    method: "POST",
+    expected: 409,
+    body: { personId: specialPerson.id, username: "publisher-test", password: "123456", status: "active", mustChangePassword: false, roles: [managerRole.code], scopes: [{ module:"info", scopeType: "self", scopeId: "" }] }
+  });
+  await request("/admin/accounts", {
+    cookie: admin.cookie,
+    method: "POST",
+    expected: 409,
+    body: { personId: person.id, username: "publisher-second", password: "123456", status: "active", mustChangePassword: false, roles: [managerRole.code], scopes: [{ module:"info", scopeType: "self", scopeId: "" }] }
   });
   const receiverAccount = await request("/admin/accounts", {
     cookie: admin.cookie,

@@ -68,6 +68,18 @@ try{
   assert.equal(Object.values(authorizationSummary.counts).reduce((sum,value)=>sum+value,0),db.prepare("select count(*) as n from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active' and authorization_status='有效'").get(id).n);
   const firstCategory=Object.entries(authorizationSummary.counts).find(([,count])=>count)?.[0],authorizationDetails=(await api(`capability/personnel/${id}/authorizations${suffix}&category=${firstCategory}`)).value;
   assert.equal(authorizationDetails.items.length,authorizationSummary.counts[firstCategory]);
+  const sampleAuthorization=authorizationDetails.items[0],searchTerm=sampleAuthorization.projectCode.slice(0,8).toLowerCase();
+  const filteredSummary=(await api(`capability/personnel/${id}/authorizations${suffix}&q=${encodeURIComponent(searchTerm)}`)).value;
+  const filteredDetails=(await api(`capability/personnel/${id}/authorizations${suffix}&category=${firstCategory}&q=${encodeURIComponent(searchTerm)}`)).value;
+  assert.ok(filteredSummary.counts[firstCategory]>0);
+  assert.equal(filteredDetails.items.length,filteredSummary.counts[firstCategory]);
+  assert.ok(filteredDetails.items.every(item=>item.projectCode.toLowerCase().includes(searchTerm)));
+  const nameSummary=(await api(`capability/personnel/${id}/authorizations${suffix}&q=${encodeURIComponent(sampleAuthorization.projectName.slice(0,3))}`)).value;
+  assert.ok(nameSummary.counts[firstCategory]>0);
+  const noMatch=(await api(`capability/personnel/${id}/authorizations${suffix}&q=${encodeURIComponent('UNMATCHED-AUTHORIZATION-XYZ')}`)).value;
+  assert.ok(Object.values(noMatch.counts).every(count=>count===0));
+  const literalWildcard=(await api(`capability/personnel/${id}/authorizations${suffix}&q=${encodeURIComponent('%_')}`)).value;
+  assert.ok(Object.values(literalWildcard.counts).every(count=>count===0));
   const projectName=authorizationDetails.items[0].projectName,personnelSearch=(await api(`personnel?q=${encodeURIComponent(projectName)}`)).value;
   assert.ok(personnelSearch.items.some(item=>item.personId===id),'人员列表应支持授权项目名称搜索');
   assert.throws(()=>db.prepare("insert into personnel_licenses(id,person_id,employee_no,license_no,license_type,is_valid,created_at,updated_at) values(?,?,?,?,?,'有效',?,?)").run(crypto.randomUUID(),id,'99999999','WRONG-ID','CAAC',new Date().toISOString(),new Date().toISOString()),/身份对应不一致/);

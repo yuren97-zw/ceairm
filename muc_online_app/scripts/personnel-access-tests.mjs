@@ -88,8 +88,11 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   await asActor(`/personnel/${outside.id}`,{expected:404});
   assert.deepEqual(new Set(listed.items.map(p=>p.id)),new Set([actor.id,peer.id]));
   assert.equal(listed.facets.total,2);assert.deepEqual(listed.facets.departments,["范围A部"]);
-  assert.equal(Object.hasOwn(listed.items[0],"actualGrade"),false);assert.equal(Object.hasOwn(listed.items[0],"licenseCount"),false);
-  assert.equal(Object.hasOwn((await asActor(`/personnel/${peer.id}`)).person,"actualGrade"),false);
+  const listedOwn=listed.items.find(item=>item.id===actor.id),listedPeer=listed.items.find(item=>item.id===peer.id);
+  assert.equal(listedOwn.actualGrade,"");assert.equal(listedOwn.actualGradeMasked,false);assert.equal(Object.hasOwn(listedOwn,"licenseCount"),false);
+  assert.equal(listedPeer.actualGrade,null);assert.equal(listedPeer.actualGradeMasked,true);
+  const maskedPeer=(await asActor(`/personnel/${peer.id}`)).person;
+  assert.equal(maskedPeer.actualGrade,null);assert.equal(maskedPeer.actualGradeMasked,true);
   await asActor(`/personnel/${outside.id}`,{expected:404});
   await asActor(`/personnel/${outside.id}`,{method:"PUT",body:{name:"越权",reason:"测试"},expected:404});
   await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"P4",reason:"测试"},expected:403});
@@ -97,13 +100,17 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{administrativeTeamId:team2.id,reason:"测试"},expected:403});
   await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{position:"新职位",reason:"正常修改"}});
   assert.equal(db.prepare("select actual_grade from personnel where id=?").get(peer.id).actual_grade,"P3");
-  const log=await asActor(`/personnel/${peer.id}/changes`);assert.ok(!log.changes.some(c=>c.fieldName==="actualGrade"));
+  const log=await asActor(`/personnel/${peer.id}/changes`),gradeLog=log.changes.find(c=>c.fieldName==="actualGrade");
+  assert.ok(gradeLog);assert.equal(gradeLog.oldValue,"***");assert.equal(gradeLog.newValue,"***");assert.equal(gradeLog.masked,true);
   assert.equal(Object.hasOwn((await asActor("/settings")).settings,"people"),false);
   const directory=await asActor("/personnel/directory?purpose=maintenance");
   assert.deepEqual(directory.items.map(p=>p.personId),[dispatchPeer.id]);
   assert.equal(Object.hasOwn(directory.items[0],"actualGrade"),false);
   await asActor("/personnel/directory?purpose=unknown",{expected:403});
   assert.deepEqual((await asActor("/admin/accounts")).accounts.map(a=>a.id),[account.id]);
+  const scopedAvailability=await asActor(`/admin/accounts/availability?personId=${encodeURIComponent(peer.id)}&username=${encodeURIComponent(peer.employeeNo)}`);
+  assert.equal(scopedAvailability.available,true);
+  await asActor(`/admin/accounts/availability?personId=${encodeURIComponent(outside.id)}&username=${encodeURIComponent(outside.employeeNo)}`,{expected:404});
   await asActor("/admin/accounts",{method:"POST",body:{username:"bad-open",personId:outside.id,password:"123456",roles:["worker",role.code],scopes},expected:404});
   await call(`/admin/accounts/${account.id}`,{method:"PUT",body:{personId:peer.id,roles:["worker",role.code],scopes},expected:409});
   const oldPayload={username:"old-format",personId:peer.id,password:"123456",roles:["worker",role.code],scopes:[{scopeType:"all"}]};
@@ -139,6 +146,8 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   assert.ok(own.data.flights.some(f=>f.id===flight.id));
   assert.equal((await call("/personnel/directory?purpose=maintenance")).items.find(p=>p.personId===dispatchPeer.id).personId,beforeDirectory.personId);
   await call(`/admin/accounts/${target.id}`,{method:"DELETE"});
+  const disabledLink=await call(`/admin/accounts/availability?personId=${encodeURIComponent(dispatchPeer.id)}&username=identity-new`);
+  assert.equal(disabledLink.available,false);assert.equal(disabledLink.personAvailable,false);assert.ok(disabledLink.conflicts.includes("PERSON_LINKED"));
   assert.equal(db.prepare("select person_id from maintenance_assignments where id=?").get(assignment.id).person_id,dispatchPeer.id);
   await call(`/admin/accounts/${target.id}`,{method:"PUT",body:{personId:dispatchPeer.id,status:"active",roles:["worker"],scopes:[]}});
   // Same name is never evidence of ownership; rename never changes ownership.
@@ -164,5 +173,21 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   await call(`/personnel/organizations/${team1.id}`,{method:"PUT",expected:400,body:{name:"改名",parentId:depB.id,reason:"禁止改父级"}});
   await call(`/personnel/organizations/${team1.id}`,{method:"PUT",body:{name:"标准班组名称",reason:"统一显示"}});
   assert.equal(db.prepare("select home_team from personnel where id=?").get(actor.id).home_team,"标准班组名称");
-  console.log("通过：稳定身份迁移/幂等/冲突阻断、六模块范围隔离、敏感字段与组织权限、暂存后越权、不可换绑、开户前后派工、同名及改名归属、有效期和目录防泄露。");
+  // 实际岗级查看、维护相互独立；即使有专项权限也仍受人员数据范围约束。
+  await call(`/personnel/${peer.id}`,{method:"PUT",body:{administrativeTeamId:team1.id,reason:"恢复到权限测试范围"}});
+  const gradeViewRole=(await post("/admin/roles",{name:"实际岗级只读测试",permissions:["personnel.detail.view","personnel.actual_grade.view"]})).role;
+  await call(`/admin/accounts/${account.id}`,{method:"PUT",body:{personId:actor.id,roles:["worker",role.code,gradeViewRole.code],scopes:updatedScopes}});
+  await request("/me",{cookie:session.cookie,expected:401});session=await request("/login",{method:"POST",body:{username:account.username,password:"123456"}});
+  const gradeVisible=(await asActor(`/personnel/${peer.id}`)).person;
+  assert.equal(gradeVisible.actualGrade,"P3");assert.equal(gradeVisible.actualGradeMasked,false);
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"P4",reason:"只读不可维护"},expected:403});
+  await asActor(`/personnel/${outside.id}`,{expected:404});
+  const gradeManageRole=(await post("/admin/roles",{name:"实际岗级维护测试",permissions:["personnel.detail.view","personnel.profile.update","personnel.actual_grade.view","personnel.actual_grade.manage"]})).role;
+  await call(`/admin/accounts/${account.id}`,{method:"PUT",body:{personId:actor.id,roles:["worker",role.code,gradeManageRole.code],scopes:updatedScopes}});
+  await request("/me",{cookie:session.cookie,expected:401});session=await request("/login",{method:"POST",body:{username:account.username,password:"123456"}});
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"***",reason:"禁止保存遮罩"},expected:400});
+  await asActor(`/personnel/${peer.id}`,{method:"PUT",body:{actualGrade:"P4",reason:"专项权限维护"}});
+  const visibleLog=(await asActor(`/personnel/${peer.id}/changes`)).changes.find(c=>c.fieldName==="actualGrade"&&c.newValue==="P4");
+  assert.ok(visibleLog);assert.equal(visibleLog.oldValue,"P3");assert.equal(visibleLog.masked,false);
+  console.log("通过：稳定身份迁移/幂等/冲突阻断、六模块范围隔离、实际岗级本人/遮罩/只读/维护权限、暂存后越权、不可换绑、开户前后派工、同名及改名归属、有效期和目录防泄露。");
 }

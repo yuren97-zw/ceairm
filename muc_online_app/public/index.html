@@ -254,6 +254,10 @@
       box-shadow:0 8px 18px rgba(15,95,122,.16);
     }
     .status-line{color:var(--muted);font-size:12px}
+    .account-availability{display:block;margin-top:6px;line-height:1.35}
+    .account-availability.ok{color:#177245}
+    .account-availability.error{color:var(--danger)}
+    .account-availability.checking{color:#8A5A00}
     .grid{gap:10px}
     .card{
       background:rgba(255,255,255,.96);
@@ -376,6 +380,12 @@
     .home-metric-btn small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .module-head h1{font-size:24px;letter-spacing:-.01em}
     .module-head p{color:var(--muted)}
+    #homePage .module-head{align-items:center;flex-wrap:nowrap}
+    #homePage .module-head h1{white-space:nowrap}
+    .home-current-person{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;scrollbar-width:none;color:#6b7280;font-size:12px;font-weight:500;line-height:1.4}
+    .home-current-person::-webkit-scrollbar{display:none}
+    .home-current-person>span{display:block;width:max-content;min-width:100%;white-space:nowrap;text-align:right}
+    .home-current-person:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:3px}
     .stats-table,.user-table,.feedback-table{
       border-radius:16px;
       border-color:#E5E7EB;
@@ -1491,7 +1501,7 @@
     }
     .settings-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
     #personnelAreaNav{padding-bottom:2px}
-    #capabilityHost,#personnelMasterWrap{padding-top:2px}
+    #capabilityHost,#personnelAuthorizationWrap,#personnelMasterWrap{padding-top:2px}
     #personnelPanel.module-grid{gap:7px}
     .personnel-master-grid{display:grid;gap:10px}
     .personnel-list-panel,.personnel-detail-panel{padding:12px}
@@ -1499,6 +1509,31 @@
     .personnel-list-panel .search{max-width:320px}
     .personnel-filter-grid{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(4,minmax(120px,1fr)) auto;gap:8px;margin-top:10px}
     .personnel-filter-grid input,.personnel-filter-grid select{min-width:0}
+    .auth-overview-panel{padding:12px;min-width:0}
+    .auth-overview-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:center;margin:0 0 12px}
+    .auth-overview-filters>*{min-width:0;max-width:100%;width:100%}
+    .auth-overview-filters select{min-height:36px;padding:5px 7px}
+    .auth-overview-filters .search{grid-column:1/3;max-width:none}
+    .auth-overview-filters [data-auth-overview-clear]{grid-column:3;white-space:nowrap}
+    .auth-overview-person{border:1px solid var(--line);border-radius:8px;margin:7px 0;background:#fff;min-width:0}
+    .auth-overview-person-toggle{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px 10px;width:100%;padding:8px 10px;border:0;background:transparent;text-align:left;color:var(--text);cursor:pointer}
+    .auth-overview-person-toggle:hover{background:#f8fafc}
+    .auth-overview-person-name{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px;min-width:0}.auth-overview-person-name small,.auth-overview-person-categories small{color:var(--muted)}
+    .auth-overview-person-summary{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+    .auth-overview-person-team,.auth-overview-person-categories{min-width:0;overflow-wrap:anywhere}.auth-overview-person-team{color:var(--muted);font-size:12px}.auth-overview-person-categories{display:flex;flex-wrap:wrap;gap:4px}
+    .auth-overview-preview{overflow-wrap:anywhere}
+    .auth-overview-person-count{white-space:nowrap;color:var(--muted)}.auth-overview-person-count i{font-style:normal;margin-left:5px}
+    .auth-overview-detail{border-top:1px solid var(--line);padding:7px 10px;min-width:0}
+    .auth-overview-group{margin:8px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+    .auth-overview-group-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:44px;padding:8px 11px;border:0;background:#f8fafc;color:var(--text);font:inherit;font-size:13px;font-weight:700;text-align:left;cursor:pointer}
+    .auth-overview-group-toggle:hover{background:#f1f5f9}.auth-overview-group-toggle span{display:flex;align-items:center;gap:7px;min-width:0}.auth-overview-group-toggle i{font-style:normal;color:var(--muted)}.auth-overview-group-toggle small{font-size:12px;font-weight:400;color:var(--muted);white-space:nowrap}
+    .auth-overview-group-records{padding:0 11px}
+    .auth-overview-record{display:grid;gap:2px;padding:6px 0;border-top:1px solid #eef2f6;font-size:12px;line-height:1.4;min-width:0}
+    .auth-overview-record>strong{font-size:12px;overflow-wrap:anywhere}
+    .auth-overview-record-secondary,.auth-overview-record-tertiary{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;min-width:0;color:var(--muted);overflow-wrap:anywhere}
+    .auth-overview-record code{color:var(--muted);font-size:11px;white-space:normal;overflow-wrap:anywhere}
+    .auth-overview-expired{color:#b45309;font-weight:700}
+    .auth-overview-panel mark{background:#fff1ae;color:inherit;border-radius:2px;padding:0 1px}
     .personnel-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:12px}
     .personnel-change-log{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
     .personnel-change-log summary{cursor:pointer;font-weight:700}
@@ -1581,6 +1616,7 @@
     .role-form{min-width:min(680px,calc(100vw - 48px))}
     .role-form .check-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
     @media(max-width:980px){.personnel-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.personnel-filter-grid .search{grid-column:1/-1;max-width:none}}
+    @media(max-width:360px){.auth-overview-panel{padding:9px}.auth-overview-filters{grid-template-columns:minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,.8fr);gap:5px}.auth-overview-filters select{padding-left:3px;padding-right:2px;font-size:11px}.auth-overview-filters [data-auth-overview-clear]{padding-inline:3px;font-size:11px}}
     @media(max-width:720px){.personnel-import-batch{grid-template-columns:1fr}.personnel-list-panel .module-head{align-items:stretch}.personnel-list-panel .search{max-width:none}.personnel-filter-grid{grid-template-columns:1fr}.personnel-filter-grid .search{grid-column:auto}.personnel-row{min-width:0;grid-template-columns:1fr 1fr;padding:12px}.personnel-row.head{display:none}.personnel-row>span:nth-child(3),.personnel-row>span:nth-child(6),.personnel-row>span:nth-child(7){grid-column:1/-1}.personnel-row>span:last-child{text-align:right}.personnel-pagination{justify-content:flex-start}.personnel-detail-panel{margin:0;padding:0 12px 14px}.personnel-detail-head{display:grid}.personnel-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.personnel-detail-tab{padding:10px}.authorization-category-content{padding:2px 0 12px}.personnel-qualification-table{border:0;overflow:visible}.personnel-qualification-table table,.personnel-qualification-table tbody,.personnel-qualification-table tr,.personnel-qualification-table td{display:block;min-width:0;width:100%}.personnel-qualification-table thead{display:none}.personnel-qualification-table tr{border:1px solid var(--line);border-radius:0;margin-bottom:8px;padding:8px;background:#fff}.personnel-qualification-table td{display:grid;grid-template-columns:86px 1fr;gap:8px;border:0;padding:5px}.personnel-qualification-table td::before{content:attr(data-label);color:var(--muted);font-weight:700}}
   </style>
 </head>
@@ -1617,7 +1653,7 @@
   <div id="pullRefreshIndicator" class="pull-refresh-indicator" aria-live="polite" aria-hidden="true"><span id="pullRefreshIcon" class="pull-refresh-indicator-icon" aria-hidden="true">↓</span><span id="pullRefreshText">下拉刷新</span></div>
 
   <section id="homePage" class="page active"><main><div class="wrap module-grid">
-    <div class="module-head"><div><h1>航线运行中心</h1></div></div>
+    <div class="module-head"><div><h1>航线运行中心</h1></div><div id="homeCurrentPerson" class="home-current-person" tabindex="0" hidden><span></span></div></div>
     <section class="data-panel home-info-panel"><div class="panel-title"><div><strong>信息传达</strong></div></div><div id="homeInfoMetrics" class="metric-grid home-info-metrics"></div></section>
   </div></main></section>
 
@@ -1644,7 +1680,7 @@
     <main><div class="wrap"><section id="fixedList" class="grid"></section><div id="fixedEmpty" class="status-line">暂无固化项目。</div></div></main>
   </section>
 
-  <section id="personnelPage" class="page"><main><div id="personnelAreaNav" class="wrap"></div><div id="capabilityHost" class="wrap" hidden></div><div id="personnelMasterWrap" class="wrap"><div id="personnelPanel" class="module-grid"></div></div></main></section>
+  <section id="personnelPage" class="page"><main><div id="personnelAreaNav" class="wrap"></div><div id="capabilityHost" class="wrap" hidden></div><div id="personnelAuthorizationWrap" class="wrap" hidden></div><div id="personnelMasterWrap" class="wrap"><div id="personnelPanel" class="module-grid"></div></div></main></section>
 
   <section id="hoursPage" class="page"><main><div class="wrap module-grid">
     <div class="module-head"><div><h1>工时统计</h1><p>一级页面及 RBAC 权限已预留，业务功能尚未启用。</p></div></div>
@@ -1694,7 +1730,7 @@
 
   <script src="config.js"></script>
   <script src="import-workspace.js?v=20260904-2"></script>
-  <script src="app.js?v=20260926-main-integration-1"></script>
+  <script src="app.js?v=20261004-actual-grade-privacy"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
