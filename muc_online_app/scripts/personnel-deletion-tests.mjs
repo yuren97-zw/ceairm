@@ -112,7 +112,7 @@ export async function testPersonnelDeletion({ request, cookie, db }) {
   await call(`/admin/accounts/${account.id}`, { method: "PUT", expected: 409, body: { ...accountPayload, personId: replacement.id, status: "active" } });
   await call(`/admin/accounts/${account.id}/reset-password`, { method: "POST", expected: 409, body: { password: "654321" } });
   await call("/admin/accounts/bulk-open", { method: "POST", expected: 400, body: { rows: [{ employeeNo: person.employeeNo, username: account.username, password: "123456", roles: ["worker", role.code], scopes: [] }] } });
-  await call(`/maintenance/flights/${flight.id}/dispatch`, { method: "POST", expected: 400, body: { assignments: [{ personId: person.id, role: "例行机内" }] } });
+  await call(`/maintenance/flights/${flight.id}/dispatch`, { method: "POST", expected: 400, body: { expectedUpdatedAt: flight.updatedAt, assignments: [{ personId: person.id, role: "例行机内" }] } });
   assert.throws(() => db.prepare("update personnel set data_status='active' where id=?").run(person.id), /人员已删除/);
   assert.throws(() => db.prepare("update users set status='active' where id=?").run(account.id), /人员已删除/);
   assert.throws(() => db.prepare("update users set person_id=? where id=?").run(replacement.id, account.id), /人员已删除/);

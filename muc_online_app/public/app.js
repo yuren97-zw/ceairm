@@ -453,6 +453,7 @@ async function apiRequest(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data?.error || "接口请求失败");
     error.status = response.status;
+    error.code = data?.code || "";
     error.details = data?.errors || data?.issues || [];
     error.blockers = data?.blockers || [];
     throw error;
@@ -544,7 +545,7 @@ async function loadPersonnelDirectories() {
     return items.map(p=>({...p,id:purpose==="info"?p.accountId:p.personId,team:p.currentWorkingTeamName||p.administrativeTeamName||"未设置"}));
   };
   state.infoPeople=["info.create","info.update.own","info.update.any"].some(hasRbac)?await load("info"):[];
-  state.maintenancePeople=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance"):[];
+  state.maintenancePeople=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance_dispatch"):[];
   state.personnelDirectory=["accounts.read","accounts.create","accounts.bulk_open"].some(hasRbac)?await load("accounts"):[];
   state.organizations=(await apiRequest("/personnel/organizations")).organizations || [];
 }
@@ -586,11 +587,11 @@ function renderOrganizationSettings() {
   const canManage=scopeHasAll("personnel"),query=(state.orgSearch || "").toLowerCase();
   const rows=state.organizations.filter(o=>[organizationLabel(o)].some(v=>v.toLowerCase().includes(query)));
   const pages=Math.max(1,Math.ceil(rows.length/20));state.orgPage=Math.min(state.orgPage || 1,pages);
-  return `<section class="data-panel"><h2>正式组织目录</h2><p>部门下建立人员分组；人员分组可选下设行政班组。“未分配”是空归属状态，不是组织节点。</p><form id="organizationSearchForm"><label>搜索组织名称或完整路径<input name="q" value="${escapeHtml(state.orgSearch || "")}"></label><button class="btn secondary">搜索</button></form>${canManage?'<button class="btn" type="button" data-org-create>新增组织</button>':'<p>全局组织维护需要人员模块全部范围。</p>'}<div class="authorization-project-table"><table><thead><tr><th>名称与归属</th><th>类型</th><th>维修调配</th><th>引用数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.slice((state.orgPage-1)*20,state.orgPage*20).map(o=>`<tr><td>${escapeHtml(organizationLabel(o))}</td><td>${{department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}[o.type]}</td><td>${o.type==="personnel_group"?(o.maintenanceEligible?"参与":"不参与"):"—"}</td><td>${o.referenceCount ?? "—"}</td><td>${o.fixed?"预置":"自建"}</td><td>${canManage?`<button class="link-btn" type="button" data-org-edit="${escapeHtml(o.id)}">修改</button>${!o.fixed?`<button class="link-btn danger-text" type="button" data-org-delete="${escapeHtml(o.id)}">删除</button>`:""}`:"只读"}</td></tr>`).join("")}</tbody></table></div><p>共 ${rows.length} 项 · 第 ${state.orgPage}/${pages} 页 <button type="button" class="link-btn" data-org-page="${state.orgPage-1}" ${state.orgPage<=1?"disabled":""}>上一页</button><button type="button" class="link-btn" data-org-page="${state.orgPage+1}" ${state.orgPage>=pages?"disabled":""}>下一页</button></p></section>`;
+  return `<section class="data-panel"><h2>正式组织目录</h2><p>部门下建立人员分组；人员分组可选下设行政班组。“未分配”是空归属状态，不是组织节点。</p><form id="organizationSearchForm"><label>搜索组织名称或完整路径<input name="q" value="${escapeHtml(state.orgSearch || "")}"></label><button class="btn secondary">搜索</button></form>${canManage?'<button class="btn" type="button" data-org-create>新增组织</button>':'<p>全局组织维护需要人员模块全部范围。</p>'}<div class="authorization-project-table"><table><thead><tr><th>名称与归属</th><th>类型</th><th>能力调配</th><th>引用数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.slice((state.orgPage-1)*20,state.orgPage*20).map(o=>`<tr><td>${escapeHtml(organizationLabel(o))}</td><td>${{department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}[o.type]}</td><td>${o.type==="personnel_group"?(o.maintenanceEligible?"参与":"不参与"):"—"}</td><td>${o.referenceCount ?? "—"}</td><td>${o.fixed?"预置":"自建"}</td><td>${canManage?`<button class="link-btn" type="button" data-org-edit="${escapeHtml(o.id)}">修改</button>${!o.fixed?`<button class="link-btn danger-text" type="button" data-org-delete="${escapeHtml(o.id)}">删除</button>`:""}`:"只读"}</td></tr>`).join("")}</tbody></table></div><p>共 ${rows.length} 项 · 第 ${state.orgPage}/${pages} 页 <button type="button" class="link-btn" data-org-page="${state.orgPage-1}" ${state.orgPage<=1?"disabled":""}>上一页</button><button type="button" class="link-btn" data-org-page="${state.orgPage+1}" ${state.orgPage>=pages?"disabled":""}>下一页</button></p></section>`;
 }
 function openOrganizationDialog(org=null) {
   if(!hasRbac("personnel.organization.manage") || !scopeHasAll("personnel"))return;
-  $("#personnelDialogBody").innerHTML=`<div class="dialog-head"><h2>${org?"修改组织":"新增组织"}</h2><button class="icon-btn" data-close="personnelDialog" type="button">×</button></div><form id="organizationForm" class="entry-grid" data-org-id="${escapeHtml(org?.id || "")}"><label>组织名称<input name="name" required value="${escapeHtml(org?.name || "")}"></label><label>类型<select name="type" ${org?"disabled":""}>${Object.entries({department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}).map(([key,label])=>`<option value="${key}" ${org?.type===key?"selected":""}>${label}</option>`).join("")}</select></label><label>父级（部门无需选择）<select name="parentId" ${org?"disabled":""}><option value="">无</option>${state.organizations.filter(o=>["department","personnel_group"].includes(o.type)).map(o=>`<option value="${escapeHtml(o.id)}" ${org?.parentId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label class="login-check" data-maintenance-toggle ${org?.type==="personnel_group"?"":"hidden"}><input name="maintenanceEligible" type="checkbox" ${org?.maintenanceEligible?"checked":""}>参与维修调配</label><label>原因<textarea name="reason" ${org?"required":""}></textarea></label><button class="btn" type="submit">保存</button></form>`;
+  $("#personnelDialogBody").innerHTML=`<div class="dialog-head"><h2>${org?"修改组织":"新增组织"}</h2><button class="icon-btn" data-close="personnelDialog" type="button">×</button></div><form id="organizationForm" class="entry-grid" data-org-id="${escapeHtml(org?.id || "")}"><label>组织名称<input name="name" required value="${escapeHtml(org?.name || "")}"></label><label>类型<select name="type" ${org?"disabled":""}>${Object.entries({department:"部门",personnel_group:"人员分组",administrative_team:"行政班组"}).map(([key,label])=>`<option value="${key}" ${org?.type===key?"selected":""}>${label}</option>`).join("")}</select></label><label>父级（部门无需选择）<select name="parentId" ${org?"disabled":""}><option value="">无</option>${state.organizations.filter(o=>["department","personnel_group"].includes(o.type)).map(o=>`<option value="${escapeHtml(o.id)}" ${org?.parentId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label class="login-check" data-maintenance-toggle ${org?.type==="personnel_group"?"":"hidden"}><input name="maintenanceEligible" type="checkbox" ${org?.maintenanceEligible?"checked":""} ${org?.capabilityEligibilityLocked?'data-capability-locked disabled':""}>参与能力调配${org?.capabilityEligibilityLocked?" · 干部可派工，不参与能力统计":""}</label><label>原因<textarea name="reason" ${org?"required":""}></textarea></label><button class="btn" type="submit">保存</button></form>`;
   $("#personnelDialog").showModal();
   refreshOrganizationParentOptions($("#organizationForm"));
 }
@@ -600,7 +601,7 @@ function refreshOrganizationParentOptions(form){
   const toggle=form.querySelector("[data-maintenance-toggle]");
   toggle.hidden=form.elements.type.value!=="personnel_group";
   toggle.style.display=toggle.hidden?"none":"";
-  toggle.querySelector("input").disabled=toggle.hidden;
+  toggle.querySelector("input").disabled=toggle.hidden||toggle.querySelector("input").hasAttribute("data-capability-locked");
   if(form.dataset.orgId)return;
   const type=form.elements.type.value,parent=form.elements.parentId,current=parent.value;
   const allowed=type==="administrative_team"?["personnel_group"]:type==="personnel_group"?["department"]:[];
@@ -1066,9 +1067,9 @@ const maintenanceService = {
   async removeSubtask(id, reason = "") {
     return await apiRequest(`/maintenance/subtasks/${encodeURIComponent(id)}`, { method: "DELETE", body: { reason } });
   },
-  async dispatch(ownerType, ownerId, assignments) {
+  async dispatch(ownerType, ownerId, assignments, expectedUpdatedAt) {
     const path = ownerType === "flight" ? "flights" : "subtasks";
-    return await apiRequest(`/maintenance/${path}/${encodeURIComponent(ownerId)}/dispatch`, { method: "POST", body: { assignments } });
+    return await apiRequest(`/maintenance/${path}/${encodeURIComponent(ownerId)}/dispatch`, { method: "POST", body: { assignments, expectedUpdatedAt } });
   },
   async getReview(flightId) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`);
@@ -3570,12 +3571,14 @@ function maintenanceRatioLabel(value) {
 function maintenanceDataComparisonCard(kind, comparison = {}) {
   const labels = {
     team: ["组内权重", "暂无班组数据", "当前账号尚未配置有效班组。"],
-    group: ["人员分组个人排名", "不在人员分组统计范围", "仅统计同一正式人员分组内的可参与维修调配人员。"],
+    department: ["部门个人排名", "未参与能力人员排名", "部门排名仅统计在职的能力参与人员，包含零工时人员，不包含干部。"],
     teamRanking: ["班组排名", "不在班组排名范围", "班组排名仅包含一组、二组、三组和四组。"]
   };
-  const [title, empty, explanation] = labels[kind] || labels.group;
+  const [title, empty, explanation] = labels[kind] || labels.department;
   if (!comparison.available) {
-    return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">${title}</span><strong class="maintenance-comparison-empty">${empty}</strong><p>${explanation}</p></article>`;
+    const unavailable=comparison.reason==="incomplete_scope"?"需部门级数据范围":empty;
+    const detail=comparison.reason==="incomplete_scope"?"当前维修数据范围不完整，不生成局部部门排名。":explanation;
+    return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">${title}</span><strong class="maintenance-comparison-empty">${unavailable}</strong><p>${detail}</p></article>`;
   }
   const gap = comparison.isHighest ? "当前最高" : `距离上一名 ${maintenanceHoursLabel(comparison.gapHours)} 小时`;
   if (kind === "team") {
@@ -3584,7 +3587,7 @@ function maintenanceDataComparisonCard(kind, comparison = {}) {
   if (kind === "teamRanking") {
     return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">班组排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.teamCount || 4)} 个班组</span></div><p>${escapeHtml(comparison.team || "班组")} · <b>${maintenanceHoursLabel(comparison.totalHours)} 小时</b></p><p>${gap}</p></article>`;
   }
-  return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">人员分组内排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.memberCount || 0)} 人</span></div><p>超过 <b>${maintenanceHoursLabel(comparison.exceededPercent)}%</b> 同组成员</p><p>${gap}</p></article>`;
+  return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">部门个人排名</span><div class="maintenance-comparison-main maintenance-rank-main"><strong><small>第</small><b>${escapeHtml(comparison.rank || "-")}</b><small>名</small></strong><span>/ ${escapeHtml(comparison.memberCount || 0)} 人</span></div><p>超过 <b>${maintenanceHoursLabel(comparison.exceededPercent)}%</b> 部门成员</p><p>${gap}</p></article>`;
 }
 
 function maintenanceTrendDayNumber(value) {
@@ -3681,7 +3684,7 @@ function maintenanceCompositionView(composition = {}, period = "day", date = "")
 }
 
 function renderMaintenanceData() {
-  const personal = state.maintenancePersonalStats || { metrics: {}, period: {}, trend: [], composition: {}, teamComparison: {}, groupComparison: {}, teamRanking: {} };
+  const personal = state.maintenancePersonalStats || { metrics: {}, period: {}, trend: [], composition: {}, teamComparison: {}, departmentComparison: {}, groupComparison: {}, teamRanking: {} };
   const view = state.maintenanceDataView || "personal";
   const monthText = String(personal.period?.month || state.maintenanceMonth || "").replace("-", "年") + "月";
   const toolbar = `<div class="maintenance-data-toolbar"><div class="maintenance-data-subtabs" role="tablist">${[["personal", "个人"], ["team", "班组"], ["group", "人员分组"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${view === key}" class="${view === key ? "active" : ""}" data-maint-data-view="${key}">${label}</button>`).join("")}</div><label class="maintenance-data-month"><span>统计月份</span><input id="maintenanceDataMonth" type="month" value="${escapeHtml(state.maintenanceMonth || "")}"></label></div>`;
@@ -3701,7 +3704,7 @@ function renderMaintenanceData() {
       <article class="personal-metric-card"><span>本月工时</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="all" data-detail-period="month"><strong>${maintenanceHoursLabel(metrics.monthHours)}<small>小时</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingHours(metrics.pendingMonthHours, { period: "month" })}</article>
       <article class="personal-metric-card"><span>月度放行架次</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="sortie"><strong>${escapeHtml(metrics.monthSorties || 0)}<small>架次</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingSorties(metrics.pendingMonthSorties)}</article>
     </section>
-    <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("group", personal.groupComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
+    <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("department", personal.departmentComparison || personal.groupComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
     <section class="maintenance-chart-card maintenance-insights-card">${chartTabs}${chartBody}</section>
   </section>`;
 }
@@ -5587,6 +5590,8 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
     <form id="maintenanceDispatchForm" class="entry-grid">
       <input id="maintDispatchOwnerType" type="hidden" value="${escapeHtml(ownerType)}">
       <input id="maintDispatchOwnerId" type="hidden" value="${escapeHtml(ownerId)}">
+      <input id="maintDispatchExpectedUpdatedAt" type="hidden" value="${escapeHtml(flight.updatedAt || "")}">
+      <div id="maintenanceDispatchConflict" class="status-line error" hidden>航班已被其他人更新。<button class="link-btn" type="button" data-maint-dispatch-refresh>刷新最新派工</button></div>
       <div id="maintenanceRoleGroups" class="maintenance-role-groups ${ownerType === "subtask" ? "subtask-role-groups" : ""}"></div>
       <div class="maintenance-picker-tools"><select id="maintDispatchTeam" aria-label="班组筛选">${teams.map(team => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`).join("")}</select><input id="maintDispatchSearch" class="search" type="search" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"><span id="maintDispatchSelectedCount" class="maintenance-selected-count">已选 0 人</span></div>
       <div id="maintenancePeoplePicker" class="maintenance-people-picker"></div>
@@ -7130,6 +7135,18 @@ document.addEventListener("click", async event => {
     renderMaintenance();
     return;
   }
+  if (event.target.closest("[data-maint-dispatch-refresh]")) {
+    const ownerType = $("#maintDispatchOwnerType")?.value || "flight";
+    const ownerId = $("#maintDispatchOwnerId")?.value || "";
+    closeDialog($("#maintenanceDispatchDialog"));
+    try {
+      await refreshMaintenance();
+      await openMaintenanceDispatchDialog(ownerType, ownerId);
+    } catch (error) {
+      alert(`刷新派工信息失败：${error.message}`);
+    }
+    return;
+  }
   const dispatchButton = event.target.closest("[data-maint-dispatch]");
   if (dispatchButton) {
     const [ownerType, ownerId] = dispatchButton.dataset.maintDispatch.split(":");
@@ -8363,10 +8380,21 @@ document.addEventListener("submit", event => {
     (async () => {
       const assignments = maintenanceAssignmentsFromForm();
       if (!assignments.length) throw new Error("请至少选择一名派工人员");
-      await maintenanceService.dispatch($("#maintDispatchOwnerType").value, $("#maintDispatchOwnerId").value, assignments);
+      await maintenanceService.dispatch(
+        $("#maintDispatchOwnerType").value,
+        $("#maintDispatchOwnerId").value,
+        assignments,
+        $("#maintDispatchExpectedUpdatedAt").value
+      );
       closeDialog($("#maintenanceDispatchDialog"));
       await refreshMaintenance();
-    })().catch(error => alert(error.message));
+    })().catch(error => {
+      if (error.status === 409 && error.code === "maintenance_dispatch_stale") {
+        const conflict = $("#maintenanceDispatchConflict");
+        if (conflict) conflict.hidden = false;
+      }
+      alert(error.message);
+    });
     return;
   }
   if (event.target.id === "manualPersonnelForm") {

@@ -125,11 +125,11 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   assert.equal(db.prepare("select status from personnel_import_batches where id=?").get(staged.batch.id).status,"pending");
   // Stable person identity before and after account activation, including own task visibility.
   const flight=(await post("/maintenance/flights",{date:"2026-09-01",flightNo:"IDENTITY",aircraftNo:"B-ID",workKind:"航后"})).flight;
-  await post(`/maintenance/flights/${flight.id}/dispatch`,{assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},200);
+  await post(`/maintenance/flights/${flight.id}/dispatch`,{expectedUpdatedAt:flight.updatedAt,assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},200);
   const assignment=db.prepare("select * from maintenance_assignments where flight_id=?").get(flight.id);
   assert.equal(assignment.person_id,dispatchPeer.id);
   const mixedFlight=(await post("/maintenance/flights",{date:"2026-09-01",flightNo:"MIXED-SCOPE",aircraftNo:"B-MIX",workKind:"航后"})).flight;
-  await post(`/maintenance/flights/${mixedFlight.id}/dispatch`,{assignments:[{personId:dispatchPeer.id,role:"例行机内"},{personId:outside.id,role:"例行机外"}]},200);
+  await post(`/maintenance/flights/${mixedFlight.id}/dispatch`,{expectedUpdatedAt:mixedFlight.updatedAt,assignments:[{personId:dispatchPeer.id,role:"例行机内"},{personId:outside.id,role:"例行机外"}]},200);
   const mixedAssignments=db.prepare("select * from maintenance_assignments where flight_id=? order by person_id").all(mixedFlight.id);
   for(const row of mixedAssignments)db.prepare("insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,hours,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,2,'待复核',?,?)").run("scope-hour-"+row.id,row.owner_type,row.owner_id,row.flight_id,row.id,row.person_id,row.user_name,row.team,row.role,"2026-09-01","2026-09-01");
   const hourSnapshot=JSON.stringify(db.prepare("select * from maintenance_hour_results where flight_id=? order by id").all(mixedFlight.id));
@@ -137,7 +137,7 @@ export async function testPersonnelAccess({request,cookie,db,personnelAccess}) {
   assert.equal(JSON.stringify(db.prepare("select * from maintenance_hour_results where flight_id=? order by id").all(mixedFlight.id)),hourSnapshot);
   const outsideAssignment=mixedAssignments.find(a=>a.person_id===outside.id);
   await asActor(`/maintenance/hours/scope-hour-${outsideAssignment.id}/confirm`,{method:"POST",expected:404});
-  await asActor(`/maintenance/flights/${mixedFlight.id}/dispatch`,{method:"POST",body:{assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},expected:403});
+  await asActor(`/maintenance/flights/${mixedFlight.id}/dispatch`,{method:"POST",body:{expectedUpdatedAt:db.prepare("select updated_at from maintenance_flights where id=?").get(mixedFlight.id).updated_at,assignments:[{personId:dispatchPeer.id,role:"例行机内"}]},expected:403});
   assert.equal(db.prepare("select count(*) as n from maintenance_assignments where flight_id=?").get(mixedFlight.id).n,2);
   const beforeDirectory=(await call("/personnel/directory?purpose=maintenance")).items.find(p=>p.personId===dispatchPeer.id);
   const target=(await post("/admin/accounts",{username:"identity-test",personId:dispatchPeer.id,password:"123456",roles:["worker"],scopes:[],mustChangePassword:false})).account;
