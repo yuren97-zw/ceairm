@@ -2702,7 +2702,7 @@ function renderPersonnelArea() {
   capabilityModule?.setActive(active);
   if (active && !capabilityModule && !capabilityLoading) {
     capabilityLoading = true; const generation = capabilityGeneration; host.textContent = "正在加载能力配置…";
-    import("/capability/module.js?v=20261003-home-identity").then(module => {
+    import("/capability/module.js?v=20261007-version-refresh").then(module => {
       if (generation !== capabilityGeneration) return;
       host.textContent = "";
       capabilityModule = module.mountCapability(host, { exportWorkbook: buildXlsxWorkbook });

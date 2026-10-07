@@ -26,11 +26,48 @@ class MockResponse extends EventEmitter {
     this.headers = headers;
     return this;
   }
+  write(body = "") {
+    this.body = Buffer.concat([this.body, Buffer.isBuffer(body) ? body : Buffer.from(String(body))]);
+    return true;
+  }
   end(body = "") {
-    this.body = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+    this.write(body);
     this.emit("finish");
   }
 }
+
+test("capability SSE sends changed versions only, keeps heartbeats and revokes expired access", async t => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const req = Readable.from([]);
+  req.method = "GET";
+  req.url = "/api/capability/events";
+  req.headers = { host: "127.0.0.1:8788", cookie: String(login.res.headers["Set-Cookie"]).split(";")[0] };
+  const res = new MockResponse();
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    await measuredRoute(req, res);
+    assert.equal(res.statusCode, 200);
+    const messages = () => [...res.body.toString().matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+    assert.equal(messages().length, 1);
+    t.mock.timers.tick(3000);
+    assert.equal(messages().length, 1);
+    assert.match(res.body.toString(), /: heartbeat/);
+    // Simulate a commit by a second server sharing the database.
+    db.prepare("update capability_meta set revision=revision+1,master_revision=master_revision+1 where id=1").run();
+    t.mock.timers.tick(3000);
+    assert.equal(messages().length, 2);
+    assert.equal(messages()[1].revision, messages()[0].revision + 1);
+    assert.equal(messages()[1].masterDataVersion, messages()[0].masterDataVersion + 1);
+    t.mock.timers.tick(3000);
+    assert.equal(messages().length, 2);
+    req.headers.cookie = "";
+    t.mock.timers.tick(3000);
+    assert.match(res.body.toString(), /event: access-revoked/);
+  } finally {
+    res.emit("close");
+    t.mock.timers.reset();
+  }
+});
 
 async function request(url, { method = "GET", body, cookie = "", headers = {} } = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
