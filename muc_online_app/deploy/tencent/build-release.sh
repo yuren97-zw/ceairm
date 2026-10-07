@@ -9,7 +9,7 @@ OUTPUT="${2:-/tmp/airline-operations-center-$VERSION.tar.gz}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-cp server.mjs db.mjs postgres-connection.mjs login-protection.mjs authorization-import.mjs authorization-projects.mjs capability-core.mjs capability-integrity.mjs capability-service.mjs import-workspace.mjs organization-lanes.mjs personnel-access.mjs personnel-deletion.mjs personnel-identity.mjs rbac-policy.mjs package.json package-lock.json "$STAGE/"
+cp server.mjs db.mjs postgres-connection.mjs login-protection.mjs authorization-import.mjs authorization-projects.mjs capability-core.mjs capability-integrity.mjs capability-service.mjs import-workspace.mjs personnel-import-history.mjs organization-lanes.mjs personnel-access.mjs personnel-deletion.mjs personnel-identity.mjs rbac-policy.mjs package.json package-lock.json "$STAGE/"
 cp -R migrations scripts "$STAGE/"
 npm run build:capability
 RELEASE_VERSION="$VERSION" node scripts/build-web-assets.mjs "$STAGE/public"
