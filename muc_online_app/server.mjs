@@ -6803,7 +6803,17 @@ async function routeRequest(req, res) {
       }
       if (method === "GET" && url.pathname === "/api/capability/events") {
         res.writeHead(200, { ...securityHeaders(), "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
-        const push = () => { const fresh = currentUser(req); if (!fresh?.id || !hasAnyRbac(fresh, capabilityViewPermissions)) { res.end(); return; } res.write(`data: ${JSON.stringify({ revision: capabilityService.revision(), masterDataVersion: capabilityService.masterRevision() })}\n\n`); };
+        let lastVersion = "";
+        const push = () => {
+          const fresh = currentUser(req);
+          if (!fresh?.id || !hasAnyRbac(fresh, capabilityViewPermissions)) {
+            res.write('event: access-revoked\ndata: {}\n\n'); res.end(); return;
+          }
+          const version = JSON.stringify({ revision: capabilityService.revision(), masterDataVersion: capabilityService.masterRevision() });
+          if (version === lastVersion) { res.write(': heartbeat\n\n'); return; }
+          lastVersion = version;
+          res.write(`data: ${version}\n\n`);
+        };
         push(); const unsubscribe = capabilityService.subscribe(push);
         // The service listener handles same-process changes immediately.  The
         // short revision poll also propagates commits made by another server
