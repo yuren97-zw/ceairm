@@ -144,13 +144,19 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     });publish();return true;
   }
   function readable(actor,p){return personnelAccess.allows(actor,'personnel',p.id);}
+  // Reuse the existing SQL scope predicate once per read, never across requests.
+  function readableIds(actor,rows){
+    if(!personnelAccess.predicate)return new Set(rows.filter(p=>readable(actor,p)).map(p=>p.id));
+    const scope=personnelAccess.predicate(actor,'personnel','p');
+    return new Set(db.prepare(`select p.id from personnel p where ${scope.sql}`).all(...scope.params).map(p=>p.id));
+  }
   function requirePermission(actor,permission){if(!hasRbac(actor,permission))throw fail('没有此能力配置权限',403);}
   function requireAnyPermission(actor,permissions){if(!permissions.some(permission=>hasRbac(actor,permission)))throw fail('没有此能力配置页面的查看权限',403);}
   const isSuper=actor=>actor?.id===superAccountId;
-  function organizationIssues(actor){return source().filter(p=>eligible(p)&&p.group_code!=='GROUP-LINE-CADRE'&&readable(actor,p)&&(!p.personnel_group_id||(Number(p.maintenance_eligible)===1&&!organizationReady(p)))).map(p=>({personId:p.id,employeeNo:p.employee_no,name:p.name,reason:!p.personnel_group_id?'未分配人员分组':'组织不存在、已停用或类型不正确'}));}
-  function nonParticipants(actor){const rows=source().filter(p=>readable(actor,p));const disabled=rows.filter(p=>eligible(p)&&p.personnel_group_id&&(p.group_code==='GROUP-LINE-CADRE'||Number(p.maintenance_eligible)!==1));return {cadreName:db.prepare("select name from organization_units where code='GROUP-LINE-CADRE'").get()?.name||'不参与调配',cadre:disabled.filter(p=>p.group_code==='GROUP-LINE-CADRE').length,groupDisabled:disabled.filter(p=>p.group_code!=='GROUP-LINE-CADRE').length,unclassified:rows.filter(p=>eligible(p)&&!p.personnel_group_id).length,unavailable:rows.filter(p=>p.data_status==='active'&&!eligible(p)).length,deleted:rows.filter(p=>p.data_status==='deleted').length,total:rows.filter(p=>!eligible(p)||!organizationReady(p)).length};}
-  function spaces(actor){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);return [...new Map(source().filter(p=>eligible(p)&&organizationReady(p)&&readable(actor,p)).map(p=>[workspace(p),{id:workspace(p),name:p.department_name}])).values()];}
-  function context(actor,space){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);const all=source().filter(p=>eligible(p)&&organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));const visible=all.filter(p=>readable(actor,p));const historyScope=source().filter(p=>p.group_code!=='GROUP-LINE-CADRE'&&organizationReady(p)&&(workspace(p)===space||getState(p.id)?.workspace===space));if(!visible.length&&!historyScope.some(p=>readable(actor,p)))throw fail('没有该范围的访问权限',403);return {all,visible,complete:historyScope.length>0&&historyScope.every(p=>readable(actor,p))};}
+  function organizationIssues(actor){const rows=source(),ids=readableIds(actor,rows);return rows.filter(p=>eligible(p)&&p.group_code!=='GROUP-LINE-CADRE'&&ids.has(p.id)&&(!p.personnel_group_id||(Number(p.maintenance_eligible)===1&&!organizationReady(p)))).map(p=>({personId:p.id,employeeNo:p.employee_no,name:p.name,reason:!p.personnel_group_id?'未分配人员分组':'组织不存在、已停用或类型不正确'}));}
+  function nonParticipants(actor){const sourceRows=source(),ids=readableIds(actor,sourceRows),rows=sourceRows.filter(p=>ids.has(p.id));const disabled=rows.filter(p=>eligible(p)&&p.personnel_group_id&&(p.group_code==='GROUP-LINE-CADRE'||Number(p.maintenance_eligible)!==1));return {cadreName:db.prepare("select name from organization_units where code='GROUP-LINE-CADRE'").get()?.name||'不参与调配',cadre:disabled.filter(p=>p.group_code==='GROUP-LINE-CADRE').length,groupDisabled:disabled.filter(p=>p.group_code!=='GROUP-LINE-CADRE').length,unclassified:rows.filter(p=>eligible(p)&&!p.personnel_group_id).length,unavailable:rows.filter(p=>p.data_status==='active'&&!eligible(p)).length,deleted:rows.filter(p=>p.data_status==='deleted').length,total:rows.filter(p=>!eligible(p)||!organizationReady(p)).length};}
+  function spaces(actor){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);const rows=source(),ids=readableIds(actor,rows);return [...new Map(rows.filter(p=>eligible(p)&&organizationReady(p)&&ids.has(p.id)).map(p=>[workspace(p),{id:workspace(p),name:p.department_name}])).values()];}
+  function context(actor,space){assertReady();requireAnyPermission(actor,CAPABILITY_VIEW_PERMISSIONS);const rows=source(),stateMap=new Map(db.prepare('select * from capability_current_states').all().map(r=>[r.person_id,stateRow(r)])),ids=readableIds(actor,rows);const inSpace=p=>workspace(p)===space||stateMap.get(p.id)?.workspace===space;const all=rows.filter(p=>eligible(p)&&organizationReady(p)&&inSpace(p));const visible=all.filter(p=>ids.has(p.id));const historyScope=rows.filter(p=>p.group_code!=='GROUP-LINE-CADRE'&&organizationReady(p)&&inSpace(p));if(!visible.length&&!historyScope.some(p=>ids.has(p.id)))throw fail('没有该范围的访问权限',403);return {all,visible,complete:historyScope.length>0&&historyScope.every(p=>ids.has(p.id)),rows,stateMap,readableIds:ids};}
   function location(space,id,{active=false}={}){const row=db.prepare('select * from capability_deployment_locations where id=? and workspace=?').get(id,space);if(!row)throw fail('派驻地点不存在或不属于当前工作范围',404);if(active&&row.status!=='active')throw fail('派驻地点已停用，请重新选择',409);return row;}
   function locations(space){return db.prepare(`select l.*,
     (select count(*) from capability_status_records r where r.deployment_location_id=l.id) as reference_count,
@@ -165,8 +171,9 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     from capability_other_status_options o where o.workspace=? order by o.status asc,o.name asc`).all(space).map(row=>({id:row.id,name:row.name,status:row.status,referenceCount:Number(row.reference_count),activeRecordCount:Number(row.active_record_count),plannedRecordCount:Number(row.planned_record_count),createdAt:row.created_at,updatedAt:row.updated_at}));}
   function projectsAndPeople(rows,config){
     const catalog=new Map(db.prepare('select * from capability_catalog').all().map(c=>[c.project_code,c]));
-    const ids=new Set(rows.map(p=>p.id)); const auth=db.prepare("select * from personnel_authorizations where coalesce(data_status,'active')='active'").all().filter(a=>ids.has(a.person_id));
-    const license=db.prepare("select * from personnel_licenses where coalesce(data_status,'active')='active'").all().filter(l=>ids.has(l.person_id)&&valid(l.is_valid));
+    const ids=rows.map(p=>p.id);
+    const records=table=>{const result=[];for(let start=0;start<ids.length;start+=500){const batch=ids.slice(start,start+500);result.push(...db.prepare(`select * from ${table} where coalesce(data_status,'active')='active' and person_id in (${batch.map(()=>'?').join(',')})`).all(...batch));}return result;};
+    const auth=records('personnel_authorizations'),license=records('personnel_licenses').filter(l=>valid(l.is_valid));
     const projects=new Map();const byPerson=new Map();
     for(const a of auth){if(trim(a.authorization_status)!=='有效')continue;const c=catalog.get(a.project_code),projectCategory=category(c?.project_category);if(!c||c.status!=='active'||!trim(c.project_name)||!projectCategory)continue;const name=c.project_name;
       const key=JSON.stringify(['project',a.project_code]);
@@ -180,15 +187,16 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
   function snapshot(actor,space){
     const ctx=context(actor,space), raw=rawConfig(space);
     const {people,projects}=projectsAndPeople(ctx.visible,raw),config=normalizeConfig(projects,raw);
-    const states=people.map(p=>getState(p.id)).filter(Boolean).map(s=>s.workspace===space?s:{...s,workingGroup:null});
-    for(const p of people){if(p.workspace!==space)p.administrativeGroup=null;p.requiresWorkspaceReview=getState(p.id)?.workspace!==p.workspace;}
-    const historicalRows=source().filter(p=>(workspace(p)===space||getState(p.id)?.workspace===space)&&readable(actor,p));
+    const states=people.map(p=>ctx.stateMap.get(p.id)).filter(Boolean).map(s=>s.workspace===space?s:{...s,workingGroup:null});
+    for(const p of people){if(p.workspace!==space)p.administrativeGroup=null;p.requiresWorkspaceReview=ctx.stateMap.get(p.id)?.workspace!==p.workspace;}
+    const historicalRows=ctx.rows.filter(p=>(workspace(p)===space||ctx.stateMap.get(p.id)?.workspace===space)&&ctx.readableIds.has(p.id));
     const historicalIds=new Set(historicalRows.map(p=>p.id));
     const statusHistoryAllowed=['capability.status.view','capability.history.view','capability.report.view'].some(permission=>hasRbac(actor,permission));
     const supportHistoryAllowed=['capability.history.view','capability.report.view'].some(permission=>hasRbac(actor,permission));
     const historicalPeople=statusHistoryAllowed?historicalRows.filter(p=>!eligible(p)).map(p=>({id:p.id,employeeNo:p.employee_no,name:p.name,administrativeUnit:p.team_name||p.department_name,employmentStatus:p.employment_status,licenses:[],capabilities:[],english:'—'})):[];
+    const version=db.prepare('select revision,master_revision from capability_meta where id=1').get(),rev=Number(version.revision),master=Number(version.master_revision);
     return {
-      lanes:organizationLanes(db),workspace:space,revision:revision(),capabilityVersion:revision(),masterDataVersion:masterRevision(),dataVersion:`${masterRevision()}:${revision()}`,partial:!ctx.complete,people,historicalPeople,projects,states,config,deploymentLocations:locations(space),otherStatusOptions:otherOptions(space),isSuperAdministrator:isSuper(actor),qualificationVisible:hasRbac(actor,'personnel.qualification.view'),
+      lanes:organizationLanes(db),workspace:space,revision:rev,capabilityVersion:rev,masterDataVersion:master,dataVersion:`${master}:${rev}`,partial:!ctx.complete,people,historicalPeople,projects,states,config,deploymentLocations:locations(space),otherStatusOptions:otherOptions(space),isSuperAdministrator:isSuper(actor),qualificationVisible:hasRbac(actor,'personnel.qualification.view'),
       permissions:{
         overview:hasRbac(actor,'capability.overview.view'),
         allocationView:hasRbac(actor,'capability.allocation.view'),

@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { requestQueryStats } from "../db.mjs";
+import { seedCapabilityFixture } from "../scripts/capability-fixture.mjs";
+import { createPersonnelAccess } from "../personnel-access.mjs";
+import { createCapabilityService } from "../capability-service.mjs";
 
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ceairm-test-"));
 process.env.MUC_NO_LISTEN = "1";
@@ -1568,4 +1572,50 @@ test("login and current session expose only the linked person's own position and
   assert.equal(unlinkedLogin.payload.user.position, "");
   assert.equal(unlinkedLogin.payload.user.actualGrade, "");
   assert.equal(unlinkedLogin.payload.user.actualGradeMasked, false);
+});
+
+test("capability reads batch states and scopes with a bounded query count and unchanged scope semantics", async () => {
+  const previousEnv=process.env.NODE_ENV;
+  process.env.NODE_ENV="test";
+  try {
+    const {workspace}=await seedCapabilityFixture(db);
+    capabilityService.syncMaster();
+    const access=createPersonnelAccess({db,hasRbac:()=>true,randomId:()=>"unused",now:()=>new Date().toISOString(),audit:()=>{},superAccountId:"54002010"});
+    const service=createCapabilityService({db,hasRbac:()=>true,personnelAccess:access,audit:()=>{}});
+    const admin={id:"54002010"};
+    const measured=actor=>{const stats={count:0,totalMs:0,slowCount:0};const value=requestQueryStats.run(stats,()=>service.snapshot(actor,workspace));return {value,count:stats.count};};
+    const baseline=measured(admin);
+    const template=db.prepare("select * from personnel where id=?").get(baseline.value.people[0].id);
+    const state=db.prepare("select * from capability_current_states where person_id=?").get(template.id);
+    db.exec("savepoint capability_read_budget");
+    try {
+      for(let i=0;i<120;i++) {
+        const person={...template,id:`query-budget-person-${i}`,employee_no:String(79000000+i),name:`查询测试${i}`};
+        db.prepare(`insert into personnel(${Object.keys(person).join(",")}) values(${Object.keys(person).map(()=>"?").join(",")})`).run(...Object.values(person));
+        const current={...state,person_id:person.id,sort_index:100+i};
+        db.prepare(`insert into capability_current_states(${Object.keys(current).join(",")}) values(${Object.keys(current).map(()=>"?").join(",")})`).run(...Object.values(current));
+      }
+      const expanded=measured(admin);
+      assert.equal(expanded.value.people.length,baseline.value.people.length+120);
+      assert.equal(expanded.count,baseline.count,"adding 120 people must not add per-person queries");
+      assert.ok(expanded.count<=20,`snapshot used ${expanded.count} queries`);
+      assert.equal(expanded.value.states.length,baseline.value.states.length+120);
+      for(const scopes of [
+        [{module:"personnel",scopeType:"self"}],
+        [{module:"personnel",scopeType:"department"}],
+        [{module:"personnel",scopeType:"administrative_team"}],
+        [{module:"personnel",scopeType:"specified_groups",scopeId:template.personnel_group_id}],
+        [{module:"personnel",scopeType:"self"},{module:"personnel",scopeType:"all",validTo:"2000-01-01T00:00:00Z"}]
+      ]) {
+        const actor={id:"query-test-account",personId:template.id,dataScopes:scopes};
+        const expected=expanded.value.people.filter(p=>access.allows(actor,"personnel",p.id)).map(p=>p.id);
+        const scoped=measured(actor).value;
+        assert.deepEqual(scoped.people.map(p=>p.id),expected);
+        assert.ok(scoped.states.every(s=>expected.includes(s.personId)));
+        assert.ok(scoped.records.every(r=>expected.includes(r.person_id)));
+      }
+      assert.throws(()=>service.snapshot({id:"query-denied",dataScopes:[]},workspace),e=>e.status===403);
+      console.log(`快照查询预算：${baseline.count} → ${expanded.count}（增加120人），权限范围一致`);
+    } finally {db.exec("rollback to capability_read_budget;release capability_read_budget");}
+  } finally {if(previousEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previousEnv;}
 });
