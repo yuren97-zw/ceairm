@@ -1587,7 +1587,7 @@ test("capability reads batch states and scopes with a bounded query count and un
     const baseline=measured(admin);
     const template=db.prepare("select * from personnel where id=?").get(baseline.value.people[0].id);
     const state=db.prepare("select * from capability_current_states where person_id=?").get(template.id);
-    db.exec("savepoint capability_read_budget");
+    db.exec("begin immediate");
     try {
       for(let i=0;i<120;i++) {
         const person={...template,id:`query-budget-person-${i}`,employee_no:String(79000000+i),name:`查询测试${i}`};
@@ -1616,6 +1616,6 @@ test("capability reads batch states and scopes with a bounded query count and un
       }
       assert.throws(()=>service.snapshot({id:"query-denied",dataScopes:[]},workspace),e=>e.status===403);
       console.log(`快照查询预算：${baseline.count} → ${expanded.count}（增加120人），权限范围一致`);
-    } finally {db.exec("rollback to capability_read_budget;release capability_read_budget");}
+    } finally {db.exec("rollback");}
   } finally {if(previousEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previousEnv;}
 });
