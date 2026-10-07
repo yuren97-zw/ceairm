@@ -1,5 +1,6 @@
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
 import {createImportWorkspace,IMPORT_WORKSPACE_SCHEMA} from './import-workspace.mjs';
+import { importHistoryContext } from './personnel-import-history.mjs';
 import {organizationLanes,resolveOrganizationPath} from './organization-lanes.mjs';
 import http from "node:http";
 import { createCapabilityService } from "./capability-service.mjs";
@@ -6194,12 +6195,12 @@ function validatePersonnelImportAccess(type,rows,user) {
  });
  if(issues.length)throw Object.assign(new Error("导入存在权限、范围或组织异常，整批未生效"),{status:400,details:{issues}});
 }
-function visibleImportBatch(batch,user) {
- const rows=json(batch.rows_json,[]);
+function visibleImportBatch(batch,user,context=null) {
+ const rows=context ? context.rows.get(batch.id) : json(batch.rows_json,[]);
  return rows.every(row=>{
-   const p=findImportedPerson(importEmployeeNo(row));
-   if(p && !personnelAccess.allows(user,"personnel",p.id))return false;
-   if(!p && !personnelAccess.hasAll(user,"personnel"))return batch.created_by===user.id;
+   const p=context ? context.people.get(importEmployeeNo(row)) : findImportedPerson(importEmployeeNo(row));
+   if(p && !(context ? context.allowed.has(p.id) : personnelAccess.allows(user,"personnel",p.id)))return false;
+   if(!p && !(context ? context.hasAll : personnelAccess.hasAll(user,"personnel")))return batch.created_by===user.id;
    if(batch.import_type!=="personnel")return hasRbac(user,"personnel.qualification.view");
    return hasRbac(user,"personnel.actual_grade.manage") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
  });
@@ -7020,8 +7021,14 @@ async function routeRequest(req, res) {
     if (method === "GET" && url.pathname === "/api/personnel/imports") {
       const manager = requireRbacPermission(req, res, "personnel.import.view");
       if (!manager) return;
-      const batches = db.prepare("select *,import_type as importType,file_name as fileName,summary_json as summaryJson,created_by_name as createdByName,confirmed_by as confirmedBy,confirmed_at as confirmedAt,created_at as createdAt,updated_at as updatedAt from personnel_import_batches order by created_at desc").all().filter(row=>visibleImportBatch(row,manager)).map(row => ({ id:row.id,importType:row.importType,fileName:row.fileName,status:row.status,createdAt:row.createdAt,createdByName:row.createdByName,summary: json(row.summaryJson, {}) }));
-      return send(res, 200, { batches });
+      const rows = db.prepare("select id,import_type,import_type as importType,file_name as fileName,status,rows_json,summary_json as summaryJson,created_by,created_by_name as createdByName,created_at as createdAt from personnel_import_batches order by created_at desc,id desc").all();
+      const context = importHistoryContext(db,personnelAccess,manager,rows,importEmployeeNo);
+      const visible = rows.filter(row=>visibleImportBatch(row,manager,context));
+      const page = Math.max(1,Number.parseInt(url.searchParams.get('page')||'1',10)||1);
+      const pageSize = Math.max(1,Math.min(100,Number.parseInt(url.searchParams.get('pageSize')||'50',10)||50));
+      const batches = visible.slice((page-1)*pageSize,page*pageSize).map(row => ({ id:row.id,importType:row.importType,fileName:row.fileName,status:row.status,createdAt:row.createdAt,createdByName:row.createdByName,summary: json(row.summaryJson, {}) }));
+      const summary = visible.reduce((result,row)=>{result.pending += Number(row.status==='pending');result.errors += Number(json(row.summaryJson,{}).errors||0);return result;},{pending:0,errors:0});
+      return send(res, 200, { batches,total:visible.length,page,pageSize,summary });
     }
     if (method === "POST" && url.pathname === "/api/personnel/imports") {
       const manager = requireRbacPermission(req, res, "personnel.import.execute");

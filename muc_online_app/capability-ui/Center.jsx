@@ -41,6 +41,8 @@ function AllocationSplitter({value,onChange}){
 }
 
 function Center({exportWorkbook,active,overviewRequest}){
+  const [spacesLoading,setSpacesLoading]=useState(true);
+  const [spacesRetry,setSpacesRetry]=useState(0);
   const [spaces,setSpaces]=useState([]),[space,setSpace]=useState(''),[organizationIssues,setOrganizationIssues]=useState([]),[nonParticipants,setNonParticipants]=useState({}),[snap,setSnap]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [view,setView]=useState('overview'),[matrixWidth,setMatrixWidth]=usePref('allocation-matrix-width',380),[filters,setFilters]=useState([]),[drag,setDrag]=useState(null),[drop,setDrop]=useState(null);
   const basis='actual';
@@ -49,7 +51,7 @@ function Center({exportWorkbook,active,overviewRequest}){
   const snapshotRef=useRef(null),refreshRef=useRef(null),busyRef=useRef(false),lastCommandErrorRef=useRef(''),hover=usePersonHover(drag), spaceRef=useRef(space);
   spaceRef.current=space;snapshotRef.current=snap;
   function reload(version){const current=refreshRef.current;if(current?.workspace!==space)return Promise.resolve(null);return current.refresh(version,{force:!version}).catch(e=>{current.failed(e);throw e;});}
-  useEffect(()=>{if(!active)return;let alive=true;request('workspaces').then(r=>{if(alive){setSpaces(r.items);setOrganizationIssues(r.organizationIssues||[]);setNonParticipants(r.nonParticipants||{});setSpace(current=>r.items.some(s=>s.id===current)?current:r.items[0]?.id||'');}}).catch(e=>setError(e.message));return()=>{alive=false;};},[active]);
+  useEffect(()=>{if(!active)return;let alive=true;setSpacesLoading(true);request('workspaces').then(r=>{if(alive){setSpaces(r.items);setOrganizationIssues(r.organizationIssues||[]);setNonParticipants(r.nonParticipants||{});setSpace(current=>r.items.some(s=>s.id===current)?current:r.items[0]?.id||'');}}).catch(e=>{if(alive)setError(e.message);}).finally(()=>{if(alive)setSpacesLoading(false);});return()=>{alive=false;};},[active,spacesRetry]);
   useEffect(()=>{snapshotRef.current=null;setSnap(null);setSim(null);setMode('live');setUndo([]);setRedo([]);setModal(null);hover.closeNow();},[space]);
   useEffect(()=>{
     if(!active||!space)return;
@@ -70,7 +72,7 @@ function Center({exportWorkbook,active,overviewRequest}){
   useEffect(()=>{if(!overviewRequest)return;setStatusFocus(null);setMode('live');setSim(null);setUndo([]);setRedo([]);setDrag(null);setDrop(null);setModal(null);hover.closeNow();setView('overview');},[overviewRequest]);
   useEffect(()=>{if(!snap)return;const available=[['overview','overview'],['compact','allocationView'],['DEPLOYED','statusView'],['TRAINING','statusView'],['OTHER','statusView'],['scenarios','scenarioView'],['reports','reportView']].filter(([,permission])=>snap.permissions[permission]).map(([key])=>key);if(available.length&&!available.includes(view))setView(available[0]);},[snap,view]);
   async function command(operation,payload={},baseRevision=snapshotRef.current?.revision){if(busyRef.current)return false;busyRef.current=true;lastCommandErrorRef.current='';setBusy(true);setError('');try{const result=await request('commands',space,{...payload,operation,revision:baseRevision,requestId:createRequestId()});await reload(Number.isSafeInteger(result.revision)?{revision:result.revision,masterDataVersion:snapshotRef.current?.masterDataVersion??0}:null);return result;}catch(e){lastCommandErrorRef.current=e.message||'操作失败';setError(lastCommandErrorRef.current);if(e.status===409)await reload().catch(()=>{});return false;}finally{setBusy(false);busyRef.current=false;}}
-  if(!snap)return <div className="center"><div role="status">{error||(!spaces.length?'当前没有来自可调配人员分组的正式人员。':'正在读取中心数据库…')}</div><div className="notice">不参与调配：{nonParticipants.cadreName||"未开启调配分组"} {nonParticipants.cadre||0} 人 · 其他未开启调配分组 {nonParticipants.groupDisabled||0} 人 · 待分类 {nonParticipants.unclassified||0} 人 · 停职/离职 {nonParticipants.unavailable||0} 人 · 已删除 {nonParticipants.deleted||0} 人</div>{organizationIssues.length>0&&<div className="notice">{organizationIssues.length}人组织归属待复核，已从生产统计和调配候选中排除。</div>}</div>;
+  if(!snap)return <div className="center"><div role={error?'alert':'status'}>{error||(spacesLoading?'正在加载人员配置…':!spaces.length?'当前范围没有可调配人员，或尚未获得相应人员范围。':'正在读取中心数据库…')}{error&&<button type="button" onClick={()=>{setError('');if(space)reload().catch(()=>{});else setSpacesRetry(value=>value+1);}}>重试</button>}</div>{!spacesLoading&&<div className="notice">不参与调配：{nonParticipants.cadreName||"未开启调配分组"} {nonParticipants.cadre||0} 人 · 其他未开启调配分组 {nonParticipants.groupDisabled||0} 人 · 待分类 {nonParticipants.unclassified||0} 人 · 停职/离职 {nonParticipants.unavailable||0} 人 · 已删除 {nonParticipants.deleted||0} 人</div>}{organizationIssues.length>0&&<div className="notice">{organizationIssues.length}人组织归属待复核，已从生产统计和调配候选中排除。</div>}</div>;
   const can=p=>!!snap.permissions[p];const readOnlyOverview=view==='overview',states=readOnlyOverview?snap.states:mode==='simulation'&&sim?sim.states:snap.states;
   const model=calculate(snap.people,snap.projects,states,snap.config,basis),byId=Object.fromEntries([...(snap.historicalPeople||[]),...snap.people].map(p=>[p.id,p])),byState=Object.fromEntries(states.map(s=>[s.personId,s]));
   const assignments=Object.fromEntries(states.map(s=>[s.personId,s.workingGroup||STATUS_LABELS[s.status]||'待调配']));

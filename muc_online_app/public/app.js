@@ -538,16 +538,26 @@ function scopeHasAll(module) {
   return state.user.id===SUPER_ACCOUNT_ID || (state.user.dataScopes || []).some(s=>s.module===module && s.scopeType==="all" && (!s.validFrom || Date.parse(s.validFrom)<=Date.now()) && (!s.validTo || Date.parse(s.validTo)>=Date.now()));
 }
 
-async function loadPersonnelDirectories() {
+async function loadPersonnelDirectories(purposes = ["info", "maintenance_dispatch", "accounts", "organizations"]) {
+  const actor = state.user.id;
   const load=async purpose=>{
     const items=[];let page=1,total=1;
     while(items.length<total){const data=await apiRequest(`/personnel/directory?purpose=${purpose}&page=${page++}&pageSize=200`);total=data.total;items.push(...data.items);if(!data.items.length)break;}
     return items.map(p=>({...p,id:purpose==="info"?p.accountId:p.personId,team:p.currentWorkingTeamName||p.administrativeTeamName||"未设置"}));
   };
-  state.infoPeople=["info.create","info.update.own","info.update.any"].some(hasRbac)?await load("info"):[];
-  state.maintenancePeople=["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"].some(hasRbac)?await load("maintenance_dispatch"):[];
-  state.personnelDirectory=["accounts.read","accounts.create","accounts.bulk_open"].some(hasRbac)?await load("accounts"):[];
-  state.organizations=(await apiRequest("/personnel/organizations")).organizations || [];
+  const specs = [
+    ["info", "infoPeople", ["info.create","info.update.own","info.update.any"]],
+    ["maintenance_dispatch", "maintenancePeople", ["maintenance.dispatch.view","maintenance.assignment.manage","maintenance.review.view","maintenance.execute.view","maintenance.execute.submit","maintenance.hours.confirm"]],
+    ["accounts", "personnelDirectory", ["accounts.read","accounts.create","accounts.bulk_open"]]
+  ];
+  await Promise.all(specs.filter(([purpose])=>purposes.includes(purpose)).map(async ([purpose,field,permissions])=>{
+    const items = permissions.some(hasRbac) ? await load(purpose) : [];
+    if (state.user?.id === actor) state[field] = items;
+  }));
+  if (purposes.includes("organizations")) {
+    const result = await apiRequest("/personnel/organizations");
+    if (state.user?.id === actor) state.organizations = result.organizations || [];
+  }
 }
 
 function organizationSelects(prefix,person={}) {
@@ -954,8 +964,12 @@ const personnelService = {
   async cancelImport(id) {
     return await apiRequest(`/personnel/imports/${encodeURIComponent(id)}/cancel`, { method: "POST" });
   },
-  async imports() {
-    const data = await apiRequest("/personnel/imports");
+  async imports(page = state.personnelImportPage || 1) {
+    const actor = state.user.id;
+    const data = await apiRequest(`/personnel/imports?page=${page}&pageSize=50`);
+    if (state.user?.id !== actor) return [];
+    state.personnelImportMeta = data;
+    state.personnelImportPage = data.page;
     return data.batches || [];
   }
 };
@@ -1669,6 +1683,8 @@ function renderShell() {
   if (capabilityModule) capabilityModule.setActive(isLoggedIn() && state.activePage === "personnelPage" && personnelArea === "capability");
   if (!isLoggedIn()) {
     capabilityModule?.destroy(); capabilityModule = null; capabilityGeneration++; personnelArea = null;
+    personnelLoadSequence++; personnelLoading = false; personnelLoadError = "";
+    state.personnelImportMeta = null; state.personnelImportPage = 1;
     const oldHost = document.getElementById("capabilityHost"); if (oldHost?.shadowRoot) oldHost.replaceWith(Object.assign(document.createElement("div"), { id: "capabilityHost", hidden: true }));
     showLoginPage();
     $("#pager").hidden = true;
@@ -2154,6 +2170,7 @@ function qualificationActions(kind, recordId) {
 
 async function refreshPersonnel({ keepDetail = false } = {}) {
   if (!hasRbac("personnel.list.view")) return;
+  const actor = state.user.id;
   const result = await personnelService.list({
     q: state.personnelSearch,
     ...state.personnelFilters,
@@ -2162,6 +2179,7 @@ async function refreshPersonnel({ keepDetail = false } = {}) {
     sort: state.personnelSort,
     order: state.personnelOrder
   });
+  if (state.user?.id !== actor) return;
   state.personnel = result.items;
   state.personnelMeta = result;
   if (!keepDetail) { state.activePersonnelDetail = null; state.expandedAuthorizationCategory = ""; }
@@ -2365,9 +2383,8 @@ function renderPersonnelSearchResults() {
 
 function renderPersonnelQuality() {
   const facets = state.personnelMeta?.facets || {};
-  const pending = state.personnelImportBatches.filter(item => item.status === "pending");
-  const failedRows = state.personnelImportBatches.reduce((sum, item) => sum + Number(item.summary?.errors || 0), 0);
-  return `<section class="personnel-master-grid"><div class="metric-grid"><div class="metric"><span>工号异常</span><strong>0</strong></div><div class="metric"><span>待确认导入</span><strong>${pending.length}</strong></div><div class="metric"><span>导入异常行</span><strong>${failedRows}</strong></div><div class="metric"><span>未开通账户</span><strong>${Math.max(0, Number(facets.total || 0) - Number(facets.linked || 0))}</strong></div></div><section class="data-panel"><strong>数据质量规则</strong><div class="status-line">工号必须为8位数字且唯一；执照、授权和培训必须匹配已有人员；有异常的导入批次不会部分生效。</div></section></section>`;
+  const summary = state.personnelImportMeta?.summary || {pending:0,errors:0};
+  return `<section class="personnel-master-grid"><div class="metric-grid"><div class="metric"><span>工号异常</span><strong>0</strong></div><div class="metric"><span>待确认导入</span><strong>${summary.pending}</strong></div><div class="metric"><span>导入异常行</span><strong>${summary.errors}</strong></div><div class="metric"><span>未开通账户</span><strong>${Math.max(0, Number(facets.total || 0) - Number(facets.linked || 0))}</strong></div></div><section class="data-panel"><strong>数据质量规则</strong><div class="status-line">工号必须为8位数字且唯一；执照、授权和培训必须匹配已有人员；有异常的导入批次不会部分生效。</div></section></section>`;
 }
 
 function openPersonnelDialog(person) {
@@ -2702,7 +2719,7 @@ function renderPersonnelArea() {
   capabilityModule?.setActive(active);
   if (active && !capabilityModule && !capabilityLoading) {
     capabilityLoading = true; const generation = capabilityGeneration; host.textContent = "正在加载能力配置…";
-    import("/capability/module.js?v=20261007-version-refresh").then(module => {
+    import("/capability/module.js?v=20261007-first-open").then(module => {
       if (generation !== capabilityGeneration) return;
       host.textContent = "";
       capabilityModule = module.mountCapability(host, { exportWorkbook: buildXlsxWorkbook });
@@ -2711,7 +2728,7 @@ function renderPersonnelArea() {
   }
   return personnelArea;
 }
-document.addEventListener("click", event => { const area = event.target.closest("[data-personnel-area]"); if (area) { invalidatePersonnelSearch(); personnelArea = area.dataset.personnelArea; if (personnelArea === "capability") capabilityModule?.showOverview(); if (personnelArea === "authorization") { state.personnelAuthorizationOverview.loaded = false; state.personnelAuthorizationOverview.openPersonId = ""; } renderPersonnelPage(); } });
+document.addEventListener("click", async event => { const area = event.target.closest("[data-personnel-area]"); if (area) { invalidatePersonnelSearch(); personnelArea = area.dataset.personnelArea; if (personnelArea === "capability") capabilityModule?.showOverview(); if (personnelArea === "authorization") { state.personnelAuthorizationOverview.loaded = false; state.personnelAuthorizationOverview.openPersonId = ""; } await renderAll({force:false}); } });
 
 function resetAuthorizationOverviewDetail() {
   const view = state.personnelAuthorizationOverview;
@@ -2767,6 +2784,8 @@ function renderPersonnelPage() {
   const area = renderPersonnelArea();
   if (area === "capability") return;
   if (area === "authorization") { renderAuthorizationOverviewPage(); return; }
+  if (personnelLoading) { panel.innerHTML = '<div class="status-line" role="status">正在加载主数据…</div>'; return; }
+  if (personnelLoadError) { panel.innerHTML = `<div class="status-line" role="alert">${escapeHtml(personnelLoadError)} <button type="button" data-personnel-retry>重试</button></div>`; return; }
   const tabs = personnelTabOptions();
   if (!tabs.some(([key]) => key === state.personnelTab)) state.personnelTab = tabs[0]?.[0] || "list";
   const content = state.personnelTab === "list" ? renderPersonnelMaster()
@@ -2777,9 +2796,11 @@ function renderPersonnelPage() {
 }
 
 function renderPersonnelImports() {
+  const meta = state.personnelImportMeta || {page:1,pageSize:50,total:0};
   const types = [["personnel", "人员基本信息", "标准列：员工工号、员工姓名、部门、人员分组、行政班组、职位、是否教员、实际岗级、用工状态。"], ["license", "执照信息", "必须包含已有人员的员工工号"], ["authorization", "授权信息", "标准列：工号、姓名、项目代码、项目名称、授权类型、授权单位、授权日期、授权有效期、授权状态。项目名称和日期可空；其余必填。项目须先配置。每次替换文件内人员全部授权，必须上传各人员完整清单。"], ["training", "培训信息", "人员工号、课程代码、课程名称"]];
   return `<section class="settings-grid personnel-import-grid"><div class="data-panel setting-list manual-personnel-card"><strong>单独录入人员</strong><form id="manualPersonnelForm" class="entry-grid"><label>员工工号 *<input id="manualEmployeeNo" inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" required></label><label>姓名 *<input id="manualPersonName" required></label>${hasRbac("personnel.organization.manage") ? organizationSelects("manual") : ""}<label>职位<input id="manualPosition"></label>${hasRbac("personnel.actual_grade.manage") ? '<label>实际岗级<input id="manualActualGrade"></label>' : ""}<label class="login-check"><input id="manualIsInstructor" type="checkbox">教员</label><label>在职状态<select id="manualEmploymentStatus"><option>在职</option><option>停职</option><option>离职</option></select></label><div class="form-actions"><button class="btn" type="submit" ${hasRbac("personnel.profile.create") ? "" : "disabled"}>保存人员</button></div><div id="manualPersonnelResult" class="status-line">工号必须为8位数字，姓名为必填项，保存后可继续开通登录账户。</div></form></div>${types.map(([type, label, hint]) => `<div class="data-panel setting-list"><strong>${label}</strong><label>选择 Excel 文件<input id="personnelImportFile-${type}" type="file" accept=".xlsx"></label><span class="status-line">${hint}</span><button class="btn secondary" type="button" data-personnel-import="${type}" ${hasRbac("personnel.import.execute") ? "" : "disabled"}>检查并暂存</button><div id="personnelImportResult-${type}" class="status-line"></div></div>`).join("")}
     <div class="data-panel setting-list user-admin-card"><strong>导入历史</strong><div class="personnel-import-history">${state.personnelImportBatches.map(batch => `<div class="setting-item personnel-import-batch"><span><b>${escapeHtml({ personnel: "人员", license: "执照", authorization: "授权", training: "培训" }[batch.importType] || batch.importType)}</b> · ${escapeHtml(batch.fileName || "未命名文件")}</span><span>${escapeHtml(batch.status)} · 总计 ${batch.summary?.total || 0} · 错误 ${batch.summary?.errors || 0} · 警告 ${batch.summary?.warnings || 0}</span>${batch.importType==="authorization"&&batch.summary?.replacement?`<span class="status-line">将替换所列人员全部授权：${batch.summary.replacement.personCount}人 · 旧${batch.summary.replacement.oldCount}条 → 新${batch.summary.replacement.newCount}条 · 不再保留${batch.summary.replacement.removedCount}条（跨授权单位）</span>`:""}${batch.summary?.errors ? `<span style="color:#b42318">存在${batch.summary.errors}条错误，无法生效；请打开处理区查看并修正。</span>` : ""}${hasRbac("personnel.import.execute") ? `<button class="btn secondary" type="button" data-process-import="${escapeHtml(batch.id)}">检查与处理 / 查看替换差异</button>` : ""}${batch.status === "pending" && hasRbac("personnel.import.execute") ? `<span class="actions"><button class="link-btn" data-confirm-personnel-import="${escapeHtml(batch.id)}" type="button" ${batch.summary?.errors ? "disabled" : ""}>确认生效</button><button class="link-btn danger-text" data-cancel-personnel-import="${escapeHtml(batch.id)}" type="button">取消</button></span>` : ""}</div>`).join("") || '<div class="status-line">暂无导入记录。</div>'}</div></div>
+    <div class="personnel-pagination"><span>共 ${meta.total} 批 · 第 ${meta.page} 页</span><button type="button" data-import-history-page="${meta.page-1}" ${meta.page<=1?'disabled':''}>上一页</button><button type="button" data-import-history-page="${meta.page+1}" ${meta.page*meta.pageSize>=meta.total?'disabled':''}>下一页</button></div>
   </section>`;
 }
 
@@ -4142,6 +4163,7 @@ async function loadActivePageData({ force = true } = {}) {
   const recordPage = ["homePage", "infoPage"].includes(page);
   if (recordPage && (force || !loaded.has("records"))) {
     state.records = await recordService.list();
+    await loadPersonnelDirectories(["info"]);
     state.user = authService.withSettings(state.user);
     loaded.add("records");
     loaded.add("settings");
@@ -4155,18 +4177,30 @@ async function loadActivePageData({ force = true } = {}) {
     loaded.add("fixedProjects");
   }
   if (page === "settingsPage" && (force || !loaded.has("users"))) {
+    await loadPersonnelDirectories(["info", "accounts", "organizations"]);
     state.users = await userService.list();
     state.rbacCatalog = hasRbac("roles.read") ? await rbacService.catalog() : { roles: [], permissions: [] };
     loaded.add("users");
   }
-  if (page === "personnelPage" && (force || !loaded.has("personnel"))) {
-    await loadPersonnelDirectories();
-    if (hasRbac("personnel.list.view")) await refreshPersonnel({ keepDetail: true });
-    else { state.personnel = []; state.personnelMeta = { total: 0, page: 1, pageSize: 20, facets: {} }; }
-    state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : [];
-    if (hasRbac("personnel.qualification.manage") && state.personnelTab === "settings") await refreshAuthorizationProjects();
-    else state.authorizationProjects = { items: [], total: 0, page: 1, pageSize: 20 };
-    loaded.add("personnel");
+  if (page === "personnelPage" && personnelArea === "master") {
+    const tab = state.personnelTab, key = `personnel:${tab}`;
+    if (force || !loaded.has(key)) {
+      if (["list", "quality"].includes(tab)) {
+        await loadPersonnelDirectories(["organizations"]);
+        if (hasRbac("personnel.list.view")) await refreshPersonnel({ keepDetail: true });
+        else { state.personnel = []; state.personnelMeta = { total: 0, page: 1, pageSize: 20, facets: {} }; }
+      }
+      if (["imports","quality","changes"].includes(tab)) {
+        if(tab==='imports') await loadPersonnelDirectories(["organizations"]);
+        state.personnelImportBatches = hasRbac("personnel.import.view") ? await personnelService.imports() : [];
+        if(!hasRbac("personnel.import.view"))state.personnelImportMeta = null;
+      }
+      if (tab === "settings") {
+        await loadPersonnelDirectories(["organizations"]);
+        if (hasRbac("personnel.qualification.manage")) await refreshAuthorizationProjects();
+      }
+      loaded.add(key);
+    }
   }
   if (page === "maintenancePage" && (force || !loaded.has(`maintenance:${state.maintenanceTab}`))) {
     await maintenanceService.load();
@@ -4192,13 +4226,30 @@ function renderActivePage() {
   }
 }
 
+let personnelLoading = false, personnelLoadError = "", personnelLoadSequence = 0;
 async function renderAll(options = {}) {
   if (!isLoggedIn()) {
     renderShell();
     return;
   }
   clearAllDeferredReclassify();
-  await loadActivePageData(options);
+  const personnelPage = state.activePage === "personnelPage";
+  const sequence = ++personnelLoadSequence;
+  if (personnelPage) {
+    // Show the destination immediately; unrelated management data must not gate capability mounting.
+    personnelLoading = personnelArea === "master";
+    personnelLoadError = "";
+    renderActivePage();
+  }
+  try { await loadActivePageData(options); }
+  catch (error) {
+    if (!personnelPage) throw error;
+    if (sequence !== personnelLoadSequence) return;
+    if (isAuthExpired(error)) { await handleAuthExpired("登录状态已失效，请重新登录。"); return; }
+    personnelLoadError = error.message || "主数据加载失败";
+  }
+  if (sequence !== personnelLoadSequence) return;
+  personnelLoading = false;
   syncPeopleScopedState();
   renderActivePage();
   startMaintenanceSync();
@@ -5550,7 +5601,7 @@ async function openMaintenanceSubtaskDialog(flight, subtask = {}) {
 
 async function openMaintenanceDispatchDialog(ownerType, ownerId) {
   ensureMaintenanceDialogs();
-  await loadPersonnelDirectories();
+  await loadPersonnelDirectories(["maintenance_dispatch"]);
   const flight = ownerType === "flight" ? findMaintenanceFlight(ownerId) : findMaintenanceSubtask(ownerId).flight;
   const item = ownerType === "flight" ? flight : findMaintenanceSubtask(ownerId).subtask;
   if (!flight || !item) return;
@@ -7845,6 +7896,12 @@ document.addEventListener("toggle", event => {
 }, true);
 
 document.addEventListener("click", async event => {
+  if (event.target.closest("[data-personnel-retry]")) { await renderAll(); return; }
+  const importPage = event.target.closest("[data-import-history-page]");
+  if (importPage) {
+    state.personnelImportPage = Number(importPage.dataset.importHistoryPage);
+    await renderAll(); return;
+  }
   const personnelTab = event.target.closest("[data-personnel-tab]");
   if (personnelTab) {
     invalidatePersonnelSearch();
@@ -7852,8 +7909,7 @@ document.addEventListener("click", async event => {
     state.activePersonnelDetail = null;
     state.expandedAuthorizationCategory = "";
     resetPersonnelQualifications();
-    if (state.personnelTab === "settings") await refreshAuthorizationProjects();
-    renderPersonnelPage();
+    await renderAll({force:false});
     return;
   }
   const settingsTab = event.target.closest("[data-settings-tab]");
@@ -8092,7 +8148,7 @@ document.addEventListener("click", async event => {
   if (event.target.id === "settingsBatchImportBtn") importBatchRecords();
   if (event.target.id === "openUserCreateBtn") {
     try {
-      await loadPersonnelDirectories();
+      await loadPersonnelDirectories(["accounts"]);
       openUserDialog();
     } catch (error) {
       alert(error.message);

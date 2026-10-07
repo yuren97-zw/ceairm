@@ -9,6 +9,7 @@ import { requestQueryStats } from "../db.mjs";
 import { seedCapabilityFixture } from "../scripts/capability-fixture.mjs";
 import { createPersonnelAccess } from "../personnel-access.mjs";
 import { createCapabilityService } from "../capability-service.mjs";
+import { importHistoryContext } from "../personnel-import-history.mjs";
 
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ceairm-test-"));
 process.env.MUC_NO_LISTEN = "1";
@@ -1572,6 +1573,59 @@ test("login and current session expose only the linked person's own position and
   assert.equal(unlinkedLogin.payload.user.position, "");
   assert.equal(unlinkedLogin.payload.user.actualGrade, "");
   assert.equal(unlinkedLogin.payload.user.actualGradeMasked, false);
+});
+
+test("import history batches permission lookups and paginates only visible results", async () => {
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}});
+  const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const template=db.prepare('select * from personnel where employee_no=?').get('54002010');
+  assert.ok(template);
+  const access=createPersonnelAccess({db,hasRbac:()=>true,randomId:()=>'',now:()=>new Date().toISOString(),audit:()=>{},superAccountId:'54002010'});
+  const rows=Array.from({length:1000},()=>({'工号':template.employee_no}));
+  const batches=[{id:'budget',rows_json:JSON.stringify(rows)}];
+  for(const actor of [{id:'54002010'}, {id:'scoped',personId:template.id,dataScopes:[{module:'personnel',scopeType:'self'}]}, {id:'expired',personId:template.id,dataScopes:[{module:'personnel',scopeType:'all',validTo:'2000-01-01T00:00:00Z'}]}]) {
+    const stats={count:0,totalMs:0,slowCount:0};
+    const context=requestQueryStats.run(stats,()=>importHistoryContext(db,access,actor,batches,row=>row['工号']));
+    assert.ok(stats.count<=3,`1000 repeated import rows used ${stats.count} queries`);
+    assert.equal(context.allowed.has(template.id),access.allows(actor,'personnel',template.id));
+    assert.equal(context.rows.get('budget').length,1000);
+  }
+  db.exec('begin immediate');
+  try {
+    db.prepare('delete from personnel_import_batches').run();
+    for(let i=0;i<3;i++)db.prepare('insert into personnel_import_batches(id,import_type,file_name,file_hash,status,rows_json,summary_json,created_by,created_by_name,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)').run(`history-${i}`,'personnel',`test${i}.xlsx`,'hash','pending',JSON.stringify(rows),JSON.stringify({total:1000,errors:i}),'54002010','测试','2026-10-07T00:00:00Z','2026-10-07T00:00:00Z');
+    const first=await request('/api/personnel/imports?page=1&pageSize=2',{cookie});
+    const second=await request('/api/personnel/imports?page=2&pageSize=2',{cookie});
+    assert.equal(first.res.statusCode,200);
+    assert.equal(first.payload.total,3);assert.equal(first.payload.batches.length,2);
+    assert.equal(second.payload.batches.length,1);
+    assert.equal(new Set([...first.payload.batches,...second.payload.batches].map(b=>b.id)).size,3);
+    assert.deepEqual(first.payload.summary,{pending:3,errors:3});
+    assert.ok(first.payload.batches.every(b=>!('rows_json' in b)));
+    assert.equal((await request('/api/personnel/imports')).res.statusCode,401);
+    const account=createMaintenanceTestAccount(db.prepare('select * from users where id=?').get('54002010'),{id:'import-history-viewer',name:'导入范围测试'});
+    const role={...db.prepare('select * from rbac_roles where code=?').get('manager'),id:'import-history-role',code:'import-history-test-role',system_role:0};
+    db.prepare(`insert into rbac_roles(${Object.keys(role).join(',')}) values(${Object.keys(role).map(()=>'?').join(',')})`).run(...Object.values(role));
+    for(const code of ['personnel.import.view','personnel.qualification.view']) {
+      const permission=db.prepare('select id from rbac_permissions where code=?').get(code);
+      db.prepare('insert into rbac_role_permissions(role_id,permission_id) values(?,?)').run(role.id,permission.id);
+    }
+    db.prepare('insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)').run(account.id,role.id,new Date().toISOString());
+    db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,'self','','','',?,?)").run('import-history-scope',account.id,'personnel',new Date().toISOString(),new Date().toISOString());
+    const ownNumber=db.prepare('select employee_no from personnel where id=?').get(account.personId).employee_no;
+    const add=(id,type,items,creator=account.id)=>db.prepare('insert into personnel_import_batches(id,import_type,file_name,file_hash,status,rows_json,summary_json,created_by,created_by_name,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)').run(id,type,`${id}.xlsx`,'hash','pending',JSON.stringify(items),'{}',creator,'测试','2026-10-07T00:00:00Z','2026-10-07T00:00:00Z');
+    add('visible-own','personnel',[{'工号':ownNumber}]);
+    add('hidden-sensitive','personnel',[{'工号':ownNumber,'实际岗级':'private'}]);
+    add('visible-qualification','authorization',[{'工号':ownNumber}]);
+    add('visible-unknown-own','personnel',[{'工号':'unknown-number'}]);
+    add('hidden-unknown-other','personnel',[{'工号':'unknown-number'}],'54002010');
+    const actorLogin=await request('/api/login',{method:'POST',body:{username:account.username,password:'muc2026'}});
+    const actorCookie=String(actorLogin.res.headers['Set-Cookie']).split(';')[0];
+    const scoped=await request('/api/personnel/imports',{cookie:actorCookie});
+    assert.equal(scoped.res.statusCode,200);
+    assert.deepEqual(scoped.payload.batches.map(b=>b.id).sort(),['visible-own','visible-qualification','visible-unknown-own'].sort());
+    assert.equal(scoped.payload.total,3);
+  } finally {db.exec('rollback');}
 });
 
 test("capability reads batch states and scopes with a bounded query count and unchanged scope semantics", async () => {
