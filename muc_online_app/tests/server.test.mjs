@@ -20,7 +20,7 @@ process.env.COS_SECRET_KEY = "test-secret-key";
 process.env.COS_BUCKET = "test-bucket-1234567890";
 process.env.COS_REGION = "ap-shanghai";
 
-const { measuredRoute, parseRangeHeader, cosSignedUrl, attachmentDisposition, db, capabilityService } = await import("../server.mjs");
+const { measuredRoute, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, db, capabilityService } = await import("../server.mjs");
 
 class MockResponse extends EventEmitter {
   headers = {};
@@ -489,6 +489,31 @@ test("range requests are parsed safely", () => {
   assert.deepEqual(parseRangeHeader("bytes=10-19", 100), { start: 10, end: 19 });
   assert.deepEqual(parseRangeHeader("bytes=-10", 100), { start: 90, end: 99 });
   assert.equal(parseRangeHeader("bytes=100-120", 100), null);
+});
+
+test("COS upload verification distinguishes authorization, missing objects, service failures and size mismatches", async () => {
+  const response = (status, length = "12") => new Response(null, { status, headers: { "content-length": length, "x-cos-request-id": "cos-test-request" } });
+  const check = (status, length) => verifyCosUploadedAttachment("attachments/record/test/att-test-中文.xlsx", 12, async (url, options) => {
+    assert.equal(options.method, "HEAD");
+    assert.ok(options.signal);
+    assert.match(new URL(url).pathname, /attachments\/record\/test/);
+    return response(status, length);
+  });
+  assert.deepEqual(await check(200), { ok: true });
+  const forbidden = await check(403);
+  assert.equal(forbidden.status, 502);
+  assert.equal(forbidden.code, "COS_UPLOAD_CHECK_FORBIDDEN");
+  assert.match(forbidden.error, /HeadObject/);
+  assert.ok(!forbidden.error.includes("未找到"));
+  assert.equal(forbidden.requestId, "cos-test-request");
+  const missing = await check(404);
+  assert.equal(missing.status, 409);
+  assert.equal(missing.code, "COS_UPLOAD_OBJECT_NOT_FOUND");
+  assert.equal((await check(500)).code, "COS_UPLOAD_CHECK_FAILED");
+  assert.equal((await check(200, "11")).code, "COS_UPLOAD_SIZE_MISMATCH");
+  const unavailable = await verifyCosUploadedAttachment("test", 12, async () => { throw new Error("secret-bearing network error"); });
+  assert.equal(unavailable.code, "COS_UPLOAD_CHECK_UNAVAILABLE");
+  assert.ok(!JSON.stringify(unavailable).includes("secret-bearing"));
 });
 
 test("COS download signature includes response metadata", () => {

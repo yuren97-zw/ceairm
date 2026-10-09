@@ -5771,6 +5771,26 @@ async function createCosUpload(req, res, ownerType, ownerId) {
   });
 }
 
+async function verifyCosUploadedAttachment(objectKey, size, fetchImpl = fetch) {
+  let head;
+  try {
+    head = await fetchImpl(cosSignedUrl("HEAD", objectKey, 300), {
+      method: "HEAD", signal: AbortSignal.timeout(15000)
+    });
+  } catch {
+    return { ok: false, status: 502, code: "COS_UPLOAD_CHECK_UNAVAILABLE", error: "COS 附件校验暂时无法连接，请稍后重试" };
+  }
+  const requestId = head.headers.get("x-cos-request-id") || "";
+  if (!head.ok) {
+    if (head.status === 404) return { ok: false, status: 409, cosStatus: head.status, requestId, code: "COS_UPLOAD_OBJECT_NOT_FOUND", error: "COS 中未找到已上传附件，请重新上传" };
+    if (head.status === 403) return { ok: false, status: 502, cosStatus: head.status, requestId, code: "COS_UPLOAD_CHECK_FORBIDDEN", error: "COS 附件校验被拒绝，请管理员检查存储账号的 HeadObject 权限或签名配置" };
+    return { ok: false, status: 502, cosStatus: head.status, requestId, code: "COS_UPLOAD_CHECK_FAILED", error: "COS 附件校验失败，请稍后重试" };
+  }
+  const actualSize = Number(head.headers.get("content-length") || 0);
+  if (actualSize && actualSize !== size) return { ok: false, status: 409, requestId, code: "COS_UPLOAD_SIZE_MISMATCH", error: "附件大小校验失败" };
+  return { ok: true };
+}
+
 async function completeCosUpload(req, res, ownerType, ownerId) {
   if (!cosEnabled()) return send(res, 409, { error: "COS 直传未配置" });
   const user = requireAttachmentOwnerAccess(req, res, ownerType, ownerId);
@@ -5784,10 +5804,11 @@ async function completeCosUpload(req, res, ownerType, ownerId) {
   if (!attachmentId || !objectKey.startsWith(expectedPrefix)) return send(res, 400, { error: "附件上传凭据无效" });
   validateUploadName(name);
   if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return send(res, 400, { error: "附件大小无效" });
-  const head = await fetch(cosSignedUrl("HEAD", objectKey, 300), { method: "HEAD" });
-  if (!head.ok) return send(res, 409, { error: "COS 中未找到已上传附件" });
-  const actualSize = Number(head.headers.get("content-length") || 0);
-  if (actualSize && actualSize !== size) return send(res, 409, { error: "附件大小校验失败" });
+  const check = await verifyCosUploadedAttachment(objectKey, size);
+  if (!check.ok) {
+    console.warn(JSON.stringify({ event: "cos_upload_check_failed", attachmentId, code: check.code, cosStatus: check.cosStatus, requestId: check.requestId }));
+    return send(res, check.status, { error: check.error, code: check.code, requestId: check.requestId || "" });
+  }
   if (attachmentRow(attachmentId)) return send(res, 409, { error: "附件已登记" });
   db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)")
     .run(attachmentId, ownerType, ownerId, name, String(payload.type || "application/octet-stream"), size, "cos", objectKey, user.id, now());
@@ -8477,4 +8498,4 @@ if (process.env.MUC_NO_LISTEN !== "1") {
   });
 }
 
-export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };
+export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };

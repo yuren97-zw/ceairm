@@ -1,0 +1,17 @@
+{
+  "statement": [
+    {
+      "action": [
+        "name/cos:GetObject",
+        "name/cos:HeadObject",
+        "name/cos:PutObject",
+        "name/cos:DeleteObject"
+      ],
+      "effect": "allow",
+      "resource": [
+        "qcs::cos:ap-beijing:uid/1449362740:ceairm-production-1449362740/*"
+      ]
+    }
+  ],
+  "version": "2.0"
+}
