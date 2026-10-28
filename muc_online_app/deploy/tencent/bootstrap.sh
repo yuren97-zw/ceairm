@@ -18,8 +18,13 @@ fi
 
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_ROOT" --shell /usr/sbin/nologin "$APP_USER"
 install -d -o "$APP_USER" -g "$APP_USER" -m 0750 \
-  "$APP_ROOT/app" "$APP_ROOT/releases" "$APP_ROOT/shared" "$APP_ROOT/scripts" \
+  "$APP_ROOT/app" "$APP_ROOT/releases" "$APP_ROOT/scripts" \
   "$APP_ROOT/backups" "$APP_ROOT/logs" /var/log/airline-operations-center
+install -d -o root -g root -m 0755 "$APP_ROOT/shared"
+if [[ -f "$APP_ROOT/shared/.env" ]]; then
+  chown root:root "$APP_ROOT/shared/.env"
+  chmod 0600 "$APP_ROOT/shared/.env"
+fi
 
 sudo -u postgres psql --set ON_ERROR_STOP=1 --set app_password="$POSTGRES_APP_PASSWORD" <<'SQL'
 DO $do$

@@ -25,6 +25,7 @@ import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import {safeAttachmentMime,isInlineSafeName,validateUploadContent} from './attachment-policy.mjs';
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
@@ -5227,6 +5228,7 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
     for (const id of deletedIds) {
       const subtask = db.prepare("select * from maintenance_subtasks where id=? and flight_id=?").get(id, flightId);
       if (!subtask) throw maintenanceDispatchError("待删除的非例行项目已变化，请刷新后重试");
+      if(subtask.status==='已确认'||db.prepare("select 1 from maintenance_hour_results where owner_type='subtask' and owner_id=? and status='已确认' limit 1").get(id))throw maintenanceDispatchError('已确认的非例行项目不能通过报工确认删除');
       deleteMaintenanceSubtaskForReport(subtask, user);
     }
 
@@ -5759,6 +5761,11 @@ async function receiveMultipartUploads(req, ownerType = 'fixedProject') {
     await closeUploadStream(current.stream);
     delete current.stream;
     if (!current.size) throw uploadHttpError(400, "空文件不能上传");
+    const head=Buffer.alloc(Math.min(current.size,512));
+    const handle=await fs.open(current.fullPath,'r');
+    try{await handle.read(head,0,head.length,0);}finally{await handle.close();}
+    validateUploadContent(current.name,head);
+    current.type=safeAttachmentMime(current.name);
     saved.push(current);
     current = null;
   };
@@ -5865,21 +5872,11 @@ function validateUpload(file) {
 }
 
 function contentTypeForAttachment(row) {
-  const ext = attachmentExt(row?.name || row?.path);
-  if (BLOCKED_ATTACHMENT_EXTS.has(ext)) return "application/octet-stream";
-  return row?.type || "application/octet-stream";
+  return safeAttachmentMime(row?.name || row?.path);
 }
 
 function isInlineSafeAttachment(row) {
-  const ext = attachmentExt(row?.name || row?.path);
-  if (BLOCKED_ATTACHMENT_EXTS.has(ext)) return false;
-  const type = String(row?.type || "").toLowerCase();
-  return type.startsWith("image/")
-    || type.startsWith("video/")
-    || type.startsWith("audio/")
-    || type === "application/pdf"
-    || type.startsWith("text/")
-    || ["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "mp4", "mov", "m4v", "webm", "mp3", "wav", "m4a", "aac"].includes(ext);
+  return isInlineSafeName(row?.name || row?.path);
 }
 
 function attachmentDisposition(row, download = false) {
@@ -6041,7 +6038,7 @@ async function createCosUpload(req, res, ownerType, ownerId) {
     objectKey,
     uploadUrl: cosSignedUrl("PUT", objectKey, 600),
     expiresIn: 600,
-    headers: { "Content-Type": String(payload.type || "application/octet-stream") }
+    headers: { "Content-Type": safeAttachmentMime(name) }
   });
 }
 
@@ -6087,7 +6084,7 @@ async function completeCosUpload(req, res, ownerType, ownerId) {
   if (attachmentRow(attachmentId)) return send(res, 409, { error: "附件已登记" });
   if(!canManageAttachmentCheck(currentUser(req),{owner_type:ownerType,owner_id:ownerId}).ok)return send(res,403,{error:'当前权限或范围已变化，上传未生效'});
   db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)")
-    .run(attachmentId, ownerType, ownerId, name, String(payload.type || "application/octet-stream"), size, "cos", objectKey, user.id, now());
+    .run(attachmentId, ownerType, ownerId, name, safeAttachmentMime(name), size, "cos", objectKey, user.id, now());
   audit(user, "upload_attachment", ownerType, ownerId, `${name}(${size}B):COS`);
   return send(res, 201, { attachment: attachments(ownerType, ownerId).find(item => item.id === attachmentId) });
 }
@@ -8245,6 +8242,7 @@ async function routeRequest(req, res) {
       const hour = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
       maintenanceTransaction(()=>{
       personnelAccess.requirePerson(manager,"maintenance",hour?.person_id);
+      if(hour.status!=='待复核')throw maintenanceReviewError('工时尚未进入待复核或已经确认，不能直接确认',409);
       db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), hourId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), hourId);
       if (hour) syncMaintenanceOwnerConfirmation(hour.owner_type, hour.owner_id, manager.id);
@@ -8261,6 +8259,7 @@ async function routeRequest(req, res) {
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const hours = ids.length ? db.prepare(`select * from maintenance_hour_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
       if(hours.length!==ids.length || hours.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"工时不存在或超出范围"});
+      if(hours.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选工时包含未完成报工确认或已确认记录，请刷新后重试'});
       maintenanceTransaction(()=>{
       ids.forEach(id => db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), id));
       ids.forEach(id => db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), id));
@@ -8281,6 +8280,7 @@ async function routeRequest(req, res) {
       if (!sortie) return send(res, 404, { error: "未找到放行架次记录" });
       maintenanceTransaction(()=>{
       personnelAccess.requirePerson(manager,"maintenance",sortie.person_id);
+      if(sortie.status!=='待复核')throw maintenanceReviewError('架次尚未进入待复核或已经确认，不能直接确认',409);
       db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortieId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
       syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
@@ -8297,6 +8297,7 @@ async function routeRequest(req, res) {
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const sorties = ids.length ? db.prepare(`select * from maintenance_sortie_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
       if(sorties.length!==ids.length || sorties.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"架次不存在或超出范围"});
+      if(sorties.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选架次包含未完成报工确认或已确认记录，请刷新后重试'});
       maintenanceTransaction(()=>{
       for (const sortie of sorties) {
         db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortie.id);

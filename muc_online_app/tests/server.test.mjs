@@ -36,7 +36,7 @@ test('dispatch import previews without writes, commits partial successes and rep
   const rows=[{date:'2026-10-09',workKind:'短停',flightNo:'MU-IMP-IN/MU-IMP-OUT',releaseNames:release.name,mechanicNames:mechanic.name},{date:'2026-10-09',workKind:'航后',flightNo:'NOT-FOUND',releaseNames:release.name,mechanicNames:mechanic.name}];
   const preview=await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie,body:{rows}});
   assert.equal(preview.res.statusCode,200,JSON.stringify(preview.payload));assert.equal(preview.payload.success,1);assert.equal(preview.payload.failed,1);
-  assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n,0);
+  assert.equal(Number(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n),0);
   rows.forEach((row,i)=>Object.assign(row,{matchedFlightId:preview.payload.results[i].flightId,expectedUpdatedAt:preview.payload.results[i].expectedUpdatedAt}));
   const body={requestId:'test_import_batch_001',rows};
   const committed=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body});
@@ -46,7 +46,7 @@ test('dispatch import previews without writes, commits partial successes and rep
   assert.deepEqual(assignments.filter(a=>a.person_id===release.personId).map(a=>a.role).sort(),['放行','例行检查','接机','送机'].sort());
   assert.deepEqual(assignments.filter(a=>a.person_id===mechanic.personId).map(a=>a.role).sort(),['接机','送机'].sort());
   const replay=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body});assert.equal(replay.payload.success,1);
-  assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n,6);
+  assert.equal(Number(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n),6);
   const again=await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie,body:{rows}});assert.equal(again.payload.success,0);
   const create=async(number,kind='航后',aircraft='BIMP2')=>(await request('/api/maintenance/flights',{method:'POST',cookie,body:{date:'2026-10-09',flightNo:kind==='航前'?'':number,departureFlightNo:kind==='航前'?number:'',aircraftNo:aircraft,aircraftType:'A320',workKind:kind}})).payload.flight;
   const pre=await create('MU-IMP-PRE','航前');
@@ -57,7 +57,7 @@ test('dispatch import previews without writes, commits partial successes and rep
   const stalePreview=await check([preRow]);assert.equal(stalePreview.success,1);
   db.prepare('update maintenance_flights set updated_at=? where id=?').run('2099-01-01T00:00:00Z',pre.id);
   const stale=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body:{requestId:'test_import_stale_001',rows:[{...preRow,matchedFlightId:pre.id,expectedUpdatedAt:stalePreview.results[0].expectedUpdatedAt}]}});
-  assert.equal(stale.payload.failed,1);assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(pre.id).n,0);
+  assert.equal(stale.payload.failed,1);assert.equal(Number(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(pre.id).n),0);
   await create('MU-IMP-AMB','航后','BAMB1');await create('MU-IMP-AMB','航后','BAMB2');
   const ambiguous=await check([{...preRow,workKind:'航后',flightNo:'/MU-IMP-AMB'}]);assert.match(ambiguous.results[0].error,/多个/);
   const workerLogin=await request('/api/login',{method:'POST',body:{username:mechanic.username,password:'muc2026'}});
@@ -68,7 +68,7 @@ test('dispatch import previews without writes, commits partial successes and rep
   const postAssignments=db.prepare('select person_id,role from maintenance_assignments where flight_id=?').all(post.id);
   assert.deepEqual(postAssignments.filter(a=>a.person_id===release.personId).map(a=>a.role).sort(),['放行','例行机外','例行发动机','例行L/G','接机'].sort());assert.equal(postAssignments.filter(a=>a.person_id===mechanic.personId).length,4);
   const flightDry=await request('/api/maintenance/flights/import',{method:'POST',cookie,body:{validateOnly:true,rows:[{date:'2026-10-09',flightNo:'MU-DRY',aircraftNo:'BDRY',aircraftType:'A320',workKind:'航后'}]}});
-  assert.equal(flightDry.res.statusCode,200);assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-DRY'").get().n,0);
+  assert.equal(flightDry.res.statusCode,200);assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-DRY'").get().n),0);
 });
 // Explicit test-only configuration; production must not infer aircraft groups.
 db.prepare("insert into settings(key,value,updated_at) values(?,?,?)").run("maintenance_aircraft_hours_v1", JSON.stringify({ version: 1, groups: [{ id: "test-models", name: "测试机型组", codes: ["A319", "A320", "A321", "A330", "B737", "B787"], enabled: true, hours: Object.fromEntries(db.prepare("select name,value from maintenance_hour_rules where rule_type='workType'").all().map(row => [row.name, row.value])) }] }), new Date().toISOString());
@@ -612,7 +612,8 @@ test('200 scoped accounts and 500 historical records use bounded incremental que
     for(let n=0;n<500;n++){
       const id=`info-history-${n}`;
       db.prepare("insert into records(id,date,publisher,category,title,original,created_by,updated_by,created_at,updated_at,publisher_id) values(?,'2026-10-09','test','其他',?,'test','54002010','54002010',?,?,'54002010')").run(id,id,stamp,stamp);
-      for(const person of people)db.prepare('insert into record_recipients(record_id,user_id,person_id,name,department,team) values(?,?,?,?,?,?)').run(id,person.id,person.personId,person.name,'test','test');
+      // Preserve the 100,000-row workload without 100,000 client/worker round trips on PostgreSQL.
+      db.prepare('insert into record_recipients(record_id,user_id,person_id,name,department,team) values '+people.map(()=>'(?,?,?,?,?,?)').join(',')).run(...people.flatMap(person=>[id,person.id,person.personId,person.name,'test','test']));
     }
   }catch(error){db.exec('rollback');transactionOpen=false;throw error;}
   const snapshots=[],loadStarted=performance.now();
@@ -738,6 +739,32 @@ test('PPTX local upload and COS signing retain limits and block legacy and macro
   const row = db.prepare('select * from attachments where id=?').get(attachment.id);
   assert.deepEqual(await fs.readFile(path.join(process.env.UPLOAD_DIR, row.path)), bytes);
   assert.match(attachmentDisposition(row, true), /^attachment;/);
+});
+
+test('integration retains hostile-MIME and contradictory-extension upload protection',async()=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const created=await request('/api/records',{method:'POST',cookie,body:{date:'2026-10-28',title:'隔离附件安全测试',original:'test',category:'其他',allInScope:true}});
+  assert.equal(created.res.statusCode,201);
+  const upload=async(name,type,bytes)=>{
+    const boundary='integration-attachment-security',data=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${type}\r\n\r\n`),bytes,Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    const req=Readable.from([data]);req.method='POST';req.url=`/api/records/${created.payload.record.id}/attachments`;req.headers={host:'127.0.0.1:8788',origin:'http://127.0.0.1:8788',cookie,'content-type':`multipart/form-data; boundary=${boundary}`,'content-length':String(data.length)};
+    const res=new MockResponse();await measuredRoute(req,res);return {status:res.statusCode,payload:JSON.parse(res.body)};
+  };
+  assert.equal((await upload('fake.png','image/png',Buffer.from('<html>not a PNG</html>'))).status,415);
+  const text=await upload('note.txt','text/html',Buffer.from('<script>test-only</script>'));assert.equal(text.status,201);
+  const row=db.prepare('select * from attachments where id=?').get(text.payload.attachments[0].id);assert.match(row.type,/^text\/plain/);
+});
+
+test('integration rejects legacy direct confirmation of unfinalized hours atomically',async()=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const user=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'integration-state-guard',name:'确认保护测试'}),stamp=new Date().toISOString();
+  const insert=db.prepare("insert into maintenance_hour_results(id,owner_type,owner_id,assignment_id,person_id,user_name,hours,status,created_at,updated_at) values(?,'flight','integration-owner',?,?,?,1,?,?,?)");
+  insert.run('integration-pending','integration-assignment-1',user.personId,user.name,'待复核',stamp,stamp);
+  insert.run('integration-unfinalized','integration-assignment-2',user.personId,user.name,'已提报',stamp,stamp);
+  assert.equal((await request('/api/maintenance/hours/integration-unfinalized/confirm',{method:'POST',cookie,body:{}})).res.statusCode,409);
+  assert.equal((await request('/api/maintenance/hours/confirm-batch',{method:'POST',cookie,body:{ids:['integration-pending','integration-unfinalized']}})).res.statusCode,409);
+  assert.equal(db.prepare("select status from maintenance_hour_results where id='integration-pending'").get().status,'待复核');
+  assert.equal(db.prepare("select status from maintenance_hour_results where id='integration-unfinalized'").get().status,'已提报');
 });
 
 test("health endpoint reports version and protected APIs require login", async () => {
@@ -1070,7 +1097,7 @@ test('flight plan preview counts unique opportunities, lists original error rows
  const errors=await call({validateOnly:true,rows:[{...base,rowNumber:14,date:'bad'},{...base,rowNumber:20,locationName:'不存在地点'}]});
  assert.equal(errors.payload.valid,false);assert.deepEqual(errors.payload.errors.map(e=>e.rowNumber),[14,20]);assert.equal(errors.payload.summary.abnormal,2);
  const rejected=await call({rows:[rows[2],{...base,rowNumber:20,date:'bad'}]});assert.equal(rejected.res.statusCode,400);
- assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-NEW-SUM'").get().n,0);
+ assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-NEW-SUM'").get().n),0);
  const done=await call({rows});assert.equal(done.res.statusCode,200);assert.equal(done.payload.created,1);assert.equal(done.payload.summary.updated,1);
  assert.deepEqual(db.prepare('select * from maintenance_assignments where flight_id=?').all(id),assignmentsBefore);
  assert.equal(db.prepare('select status from maintenance_flights where id=?').get(id).status,'已派工');
@@ -1129,18 +1156,18 @@ test("additional work import requires chapters, skips duplicate projects and rol
   const fresh={...rows[0],chapter:'28',title:'新项目',rowNumber:9};
   const freshPreview=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[fresh,fresh]}});
   assert.deepEqual(freshPreview.payload.summary,{total:2,matched:2,created:1,skipped:1,abnormal:0});
-  assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n,4);
+  assert.equal(Number(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n),4);
   const freshCommit=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[fresh,fresh]}});
   assert.equal(freshCommit.payload.created,1);assert.equal(freshCommit.payload.skipped,1);
   const mismatch=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...fresh,standardHours:2}]}});
   assert.equal(mismatch.res.statusCode,400);assert.equal(mismatch.payload.errors[0].rowNumber,9);assert.match(mismatch.payload.errors[0].detail,/工时不一致/);
   const fileMismatch=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...fresh,title:'同批冲突'},{...fresh,title:'同批冲突',standardHours:2}]}});
-  assert.equal(fileMismatch.res.statusCode,400);assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n,5);
+  assert.equal(fileMismatch.res.statusCode,400);assert.equal(Number(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n),5);
   const rowErrors=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[{...fresh,date:'bad',rowNumber:7},{...fresh,chapter:'',rowNumber:12}]}});
   assert.deepEqual(rowErrors.payload.errors.map(r=>r.rowNumber),[7,12]);assert.equal(rowErrors.payload.valid,false);
   const secondFlight=await request('/api/maintenance/flights',{method:'POST',cookie,body:{...flightPayload,aircraftNo:'B-ADD2'}});
   const independent=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...rows[0],aircraftNo:'B-ADD2'}]}});
-  assert.equal(independent.payload.created,1);assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(secondFlight.payload.flight.id).n,1);
+  assert.equal(independent.payload.created,1);assert.equal(Number(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(secondFlight.payload.flight.id).n),1);
 
   const atomic = await request("/api/maintenance/subtasks/import", {
     method: "POST", cookie, body: { rows: [
@@ -2169,10 +2196,10 @@ test("work locations default to Qingdao, separate import identities and reject i
   const base = { date: "2099-11-16", flightNo: "MU-LOC-TEST", aircraftNo: "B-LOC-TEST", workKind: "航后" };
   const invalid = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [base, { ...base, locationName: "拼错地点" }] } });
   assert.equal(invalid.res.statusCode, 400);
-  assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n, 0);
+  assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n), 0);
   const invalidChoice = await request("/api/maintenance/flights", { method: "POST", cookie, body: { ...base, locationId: "", locationName: "拼错地点" } });
   assert.equal(invalidChoice.res.statusCode, 400);
-  assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n, 0);
+  assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n), 0);
   const imported = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [base, { ...base, locationName: "延吉" }] } });
   assert.equal(imported.res.statusCode, 200);
   assert.equal(imported.payload.created, 2);
@@ -2184,7 +2211,7 @@ test("work locations default to Qingdao, separate import identities and reject i
   const repeat=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...additional,locationName:'延吉'}]}});
   assert.equal(repeat.payload.created,0);assert.equal(repeat.payload.skipped,1);
   const atLocations=db.prepare('select f.location_id,count(s.id) as n from maintenance_flights f join maintenance_subtasks s on s.flight_id=f.id where f.flight_no=? group by f.location_id').all(base.flightNo);
-  assert.equal(atLocations.length,2);assert.ok(atLocations.every(row=>row.n===1));
+  assert.equal(atLocations.length,2);assert.ok(atLocations.every(row=>Number(row.n)===1));
   const filtered = await request(`/api/maintenance/flights?scope=dispatch&dateFrom=${base.date}&dateTo=${base.date}&locationId=${encodeURIComponent(yanji.id)}&view=summary`, { cookie });
   assert.equal(filtered.payload.flights.length, 1);
   assert.equal(filtered.payload.flights[0].locationName, "延吉");
@@ -2243,7 +2270,7 @@ test("pure routine auto confirmation shares finalization, exclusions, rollback a
     assert.equal(final.payload.flight.reportFinalizationMode, "automatic");
     assert.equal(final.payload.flight.reportFinalizedBy, "");
     assert.equal(final.payload.flight.archivedAt, "");
-    assert.equal(db.prepare("select count(*) as n from maintenance_logs where flight_id=? and action='report_auto_finalize'").get(id).n, 1);
+    assert.equal(Number(db.prepare("select count(*) as n from maintenance_logs where flight_id=? and action='report_auto_finalize'").get(id).n), 1);
     assert.ok(db.prepare("select status from maintenance_report_batches where flight_id=?").all(id).every(row => row.status === "待复核"));
     assert.ok(db.prepare("select status from maintenance_hour_results where flight_id=?").all(id).every(row => row.status === "待复核"));
     assert.equal((await submit(id, "routine", { expectedUpdatedAt: stale })).res.statusCode, 409);
@@ -2295,7 +2322,7 @@ test("pure routine auto confirmation shares finalization, exclusions, rollback a
     .run(`draft-${drafted}`, drafted, JSON.stringify({ items: [{ title: "待录入工作" }] }), new Date().toISOString());
   assert.equal((await submit(drafted, "release")).res.statusCode, 200);
   assert.equal((await submit(drafted, "routine")).payload.flight.status, "已提报");
-  assert.equal(db.prepare("select count(*) as n from maintenance_report_drafts where flight_id=?").get(drafted).n, 1);
+  assert.equal(Number(db.prepare("select count(*) as n from maintenance_report_drafts where flight_id=?").get(drafted).n), 1);
 
   const broken = await create();
   assert.equal((await submit(broken, "routine")).res.statusCode, 200);
@@ -2303,8 +2330,8 @@ test("pure routine auto confirmation shares finalization, exclusions, rollback a
   try {
     const release = await submit(broken, "release");
     assert.ok(release.res.statusCode >= 400, JSON.stringify(release.payload));
-    assert.equal(db.prepare("select count(*) as n from maintenance_report_batches where flight_id=? and report_type='release'").get(broken).n, 0);
-    assert.equal(db.prepare("select count(*) as n from maintenance_sortie_results where flight_id=?").get(broken).n, 0);
+    assert.equal(Number(db.prepare("select count(*) as n from maintenance_report_batches where flight_id=? and report_type='release'").get(broken).n), 0);
+    assert.equal(Number(db.prepare("select count(*) as n from maintenance_sortie_results where flight_id=?").get(broken).n), 0);
     assert.equal(db.prepare("select report_finalized_at from maintenance_flights where id=?").get(broken).report_finalized_at || "", "");
   } finally { db.prepare("update personnel set employment_status='在职' where id=?").run(person.personId); }
   const blocked = await create();

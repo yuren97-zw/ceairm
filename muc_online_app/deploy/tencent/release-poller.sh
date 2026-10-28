@@ -14,11 +14,16 @@ exec 9>"$APP_ROOT/deploy-agent.lock"
 flock -n 9 || exit 0
 
 API="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest"
-AUTH=(--header "Authorization: Bearer $GITHUB_TOKEN" --header "X-GitHub-Api-Version: 2022-11-28")
+AUTH_HEADER="$(mktemp)"
+WORK=""
+trap 'rm -rf "${WORK:-}" "${AUTH_HEADER:-}"' EXIT
+printf 'Authorization: Bearer %s\nX-GitHub-Api-Version: 2022-11-28\n' "$GITHUB_TOKEN" > "$AUTH_HEADER"
+chmod 0600 "$AUTH_HEADER"
+AUTH=(--header "@$AUTH_HEADER")
 RELEASE_JSON="$(curl --fail --silent --show-error --location "${AUTH[@]}" "$API")"
 VERSION="$(jq -r '.tag_name // empty' <<<"$RELEASE_JSON")"
 [[ -n "$VERSION" ]] || { echo "Latest approved release has no tag" >&2; exit 1; }
-[[ "$VERSION" == production-* ]] || { echo "Latest release is not an approved production release: $VERSION" >&2; exit 1; }
+[[ "$VERSION" =~ ^production-[A-Za-z0-9._-]+$ ]] || { echo "Latest release is not an approved production release: $VERSION" >&2; exit 1; }
 CURRENT="$(basename "$(readlink -f "$APP_ROOT/app/current" 2>/dev/null || true)")"
 [[ "$CURRENT" == "$VERSION" ]] && exit 0
 
@@ -30,7 +35,6 @@ checksum_url="$(jq -r '.assets[] | select(.name=="airline-operations-center.tar.
 }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 curl --fail --silent --show-error --location "${AUTH[@]}" --header "Accept: application/octet-stream" "$archive_url" -o "$WORK/airline-operations-center.tar.gz"
 curl --fail --silent --show-error --location "${AUTH[@]}" --header "Accept: application/octet-stream" "$checksum_url" -o "$WORK/airline-operations-center.tar.gz.sha256"
 (cd "$WORK" && sha256sum -c airline-operations-center.tar.gz.sha256)

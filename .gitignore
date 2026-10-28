@@ -6,6 +6,11 @@
 muc_online_app/data/
 muc_online_app/uploads/
 muc_online_app/outputs/
+muc_online_app/uploads-*/
+muc_online_app/review-runtime/
+muc_online_app/source-backups/
+.codex-spreadsheet-read/
+work/
 
 # Dependencies and build caches.
 node_modules/

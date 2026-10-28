@@ -1,7 +1,11 @@
-import test from 'node:test';
+import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
 import {inflateRawSync} from 'node:zlib';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+const outputDir=await fs.mkdtemp(path.join(os.tmpdir(),'attendance-export-test-'));
+after(()=>fs.rm(outputDir,{recursive:true,force:true}));
 import {exportTables,exportXlsx,exportHtml} from '../attendance-export.mjs';
 import {classifyDay,monthDates} from '../attendance-rules.mjs';
 export function sample(){
@@ -13,8 +17,8 @@ export function sample(){
 }
 export function unzip(buf){let pos=0;const files={};while(buf.readUInt32LE(pos)===0x04034b50){const length=buf.readUInt32LE(pos+18),nl=buf.readUInt16LE(pos+26),el=buf.readUInt16LE(pos+28),name=buf.subarray(pos+30,pos+30+nl).toString();files[name]=inflateRawSync(buf.subarray(pos+30+nl+el,pos+30+nl+el+length)).toString();pos+=30+nl+el+length;}return files;}
 test('all eleven workbooks preserve totals, actual zeros, missing data and night allowance',()=>{const s=sample(),tables=exportTables(s);assert.equal(tables.length,11);const summary=tables[0][1];assert.equal(summary[1][4],2);assert.equal(tables.find(t=>t[0]==='夜班值班统计表')[1][1].at(-2),50);assert.ok(!JSON.stringify(tables).includes('60分钟次数'));const overtime=tables.find(t=>t[0]==='加班明细')[1];assert.equal(overtime[3][5],null);});
-test('xlsx is complete XML archive, numeric elapsed time exceeds 24h, source text never executes',async()=>{const b=exportXlsx(sample()),files=unzip(b);assert.equal(Object.keys(files).length,16);assert.match(files['xl/styles.xml'],/\[h\]:mm:ss/);assert.match(files['xl/worksheets/sheet1.xml'],/05400001/);assert.match(files['xl/worksheets/sheet1.xml'],/1\.157407/);assert.ok(!files['xl/worksheets/sheet3.xml'].includes('<script>'));assert.ok(!Object.values(files).some(v=>v.includes('<f>')));await fs.writeFile(new URL('../../work/attendance-test.xlsx',import.meta.url),b);});
-test('HTML is self-contained read-only snapshot with escaped embedded data',async()=>{const html=exportHtml(sample());assert.ok(!html.includes('<img onerror=alert(1)>'));assert.ok(html.includes('\\u003c/script>'));assert.ok(!html.includes('<script src='));assert.ok(!html.includes('<link rel='));assert.ok(html.includes('offline:true'));await fs.writeFile(new URL('../../work/attendance-test.html',import.meta.url),html);});
+test('xlsx is complete XML archive, numeric elapsed time exceeds 24h, source text never executes',async()=>{const b=exportXlsx(sample()),files=unzip(b);assert.equal(Object.keys(files).length,16);assert.match(files['xl/styles.xml'],/\[h\]:mm:ss/);assert.match(files['xl/worksheets/sheet1.xml'],/05400001/);assert.match(files['xl/worksheets/sheet1.xml'],/1\.157407/);assert.ok(!files['xl/worksheets/sheet3.xml'].includes('<script>'));assert.ok(!Object.values(files).some(v=>v.includes('<f>')));await fs.writeFile(path.join(outputDir,'attendance-test.xlsx'),b);});
+test('HTML is self-contained read-only snapshot with escaped embedded data',async()=>{const html=exportHtml(sample());assert.ok(!html.includes('<img onerror=alert(1)>'));assert.ok(html.includes('\\u003c/script>'));assert.ok(!html.includes('<script src='));assert.ok(!html.includes('<link rel='));assert.ok(html.includes('offline:true'));await fs.writeFile(path.join(outputDir,'attendance-test.html'),html);});
 test('export keeps all start/end points, summaries and semantic colors with approved leave kept normal',async()=>{
  const {attendanceTone}=await import('../public/attendance-presentation.mjs');const s=sample(),day=s.people[0].days[0];
  day.punchDetails=[{type:'OnDuty',planned:100000,actual:99000,status:'有效打卡',rawStatus:['Normal'],reason:'配对'},{type:'OffDuty',planned:200000,actual:null,status:'缺卡',rawStatus:[],reason:'没有打卡'}];

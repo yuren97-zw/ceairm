@@ -8,7 +8,6 @@ const receiverStatusFilters = ["全部", "未读", "超期", "收藏"];
 const publisherStatusFilters = ["全部", "未读", "超期", "收藏", "我发布"];
 const adminStatusFilters = ["全部", "未读", "超期", "收藏", "我发布", "作废"];
 const LOGIN_STORAGE_KEY = "muc_saved_login_v1";
-const AUTO_LOGIN_SKIP_KEY = "muc_skip_auto_login_once";
 const MAINTENANCE_RULE_GROUPS_STORAGE_KEY = "muc_maintenance_rule_groups_open_v1";
 const SUPER_ACCOUNT_ID = "54002010";
 const scopeModuleLabels={personnel:"人员与能力",accounts:"登录账户管理",info:"信息传达",maintenance:"维修管控",hours:"工时统计",attendance:"考勤管理"};
@@ -193,37 +192,31 @@ function isLoggedIn() {
 
 function savedLogin() {
   try {
-    return JSON.parse(localStorage.getItem(LOGIN_STORAGE_KEY) || "{}");
+    const saved=JSON.parse(localStorage.getItem(LOGIN_STORAGE_KEY)||'{}');
+    const safe={username:typeof saved?.username==='string'?saved.username:'',rememberAccount:!!(saved?.rememberAccount||saved?.rememberPassword)};
+    if(saved?.password!==undefined||saved?.autoLogin!==undefined||saved?.rememberPassword!==undefined)localStorage.setItem(LOGIN_STORAGE_KEY,JSON.stringify(safe));
+    return safe;
   } catch {
     return {};
   }
 }
 
-function persistLoginPreference(username, password, rememberPassword, autoLogin) {
-  if (!rememberPassword) {
+function persistLoginPreference(username, rememberAccount) {
+  if (!rememberAccount) {
     localStorage.removeItem(LOGIN_STORAGE_KEY);
     return;
   }
   localStorage.setItem(LOGIN_STORAGE_KEY, JSON.stringify({
     username,
-    password,
-    rememberPassword: true,
-    autoLogin: !!autoLogin
+    rememberAccount: true
   }));
-}
-
-function clearAutoLoginPreference() {
-  const saved = savedLogin();
-  if (!saved.rememberPassword) return;
-  localStorage.setItem(LOGIN_STORAGE_KEY, JSON.stringify({ ...saved, autoLogin: false }));
 }
 
 function fillLoginForm() {
   const saved = savedLogin();
   $("#loginUser").value = saved.username || "";
-  $("#loginPass").value = saved.rememberPassword ? (saved.password || "") : "";
-  $("#rememberPassword").checked = !!saved.rememberPassword;
-  $("#autoLogin").checked = !!saved.autoLogin && !!saved.rememberPassword;
+  $("#loginPass").value = '';
+  $("#rememberPassword").checked = !!saved.rememberAccount;
 }
 
 function currentRoute() {
@@ -382,12 +375,10 @@ async function submitChangePassword() {
     await authService.changePassword(state.user.username, oldPassword, newPassword);
     const saved = savedLogin();
     if (saved.username === state.user.username) localStorage.removeItem(LOGIN_STORAGE_KEY);
-    sessionStorage.setItem(AUTO_LOGIN_SKIP_KEY, "1");
     $("#changePasswordDialog").close();
     state.user = emptyUser();
     showLoginPage("密码已修改，请使用新密码重新登录。");
     $("#rememberPassword").checked = false;
-    $("#autoLogin").checked = false;
     setLoginBusy(false, "密码已修改，请使用新密码登录。");
   } catch (error) {
     setChangePasswordBusy(false, error.message || "修改失败，请稍后再试。");
@@ -409,14 +400,12 @@ async function performLogin() {
     return;
   }
   const rememberPassword = $("#rememberPassword").checked;
-  const autoLogin = $("#autoLogin").checked;
   setLoginBusy(true, "正在登录...");
   try {
     const user = await authService.login(username, password);
     state.user = user;
     state.loadedData = new Set();
-    persistLoginPreference(username, password, rememberPassword, autoLogin);
-    sessionStorage.removeItem(AUTO_LOGIN_SKIP_KEY);
+    persistLoginPreference(username, rememberPassword);
     if (user.mustChangePassword) {
       setLoginBusy(false, "首次登录或密码重置后，请先修改密码。");
       openChangePasswordDialog();
@@ -440,9 +429,10 @@ async function performLogin() {
 }
 
 function apiUrl(path = "") {
-  if (/^(blob:|data:|https?:)/i.test(path || "")) return path;
-  if (String(path || "").startsWith("/api/")) return `${API_BASE_URL}${path.slice(4)}`;
-  return path || "";
+  const value=String(path||'').trim();
+  if(/^(blob:|data:|https?:)/i.test(value))return value;
+  if(value.startsWith('/api/'))return `${API_BASE_URL}${value.slice(4)}`;
+  return '';
 }
 
 async function apiRequest(path, options = {}) {
@@ -8064,7 +8054,6 @@ $("#subpageMenuBtn").addEventListener("click", event => {
 $("#loginBtn").addEventListener("click", () => showLoginPage());
 $("#accountPasswordBtn").addEventListener("click", openChangePasswordDialog);
 $("#logoutBtn").addEventListener("click", async () => {
-  sessionStorage.setItem(AUTO_LOGIN_SKIP_KEY, "1");
   stopMaintenanceSync();
   stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
   await authService.logout();
@@ -8074,14 +8063,6 @@ $("#logoutBtn").addEventListener("click", async () => {
 });
 $("#openEntryBtn").addEventListener("click", () => openRecordForm());
 $("#openFixedBtn").addEventListener("click", () => openFixedForm());
-
-$("#rememberPassword").addEventListener("change", () => {
-  if (!$("#rememberPassword").checked) $("#autoLogin").checked = false;
-});
-
-$("#autoLogin").addEventListener("change", () => {
-  if ($("#autoLogin").checked) $("#rememberPassword").checked = true;
-});
 
 $("#loginForm").addEventListener("submit", event => {
   event.preventDefault();
@@ -9405,20 +9386,8 @@ async function init() {
       state.user = await authService.current();
     } catch (error) {
       if (!isAuthExpired(error)) throw error;
-      const saved = savedLogin();
-      const skipAutoLogin = sessionStorage.getItem(AUTO_LOGIN_SKIP_KEY) === "1";
-      if (saved.autoLogin && saved.rememberPassword && saved.username && saved.password && !skipAutoLogin) {
-        try {
-          state.user = await authService.login(saved.username, saved.password);
-        } catch (loginError) {
-          clearAutoLoginPreference();
-          await navigate(ROUTES.login, { replace: true, message: `自动登录失败：${loginError.message}` });
-          return;
-        }
-      } else {
-        await navigate(ROUTES.login, { replace: true });
-        return;
-      }
+      await navigate(ROUTES.login, { replace: true });
+      return;
     }
     if (state.user.mustChangePassword) {
       setAppMode("locked");
