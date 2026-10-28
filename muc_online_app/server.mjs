@@ -1,3 +1,5 @@
+import {attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
 import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
@@ -6996,6 +6998,21 @@ async function routeRequest(req, res) {
     if (url.pathname.startsWith('/api/attendance/')) {
       const actor = requireRbacPermission(req,res,'attendance.read'); if(!actor)return;
       const filters=Object.fromEntries(['month','query','department','team','personId'].map(k=>[k,url.searchParams.get(k)||'']));
+      if(url.pathname.startsWith('/api/attendance/leave-balances')){
+        const f={month:url.searchParams.get('month')||'',year:url.searchParams.get('year'),query:url.searchParams.get('query')||'',department:url.searchParams.get('department')||'',team:url.searchParams.get('team')||'',personId:url.searchParams.get('personId')||'',group:url.searchParams.get('group')||''};
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances'){const data=attendanceService.leave.snapshot(actor,f);if(attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...f,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}return send(res,200,data);}
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances/details')return send(res,200,attendanceService.leave.details(actor,f));
+        if(method==='POST'&&url.pathname==='/api/attendance/leave-balances/refresh')return send(res,202,attendanceService.leave.refresh(actor,await bodyJson(req)));
+        if(method==='GET'&&['/api/attendance/leave-balances/export/xlsx','/api/attendance/leave-balances/export/html'].includes(url.pathname)){
+          const scope=url.searchParams.get('scope')||'filtered';if(!['all','filtered'].includes(scope))return send(res,400,{error:'导出范围无效'});
+          const selected=scope==='all'?{year:f.year}:f,data=attendanceService.leave.snapshot(actor,selected,'attendance.export');data.filters=selected;data.exportScope=scope==='all'?'全部有权查看人员':'当前筛选人员';data.exportedAt=new Date().toISOString();data.pageSize=attendanceService.displaySettings(actor).pageSize;
+          if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...selected,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}
+          const format=url.pathname.endsWith('/xlsx')?'xlsx':'html',content=format==='xlsx'?leaveXlsx(data):Buffer.from(leaveHtml(data));audit(actor,'attendance_leave_export','attendance',String(data.year),JSON.stringify({format,scope,people:data.people.length}));
+          return sendBinary(res,200,content,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="leave-${data.year}.${format}"`});
+        }
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/approval-plans')return send(res,200,attendanceService.approvalPlanDetails(actor,filters));
+      if(method==='POST'&&url.pathname==='/api/attendance/approval-plans/refresh')return send(res,202,attendanceService.approvalPlanRefresh(actor,await bodyJson(req)));
       if(method==='GET' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.displaySettings(actor));
       if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
       if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,attendanceService.status(actor));
@@ -7005,6 +7022,7 @@ async function routeRequest(req, res) {
         if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:p.days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
         return send(res,200,snapshot);
       }
+      if(method==='POST' && url.pathname==='/api/attendance/approval-reasons/backfill')return send(res,202,attendanceService.enqueueApprovalReasons(actor,await bodyJson(req)));
       if(method==='POST' && url.pathname==='/api/attendance/leave-types/refresh')return send(res,200,await attendanceService.refreshLeaveTypes(actor));
       if(method==='POST' && url.pathname==='/api/attendance/sync'){
         const payload=await bodyJson(req);return send(res,202,attendanceService.enqueue({from:payload.from,to:payload.to,user:actor}));
@@ -7020,6 +7038,7 @@ async function routeRequest(req, res) {
           selected.categories=[...new Set(categories)];
         }
         const snapshot=attendanceService.snapshot(actor,selected,'attendance.export');
+        if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){snapshot.people=snapshot.people.map(p=>attendanceService.approvalPlans.decorate(p,snapshot.month));snapshot.categories=attendanceOrderedCategories([...new Set([...snapshot.categories,...snapshot.people.flatMap(p=>Object.keys(p.pendingCounts||{}))])]);}
         snapshot.exportScope=exportScope==='all'?'全部有权查看人员':'当前筛选人员';snapshot.filters=selected;
         const format=url.pathname.endsWith('/xlsx')?'xlsx':'html';
         const body=format==='xlsx'?attendanceXlsx(snapshot,{changes:attendanceService.changes(actor,{...selected,month:snapshot.month}),runs:attendanceService.status(actor).runs}):Buffer.from(attendanceHtml(snapshot));

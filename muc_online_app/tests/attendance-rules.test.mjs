@@ -54,3 +54,43 @@ test('duplicate actuals agree; unplanned and uncovered records cannot enter summ
  a.points=[];assert.equal(punchSummary(classifyDay(a,now)).on.actual,null);assert.ok(classifyDay(a,now).punchDetails.every(p=>p.status==='未配对'));
  a.covered=false;assert.ok(classifyDay(a,now).punchDetails.every(p=>p.actual===null));
 });
+
+test('an old query cannot turn a later planned missing punch into confirmed absence',()=>{
+ const a=input();a.punches=a.punches.filter(p=>p.type==='OnDuty');const r=classifyDay(a,off+600000,off-1000);assert.equal(r.category,'待核实');assert.equal(r.punchDetails.find(p=>p.type==='OffDuty').status,'待核实');assert.equal(r.overtime.status,'待核实');assert.equal(r.overtime.seconds,null);
+});
+test('a query after the planned point can confirm missing while complete punches and approval remain unchanged',()=>{
+ const a=input();a.punches=a.punches.filter(p=>p.type==='OnDuty');assert.equal(classifyDay(a,off+600000,off+1000).category,'缺卡');const full=input();assert.equal(classifyDay(full,now,on-1000).category,'夜班');assert.equal(classifyDay(full,now,on-1000).overtime.seconds,3661);a.approvals=[trip()];assert.notEqual(classifyDay(a,now,off-1000).category,'待核实');
+});
+
+test('valid complete day/night punches take priority over outing while preserving approval evidence',()=>{
+ for(const dayShift of [false,true]){const a=input();if(dayShift){a.points.forEach(p=>p.planned-=12*3600000);a.punches.forEach(p=>{p.planned-=12*3600000;p.actual-=12*3600000;});}a.approvals=[{...trip(),kind:'外出'}];const r=classifyDay(a,now);assert.equal(r.category,dayShift?'白班':'夜班');assert.equal(r.overtime.seconds,3661);assert.equal(r.approvalAttributions[0].id,'approval');assert.equal(a.approvals.length,1);}
+});
+test('outing priority does not conceal missing, conflicting, invalid or abnormal punches, or leave conflicts',()=>{
+ const a=input();a.approvals=[{...trip(),kind:'外出',end:on+1000}];a.punches.pop();assert.equal(classifyDay(a,now).category,'缺卡');a.punches=input().punches.map(p=>({...p,source:'SYSTEM',timeResult:'NotSigned'}));assert.equal(classifyDay(a,now).category,'缺卡');a.punches=input().punches;a.punches.push({...a.punches[1],actual:off+7200000});assert.equal(classifyDay(a,now).category,'待核对');a.punches=input().punches;a.punches[1].timeResult='Early';assert.equal(classifyDay(a,now).category,'早退');a.punches=input().punches;a.approvals.push({...trip(),id:'leave',kind:'请假',subType:'病假'});assert.equal(classifyDay(a,now).category,'待核对');
+});
+test('same outing carried by a proved previous overnight shift does not consume the next rest date',()=>{
+ const a=input(),approval={...trip(),kind:'外出',end:t('2026-09-22T02:05:00')};a.approvals=[approval];const rest={date:'2026-09-22',covered:true,rest:true,points:[],punches:[],approvals:[approval]};const r=classifyDay(rest,now,null,{previousWorkDays:[a]});assert.equal(r.category,'休息');assert.equal(r.approvalAttributions[0].workDate,'2026-09-21');assert.equal(r.approvalAttributions[0].status,'previous_workday');assert.equal(r.overtime.seconds,null);assert.equal(rest.approvals.length,1);
+});
+test('rest-day carry requires reliable preceding schedule and same approved instance, never assumes a noon cutoff',()=>{
+ const approval={...trip(),kind:'外出',end:t('2026-09-22T02:05:00')},rest={date:'2026-09-22',covered:true,rest:true,points:[],punches:[],approvals:[approval]};const a=input();a.approvals=[approval];
+ for(const prev of [[],[{...a,scheduleConflict:true}],[{...a,approvals:[{...approval,id:'other'}]}],[a,{...a,date:'2026-09-20'}]])assert.equal(classifyDay(rest,now,null,{previousWorkDays:prev}).category,'待核对');
+ const current={...rest,approvals:[{...approval,start:t('2026-09-22T01:00:00')}]};assert.equal(classifyDay(current,now,null,{previousWorkDays:[a]}).category,'外出');
+ const beyond={...rest,approvals:[{...approval,end:t('2026-09-22T09:00:00')}]};assert.equal(classifyDay(beyond,now,null,{previousWorkDays:[a]}).category,'外出');
+ const revoked={...rest,approvals:[{...approval,revoked:true}]};assert.equal(classifyDay(revoked,now).category,'休息');
+});
+test('October 1.5-day outing example counts outing, night then rest with exact overtime intact',()=>{
+ const approval={id:'outing-example',kind:'外出',approved:true,revoked:false,start:t('2026-10-10T08:30:00'),end:t('2026-10-12T02:05:00')};
+ const make=(date,onTime,offTime)=>({date,covered:true,rest:false,points:[{type:'OnDuty',planned:t(onTime),planId:'on'},{type:'OffDuty',planned:t(offTime),planId:'off'}],punches:[],approvals:[approval]});
+ const first=make('2026-10-10','2026-10-10T08:30:00','2026-10-10T19:40:00');const night=make('2026-10-11','2026-10-11T19:40:00','2026-10-12T08:30:00');night.punches=night.points.map(p=>({...p,actual:t(p.type==='OnDuty'?'2026-10-11T18:01:21':'2026-10-12T09:41:02'),source:'USER',recordId:p.planId,timeResult:'Normal',valid:true}));const rest={date:'2026-10-12',covered:true,rest:true,points:[],punches:[],approvals:[approval]};const at=t('2026-10-25T20:00:00');assert.deepEqual([classifyDay(first,at).category,classifyDay(night,at).category,classifyDay(rest,at,null,{previousWorkDays:[night,first]}).category],['外出','夜班','休息']);assert.equal(classifyDay(night,at).overtime.seconds,4262);
+});
+
+test('an outing really covering a rest date remains outing when reliable preceding schedule rules out overnight carry',()=>{
+ const a=input(),approval={...trip(),kind:'外出',end:t('2026-09-22T12:00:00')};a.approvals=[approval];a.points=a.points.map(p=>({...p,planned:p.planned-12*3600000}));const rest={date:'2026-09-22',covered:true,rest:true,points:[],punches:[],approvals:[approval]};assert.equal(classifyDay(rest,now,null,{previousWorkDays:[a]}).category,'外出');
+});
+
+test('24-hour shift is defined by plan and paired valid records, not actual overtime duration',()=>{
+ const a=input();a.points[0].planned=t('2026-09-21T08:30:00');a.points[1].planned=a.points[0].planned+86400000;a.punches=a.points.map(p=>({...p,actual:p.planned+(p.type==='OffDuty'?61000:-1000),recordId:p.planId,source:'USER',timeResult:'Normal',valid:true}));const r=classifyDay(a,now);assert.equal(r.category,'24小时班');assert.equal(r.shift,'24小时班');assert.equal(r.overtime.seconds,61);a.punches.pop();assert.equal(classifyDay(a,now).category,'缺卡');assert.equal(classifyDay(a,a.points[0].planned+1000).category,'尚未到下班时间');assert.equal(classifyDay(a,a.points[0].planned+1000).shift,'24小时班');const night=input();night.punches[1].actual=night.punches[0].actual+26*3600000;assert.equal(classifyDay(night,now).category,'夜班');
+});
+test('follow-along is mutually exclusive with remaining outing and cannot replace reliable work or rest carry',()=>{
+ const out={...trip(),kind:'外出',reason:'参加跟班工作',reasonStatus:'ok'};const a=input();a.punches=[];a.approvals=[out];assert.equal(classifyDay(a,now).category,'跟班');a.approvals=[{...out,reason:'外出办公'}];assert.equal(classifyDay(a,now).category,'外出');a.punches=input().punches;a.approvals=[out];assert.equal(classifyDay(a,now).category,'夜班');const approval={...out,end:t('2026-09-22T02:05:00')};a.approvals=[approval];const rest={date:'2026-09-22',covered:true,rest:true,points:[],punches:[],approvals:[approval]};assert.equal(classifyDay(rest,now,null,{previousWorkDays:[a]}).category,'休息');a.punches=[];a.approvals=[out,{...out,id:'other',reason:'办事'}];assert.equal(classifyDay(a,now).category,'跟班');a.approvals=[{...out,revoked:true}];assert.equal(classifyDay(a,now).category,'缺卡');
+});

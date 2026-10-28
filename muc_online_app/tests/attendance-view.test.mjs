@@ -13,6 +13,16 @@ function setup(options={}){
  const button=dataset=>({dataset,hasAttribute:n=>n==='data-clear'&&dataset.clear!==undefined,closest(){return this;},isConnected:true});
  return {view,host,query,content,details,modal,modalEvents,input,listeners,button};
 }
+test('compact header keeps only month beside the title in live and offline views',()=>{
+ for(const offline of [false,true]){
+  const s=setup({offline,canExport:true,canSync:true});
+  assert.match(s.host.innerHTML,/<div class="att-title"><h1>考勤管理<\/h1><span class="att-month">2026-10<\/span><\/div>/);
+  assert.doesNotMatch(s.host.innerHTML,/att-eyebrow|每人每天唯一归类|attendance-api-1\.0/);
+  assert.equal(s.host.innerHTML.includes('data-month'),!offline);
+  assert.match(s.host.innerHTML,/data-export="xlsx"/);
+  s.view.destroy();
+ }
+});
 test('search debounces 300ms, keeps focus/caret, clears immediately and ignores intermediate IME input',t=>{
  t.mock.timers.enable({apis:['setTimeout']});const s=setup();s.input('张');t.mock.timers.tick(299);assert.match(s.content.innerHTML,/李四/);
  s.input('张三');t.mock.timers.tick(299);assert.match(s.content.innerHTML,/李四/);t.mock.timers.tick(1);assert.ok(!s.content.innerHTML.includes('李四'));assert.equal(s.host.ownerDocument.activeElement,s.query);assert.equal(s.query.selectionStart,2);
@@ -110,4 +120,23 @@ test('fixed order ignores legacy preferences, unknown names sort before final ne
 test('all and only positive category counts get color labels including normal, leave, abnormal and neutral',()=>{
  const categories=['白班','缺卡','病假','无记录','未来日期','新类别'];const data={people:[{personId:'a',name:'甲',counts:Object.fromEntries(categories.map(c=>[c,1])),days:[],overtimeSeconds:null},{personId:'b',name:'乙',counts:{},days:[],overtimeSeconds:null}],categories,dates:[],month:'2026-09',leaveTypes:{names:['病假'],status:'ready'}};
  const s=setup({data});assert.equal((s.content.innerHTML.match(/class="att-link att-count-positive"/g)||[]).length,categories.length);assert.equal((s.content.innerHTML.match(/class="att-link "/g)||[]).length,categories.length);assert.match(s.content.innerHTML,/天数合计/);assert.match(s.content.innerHTML,/已计算／无法计算/);s.view.destroy();
+});
+test('positive headings use all filtered people across pages and reset when the positive person is filtered out',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const data={people:Array.from({length:21},(_,i)=>({personId:String(i),name:'人员'+i,employeeNo:'P'+i,department:i===20?'B':'A',days:[],counts:i===20?{'白班':1,'缺卡':2,'病假':1}:{},overtimeSeconds:null})),categories:['白班','缺卡','病假','夜班'],dates:[],month:'2026-10',leaveTypes:{names:['病假']}};
+ const s=setup({data});const headings=()=>s.content.innerHTML.match(/<thead>([\s\S]*?)<\/thead>/)[1];
+ for(const c of ['白班','缺卡','病假'])assert.match(headings(),new RegExp('class="att-positive-heading"[^>]*>'+c+'</span>'));
+ assert.match(headings(),/<th>夜班<\/th>/);assert.ok(!headings().includes('att-abnormal-heading'));
+ const first=headings();await s.listeners.get('click')({target:s.button({page:'1'})});assert.equal(headings(),first);
+ s.input('P0');t.mock.timers.tick(300);assert.ok(!headings().includes('att-positive-heading'));assert.match(headings(),/<th>缺卡<\/th>/);
+ s.input('不存在');t.mock.timers.tick(300);assert.ok(!headings().includes('att-positive-heading'));
+ s.input('');t.mock.timers.tick(300);assert.equal(headings(),first);s.view.destroy();
+});
+
+test('permanently excluded leave cannot return through fixed order, unknown categories, refreshed selections or catalog descriptions',async()=>{const {attendanceFixedCategoryOrder,attendanceOrderedCategories,attendanceRefreshColumns,attendanceLeaveCatalogText}=await import('../public/attendance-presentation.mjs');assert.ok(!attendanceFixedCategoryOrder.includes('新冠关爱假'));assert.deepEqual(attendanceOrderedCategories(['新冠关爱假','外出','跟班','出差']),['外出','跟班','出差']);assert.ok(!attendanceRefreshColumns(['新冠关爱假','婚假'],new Set(),new Set(),true).has('新冠关爱假'));assert.ok(!attendanceLeaveCatalogText({names:['新冠关爱假','婚假'],status:'ready'}).includes('新冠关爱假'));});
+
+test('pending approval count preserves layout, colors and actual total; click splits actual and pending dates',async()=>{
+ const s=setup({data:{people:[{personId:'a',name:'张三',employeeNo:'001',days:[{date:'2026-10-30',category:'未来日期',pendingCategories:['外出'],input:{},purposes:[],punchDetails:[],overtime:{seconds:null},reason:'未来',issues:[]}],counts:{未来日期:1},pendingCounts:{外出:1},displayCounts:{未来日期:1,外出:1},approvalPlans:[{id:'a',category:'外出',state:'approved',dates:['2026-10-30'],reason:'safe'}],overtimeSeconds:null}],dates:['2026-10-30'],categories:['外出','未来日期'],month:'2026-10',approvalPlanStatus:{enabled:true}}});
+ assert.match(s.content.innerHTML,/带圆点的数字含已批准待复核记录/);assert.match(s.content.innerHTML,/data-count="a\|外出">1<span class="att-plan-dot"/);
+ await s.listeners.get('click')({target:s.button({count:'a|外出'})});assert.match(s.modal.innerHTML,/已核实／当前考勤结果 0天/);assert.match(s.modal.innerHTML,/已批准待复核 1天/);assert.match(s.modal.innerHTML,/2026-10-30/);s.view.destroy();
 });

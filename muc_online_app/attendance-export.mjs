@@ -1,3 +1,4 @@
+import {excelApprovalProjection} from './attendance-approval-reasons.mjs';
 import fs from 'node:fs';
 import {deflateRawSync} from 'node:zlib';
 import {durationText} from './attendance-rules.mjs';
@@ -13,7 +14,7 @@ function zip(entries){
  const c=Buffer.concat(central),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(c.length,12);end.writeUInt32LE(offset,16);return Buffer.concat([...chunks,c,end]);
 }
 export function exportTables(snapshot,{changes=[],runs=[]}={}){
- const {people,dates}=snapshot;
+ const {people,dates}=excelApprovalProjection(snapshot);
  const categories=attendanceOrderedCategories(snapshot.categories);
  const summary=[['姓名','工号','部门','班组',...categories,'天数合计','累计分钟','累计小时','累计时长','已计算天数','无法计算天数'],...people.map(p=>[p.name,p.employeeNo,p.department,p.team,...categories.map(c=>p.counts[c]||0),p.days.length,p.overtimeSeconds===null?null:p.overtimeSeconds/60,p.overtimeSeconds===null?null:p.overtimeSeconds/3600,{duration:p.overtimeSeconds},p.computedDays,p.uncomputableDays])];
  const matrix=[['姓名','工号','班组',...dates],...people.map(p=>[p.name,p.employeeNo,p.team,...p.days.map(d=>d.category)])];
@@ -22,7 +23,7 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
  const raw=[['姓名','工号','工作日','类型','原始状态（必要字段）']];
  const issues=[['姓名','工号','工作日','类别','原因','问题','同步错误']];
  const coverage=[['姓名','工号','工作日','数据覆盖','最近成功时间','最近错误','当前使用旧数据','历史说明']];
- const night=[['姓名','工号',...dates,'夜班金额合计','班组'],...people.map(p=>{const vals=p.days.map(d=>d.category==='夜班'?25:['派驻','缺卡','旷工'].includes(d.category)?d.category:null);return [p.name,p.employeeNo,...vals,p.days.filter(d=>d.category==='夜班').length*25,p.team];})];
+ const night=[['姓名','工号',...dates,'夜餐值班费合计','班组'],...people.map(p=>{const vals=p.days.map(d=>['夜班','24小时班'].includes(d.category)?25:['派驻','缺卡','旷工'].includes(d.category)?d.category:null);return [p.name,p.employeeNo,...vals,p.days.filter(d=>['夜班','24小时班'].includes(d.category)).length*25,p.team];})];
  for(const p of people)for(const d of p.days){
   const {on,off}=punchSummary(d);
   const allPunches=(d.punchDetails||[]).map(v=>`${v.type==='OnDuty'?'上班':v.type==='OffDuty'?'下班':v.type} | 计划：${local(v.planned)||'—'} | 有效实际：${local(v.actual)||'—'} | ${v.status} | ${(v.rawStatus||[]).map(attendanceRawStatus).join('、')} | ${v.reason}`).join('\n');
@@ -33,16 +34,16 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
   coverage.push([p.name,p.employeeNo,d.date,d.input.covered?'已读取':'未覆盖',d.updatedAt,d.syncError,d.stale?'是':'否',snapshot.historyWarning]);
  }
  const names=new Map(people.map(p=>[p.personId,p]));
- const history=[['姓名','工号','工作日','变更前','变更后','变更时间','同步批次'],...changes.filter(c=>names.has(c.person_id)).map(c=>[names.get(c.person_id).name,names.get(c.person_id).employeeNo,c.work_date,c.before_json,c.after_json,c.changed_at,c.run_id])];
+ const history=[['姓名','工号','工作日','变更前','变更后','变更时间','同步批次'],...excelApprovalProjection(changes).filter(c=>names.has(c.person_id)).map(c=>[names.get(c.person_id).name,names.get(c.person_id).employeeNo,c.work_date,c.before_json,c.after_json,c.changed_at,c.run_id])];
  const jobs=[['批次','开始日期','结束日期','状态','任务计数','错误','更新时间'],...runs.map(r=>[r.id,r.from,r.to,r.status,JSON.stringify(r.counts),r.error,r.updatedAt])];
- const rules=[['项目','说明'],['月份',snapshot.month],['导出人数',people.length],['导出范围',snapshot.exportScope||'当前筛选人员'],['筛选条件',JSON.stringify(snapshot.filters||{})],['假期目录',attendanceLeaveCatalogText(snapshot.leaveTypes)],['假期目录最近更新',snapshot.leaveTypes?.lastSyncedAt||'尚未成功读取'],['类别筛选',snapshot.filters?.categories?.length?'以下类别任一整月数量大于0：'+snapshot.filters.categories.join('、'):'未限制类别；显示符合基础条件的全部人员'],['生成时间',snapshot.generatedAt],['导出时间',snapshot.exportedAt||snapshot.generatedAt],['最后数据同步时间',snapshot.lastSyncedAt],['规则版本',snapshot.ruleVersion],['历史覆盖',snapshot.historyWarning],['分类','每人每天唯一分类；明确白班／夜班优先于出差用途；培训和派驻只匹配出差事由字段。'],['关键词','培训、派驻；同时命中标为用途冲突，未命中保留出差，事由缺失不等于未命中。'],['加班',snapshot.overtimeNote],['时间精度','按秒累计，不逐日取整，不扣用餐，不设门槛；空值不等于零。'],['夜班金额','最终类别为夜班的日期每次25元；派驻、缺卡、旷工仅标识。自动结果，覆盖不足时不代表完整应发金额。'],['打卡展示','摘要为首个计划上班点、末次计划下班点及各自配对的有效实际打卡；逐日明细保留全部点。空值及审批免打卡不表示真实打卡。'],['颜色','蓝绿色：正常出勤、休息及合法审批；琥珀至赭红：异常或待核对；灰色：未同步、无记录、未到时及未知类别。'],['来源','钉钉API；源数据修正后重新同步；人员与能力状态接口首期不启用。']];
+ const rules=[['项目','说明'],['月份',snapshot.month],['导出人数',people.length],['导出范围',snapshot.exportScope||'当前筛选人员'],['筛选条件',JSON.stringify(snapshot.filters||{})],['假期目录',attendanceLeaveCatalogText(snapshot.leaveTypes)],['假期目录最近更新',snapshot.leaveTypes?.lastSyncedAt||'尚未成功读取'],['类别筛选',snapshot.filters?.categories?.length?'以下类别任一整月数量大于0：'+snapshot.filters.categories.join('、'):'未限制类别；显示符合基础条件的全部人员'],['生成时间',snapshot.generatedAt],['导出时间',snapshot.exportedAt||snapshot.generatedAt],['最后数据同步时间',snapshot.lastSyncedAt],['规则版本',snapshot.ruleVersion],['历史覆盖',snapshot.historyWarning],['分类','每人每天唯一分类；完整有效打卡明确的白班／夜班优先于外出审批和出差用途，未解释请假及冲突仍核对。跨夜外出有前序排班及同一审批依据时归前一工作日，不重复占用次日休息；培训和派驻只匹配出差事由字段。'],['关键词','培训、派驻；同时命中标为用途冲突，未命中保留出差，事由缺失不等于未命中。'],['加班',snapshot.overtimeNote],['时间精度','按秒累计，不逐日取整，不扣用餐，不设门槛；空值不等于零。'],['夜班金额','最终类别为夜班或24小时班的日期每次25元，跨夜按归属工作日只计一次；派驻、缺卡、旷工仅标识。自动结果，覆盖不足时不代表完整应发金额。'],['打卡展示','摘要为首个计划上班点、末次计划下班点及各自配对的有效实际打卡；逐日明细保留全部点。空值及审批免打卡不表示真实打卡。'],['颜色','蓝绿色：正常出勤、休息及合法审批；琥珀至赭红：异常或待核对；灰色：未同步、无记录、未到时及未知类别。'],['来源','钉钉API；源数据修正后重新同步；人员与能力状态接口首期不启用。']];
  return [['人员汇总',summary],['逐日明细（横版）',matrix],['逐日明细',detail],['原始状态核对',raw],['异常清单',issues],['夜班值班统计表',night],['加班明细',overtime],['同步覆盖',coverage],['源数据变更记录',history],['同步任务',jobs],['统计规则',rules]];
 }
 export function exportXlsx(snapshot,options){
  snapshot={...snapshot,categories:attendanceOrderedCategories(snapshot.categories)};
  const tones=Object.values(attendanceTones),leaves=legalLeaveCategories(snapshot);
  const toneIndex=category=>3+tones.findIndex(t=>t.key===attendanceTone(category,leaves).key);
- const tables=exportTables(snapshot,options),ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main',entries=[];
+ const tables=options?.tables||exportTables(snapshot,options),ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main',entries=[];
  entries.push(['[Content_Types].xml',`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${tables.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`]);
  entries.push(['_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>']);
  entries.push(['xl/workbook.xml',`<workbook xmlns="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${tables.map(([name],i)=>`<sheet name="${xml(name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('')}</sheets></workbook>`]);
@@ -65,8 +66,9 @@ export function exportXlsx(snapshot,options){
 export function exportHtml(snapshot){
  snapshot={...snapshot,categories:attendanceOrderedCategories(snapshot.categories)};
  const css=fs.readFileSync(new URL('./public/attendance.css',import.meta.url),'utf8');
+ const planPresentation=fs.readFileSync(new URL('./public/attendance-approval-plan-view.mjs',import.meta.url),'utf8').replace(/^export /gm,'');
  const presentation=fs.readFileSync(new URL('./public/attendance-presentation.mjs',import.meta.url),'utf8').replace(/^export /gm,'');
  const view=fs.readFileSync(new URL('./public/attendance-view.mjs',import.meta.url),'utf8').replace(/^import .*?;\n/gm,'').replace(/^export /gm,'');
  const seed=JSON.stringify(snapshot).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
- return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>考勤只读快照 ${xml(snapshot.month)}</title><style>${css}</style></head><body><main id="attendanceHost" class="attendance"></main><script id="attendanceSeed" type="application/json">${seed}</script><script>${presentation}\n${view}\nconst data=JSON.parse(document.getElementById('attendanceSeed').textContent);mountAttendanceView(document.getElementById('attendanceHost'),data,{offline:true});</script></body></html>`;
+ return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>考勤只读快照 ${xml(snapshot.month)}</title><style>${css}</style></head><body><main id="attendanceHost" class="attendance"></main><script id="attendanceSeed" type="application/json">${seed}</script><script>${planPresentation}\n${presentation}\n${view}\nconst data=JSON.parse(document.getElementById('attendanceSeed').textContent);mountAttendanceView(document.getElementById('attendanceHost'),data,{offline:true});</script></body></html>`;
 }

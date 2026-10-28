@@ -1,0 +1,19 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {minimizeApprovalDetail,readApprovalReason,enrichApprovalReason,excelApprovalProjection} from '../attendance-approval-reasons.mjs';
+import {attendanceTone} from '../public/attendance-presentation.mjs';
+import {attendanceApprovalReasonHtml} from '../public/attendance-view.mjs';
+test('reason extraction uses exact IDs/names, keeps original text and never scans private unrelated fields',()=>{
+ const detail={status:'COMPLETED',result:'agree',title:'跟班',formComponentValues:[{id:'TextareaField-JYNRW51P',name:'外出事由',value:'  跟班\n保障 <script>bad()</script>'},{name:'备注',value:'secret-note'},{name:'附件',value:'secret-file'}]};const minimal=minimizeApprovalDetail(detail,'外出',{});assert.equal(minimal.formComponentValues.length,1);assert.ok(!JSON.stringify(minimal).includes('secret'));const a=enrichApprovalReason({kind:'外出',approved:true},{detail:minimal,status:'ok'});assert.equal(a.recognizedCategory,'跟班');assert.deepEqual(a.matchedKeywords,['跟班']);assert.equal(a.reason,detail.formComponentValues[0].value);assert.ok(attendanceApprovalReasonHtml(a).includes('&lt;script&gt;'));assert.ok(!attendanceApprovalReasonHtml(a).includes('<script>'));assert.deepEqual(attendanceTone('跟班'),attendanceTone('外出'));assert.deepEqual(attendanceTone('24小时班'),attendanceTone('夜班'));
+});
+test('empty, missing, ambiguous, denied, stale and withdrawn approval evidence remain distinct',()=>{
+ assert.equal(readApprovalReason({formComponentValues:[{name:'请假事由',value:''}]},'请假').reasonStatus,'empty');assert.equal(readApprovalReason({formComponentValues:[]},'请假').reasonStatus,'field_missing');assert.equal(readApprovalReason({formComponentValues:[{name:'请假事由',value:'a'},{name:'请假事由',value:'b'}]},'请假').reasonStatus,'ambiguous');assert.equal(enrichApprovalReason({kind:'请假'},{detail:null,status:'permission_denied'}).reasonStatus,'permission_denied');const d=minimizeApprovalDetail({status:'COMPLETED',result:'agree',formComponentValues:[{name:'外出事由',value:'跟班'}]},'外出',{});assert.equal(enrichApprovalReason({kind:'外出'},{detail:d,status:'detail_missing'}).reasonStatus,'stale');assert.equal(enrichApprovalReason({kind:'外出',approved:true},{detail:{...d,status:'TERMINATED'},status:'ok'}).revoked,true);
+});
+test('Excel projection strips external/leave text recursively including JSON change history, keeps trip reasons',()=>{
+ const approval={kind:'请假',reason:'PRIVATE-HEALTH-CANARY',reasonStatus:'ok'},outing={kind:'外出',reason:'PRIVATE-OUT-CANARY'},trip={kind:'出差',reason:'培训'};const projected=excelApprovalProjection({input:{approvals:[approval,outing,trip],raw:{approvals:[approval]}},before_json:JSON.stringify({approvals:[approval,outing,trip]})});assert.ok(!JSON.stringify(projected).includes('PRIVATE-'));assert.ok(JSON.stringify(projected).includes('培训'));
+});
+test('medical leave reason is readable in authorized detail while unrelated keyword text cannot create follow-along',()=>{
+ const medical=minimizeApprovalDetail({status:'COMPLETED',result:'agree',formComponentValues:[{name:'请假事由',value:'PRIVATE-HEALTH-CANARY'}]},'请假',{});const leave=enrichApprovalReason({kind:'请假',subType:'病假',approved:true},{detail:medical,status:'ok'});assert.ok(attendanceApprovalReasonHtml(leave).includes('病假'));assert.ok(attendanceApprovalReasonHtml(leave).includes('PRIVATE-HEALTH-CANARY'));const ordinary=minimizeApprovalDetail({status:'COMPLETED',result:'agree',title:'跟班',formComponentValues:[{name:'外出事由',value:'办理公务'},{name:'备注',value:'跟班'}]},'外出',{});assert.equal(enrichApprovalReason({kind:'外出'},{detail:ordinary,status:'ok'}).recognizedCategory,'外出');
+});
+test('known pending approval is not treated as approved simply because its reason has a keyword',()=>{
+ const detail=minimizeApprovalDetail({status:'RUNNING',result:'',formComponentValues:[{name:'外出事由',value:'跟班'}]},'外出',{});assert.equal(enrichApprovalReason({kind:'外出',approved:true},{detail,status:'ok'}).approved,false);
+});

@@ -4,7 +4,7 @@ import {inflateRawSync} from 'node:zlib';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-const outputDir=await fs.mkdtemp(path.join(os.tmpdir(),'attendance-export-test-'));
+const outputDir=await fs.mkdtemp(path.join(os.tmpdir(),'attendance-export-'));
 after(()=>fs.rm(outputDir,{recursive:true,force:true}));
 import {exportTables,exportXlsx,exportHtml} from '../attendance-export.mjs';
 import {classifyDay,monthDates} from '../attendance-rules.mjs';
@@ -46,4 +46,7 @@ test('xlsx colors every positive category count and leaves zeros unfilled',()=>{
  const sheet=unzip(exportXlsx(s))['xl/worksheets/sheet1.xml'];const row=sheet.match(/<row r="2">(.*?)<\/row>/s)[1];const cells=[...row.matchAll(/<c r="([A-Z]+)2" s="(\d+)"[^>]*>(.*?)<\/c>/gs)];
  const summary=exportTables(s)[0][1],categories=summary[0].slice(4,4+s.categories.length);
  categories.forEach((c,i)=>{const style=Number(cells[i+4][2]);assert.equal(style>2,(s.people[0].counts[c]||0)>0,c);});
+});
+test('24-hour and night shifts each earn one 25 yuan allowance; new private approval text never enters XLSX',()=>{
+ const s=sample();s.people[0].days[0].category='24小时班';s.people[0].counts={'24小时班':1,'夜班':1,'未同步':28};s.categories=['24小时班','夜班','未同步'];const a={kind:'请假',reason:'PRIVATE-HEALTH-CANARY'};s.people[0].days[0].input.approvals=[a];s.people[0].days[0].input.raw={approvals:[a]};const changes=[{person_id:'p1',before_json:JSON.stringify({approvals:[a]}),after_json:JSON.stringify({raw:{approvals:[a]}})}];assert.equal(exportTables(s).find(t=>t[0]==='夜班值班统计表')[1][1].at(-2),50);const xml=Object.values(unzip(exportXlsx(s,{changes}))).join('');assert.ok(!xml.includes('PRIVATE-HEALTH-CANARY'));assert.ok(exportHtml(s).includes('PRIVATE-HEALTH-CANARY'));
 });

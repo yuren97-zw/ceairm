@@ -11,7 +11,7 @@ function fixture(options={}){
  let purpose='培训',calls=0;
  const client={directory:async()=>({departments:[{id:'1',name:'青岛航线维修车间'}],users:[{userId:'u1',employeeNo:'54000001',name:'人员一',departmentIds:['1']},{userId:'u2',employeeNo:'54000002',name:'人员二',departmentIds:['1']}]}),results:async()=>[],schedules:async()=>[],day:async(user,date)=>{calls++;return {userid:user,work_date:Date.parse(date+'T00:00:00+08:00'),attendance_result_list:[],check_record_list:[],approve_list:[{procInst_id:'a',tag_name:'出差',begin_time:Date.parse('2026-09-01T00:00:00+08:00'),end_time:Date.parse('2026-10-01T00:00:00+08:00')}]};},approval:async()=>({status:'COMPLETED',result:'agree',formComponentValues:[{name:'出差事由',value:purpose}]}),...options.client};
  const personnelAccess={predicate:u=>u.all?{sql:'1=1',params:[]}:{sql:'p.id=?',params:[u.personId]},hasAll:u=>!!u.all,requirePerson(u,m,id){if(!u.all&&id!==u.personId)throw Object.assign(Error('not found'),{status:404});}};
- const config={...configuration({DINGTALK_APP_KEY:'test',DINGTALK_APP_SECRET:'test',DINGTALK_OP_USER_ID:'op',DINGTALK_ROOT_DEPT_ID:'1'}),...options.config};
+ const config={...configuration({DINGTALK_APP_KEY:'test',DINGTALK_APP_SECRET:'test',DINGTALK_OP_USER_ID:'op',DINGTALK_ROOT_DEPT_ID:'1',ATTENDANCE_WORKER_ENABLED:'true'}),...options.config};
  const deps={db,client,personnelAccess,isAdmin:u=>u.id==='admin',hasRbac:(u,p)=>u.permissions.includes(p),audit:()=>{},clock,config};
  return {db,service:createAttendanceService(deps),deps,setPurpose:v=>purpose=v,get calls(){return calls;}};
 }
@@ -104,3 +104,5 @@ test('new API leave types automatically appear before no-record/future, remain z
  for(const month of ['2026-09','2026-10']){const s=f.service.snapshot(admin,{month});assert.ok(s.categories.includes('新增护理假'));assert.ok(s.categories.indexOf('病假')<s.categories.indexOf('新增护理假'));if(s.categories.includes('未来日期'))assert.ok(s.categories.indexOf('新增护理假')<s.categories.indexOf('未来日期'));assert.ok(s.people.every(p=>!p.counts['新增护理假']));}
  assert.deepEqual(f.service.snapshot(admin,{month:'2026-09'}).people,before.people);assert.equal(f.calls,0);f.db.close();
 });
+
+test('excluded leave is not stored by catalog refresh and old persisted catalog cannot rediscover it',async()=>{const f=fixture({client:{leaveTypes:async()=>[{name:'新冠关爱假',code:'excluded'},{name:'婚假',code:'marriage'}]}});await f.service.refreshLeaveTypes(admin);assert.deepEqual(f.service.status(admin).leaveTypes.names,['婚假']);assert.ok(!f.db.prepare("select types_json from attendance_leave_catalog where id='enterprise'").get().types_json.includes('新冠关爱假'));f.db.prepare("update attendance_leave_catalog set types_json=? where id='enterprise'").run(JSON.stringify([{name:'新冠关爱假'},{name:'婚假'}]));assert.deepEqual(f.service.status(admin).leaveTypes.names,['婚假']);f.db.close();});

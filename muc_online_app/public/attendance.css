@@ -9,3 +9,27 @@
 /* Shared column editor and row selector remain usable on narrow screens. */
 .att-columns-actions{flex-wrap:wrap}.att-pagination{flex-wrap:wrap;gap:8px}.attendance .att-page-size{display:flex;flex-direction:row;align-items:center;gap:6px;margin-right:auto;white-space:nowrap}.att-page-size select{min-height:38px;padding:6px 8px}.attendance .att-tag.att-tone{border:1px solid var(--att-tone-border);font-weight:600}.att-legend-abnormal::before{background:#d97755}.att-abnormal-heading{border-bottom-color:var(--att-tone-border)}
 @media(max-width:479px){.att-pagination{font-size:12px;gap:6px}.attendance .att-pagination button{font-size:12px;padding:6px 8px}.attendance .att-page-size{font-size:12px;gap:4px}.attendance .att-page-size select{font-size:12px;padding:6px}}
+.att-positive-heading{color:var(--att-tone-fg);border-bottom:2px solid var(--att-tone-border);padding-bottom:2px}
+/* Compact attendance header and metrics, shared with the read-only snapshot. */
+.attendance .att-head{gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.attendance .att-title{display:flex;align-items:baseline;gap:12px;flex-shrink:0}
+.attendance .att-title h1{margin:0}
+.attendance .att-month{font-size:13px;font-weight:400;color:#718095;white-space:nowrap}
+.attendance .att-actions{gap:8px;min-width:0}
+.attendance .att-actions button,.attendance .att-actions input,.attendance .att-actions select{height:38px;min-height:38px;max-width:100%;margin:0;padding:7px 10px;font-size:14px;line-height:22px;border-radius:8px;white-space:nowrap}
+.attendance .att-actions label{font-size:12px;gap:4px;min-width:0}
+@media(max-width:800px){.attendance .att-actions button,.attendance .att-actions input,.attendance .att-actions select{font-size:16px}}
+.attendance .att-actions input[type=month]{width:154px;min-width:0}
+.attendance .att-actions input[type=month]::-webkit-calendar-picker-indicator{width:16px;height:16px;margin:0 0 0 6px;padding:0}
+.attendance .att-cards{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr);gap:8px;margin:14px 0}
+.attendance .att-cards>div{padding:10px 12px;border-radius:8px;box-shadow:none;min-width:0}
+.attendance .att-cards small{font-size:12px;line-height:1.4}
+.attendance .att-cards strong{font-size:20px;line-height:1.4;margin-top:4px;overflow-wrap:anywhere}
+.attendance .att-cards em{font-size:11px;margin-left:4px;white-space:nowrap}
+@media(max-width:479px){.attendance .att-cards{gap:5px}.attendance .att-cards>div{padding:8px 6px}.attendance .att-cards small{font-size:11px}.attendance .att-cards strong{font-size:16px}.attendance .att-cards em{font-size:10px;margin-left:2px}.attendance .att-title{gap:10px}}
+
+/* Annual leave shares the existing personnel controls and dialog. */
+.att-leave-active>.att-head .att-actions,.att-leave-active>.att-head .att-month,.att-leave-active>.att-note,.att-leave-active>.att-filters,.att-leave-active>.att-cards,.att-leave-active>.att-legend{display:none}
+.att-leave-head{display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin-bottom:12px}.att-leave-head label{min-width:0}.att-leave-head select,.att-leave-head button{min-height:40px;max-width:100%}.att-leave-value{text-align:left;white-space:normal;min-width:150px;line-height:1.6}.attendance [data-leave-root]{min-width:0}.attendance [data-leave-root] .att-table{max-width:100%}
+
+.att-plan-dot{font-size:.55em;margin-left:.28em;color:var(--att-tone-fg,#607d8b);vertical-align:super;opacity:.8}.att-plan-pending{font-size:11px;color:#687c8f;white-space:normal}
