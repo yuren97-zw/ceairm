@@ -4,7 +4,7 @@ import { ThirdPartyAuthorizationGroups } from "./ThirdPartyAuthorizationGroups.j
 
 const AUTHORIZATION_CATEGORIES = [["release", "放行"], ["test_run", "试车"], ["maintenance", "维修"], ["special", "专项"], ["third_party", "三方"], ["other", "其他"]];
 const hoverAuthorizationCache = new Map();
-const PERSON_HOVER_DELAY_MS = 500;
+const PERSON_HOVER_DELAY_MS = 800;
 
 function licenseLabel(person) {
   return person.licenses.map((item) => item.type.replace("执照", "")).join("+") || "无执照";
@@ -46,7 +46,7 @@ export function StaffPersonCard({ person, group, statusText = "", planText = "",
   const planLead = planSeparator >= 0 ? planText.slice(0, planSeparator + 1) : planText;
   const planDetail = planSeparator >= 0 ? planText.slice(planSeparator + 1) : "";
   return (
-    <button className={`compact-person-row ${statusText || planText ? "has-status-copy" : ""} ${items.length || extra > 0 ? "has-card-capabilities" : "no-card-capabilities"} ${highlighted ? "candidate-highlight" : ""} ${dragging ? "dragging-source" : ""} ${dropPosition ? `drop-${dropPosition}` : ""} ${support ? "support-person-row" : ""}`} data-person-id={person.id} draggable={draggable} onDragStart={(event) => onDragStart(event, person)} onDragEnd={onDragEnd} onDragOver={onDragOver} onDrop={onDrop} onMouseEnter={(event) => onHoverStart(event, person)} onMouseLeave={onHoverEnd} onFocus={(event) => onHoverStart(event, person, true)} onBlur={onHoverEnd} onClick={() => onOpen(person)} type="button" aria-label={`查看${person.name}能力详情，当前${group}`}>
+    <button className={`compact-person-row ${statusText || planText ? "has-status-copy" : ""} ${items.length || extra > 0 ? "has-card-capabilities" : "no-card-capabilities"} ${highlighted ? "candidate-highlight" : ""} ${dragging ? "dragging-source" : ""} ${dropPosition ? `drop-${dropPosition}` : ""} ${support ? "support-person-row" : ""}`} data-person-id={person.id} draggable={draggable} onDragStart={(event) => onDragStart(event, person)} onDragEnd={onDragEnd} onDragOver={onDragOver} onDrop={onDrop} onClick={() => onOpen(person)} type="button" aria-label={`查看${person.name}能力详情，当前${group}`}>
       <span className={`compact-person-main ${statusText || planText ? "has-status-copy" : ""}`}><strong>{person.name}</strong>{statusText && <small className={`current-status ${isSupport ? "support-highlight" : ""}`} title={statusText}>{statusText}</small>}{planText && <small className="future-plan" title={planText}>{planLead}{planDetail && <><wbr />{planDetail}</>}</small>}</span>
       {(items.length > 0 || extra > 0) && <span className="compact-capabilities" onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>{items.map((item) => <span className={`compact-cap-tag ${item.kind}${item.tone ? ` ${item.tone}` : ""}`} key={item.key} title={item.title||item.label}>{item.label}</span>)}{extra > 0 && <span className="compact-more">+{extra}项</span>}</span>}
       {onAnnotate && <span className={`compact-annotation ${annotation ? "has-note" : ""}`} title={annotation || "点击添加标注"} onClick={(event) => { event.stopPropagation(); onAnnotate(person); }}>{annotation || "＋标注"}</span>}

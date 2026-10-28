@@ -11,6 +11,7 @@ muc_online_app/outputs/
 node_modules/
 muc_online_app/node_modules/
 muc_online_app/dist-public/
+muc_online_app/public/vendor/pdfjs/
 .netlify/
 
 # Local environment files.

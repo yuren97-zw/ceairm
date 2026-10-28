@@ -75,6 +75,44 @@ try{
   await cmd('move',{personId:specialPersonId,targetGroup:'一组'});s=await snapshot();assert.equal(s.stats['一组'].actual.length,beforeSpecial.stats['一组'].actual.length+1);assert.equal(s.stats['一组'].administrative.length,beforeSpecial.stats['一组'].administrative.length);
   await cmd('move',{personId:specialPersonId,targetGroup:null});s=await snapshot();assert.equal(s.states.find(state=>state.personId===specialPersonId).workingGroup,null);
   const person=s.people.find(p=>p.administrativeGroup==='一组'), id=person.id;
+  // Independent work pools persist without changing formal organization.
+  {
+  const masterBefore=db.prepare('select * from personnel where id=?').get(id);
+  const placementBefore=structuredClone(s.states.find(row=>row.personId===id));
+  const specialBefore=structuredClone(s.states.find(row=>row.personId===specialPersonId));
+  const toSpecial=await cmd('move',{personId:id,targetGroup:null,targetPool:'SPECIAL',targetIndex:0});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===id).allocationPool,'SPECIAL');
+  assert.equal(s.stats['一组'].actual.length,beforeSpecial.stats['一组'].actual.length-1);
+  assert.deepEqual(db.prepare('select * from personnel where id=?').get(id),masterBefore);
+  await cmd('move',{personId:id,targetGroup:null,targetPool:'UNKNOWN'},400);
+  await cmd('compensate',{historyId:toSpecial.historyId});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===id).workingGroup,'一组');
+  const poolChange=await cmd('move',{personId:specialPersonId,targetGroup:null,targetPool:'WAITING',targetIndex:0});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'WAITING');
+  const poolUndo=await cmd('compensate',{historyId:poolChange.historyId});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'SPECIAL');
+  await cmd('compensate',{historyId:poolUndo.historyId});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'WAITING');
+  // Pool-only intents survive save/reload/apply, and do not move unaffected rows.
+  const desired=structuredClone(s.states);Object.assign(desired.find(row=>row.personId===id),{workingGroup:null,allocationPool:'SPECIAL',index:0});
+  await cmd('saveScenario',{name:'pool-only-test',states:desired,movedPersonIds:[id],baseRevision:s.revision});
+  s=await snapshot();const poolScenario=s.scenarios.find(row=>row.name==='pool-only-test');
+  await cmd('applyScenario',{scenarioId:poolScenario.id});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===id).allocationPool,'SPECIAL');
+  assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'WAITING');
+  await cmd('move',{personId:id,targetGroup:null,targetPool:'WAITING',targetIndex:0});
+  s=await snapshot();assert.equal(s.states.find(row=>row.personId===id).allocationPool,'WAITING');
+  // Repeated service startup must not reclassify explicit pool assignments.
+  service.init();s=await snapshot();assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'WAITING');
+  assert.equal(s.states.find(row=>row.personId===id).allocationPool,'WAITING');
+  assert.deepEqual(db.prepare('select * from personnel where id=?').get(id),masterBefore);
+  await cmd('restore');s=await snapshot();
+  assert.equal(s.states.find(row=>row.personId===id).workingGroup,'一组');
+  assert.equal(s.states.find(row=>row.personId===specialPersonId).allocationPool,'SPECIAL');
+  await cmd('move',{personId:id,targetGroup:placementBefore.workingGroup,targetIndex:placementBefore.index});
+  await cmd('move',{personId:specialPersonId,targetGroup:null,targetPool:specialBefore.allocationPool,targetIndex:specialBefore.index});
+  s=await snapshot();assert.deepEqual(s.matrix.map(row=>row.actual),initial.matrix.map(row=>row.actual));
+  }
   const authorizationSummary=(await api(`capability/personnel/${id}/authorizations${suffix}`)).value;
   assert.equal(Object.values(authorizationSummary.counts).reduce((sum,value)=>sum+value,0),db.prepare("select count(*) as n from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active' and authorization_status='有效'").get(id).n);
   const firstCategory=Object.entries(authorizationSummary.counts).find(([,count])=>count)?.[0],authorizationDetails=(await api(`capability/personnel/${id}/authorizations${suffix}&category=${firstCategory}`)).value;
@@ -238,5 +276,57 @@ try{
   assert.equal(secondService.snapshot(actor,workspace).lanes.find(l=>l.key==='一组').name,'第一维修班');
   db.prepare("update personnel set employment_status='离职' where id=?").run(id);service.syncMaster();
   assert.ok(!(await snapshot()).people.some(p=>p.id===id));assert.ok((await snapshot()).historicalPeople.some(p=>p.id===id));assert.ok((await snapshot()).history.some(h=>h.person_id===id));assert.ok(db.prepare('select count(*) as n from capability_history where person_id=?').get(id).n>0);
-  console.log(JSON.stringify({ok:true,baselinePeople:initial.people.length,groups:GROUPS.map(g=>initial.stats[g].administrative.length),tests:'identity, dedupe, dual-matrix, sorting, support, compensation, status, atomic deployment handover, scheduler, atomic scenarios, targets, RBAC/scope, idempotency, concurrency, reports, two SSE clients, persistence',testDatabase:tmp},null,2));
+  // Work pools now have independent null-group order; sorting one leaves the other untouched.
+  const {specialPoolDropIndex}=await import('../capability-ui/special-pool-order.js');
+  for(let i=0;i<2;i++)db.prepare('insert into personnel(id,employee_no,name,department,home_team,department_id,personnel_group_id,administrative_team_id,employment_status,data_status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)').run(`pool-sort-${i}`,`7899900${i}`,`池内排序${i}`,'航线维修车间','',specialGroup.parent_id,specialGroup.id,null,'在职','active',at,at);
+  service.syncMaster();s=await snapshot();
+  const poolPeople=snap=>snap.states.filter(v=>v.status==='ON_DUTY'&&v.workingGroup===null&&v.allocationPool==='SPECIAL').sort((a,b)=>a.index-b.index||a.personId.localeCompare(b.personId)).map(v=>snap.people.find(p=>p.id===v.personId));
+  const specialIds=snap=>poolPeople(snap).filter(p=>p.personnelGroupCode==='GROUP-LINE-SPECIAL').map(p=>p.id);
+  const ordinaryIds=snap=>snap.states.filter(v=>v.status==='ON_DUTY'&&v.workingGroup===null&&v.allocationPool==='WAITING').sort((a,b)=>a.index-b.index||a.personId.localeCompare(b.personId)).map(p=>p.personId);
+  const ordinary=s.people.find(p=>p.personnelGroupCode!=='GROUP-LINE-SPECIAL'&&s.states.find(v=>v.personId===p.id)?.status==='ON_DUTY');
+  await cmd('move',{personId:ordinary.id,targetGroup:null,targetIndex:1});s=await snapshot();
+  const orderBefore=specialIds(s),ordinaryBefore=ordinaryIds(s),matrixBefore=JSON.stringify(s.matrix),statsBefore=JSON.stringify(s.stats);
+  const sortResult=await cmd('move',{personId:'pool-sort-1',targetGroup:null,targetIndex:specialPoolDropIndex(poolPeople(s),'pool-sort-1','pool-sort-0',false)});
+  s=await snapshot();assert.ok(specialIds(s).indexOf('pool-sort-1')<specialIds(s).indexOf('pool-sort-0'));assert.deepEqual(ordinaryIds(s),ordinaryBefore);assert.equal(JSON.stringify(s.matrix),matrixBefore);assert.equal(JSON.stringify(s.stats),statsBefore);
+  secondService.syncMaster();assert.deepEqual(specialIds(secondService.snapshot(actor,workspace)),specialIds(s));
+  await cmd('compensate',{historyId:sortResult.historyId});s=await snapshot();assert.deepEqual(specialIds(s),orderBefore);assert.deepEqual(ordinaryIds(s),ordinaryBefore);
+  const desired=structuredClone(s.states),list=poolPeople(s).filter(p=>p.id!=='pool-sort-0');list.splice(specialPoolDropIndex(poolPeople(s),'pool-sort-0','pool-sort-1',true),0,s.people.find(p=>p.id==='pool-sort-0'));list.forEach((p,i)=>{desired.find(v=>v.personId===p.id).index=i;});
+  await cmd('applyScenario',{states:desired,baseRevision:s.revision});s=await snapshot();assert.ok(specialIds(s).indexOf('pool-sort-0')>specialIds(s).indexOf('pool-sort-1'),JSON.stringify({applied:JSON.parse(db.prepare("select payload from capability_history where type='SCENARIO_APPLIED' order by occurred_at desc limit 1").get().payload),actual:poolPeople(s).map(p=>p.id),desired:desired.filter(v=>v.workingGroup===null&&v.status==='ON_DUTY').sort((a,b)=>a.index-b.index||a.personId.localeCompare(b.personId)).map(p=>p.personId)}));assert.deepEqual(ordinaryIds(s),ordinaryBefore);
+  // Regression: appending one mover normalizes sparse neighbour indexes, but
+  // those neighbours must not enter scheduled checks or execution history.
+  {
+  s=await snapshot();const neighbour=s.states.find(v=>v.status==='ON_DUTY'&&v.workingGroup==='一组');
+  db.prepare('update capability_current_states set sort_index=999 where person_id=?').run(neighbour.personId);
+  s=await snapshot();const scheduled=structuredClone(s.states),destination=scheduled.filter(v=>v.status==='ON_DUTY'&&v.workingGroup==='一组').sort((a,b)=>a.index-b.index||a.personId.localeCompare(b.personId));
+  const mover=scheduled.find(v=>v.personId==='pool-sort-0');mover.workingGroup='一组';destination.push(mover);destination.forEach((v,index)=>{v.index=index;});
+  await cmd('saveScenario',{name:'仅移动意向定时回归',states:scheduled,movedPersonIds:[mover.personId],baseRevision:s.revision,effectiveAt:new Date(Date.now()+3600000).toISOString()});
+  const saved=db.prepare('select * from capability_scenarios where name=?').get('仅移动意向定时回归');
+  assert.deepEqual(JSON.parse(saved.payload).intents.map(v=>v.personId),[mover.personId]);
+  // Unrelated personnel may enter training after save; the plan still applies.
+  await cmd('status',{personId:neighbour.personId,kind:'TRAINING',label:'无关人员不阻断方案',startDate:today()});
+  db.prepare('update capability_scenarios set effective_at=? where id=?').run(new Date(Date.now()-1000).toISOString(),saved.id);
+  const historyBefore=Number(db.prepare('select count(*) as n from capability_history where person_id=?').get(neighbour.personId).n);
+  service.schedule();assert.equal(db.prepare('select schedule_status from capability_scenarios where id=?').get(saved.id).schedule_status,'applied');
+  assert.equal((await snapshot()).states.find(v=>v.personId===mover.personId).workingGroup,'一组');
+  assert.equal(Number(db.prepare('select count(*) as n from capability_history where person_id=?').get(neighbour.personId).n),historyBefore);
+  const appliedCount=Number(db.prepare("select count(*) as n from capability_history where type='SCENARIO_SCHEDULED_APPLIED'").get().n);service.schedule();
+  assert.equal(Number(db.prepare("select count(*) as n from capability_history where type='SCENARIO_SCHEDULED_APPLIED'").get().n),appliedCount);
+  // Existing pending payloads may already contain the old erroneous intents.
+  // Recompute from baseline and target instead of trusting that array.
+  const legacyId=crypto.randomUUID(),legacyPayload=JSON.parse(saved.payload);delete legacyPayload.intentVersion;delete legacyPayload.movedPersonIds;
+  legacyPayload.intents.push({personId:neighbour.personId,targetGroup:'一组',targetIndex:destination.length-2});
+  db.prepare('insert into capability_scenarios(id,workspace,name,base_revision,payload,created_by,updated_at,effective_at,schedule_status,baseline_payload) values(?,?,?,?,?,?,?,?,?,?)').run(legacyId,workspace,'旧方案意向兼容',saved.base_revision,JSON.stringify(legacyPayload),actor.id,new Date().toISOString(),new Date(Date.now()-1000).toISOString(),'pending',saved.baseline_payload);
+  service.schedule();assert.equal(db.prepare('select schedule_status from capability_scenarios where id=?').get(legacyId).schedule_status,'applied');
+  assert.equal(Number(db.prepare('select count(*) as n from capability_history where person_id=?').get(neighbour.personId).n),historyBefore);
+  // A genuinely involved person's status still pauses the entire transaction.
+  s=await snapshot();const blocked=structuredClone(s.states),blockedMover=blocked.find(v=>v.personId==='pool-sort-1');blockedMover.workingGroup='二组';
+  await cmd('saveScenario',{name:'涉及人员冲突暂停',states:blocked,movedPersonIds:[blockedMover.personId],baseRevision:s.revision,effectiveAt:new Date(Date.now()+3600000).toISOString()});
+  await cmd('status',{personId:blockedMover.personId,kind:'TRAINING',label:'涉及人员冲突',startDate:today()});
+  const blockedScenario=db.prepare('select id from capability_scenarios where name=?').get('涉及人员冲突暂停');
+  db.prepare('update capability_scenarios set effective_at=? where id=?').run(new Date(Date.now()-1000).toISOString(),blockedScenario.id);
+  const beforeConflict=(await snapshot()).states;service.schedule();
+  assert.equal(db.prepare('select schedule_status from capability_scenarios where id=?').get(blockedScenario.id).schedule_status,'conflict');
+  assert.deepEqual((await snapshot()).states,beforeConflict);
+  }
+  console.log(JSON.stringify({ok:true,baselinePeople:initial.people.length,groups:GROUPS.map(g=>initial.stats[g].administrative.length),tests:'identity, dedupe, dual-matrix, sorting, support, compensation, status, atomic deployment handover, scheduler, atomic scenarios, explicit scenario intents, unrelated-status isolation, targets, RBAC/scope, idempotency, concurrency, reports, two SSE clients, persistence',testDatabase:tmp},null,2));
 } finally {server.closeAllConnections();await new Promise(r=>server.close(r));db.close();}

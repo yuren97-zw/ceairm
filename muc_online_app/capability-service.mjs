@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import {handoverDays,handoverEnd} from './deployment-handover.mjs';
+import { scenarioIntents, scenarioMoveSteps } from './scenario-intents.mjs';
+import {ALLOCATION_POOLS} from './allocation-areas.mjs';
 import {LANE_CODES,laneKeyForCode,organizationLanes} from './organization-lanes.mjs';
 import { GROUPS,STATUS_LABELS,category,normalizeConfig,calculate,today,days } from './capability-core.mjs';
 import { preflightCapabilityIntegrity } from './capability-integrity.mjs';
@@ -43,10 +46,14 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     const stateColumns=new Set(db.prepare('pragma table_info(capability_current_states)').all().map(row=>row.name));
     if(!stateColumns.has('working_team_id'))db.exec("alter table capability_current_states add column working_team_id text");
     if(!stateColumns.has('administrative_team_id'))db.exec("alter table capability_current_states add column administrative_team_id text");
+    if(!stateColumns.has('allocation_pool'))db.exec("alter table capability_current_states add column allocation_pool text check(allocation_pool is null or allocation_pool in ('SPECIAL','WAITING'))");
+    db.exec("update capability_current_states set allocation_pool=case when person_id in (select p.id from personnel p join organization_units g on g.id=p.personnel_group_id where g.code='GROUP-LINE-SPECIAL') then 'SPECIAL' else 'WAITING' end where allocation_pool is null");
     const statusColumns=new Set(db.prepare('pragma table_info(capability_status_records)').all().map(row=>row.name));
     if(!statusColumns.has('replaces_record_id'))db.exec("alter table capability_status_records add column replaces_record_id text");
     if(!statusColumns.has('deployment_location_id'))db.exec("alter table capability_status_records add column deployment_location_id text");
     if(!statusColumns.has('other_status_option_id'))db.exec("alter table capability_status_records add column other_status_option_id text");
+    if(!statusColumns.has('handover_days'))db.exec('alter table capability_status_records add column handover_days integer not null default 1 check(handover_days between 1 and 3)');
+    if(!statusColumns.has('return_target'))db.exec("alter table capability_status_records add column return_target text check(return_target is null or return_target in ('一组','二组','三组','四组','SPECIAL','WAITING'))");
     if(!statusColumns.has('data_status'))db.exec("alter table capability_status_records add column data_status text not null default 'active'");
     if(!statusColumns.has('deleted_at'))db.exec("alter table capability_status_records add column deleted_at text");
     if(!statusColumns.has('deleted_by'))db.exec("alter table capability_status_records add column deleted_by text");
@@ -121,9 +128,10 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     if(db.kind==='postgres')db.exec(`create or replace function guard_capability_other_status_option() returns trigger language plpgsql as $$ begin if ${invalidOther} then raise exception '其他状态目录关联无效'; end if; return new; end $$; drop trigger if exists capability_other_status_option_guard on capability_status_records; create trigger capability_other_status_option_guard before insert or update of other_status_option_id,kind,workspace on capability_status_records for each row execute function guard_capability_other_status_option();`);
     else db.exec(`drop trigger if exists capability_other_status_option_insert_guard; create trigger capability_other_status_option_insert_guard before insert on capability_status_records when ${invalidOther} begin select raise(abort,'其他状态目录关联无效'); end; drop trigger if exists capability_other_status_option_update_guard; create trigger capability_other_status_option_update_guard before update of other_status_option_id,kind,workspace on capability_status_records when ${invalidOther} begin select raise(abort,'其他状态目录关联无效'); end;`);
   }
-  function stateRow(row){return {personId:row.person_id,status:row.status,workingGroup:row.working_group,currentWorkingTeamId:row.working_team_id||null,administrativeGroup:row.administrative_group,administrativeTeamId:row.administrative_team_id||null,workspace:row.workspace,index:row.sort_index,recordId:row.record_id,updatedAt:row.updated_at};}
+  function stateRow(row){return {personId:row.person_id,status:row.status,workingGroup:row.working_group,allocationPool:row.allocation_pool||'WAITING',currentWorkingTeamId:row.working_team_id||null,administrativeGroup:row.administrative_group,administrativeTeamId:row.administrative_team_id||null,workspace:row.workspace,index:row.sort_index,recordId:row.record_id,updatedAt:row.updated_at};}
   function getState(id){const row=db.prepare('select * from capability_current_states where person_id=?').get(id);return row?stateRow(row):null;}
-  function put(s){db.prepare(`insert into capability_current_states(person_id,status,working_group,workspace,administrative_group,sort_index,record_id,updated_at,working_team_id,administrative_team_id) values(?,?,?,?,?,?,?,?,?,?) on conflict(person_id) do update set status=excluded.status,working_group=excluded.working_group,workspace=excluded.workspace,administrative_group=excluded.administrative_group,sort_index=excluded.sort_index,record_id=excluded.record_id,updated_at=excluded.updated_at,working_team_id=excluded.working_team_id,administrative_team_id=excluded.administrative_team_id`).run(s.personId,s.status,s.workingGroup,s.workspace,s.administrativeGroup,s.index,s.recordId||null,stamp(),s.currentWorkingTeamId||null,s.administrativeTeamId||null);}
+  function defaultPool(id){return db.prepare("select g.code from personnel p left join organization_units g on g.id=p.personnel_group_id where p.id=?").get(id)?.code==='GROUP-LINE-SPECIAL'?'SPECIAL':'WAITING';}
+  function put(s){db.prepare(`insert into capability_current_states(person_id,status,working_group,workspace,administrative_group,sort_index,record_id,updated_at,working_team_id,administrative_team_id,allocation_pool) values(?,?,?,?,?,?,?,?,?,?,?) on conflict(person_id) do update set status=excluded.status,working_group=excluded.working_group,workspace=excluded.workspace,administrative_group=excluded.administrative_group,sort_index=excluded.sort_index,record_id=excluded.record_id,updated_at=excluded.updated_at,working_team_id=excluded.working_team_id,administrative_team_id=excluded.administrative_team_id,allocation_pool=excluded.allocation_pool`).run(s.personId,s.status,s.workingGroup,s.workspace,s.administrativeGroup,s.index,s.recordId||null,stamp(),s.currentWorkingTeamId||null,s.administrativeTeamId||null,s.allocationPool||defaultPool(s.personId));}
   function closeSupport(id){db.prepare('update capability_supports set ended_at=? where person_id=? and ended_at is null').run(stamp(),id);}
   function syncMaster(){
     assertReady();
@@ -183,6 +191,11 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     const people=rows.map(p=>{const licenses=license.filter(l=>l.person_id===p.id).map(l=>({type:l.license_type||'',number:l.license_no||'',english:l.license_english_level||'',remark:l.remark||''}));return {id:p.id,employeeNo:p.employee_no,name:p.name,personnelGroup:p.group_name,personnelGroupCode:p.group_code,administrativeGroup:adminGroup(p),administrativeTeamId:p.administrative_team_id,administrativeUnit:p.team_name||(p.group_code==='GROUP-LINE-SPECIAL'?p.group_name:'待调配'),workspace:workspace(p),hasLicense:!!licenses.length,licenses,english:licenses.find(l=>l.english)?.english||licenses.map(l=>l.remark).join(' ').match(/英语等级\s*[：:]\s*([1-6])/)?.[1]||'—',capabilities:[...(byPerson.get(p.id)?.values()||[])]};});
     return {people,projects:[...projects.values()].sort((a,b)=>a.code.localeCompare(b.code)||a.unit.localeCompare(b.unit))};
   }
+  function scenarioStates(rows){
+    if(!Array.isArray(rows))return rows;
+    const legacy=rows.some(s=>s.allocationPool===undefined),pools=legacy?new Map(source().map(p=>[p.id,p.group_code==='GROUP-LINE-SPECIAL'?'SPECIAL':'WAITING'])):null;
+    return rows.map(s=>({...s,allocationPool:s.allocationPool===undefined?(pools.get(s.personId)||'WAITING'):s.allocationPool}));
+  }
   function rawConfig(space){return parse(db.prepare('select payload from capability_configuration where workspace=?').get(space)?.payload);}
   function snapshot(actor,space){
     const ctx=context(actor,space), raw=rawConfig(space);
@@ -197,6 +210,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     const version=db.prepare('select revision,master_revision from capability_meta where id=1').get(),rev=Number(version.revision),master=Number(version.master_revision);
     return {
       lanes:organizationLanes(db),workspace:space,revision:rev,capabilityVersion:rev,masterDataVersion:master,dataVersion:`${master}:${rev}`,partial:!ctx.complete,people,historicalPeople,projects,states,config,deploymentLocations:locations(space),otherStatusOptions:otherOptions(space),isSuperAdministrator:isSuper(actor),qualificationVisible:hasRbac(actor,'personnel.qualification.view'),
+      returnTargets:permittedReturnTargets(actor,space,ctx),
       permissions:{
         overview:hasRbac(actor,'capability.overview.view'),
         allocationView:hasRbac(actor,'capability.allocation.view'),
@@ -215,7 +229,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
       records:db.prepare(`select r.*,case when r.kind='DEPLOYED' then coalesce(l.name,r.label) when r.kind='OTHER' then coalesce(o.name,r.label) else r.label end as label_current from capability_status_records r left join capability_deployment_locations l on l.id=r.deployment_location_id left join capability_other_status_options o on o.id=r.other_status_option_id where r.workspace=? and r.data_status='active' order by r.created_at desc`).all(space).filter(r=>historicalIds.has(r.person_id)&&(statusHistoryAllowed||['ACTIVE','PLANNED'].includes(r.phase))).map(r=>({...r,label_snapshot:r.label,label:r.label_current})),
       supports:db.prepare('select * from capability_supports where workspace=? order by started_at desc').all(space).filter(r=>historicalIds.has(r.person_id)&&(supportHistoryAllowed||!r.ended_at)),
       history:hasRbac(actor,'capability.history.view')?db.prepare('select * from capability_history where workspace=? order by occurred_at desc').all(space).filter(r=>!r.person_id?ctx.complete:historicalIds.has(r.person_id)).map(r=>({...r,payload:parse(r.payload)})):[],
-      scenarios:hasRbac(actor,'capability.scenario.view')&&ctx.complete?db.prepare('select * from capability_scenarios where workspace=? order by updated_at desc').all(space).map(s=>({...s,payload:parse(s.payload),baseline:parse(s.baseline_payload)?.states||[],conflicts:parse(s.conflict_payload,[])})):[],
+      scenarios:hasRbac(actor,'capability.scenario.view')&&ctx.complete?db.prepare('select * from capability_scenarios where workspace=? order by updated_at desc').all(space).map(s=>({...s,payload:{...parse(s.payload),states:scenarioStates(parse(s.payload)?.states||[])},baseline:scenarioStates(parse(s.baseline_payload)?.states||[]),conflicts:parse(s.conflict_payload,[])})):[],
       ...calculate(people,projects,states,config)
     };
   }
@@ -233,24 +247,86 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     const items=db.prepare(`select a.id,c.project_code as projectCode,c.project_name as projectName,c.project_category as category,coalesce(c.third_party_company,'') as thirdPartyCompany,a.authorization_type as authorizationType,a.authorization_unit as authorizationUnit,a.authorized_at as authorizedAt,a.authorization_expires_at as authorizationExpiresAt,a.authorization_status as authorizationStatus ${base} and c.project_category=? order by c.third_party_company,c.project_name,c.project_code,a.authorization_type,a.authorization_unit`).all(...params,categoryValue);
     return {counts,items};
   }
-  function ensureTarget(actor,space,group){if(group!==null&&!GROUPS.includes(group))throw fail('工作班组无效');const ctx=context(actor,space);const members=ctx.all.filter(p=>adminGroup(p)===group||getState(p.id)?.workingGroup===group);if(members.some(p=>!readable(actor,p))||(!members.length&&!ctx.complete))throw fail('没有目标班组完整调配权限',403);}
-  function move(actor,space,id,group,index,reason='调配'){
+  function ensureTarget(actor,space,group,ctx){if(group!==null&&!GROUPS.includes(group))throw fail('工作班组无效');ctx??=context(actor,space);const members=ctx.all.filter(p=>adminGroup(p)===group||ctx.stateMap.get(p.id)?.workingGroup===group);if(members.some(p=>!ctx.readableIds.has(p.id))||(!members.length&&!ctx.complete))throw fail('没有目标班组完整调配权限',403);}
+  function move(actor,space,id,group,index,reason='调配',targetPool){
+    if(targetPool!==undefined&&!ALLOCATION_POOLS.includes(targetPool))throw fail('工作分配区域无效');
+    const pool=targetPool??defaultPool(id);
     ensurePerson(actor,space,id);ensureTarget(actor,space,group);const before=getState(id);if(before.workspace!==workspace(source().find(p=>p.id===id)))throw fail('人员正式组织已变化，请刷新后再调配',409);if(before.status!=='ON_DUTY')throw fail('仅在岗人员可以调配',409);
-    before.index=db.prepare("select person_id from capability_current_states where workspace=? and status='ON_DUTY' order by sort_index,person_id").all(space).filter(s=>getState(s.person_id).workingGroup===before.workingGroup).findIndex(s=>s.person_id===id);if(before.workingGroup!==group){closeSupport(id);if(group&&group!==before.administrativeGroup)db.prepare('insert into capability_supports values(?,?,?,?,?,?,?)').run(uid(),id,space,before.administrativeGroup,group,stamp(),null);}
-    const order=db.prepare("select * from capability_current_states where workspace=? and status='ON_DUTY' order by sort_index,person_id").all(space).filter(s=>s.working_group===group&&s.person_id!==id);
+    const activeIds=new Set(context(actor,space).all.map(p=>p.id)),current=db.prepare("select * from capability_current_states where workspace=? and status='ON_DUTY' order by sort_index,person_id").all(space).filter(s=>activeIds.has(s.person_id)).sort((a,b)=>a.sort_index-b.sort_index||a.person_id.localeCompare(b.person_id));
+    before.index=current.filter(s=>s.working_group===before.workingGroup&&(s.working_group!==null||s.allocation_pool===before.allocationPool)).findIndex(s=>s.person_id===id);if(before.workingGroup!==group){closeSupport(id);if(group&&group!==before.administrativeGroup)db.prepare('insert into capability_supports values(?,?,?,?,?,?,?)').run(uid(),id,space,before.administrativeGroup,group,stamp(),null);}
+    const order=current.filter(s=>s.working_group===group&&(group!==null||s.allocation_pool===pool)&&s.person_id!==id);
     const at=index==null?order.length:Math.max(0,Math.min(order.length,index));if(index!=null&&!Number.isSafeInteger(index))throw fail('排序位置无效');order.splice(at,0,{person_id:id});order.forEach((s,i)=>db.prepare('update capability_current_states set sort_index=? where person_id=?').run(i,s.person_id));
     const targetTeam=group?db.prepare("select id from organization_units where unit_type='administrative_team' and status='active' and code=?").get(LANE_CODES[group]):null;
     if(group&&!targetTeam)throw fail('工作班组未在正式组织目录中配置',409);
-    const next={...before,workingGroup:group,currentWorkingTeamId:targetTeam?.id||null,index:at};put(next);return log(id,space,before.workingGroup===group?'PERSON_ORDER_CHANGED':'PERSON_WORKING_GROUP_CHANGED',actor,{before,after:next,reason});
+    const next={...before,workingGroup:group,allocationPool:group?before.allocationPool:pool,currentWorkingTeamId:targetTeam?.id||null,index:at};put(next);return log(id,space,before.workingGroup===group&&(group!==null||before.allocationPool===pool)?'PERSON_ORDER_CHANGED':'PERSON_WORKING_GROUP_CHANGED',actor,{before,after:next,reason});
   }
   function overlap(id,start,end,except){return db.prepare("select * from capability_status_records where person_id=? and phase in ('PLANNED','ACTIVE') and data_status='active'").all(id).some(r=>r.id!==except&&(!r.start_date||!end||r.start_date<=end)&&(!r.end_date||r.end_date>=start));}
   function activate(r,actor){const before=getState(r.person_id);if(!before||before.status!=='ON_DUTY')throw fail('人员已有其他主状态',409);closeSupport(r.person_id);put({...before,status:r.kind,workingGroup:null,currentWorkingTeamId:null,recordId:r.id});db.prepare("update capability_status_records set phase='ACTIVE',updated_at=? where id=?").run(stamp(),r.id);log(r.person_id,r.workspace,'PERSON_STATUS_CHANGED',actor,{before,record:r});}
+  // Resolve work placement only: never update the personnel master organization.
+  function returnOrganization(space,target,organizations){
+    const byId=id=>organizations?organizations.get(id):db.prepare('select * from organization_units where id=?').get(id);
+    const department=byId(space.replace(/^department:/,''));
+    if(!department||department.unit_type!=='department'||department.status!=='active')return null;
+    if(target==='WAITING')return {group:null,pool:'WAITING',teamId:null};
+    const group=GROUPS.includes(target)?target:null;
+    const code=group?LANE_CODES[group]:'GROUP-LINE-SPECIAL',type=group?'administrative_team':'personnel_group';
+    const unit=organizations?[...organizations.values()].find(row=>row.code===code&&row.status==='active'&&row.unit_type===type):db.prepare("select * from organization_units where code=? and status='active' and unit_type=?").get(code,type);
+    if(!unit||(!group&&Number(unit.maintenance_eligible)!==1))return null;
+    let current=unit;const seen=new Set();
+    while(current&&current.id!==department.id){if(seen.has(current.id)||current.status!=='active')return null;seen.add(current.id);current=current.parent_id?byId(current.parent_id):null;}
+    return current?{group,pool:group?null:'SPECIAL',teamId:group?unit.id:null}:null;
+  }
+  function permittedReturnTargets(actor,space,ctx){
+    if(!hasRbac(actor,'capability.allocation.submit'))return [];
+    // Request-local only: command validation obtains a fresh context, never a cached permission result.
+    ctx??=context(actor,space);
+    const organizations=new Map(db.prepare('select * from organization_units').all().map(row=>[row.id,row]));
+    return [...GROUPS,'SPECIAL','WAITING'].filter(target=>{
+      if(!returnOrganization(space,target,organizations))return false;
+      try{ensureTarget(actor,space,GROUPS.includes(target)?target:null,ctx);return true;}catch(error){if(error.status===403)return false;throw error;}
+    });
+  }
+  function validateReturnTarget(actor,space,payload,previous=null){
+    if(!Object.hasOwn(payload,'returnTarget'))return previous;
+    const target=payload.returnTarget;
+    if(target!==null&&![...GROUPS,'SPECIAL','WAITING'].includes(target))throw fail('到期返回位置无效');
+    if(target===previous)return target;
+    requirePermission(actor,'capability.allocation.submit');
+    if(target!==null&&!permittedReturnTargets(actor,space).includes(target))throw fail('没有目标位置完整调配权限或目标已失效',403);
+    return target;
+  }
   function endRecord(r,actor,end=today()){
     const before=getState(r.person_id);if(end>today())throw fail('结束操作不能使用未来日期，请修改计划结束日期');if(r.start_date&&end<r.start_date)throw fail('结束日期早于开始日期');
     db.prepare("update capability_status_records set phase='ENDED',end_date=?,updated_at=? where id=?").run(end,stamp(),r.id);
-    if(before?.recordId===r.id){const master=source().find(p=>p.id===r.person_id);put({...before,status:'ON_DUTY',workingGroup:master&&eligible(master)&&organizationReady(master)?adminGroup(master):null,currentWorkingTeamId:master&&eligible(master)&&organizationReady(master)?master.administrative_team_id:null,workspace:master&&workspace(master)?workspace(master):before.workspace,recordId:null});log(r.person_id,r.workspace,'PERSON_STATUS_ENDED',actor,{before,recordId:r.id,endDate:end});}
+    if(before?.recordId===r.id){
+      const master=source().find(p=>p.id===r.person_id),usable=master&&eligible(master)&&organizationReady(master),currentSpace=master&&workspace(master)||before.workspace;
+      const requested=r.return_target||null,configured=requested&&usable&&currentSpace===r.workspace?returnOrganization(r.workspace,requested):null;
+      let fallbackReason=requested&&!configured?'指定返回位置或人员工作范围已失效':null;
+      const administrative=usable&&(adminGroup(master)?returnOrganization(currentSpace,adminGroup(master)):defaultPool(r.person_id)==='SPECIAL'?returnOrganization(currentSpace,'SPECIAL'):null);
+      const destination=configured||administrative||{group:null,pool:'WAITING',teamId:null};
+      if(!configured&&!administrative)fallbackReason=fallbackReason||'无有效行政返回位置，进入待调配';
+      closeSupport(r.person_id);
+      const group=destination.group;
+      const index=Number(group
+        ?db.prepare("select coalesce(max(sort_index),-1)+1 as n from capability_current_states where workspace=? and status='ON_DUTY' and working_group=?").get(currentSpace,group).n
+        :db.prepare("select coalesce(max(sort_index),-1)+1 as n from capability_current_states where workspace=? and status='ON_DUTY' and working_group is null and allocation_pool=?").get(currentSpace,destination.pool||defaultPool(r.person_id)).n);
+      const next={...before,status:'ON_DUTY',workingGroup:group,currentWorkingTeamId:destination.teamId,allocationPool:destination.pool||defaultPool(r.person_id),workspace:currentSpace,recordId:null,index};
+      put(next);
+      if(group&&group!==adminGroup(master))db.prepare('insert into capability_supports values(?,?,?,?,?,?,?)').run(uid(),r.person_id,currentSpace,adminGroup(master),group,stamp(),null);
+      log(r.person_id,r.workspace,'PERSON_STATUS_ENDED',actor,{before,after:next,recordId:r.id,endDate:end,returnTarget:requested,actualReturnTarget:group||destination.pool,fallbackReason,trigger:actor?'manual':'automatic',endedByReplacement:!!activeSuccessor(r.id)});
+    }
   }
   const activeSuccessor=id=>db.prepare("select * from capability_status_records where replaces_record_id=? and data_status='active'").get(id);
+  function validateHandover(actor,space,incoming,previous,start,end,value,next=null){
+    let count,finish;try{count=handoverDays(value);finish=handoverEnd(start,count);}catch(e){throw fail(e.message);}
+    ensureRecordedPerson(actor,space,previous.person_id);
+    if(previous.start_date&&start<previous.start_date)throw fail('交接日期不能早于上一段开始日期',409);
+    if(end&&end<finish)throw fail('接班人员结束日期不能早于交接结束日期',409);
+    if(overlap(previous.person_id,previous.start_date,finish,previous.id))throw fail('原派驻人员在交接日期内已有其他状态计划',409);
+    if(previous.replaces_record_id&&start<=handoverEnd(previous.start_date,previous.handover_days))throw fail('上一段交接完成后才能开始下一段交接',409);
+    if(next&&next.start_date<=finish)throw fail('本次交接尚未完成，不能开始下一段交接',409);
+    return {count,finish};
+  }
   function deploymentChain(record){
     const found=new Map([[record.id,record]]);let current=record;
     while(current.replaces_record_id){const prior=db.prepare("select * from capability_status_records where id=? and data_status='active'").get(current.replaces_record_id);if(!prior||found.has(prior.id))break;found.set(prior.id,prior);current=prior;}
@@ -259,7 +335,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
   }
   function restoreDeletedActiveRecord(r,actor){
     const before=getState(r.person_id);if(before?.recordId!==r.id)return;const master=source().find(p=>p.id===r.person_id),usable=master&&eligible(master)&&organizationReady(master);
-    put({...before,status:'ON_DUTY',workingGroup:usable?adminGroup(master):null,currentWorkingTeamId:usable?master.administrative_team_id:null,workspace:usable?workspace(master):before.workspace,recordId:null});log(r.person_id,r.workspace,'DELETED_ACTIVE_STATUS_RESTORED',actor,{before,recordId:r.id});
+    put({...before,status:'ON_DUTY',allocationPool:defaultPool(r.person_id),workingGroup:usable?adminGroup(master):null,currentWorkingTeamId:usable?master.administrative_team_id:null,workspace:usable?workspace(master):before.workspace,recordId:null});log(r.person_id,r.workspace,'DELETED_ACTIVE_STATUS_RESTORED',actor,{before,recordId:r.id});
   }
   function scenarioTime(value){
     if(!value)return null;
@@ -269,10 +345,6 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     if(Date.parse(normalized)<=Date.now())throw fail('生效时间必须晚于当前时间');
     return normalized;
   }
-  function scenarioIntents(baseline,desired){
-    const before=new Map(baseline.map(s=>[s.personId,s]));
-    return desired.filter(target=>{const prior=before.get(target.personId);return prior?.status==='ON_DUTY'&&target.status==='ON_DUTY'&&(prior.workingGroup!==target.workingGroup||prior.index!==target.index);}).map(target=>({personId:target.personId,targetGroup:target.workingGroup??null,targetIndex:target.index}));
-  }
   const scenarioStatusLabel=status=>({DEPLOYED:'派驻',TRAINING:'培训',OTHER:'其他状态'}[status]||status||'未知状态');
   function runScheduledScenarios(){
     const due=db.prepare("select id from capability_scenarios where schedule_status='pending' and effective_at<=? order by effective_at,updated_at,id").all(stamp());
@@ -280,7 +352,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
       try{tx(()=>{
         const scenario=db.prepare("select * from capability_scenarios where id=? and schedule_status='pending'").get(item.id);
         if(!scenario||scenario.effective_at>stamp())return;
-        const scenarioPayload=parse(scenario.payload),desired=scenarioPayload?.states||[],baseline=parse(scenario.baseline_payload)?.states||[],intents=Array.isArray(scenarioPayload?.intents)?scenarioPayload.intents:scenarioIntents(baseline,desired),conflicts=[];
+        const scenarioPayload=parse(scenario.payload),desired=scenarioStates(scenarioPayload?.states||[]),baseline=scenarioStates(parse(scenario.baseline_payload)?.states||[]),intents=scenarioIntents(baseline,desired,scenarioPayload.intentVersion===2?scenarioPayload.movedPersonIds:undefined),conflicts=[];
         const actor=resolveActor(scenario.created_by);
         let current=[];
         try{
@@ -292,6 +364,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
           const currentMap=new Map(current.map(s=>[s.personId,s]));
           for(const intent of intents){
             if(!GROUPS.includes(intent.targetGroup)&&intent.targetGroup!==null){conflicts.push({personId:intent.personId,reason:'方案目标班组无效'});continue;}
+            if(intent.targetPool!==undefined&&!ALLOCATION_POOLS.includes(intent.targetPool)){conflicts.push({personId:intent.personId,reason:'方案工作分配区域无效'});continue;}
             if(!Number.isSafeInteger(intent.targetIndex)||intent.targetIndex<0){conflicts.push({personId:intent.personId,reason:'方案人员顺序无效'});continue;}
             const live=currentMap.get(intent.personId);
             if(!live){conflicts.push({personId:intent.personId,reason:'人员已停职、离职、删除、组织失效或超出执行范围'});continue;}
@@ -301,7 +374,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
         }catch(error){conflicts.push({reason:error.message||'方案复核失败'});}
         if(conflicts.length){db.prepare("update capability_scenarios set schedule_status='conflict',conflict_payload=?,updated_at=? where id=?").run(JSON.stringify(conflicts),stamp(),scenario.id);log(null,scenario.workspace,'SCENARIO_SCHEDULED_CONFLICT',actor,{scenarioId:scenario.id,conflicts});audit(actor||{id:'system'},'capability_scheduled_scenario_conflict','capability',scenario.workspace,JSON.stringify({scenarioId:scenario.id,conflicts}));}
         else{
-          for(const targetGroup of [null,...GROUPS])for(const intent of intents.filter(item=>item.targetGroup===targetGroup).sort((a,b)=>a.targetIndex-b.targetIndex||a.personId.localeCompare(b.personId))){const live=getState(intent.personId);if(live.workingGroup!==targetGroup||live.index!==intent.targetIndex)move(actor,scenario.workspace,intent.personId,targetGroup,intent.targetIndex,'定时应用方案 '+scenario.id);}
+          for(const step of scenarioMoveSteps(current,intents))move(actor,scenario.workspace,step.personId,step.targetGroup,step.targetIndex,'定时应用方案 '+scenario.id,step.targetPool);
           db.prepare("update capability_scenarios set schedule_status='applied',applied_at=?,conflict_payload=null,updated_at=? where id=?").run(stamp(),stamp(),scenario.id);
           log(null,scenario.workspace,'SCENARIO_SCHEDULED_APPLIED',actor,{scenarioId:scenario.id,effectiveAt:scenario.effective_at,intents});
           audit(actor,'capability_scheduled_scenario_applied','capability',scenario.workspace,JSON.stringify({scenarioId:scenario.id}));
@@ -325,14 +398,15 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
     let result;try{result=tx(()=>{let historyId=null;const retry=db.prepare('select * from capability_commands where id=?').get(payload.requestId);if(retry){if(retry.actor_id!==actor.id||retry.request_hash!==requestHash)throw fail('请求标识冲突',409);return JSON.parse(retry.response);}
       if(payload.revision!==revision())throw fail('数据已更新，请刷新并重新检查影响',409);const ctx=context(actor,space);
       if(['config','restore','createDeploymentLocation','updateDeploymentLocation','setDeploymentLocationStatus','deleteDeploymentLocation','createOtherStatusOption','updateOtherStatusOption','setOtherStatusOptionStatus','deleteOtherStatusOption','saveScenario','deleteScenario','cancelScenario','rescheduleScenario','applyScenario'].includes(operation)&&!ctx.complete)throw fail('该操作需要当前范围完整权限',403);
-      if(operation==='move')historyId=move(actor,space,payload.personId,payload.targetGroup??null,payload.targetIndex);
-      if(operation==='restore')for(const p of ctx.visible){const s=getState(p.id);if(s.status==='ON_DUTY'&&s.workingGroup!==s.administrativeGroup)move(actor,space,p.id,s.administrativeGroup,undefined,'恢复行政班组');}
+      if(operation==='move')historyId=move(actor,space,payload.personId,payload.targetGroup??null,payload.targetIndex,'调配',payload.targetPool);
+      if(operation==='restore')for(const p of ctx.visible){const s=getState(p.id);if(s.status==='ON_DUTY'&&(s.workingGroup!==s.administrativeGroup||(s.workingGroup===null&&s.allocationPool!==defaultPool(p.id))))move(actor,space,p.id,s.administrativeGroup,undefined,'恢复行政班组',defaultPool(p.id));}
       if(operation==='compensate'){
-        const h=db.prepare('select * from capability_history where id=? and workspace=?').get(payload.historyId,space);if(!h)throw fail('历史记录不存在',404);if(h.actor_id!==actor.id)throw fail('只能补偿本人调配记录',403);const v=parse(h.payload);if(!['PERSON_ORDER_CHANGED','PERSON_WORKING_GROUP_CHANGED'].includes(h.type)||!v.before||!v.after)throw fail('此记录不支持调配补偿');const s=getState(h.person_id);if(s.workingGroup!==v.after.workingGroup||s.index!==v.after.index)throw fail('人员后续已变化，不能直接撤销',409);historyId=move(actor,space,h.person_id,v.before.workingGroup,v.before.index,'补偿 '+h.id);
+        const h=db.prepare('select * from capability_history where id=? and workspace=?').get(payload.historyId,space);if(!h)throw fail('历史记录不存在',404);if(h.actor_id!==actor.id)throw fail('只能补偿本人调配记录',403);const v=parse(h.payload);if(!['PERSON_ORDER_CHANGED','PERSON_WORKING_GROUP_CHANGED'].includes(h.type)||!v.before||!v.after)throw fail('此记录不支持调配补偿');const s=getState(h.person_id);if(s.workingGroup!==v.after.workingGroup||(s.workingGroup===null&&s.allocationPool!==(v.after.allocationPool||defaultPool(h.person_id)))||s.index!==v.after.index)throw fail('人员后续已变化，不能直接撤销',409);historyId=move(actor,space,h.person_id,v.before.workingGroup,v.before.index,'补偿 '+h.id,v.before.allocationPool||defaultPool(h.person_id));
       }
       if(operation==='status'){
         ensurePerson(actor,space,payload.personId);const kind=payload.kind;if(!['DEPLOYED','TRAINING','OTHER'].includes(kind))throw fail('状态类型无效');const start=date(payload.startDate),end=date(payload.endDate,true);if(end&&end<start)throw fail('结束日期早于开始日期');if(end&&end<today())throw fail('已结束的历史请通过迁移核实，不创建当前状态');if(overlap(payload.personId,start,end))throw fail('人员状态时段重叠',409);const deployment=kind==='DEPLOYED'?location(space,payload.deploymentLocationId,{active:true}):null,other=kind==='OTHER'?otherOption(space,payload.otherStatusOptionId,{active:true}):null,label=deployment?.name||other?.name||trim(payload.label);if(!label)throw fail('请填写培训项目');
-        const r={id:uid(),person_id:payload.personId,workspace:space,kind,label,start_date:start,end_date:end,phase:'PLANNED',remark:trim(payload.remark),created_at:stamp(),updated_at:stamp(),replaces_record_id:null,deployment_location_id:deployment?.id||null,other_status_option_id:other?.id||null};db.prepare('insert into capability_status_records(id,person_id,workspace,kind,label,start_date,end_date,phase,remark,created_at,updated_at,replaces_record_id,deployment_location_id,other_status_option_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(r));if(start<=today())activate(r,actor);else log(r.person_id,space,'STATUS_PLANNED',actor,{record:r});
+        const returnTarget=validateReturnTarget(actor,space,payload);
+        const r={return_target:returnTarget,id:uid(),person_id:payload.personId,workspace:space,kind,label,start_date:start,end_date:end,phase:'PLANNED',remark:trim(payload.remark),created_at:stamp(),updated_at:stamp(),replaces_record_id:null,deployment_location_id:deployment?.id||null,other_status_option_id:other?.id||null};db.prepare('insert into capability_status_records(return_target,id,person_id,workspace,kind,label,start_date,end_date,phase,remark,created_at,updated_at,replaces_record_id,deployment_location_id,other_status_option_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(r));if(start<=today())activate(r,actor);else log(r.person_id,space,'STATUS_PLANNED',actor,{record:r});
       }
       if(operation==='replaceDeployment'){
         const incoming=ensurePerson(actor,space,payload.personId),deployment=location(space,payload.deploymentLocationId,{active:true}),label=deployment.name,start=date(payload.startDate),end=date(payload.endDate,true);
@@ -340,19 +414,29 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
         const outgoing=db.prepare("select * from capability_status_records where id=? and workspace=? and data_status='active'").get(payload.replacesRecordId,space);
         if(!outgoing||outgoing.kind!=='DEPLOYED'||!['ACTIVE','PLANNED'].includes(outgoing.phase))throw fail('被替换人员已不在进行中或计划派驻，请刷新后重新确认',409);
         ensureRecordedPerson(actor,space,outgoing.person_id);if(incoming.id===outgoing.person_id)throw fail('接班人员不能替换自己');if(outgoing.deployment_location_id!==deployment.id)throw fail('派驻地点已变化，请刷新后重新确认',409);if(outgoing.start_date&&start<outgoing.start_date)throw fail('接班日期不能早于原派驻开始日期');
-        if(activeSuccessor(outgoing.id))throw fail('该派驻记录已有接班人员',409);if(overlap(incoming.id,start,end))throw fail('接班人员状态时段重叠',409);if(overlap(outgoing.person_id,outgoing.start_date,start,outgoing.id))throw fail('原派驻人员在交接日期前已有其他状态计划',409);
-        const createdAt=stamp(),record={id:uid(),person_id:incoming.id,workspace:space,kind:'DEPLOYED',label,start_date:start,end_date:end,phase:'PLANNED',remark:trim(payload.remark),created_at:createdAt,updated_at:createdAt,replaces_record_id:outgoing.id,deployment_location_id:deployment.id};
-        db.prepare('update capability_status_records set end_date=?,updated_at=? where id=?').run(start,createdAt,outgoing.id);
-        db.prepare('insert into capability_status_records(id,person_id,workspace,kind,label,start_date,end_date,phase,remark,created_at,updated_at,replaces_record_id,deployment_location_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(record));
-        log(outgoing.person_id,space,'DEPLOYMENT_REPLACED',actor,{recordId:outgoing.id,replacedByRecordId:record.id,previousEndDate:outgoing.end_date||'',endDate:start,location:label});
-        historyId=log(record.person_id,space,'DEPLOYMENT_REPLACEMENT_CREATED',actor,{record,replaces:{recordId:outgoing.id,personId:outgoing.person_id,previousEndDate:outgoing.end_date||'',endDate:start}});
+        const handover=validateHandover(actor,space,incoming,outgoing,start,end,payload.handoverDays??1);
+        if(activeSuccessor(outgoing.id))throw fail('该派驻记录已有接班人员',409);if(overlap(incoming.id,start,end))throw fail('接班人员状态时段重叠',409);if(overlap(outgoing.person_id,outgoing.start_date,handover.finish,outgoing.id))throw fail('原派驻人员在交接日期前已有其他状态计划',409);
+        const returnTarget=validateReturnTarget(actor,space,payload);
+        const createdAt=stamp(),record={handover_days:handover.count,return_target:returnTarget,id:uid(),person_id:incoming.id,workspace:space,kind:'DEPLOYED',label,start_date:start,end_date:end,phase:'PLANNED',remark:trim(payload.remark),created_at:createdAt,updated_at:createdAt,replaces_record_id:outgoing.id,deployment_location_id:deployment.id};
+        db.prepare('update capability_status_records set end_date=?,updated_at=? where id=?').run(handover.finish,createdAt,outgoing.id);
+        db.prepare('insert into capability_status_records(handover_days,return_target,id,person_id,workspace,kind,label,start_date,end_date,phase,remark,created_at,updated_at,replaces_record_id,deployment_location_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(record));
+        log(outgoing.person_id,space,'DEPLOYMENT_REPLACED',actor,{recordId:outgoing.id,replacedByRecordId:record.id,previousEndDate:outgoing.end_date||'',endDate:handover.finish,handoverDays:handover.count,location:label});
+        historyId=log(record.person_id,space,'DEPLOYMENT_REPLACEMENT_CREATED',actor,{record,replaces:{recordId:outgoing.id,personId:outgoing.person_id,previousEndDate:outgoing.end_date||'',endDate:handover.finish,handoverDays:handover.count}});
         if(start<=today())activate(record,actor);
       }
       if(['end','updateStatus','deleteStatus'].includes(operation)){
         const r=db.prepare("select * from capability_status_records where id=? and workspace=? and data_status='active'").get(payload.recordId,space);if(!r)throw fail('记录不存在或已删除',404);ensureRecordedPerson(actor,space,r.person_id);const superAdmin=isSuper(actor);if(operation==='deleteStatus'&&!superAdmin)throw fail('仅唯一超级管理员可以删除状态记录',403);if(operation!=='deleteStatus'&&!['ACTIVE','PLANNED'].includes(r.phase)&&!superAdmin)throw fail('记录已结束',409);
-        if(operation==='end'){if(r.phase==='PLANNED'){db.prepare("update capability_status_records set phase='CANCELLED',updated_at=? where id=?").run(stamp(),r.id);log(r.person_id,space,'STATUS_CANCELLED',actor,{record:r});}else endRecord(r,actor,date(payload.endDate||today()));}
+        if(operation==='updateStatus'){
+          const target=validateReturnTarget(actor,space,payload,r.return_target||null);
+          if(target!==(r.return_target||null)){
+            db.prepare('update capability_status_records set return_target=? where id=?').run(target,r.id);
+            log(r.person_id,space,'STATUS_RETURN_TARGET_CHANGED',actor,{recordId:r.id,before:r.return_target||null,after:target});
+            r.return_target=target;
+          }
+        }
+        if(operation==='end'){if(r.phase==='PLANNED'){db.prepare("update capability_status_records set phase='CANCELLED',updated_at=? where id=?").run(stamp(),r.id);log(r.person_id,space,'STATUS_CANCELLED',actor,{record:r});}else {const next=activeSuccessor(r.id),end=date(payload.endDate||today());if((next||r.replaces_record_id)&&end>today())throw fail('未来结束日期请通过修改派驻记录设置，不能提前结束交接',409);if(r.replaces_record_id&&end<handoverEnd(r.start_date,r.handover_days))throw fail('接班人员结束日期不能早于交接结束日期',409);if(next&&end!==handoverEnd(next.start_date,next.handover_days))throw fail('结束日期由交接关系固定，请修改接班记录',409);endRecord(r,actor,end);}}
         else if(operation==='deleteStatus'){const reason=trim(payload.reason);if(!reason)throw fail('请填写删除原因');restoreDeletedActiveRecord(r,actor);db.prepare("update capability_status_records set data_status='deleted',deleted_at=?,deleted_by=?,deletion_reason=?,updated_at=? where id=? and data_status='active'").run(stamp(),actor.id,reason,stamp(),r.id);historyId=log(r.person_id,space,'STATUS_SAFE_DELETED',actor,{record:r,reason,previousRecordId:r.replaces_record_id||null,nextRecordId:activeSuccessor(r.id)?.id||null});}
-        else {const reason=trim(payload.reason);if(!['ACTIVE','PLANNED'].includes(r.phase)&&!reason)throw fail('修改历史记录必须填写原因');const start=date(payload.startDate),requestedEnd=date(payload.endDate,true);if(requestedEnd&&requestedEnd<start)throw fail('结束日期早于开始日期');if(r.phase==='ACTIVE'&&start>today())throw fail('已生效记录不能改为未来开始');if(overlap(r.person_id,start,requestedEnd,r.id))throw fail('人员状态时段重叠',409);const previous=r.replaces_record_id?db.prepare("select * from capability_status_records where id=? and data_status='active'").get(r.replaces_record_id):null,next=activeSuccessor(r.id);if(next&&requestedEnd!==next.start_date)throw fail(`本记录已由下一位人员于${next.start_date}接班，结束日期必须与之一致`,409);const deployment=r.kind==='DEPLOYED'?location(space,payload.deploymentLocationId,{active:payload.deploymentLocationId!==r.deployment_location_id}):null,other=r.kind==='OTHER'?otherOption(space,payload.otherStatusOptionId,{active:payload.otherStatusOptionId!==r.other_status_option_id}):null,label=deployment?.name||other?.name||trim(payload.label);if(!label)throw fail('地点或项目不能为空');const chain=r.kind==='DEPLOYED'?deploymentChain(r):[r],locationChanged=deployment&&deployment.id!==r.deployment_location_id;if(locationChanged&&chain.length>1&&!superAdmin)throw fail('交接链地点不能单独修改',403);if(locationChanged&&chain.length>1&&!payload.confirmChainLocation)throw fail(`修改地点将同步更新交接链中${chain.length}条记录，请确认`,409);const changedAt=stamp();if(locationChanged&&chain.length>1)for(const linked of chain)db.prepare('update capability_status_records set label=?,deployment_location_id=?,updated_at=? where id=?').run(label,deployment.id,changedAt,linked.id);db.prepare('update capability_status_records set label=?,start_date=?,end_date=?,remark=?,deployment_location_id=?,other_status_option_id=?,updated_at=? where id=?').run(label,start,requestedEnd,trim(payload.remark),deployment?.id||null,other?.id||null,changedAt,r.id);if(previous){if(previous.start_date&&start<previous.start_date)throw fail('交接日期不能早于上一段开始日期');db.prepare('update capability_status_records set end_date=?,updated_at=? where id=?').run(start,changedAt,previous.id);}const fresh=db.prepare('select * from capability_status_records where id=?').get(r.id);if(fresh.phase==='ACTIVE'&&fresh.end_date&&fresh.end_date<today())endRecord(fresh,actor,fresh.end_date);else if(fresh.phase==='PLANNED'&&fresh.end_date&&fresh.end_date<today())db.prepare("update capability_status_records set phase='ENDED',updated_at=? where id=?").run(changedAt,fresh.id);else if(fresh.phase==='PLANNED'&&fresh.start_date<=today()&&getState(fresh.person_id)?.status==='ON_DUTY')activate(fresh,actor);log(r.person_id,space,'STATUS_UPDATED',actor,{before:r,after:{...payload,label},reason,chainLocationCount:locationChanged?chain.length:0});}
+        else {const reason=trim(payload.reason);if(!['ACTIVE','PLANNED'].includes(r.phase)&&!reason)throw fail('修改历史记录必须填写原因');const start=date(payload.startDate),requestedEnd=date(payload.endDate,true);if(requestedEnd&&requestedEnd<start)throw fail('结束日期早于开始日期');if(r.phase==='ACTIVE'&&start>today())throw fail('已生效记录不能改为未来开始');if(overlap(r.person_id,start,requestedEnd,r.id))throw fail('人员状态时段重叠',409);const previous=r.replaces_record_id?db.prepare("select * from capability_status_records where id=? and data_status='active'").get(r.replaces_record_id):null,next=activeSuccessor(r.id);const handover=previous?validateHandover(actor,space,r,previous,start,requestedEnd,payload.handoverDays??r.handover_days,next):null;if(!previous&&payload.handoverDays!==undefined&&Number(payload.handoverDays)!==1)throw fail('无有效上一段派驻关系，不能修改交接天数',409);if(handover&&(start!==r.start_date||handover.count!==r.handover_days)){if((r.start_date<=today()||previous.phase==='ENDED')&&!reason)throw fail('已开始交接，修改日期或天数必须填写原因');if(previous.phase==='ENDED'&&!superAdmin)throw fail('修改已结束的上一段派驻需要超级管理员权限',403);}if(next&&requestedEnd!==handoverEnd(next.start_date,next.handover_days))throw fail('结束日期由交接关系固定，请修改接班记录',409);if(next&&start>next.start_date)throw fail('开始日期不能晚于下一位接班日期',409);const deployment=r.kind==='DEPLOYED'?location(space,payload.deploymentLocationId,{active:payload.deploymentLocationId!==r.deployment_location_id}):null,other=r.kind==='OTHER'?otherOption(space,payload.otherStatusOptionId,{active:payload.otherStatusOptionId!==r.other_status_option_id}):null,label=deployment?.name||other?.name||trim(payload.label);if(!label)throw fail('地点或项目不能为空');const chain=r.kind==='DEPLOYED'?deploymentChain(r):[r],locationChanged=deployment&&deployment.id!==r.deployment_location_id;if(locationChanged&&chain.length>1&&!superAdmin)throw fail('交接链地点不能单独修改',403);if(locationChanged&&chain.length>1&&!payload.confirmChainLocation)throw fail(`修改地点将同步更新交接链中${chain.length}条记录，请确认`,409);const changedAt=stamp();if(locationChanged&&chain.length>1)for(const linked of chain)db.prepare('update capability_status_records set label=?,deployment_location_id=?,updated_at=? where id=?').run(label,deployment.id,changedAt,linked.id);db.prepare('update capability_status_records set label=?,start_date=?,end_date=?,remark=?,deployment_location_id=?,other_status_option_id=?,updated_at=? where id=?').run(label,start,requestedEnd,trim(payload.remark),deployment?.id||null,other?.id||null,changedAt,r.id);if(previous&&(start!==r.start_date||handover.count!==r.handover_days)){db.prepare('update capability_status_records set handover_days=? where id=?').run(handover.count,r.id);db.prepare('update capability_status_records set end_date=?,updated_at=? where id=?').run(handover.finish,changedAt,previous.id);if(previous.phase==='ENDED'&&(start!==r.start_date||handover.count!==r.handover_days)&&handover.finish>=today())throw fail('不能通过修改交接日期重新激活已结束派驻',409);}const fresh=db.prepare('select * from capability_status_records where id=?').get(r.id);if(fresh.phase==='ACTIVE'&&fresh.end_date&&fresh.end_date<today())endRecord(fresh,actor,fresh.end_date);else if(fresh.phase==='PLANNED'&&fresh.end_date&&fresh.end_date<today())db.prepare("update capability_status_records set phase='ENDED',updated_at=? where id=?").run(changedAt,fresh.id);else if(fresh.phase==='PLANNED'&&fresh.start_date<=today()&&getState(fresh.person_id)?.status==='ON_DUTY')activate(fresh,actor);log(r.person_id,space,'STATUS_UPDATED',actor,{before:r,after:{...payload,label},reason,chainLocationCount:locationChanged?chain.length:0});}
       }
       if(operation==='createDeploymentLocation'){
         const name=trim(payload.name);if(!name)throw fail('请填写派驻地点名称');if(name.length>100)throw fail('派驻地点名称不能超过100字');if(db.prepare('select id from capability_deployment_locations where workspace=? and name=?').get(space,name))throw fail('当前工作范围已有同名派驻地点',409);const id=uid(),now=stamp();db.prepare("insert into capability_deployment_locations values(?,?,?,'active',?,?,?,?)").run(id,space,name,actor.id,now,actor.id,now);historyId=log(null,space,'DEPLOYMENT_LOCATION_CREATED',actor,{id,name});
@@ -386,7 +470,7 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
       if(operation==='saveScenario'){
         if(!trim(payload.name))throw fail('请填写方案名称');if(payload.baseRevision!==revision())throw fail('方案基准已过期',409);validateScenario(actor,space,payload.states);
         const effectiveAt=scenarioTime(payload.effectiveAt);if(effectiveAt)requirePermission(actor,'capability.scenario.apply');
-        const baseline=snapshot(actor,space).states,intents=scenarioIntents(baseline,payload.states),id=uid();db.prepare('insert into capability_scenarios(id,workspace,name,base_revision,payload,created_by,updated_at,effective_at,schedule_status,baseline_payload) values(?,?,?,?,?,?,?,?,?,?)').run(id,space,trim(payload.name),payload.baseRevision,JSON.stringify({states:payload.states,intents}),actor.id,stamp(),effectiveAt,effectiveAt?'pending':'saved',JSON.stringify({states:baseline}));log(null,space,'SCENARIO_SAVED',actor,{id,name:payload.name,effectiveAt,intents});
+        const baseline=snapshot(actor,space).states,intents=scenarioIntents(baseline,scenarioStates(payload.states),payload.movedPersonIds),id=uid();db.prepare('insert into capability_scenarios(id,workspace,name,base_revision,payload,created_by,updated_at,effective_at,schedule_status,baseline_payload) values(?,?,?,?,?,?,?,?,?,?)').run(id,space,trim(payload.name),payload.baseRevision,JSON.stringify({states:payload.states,intents,intentVersion:2,movedPersonIds:intents.map(item=>item.personId)}),actor.id,stamp(),effectiveAt,effectiveAt?'pending':'saved',JSON.stringify({states:baseline}));log(null,space,'SCENARIO_SAVED',actor,{id,name:payload.name,effectiveAt,intents});
       }
       if(operation==='deleteScenario'){const s=db.prepare('select * from capability_scenarios where id=? and workspace=?').get(payload.scenarioId,space);if(!s)throw fail('方案不存在',404);if(s.schedule_status==='pending')throw fail('请先取消待生效的定时方案',409);db.prepare('delete from capability_scenarios where id=?').run(s.id);log(null,space,'SCENARIO_DELETED',actor,{scenario:s});}
       if(operation==='cancelScenario'){const s=db.prepare('select * from capability_scenarios where id=? and workspace=?').get(payload.scenarioId,space);if(!s)throw fail('方案不存在',404);if(s.schedule_status!=='pending')throw fail('只有待生效方案可以取消',409);db.prepare("update capability_scenarios set schedule_status='cancelled',updated_at=? where id=?").run(stamp(),s.id);log(null,space,'SCENARIO_SCHEDULE_CANCELLED',actor,{scenarioId:s.id,effectiveAt:s.effective_at});}
@@ -394,13 +478,14 @@ export function createCapabilityService({db,hasRbac,personnelAccess,audit,resolv
       if(operation==='applyScenario'){
         const s=payload.scenarioId?db.prepare('select * from capability_scenarios where id=? and workspace=?').get(payload.scenarioId,space):null;if(payload.scenarioId&&!s)throw fail('方案不存在',404);
         const sourceScenario=payload.sourceScenarioId?db.prepare('select * from capability_scenarios where id=? and workspace=?').get(payload.sourceScenarioId,space):null;if(payload.sourceScenarioId&&!sourceScenario)throw fail('原方案不存在',404);
-        const states=s?parse(s.payload).states:payload.states;const base=s?Number(s.base_revision):payload.baseRevision;if(base!==revision())throw fail('方案基准已过期，需重新计算',409);validateScenario(actor,space,states);
-        for(const target of states.filter(s=>s.status==='ON_DUTY').sort((a,b)=>a.index-b.index))move(actor,space,target.personId,target.workingGroup,target.index,'应用方案');if(s||sourceScenario)db.prepare("update capability_scenarios set schedule_status='applied',applied_at=?,updated_at=? where id=?").run(stamp(),stamp(),(s||sourceScenario).id);log(null,space,'SCENARIO_APPLIED',actor,{scenarioId:s?.id||sourceScenario?.id||null,modifiedFromSaved:!!sourceScenario&&hash(states)!==hash(parse(sourceScenario.payload).states)});
+        const states=scenarioStates(s?parse(s.payload).states:payload.states);const base=s?Number(s.base_revision):payload.baseRevision;if(base!==revision())throw fail('方案基准已过期，需重新计算',409);validateScenario(actor,space,states);
+        const current=snapshot(actor,space).states,saved=s?parse(s.payload):null,intentions=scenarioIntents(current,states,payload.movedPersonIds??(saved?.intentVersion===2?saved.movedPersonIds:undefined));
+        for(const step of scenarioMoveSteps(current,intentions))move(actor,space,step.personId,step.targetGroup,step.targetIndex,'应用方案',step.targetPool);if(s||sourceScenario)db.prepare("update capability_scenarios set schedule_status='applied',applied_at=?,updated_at=? where id=?").run(stamp(),stamp(),(s||sourceScenario).id);log(null,space,'SCENARIO_APPLIED',actor,{scenarioId:s?.id||sourceScenario?.id||null,modifiedFromSaved:!!sourceScenario&&hash(states)!==hash(parse(sourceScenario.payload).states),intents:intentions});
       }
       const beforeRevision=revision();const next=['saveScenario','deleteScenario'].includes(operation)?beforeRevision:event('CAPABILITY_UPDATED');const result={ok:true,revision:next,historyId};db.prepare('insert into capability_commands values(?,?,?,?)').run(payload.requestId,actor.id,requestHash,JSON.stringify(result));audit(actor,'capability_'+operation,'capability',space,JSON.stringify({revision:next,...(operation==='replaceDeployment'?{incomingPersonId:payload.personId,replacesRecordId:payload.replacesRecordId,handoverDate:payload.startDate,deploymentLocationId:payload.deploymentLocationId}:{}),...(['updateStatus','deleteStatus'].includes(operation)?{recordId:payload.recordId,reason:trim(payload.reason)}:{})}));return result;
     });}catch(error){if(operation.endsWith('DeploymentLocation'))audit(actor,'capability_'+operation+'_rejected','capability',space,JSON.stringify({status:error.status||500,error:error.message,locationId:payload.locationId||null}));throw error;}publish();return result;
   }
-  function validateScenario(actor,space,states){if(!Array.isArray(states))throw fail('方案状态无效');const people=context(actor,space).visible;const map=new Map(states.map(s=>[s.personId,s]));if(map.size!==people.length||states.length!==people.length)throw fail('方案人员与当前范围不一致');for(const p of people){const target=map.get(p.id),live=getState(p.id);if(!target||target.status!==live.status||target.recordId!==live.recordId)throw fail('方案状态已变化，需重新计算',409);ensureTarget(actor,space,target.workingGroup);if(!Number.isSafeInteger(target.index)||target.index<0)throw fail('方案顺序无效');if(target.status!=='ON_DUTY'&&target.workingGroup!==live.workingGroup)throw fail('非在岗人员不能调配');}}
+  function validateScenario(actor,space,states){if(!Array.isArray(states))throw fail('方案状态无效');const people=context(actor,space).visible;const map=new Map(states.map(s=>[s.personId,s]));if(map.size!==people.length||states.length!==people.length)throw fail('方案人员与当前范围不一致');for(const p of people){const target=map.get(p.id),live=getState(p.id);if(!target||target.status!==live.status||target.recordId!==live.recordId)throw fail('方案状态已变化，需重新计算',409);ensureTarget(actor,space,target.workingGroup);if(target.allocationPool!==undefined&&!ALLOCATION_POOLS.includes(target.allocationPool))throw fail('工作分配区域无效');if(!Number.isSafeInteger(target.index)||target.index<0)throw fail('方案顺序无效');if(target.status!=='ON_DUTY'&&(target.workingGroup!==live.workingGroup||(target.allocationPool!==undefined&&target.allocationPool!==live.allocationPool)))throw fail('非在岗人员不能调配');}}
   function report(actor,space){requirePermission(actor,'capability.report.export');return {...snapshot(actor,space),exportedAt:stamp(),schemaVersion:2,source:'center-master'};}
   return {init,revision,masterRevision,readiness:()=>({ready,issue:readinessIssue,source:'center-master'}),organizationIssues,nonParticipants,syncMaster,schedule,spaces,snapshot,personAuthorizations,command,report,subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);}};
 }

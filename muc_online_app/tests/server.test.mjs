@@ -5,22 +5,73 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import vm from "node:vm";
 import { requestQueryStats } from "../db.mjs";
 import { seedCapabilityFixture } from "../scripts/capability-fixture.mjs";
 import { createPersonnelAccess } from "../personnel-access.mjs";
 import { createCapabilityService } from "../capability-service.mjs";
 import { importHistoryContext } from "../personnel-import-history.mjs";
+import { pptxFixture } from './fixtures/pptx-fixture.mjs';
 
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ceairm-test-"));
 process.env.MUC_NO_LISTEN = "1";
 process.env.DB_PATH = path.join(tempDir, "test.sqlite");
+process.env.UPLOAD_DIR = path.join(tempDir, 'uploads');
 process.env.APP_VERSION = "test-version";
 process.env.COS_SECRET_ID = "test-secret-id";
 process.env.COS_SECRET_KEY = "test-secret-key";
 process.env.COS_BUCKET = "test-bucket-1234567890";
 process.env.COS_REGION = "ap-shanghai";
 
-const { measuredRoute, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, db, capabilityService } = await import("../server.mjs");
+const { measuredRoute, pumpInfoSync, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, db, capabilityService } = await import("../server.mjs");
+test('dispatch import previews without writes, commits partial successes and replays idempotently',async()=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}});
+  const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const template=db.prepare("select * from users where id='54002010'").get();
+  const release=createMaintenanceTestAccount(template,{id:'import-release',name:'导入放行员'});
+  const mechanic=createMaintenanceTestAccount(template,{id:'import-mechanic',name:'导入维修员'});
+  const created=await request('/api/maintenance/flights',{method:'POST',cookie,body:{date:'2026-10-09',flightNo:'MU-IMP-IN',departureFlightNo:'MU-IMP-OUT',aircraftNo:'BIMP',aircraftType:'A320',workKind:'短停'}});
+  assert.equal(created.res.statusCode,201,JSON.stringify(created.payload));
+  const flightId=created.payload.flight.id;
+  const rows=[{date:'2026-10-09',workKind:'短停',flightNo:'MU-IMP-IN/MU-IMP-OUT',releaseNames:release.name,mechanicNames:mechanic.name},{date:'2026-10-09',workKind:'航后',flightNo:'NOT-FOUND',releaseNames:release.name,mechanicNames:mechanic.name}];
+  const preview=await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie,body:{rows}});
+  assert.equal(preview.res.statusCode,200,JSON.stringify(preview.payload));assert.equal(preview.payload.success,1);assert.equal(preview.payload.failed,1);
+  assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n,0);
+  rows.forEach((row,i)=>Object.assign(row,{matchedFlightId:preview.payload.results[i].flightId,expectedUpdatedAt:preview.payload.results[i].expectedUpdatedAt}));
+  const body={requestId:'test_import_batch_001',rows};
+  const committed=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body});
+  assert.equal(committed.payload.success,1,JSON.stringify(committed.payload));assert.equal(committed.payload.failed,1);
+  assert.equal(db.prepare('select status from maintenance_flights where id=?').get(flightId).status,'已派工');
+  const assignments=db.prepare('select person_id,role from maintenance_assignments where flight_id=?').all(flightId);
+  assert.deepEqual(assignments.filter(a=>a.person_id===release.personId).map(a=>a.role).sort(),['放行','例行检查','接机','送机'].sort());
+  assert.deepEqual(assignments.filter(a=>a.person_id===mechanic.personId).map(a=>a.role).sort(),['接机','送机'].sort());
+  const replay=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body});assert.equal(replay.payload.success,1);
+  assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(flightId).n,6);
+  const again=await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie,body:{rows}});assert.equal(again.payload.success,0);
+  const create=async(number,kind='航后',aircraft='BIMP2')=>(await request('/api/maintenance/flights',{method:'POST',cookie,body:{date:'2026-10-09',flightNo:kind==='航前'?'':number,departureFlightNo:kind==='航前'?number:'',aircraftNo:aircraft,aircraftType:'A320',workKind:kind}})).payload.flight;
+  const pre=await create('MU-IMP-PRE','航前');
+  const preRow={...rows[0],workKind:'航前',flightNo:'/MU-IMP-PRE'};
+  const check=async(items)=> (await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie,body:{rows:items}})).payload;
+  const duplicate=await check([preRow,preRow]);assert.equal(duplicate.failed,2);
+  const missing=await check([{...preRow,releaseNames:''}]);assert.equal(missing.failed,1);
+  const stalePreview=await check([preRow]);assert.equal(stalePreview.success,1);
+  db.prepare('update maintenance_flights set updated_at=? where id=?').run('2099-01-01T00:00:00Z',pre.id);
+  const stale=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body:{requestId:'test_import_stale_001',rows:[{...preRow,matchedFlightId:pre.id,expectedUpdatedAt:stalePreview.results[0].expectedUpdatedAt}]}});
+  assert.equal(stale.payload.failed,1);assert.equal(db.prepare('select count(*) as n from maintenance_assignments where flight_id=?').get(pre.id).n,0);
+  await create('MU-IMP-AMB','航后','BAMB1');await create('MU-IMP-AMB','航后','BAMB2');
+  const ambiguous=await check([{...preRow,workKind:'航后',flightNo:'/MU-IMP-AMB'}]);assert.match(ambiguous.results[0].error,/多个/);
+  const workerLogin=await request('/api/login',{method:'POST',body:{username:mechanic.username,password:'muc2026'}});
+  const denied=await request('/api/maintenance/dispatch-import/preview',{method:'POST',cookie:String(workerLogin.res.headers['Set-Cookie']).split(';')[0],body:{rows:[preRow]}});assert.equal(denied.res.statusCode,403);
+  const post=await create('MU-IMP-POST');
+  const postPreview=await check([{...preRow,workKind:'航后',flightNo:'/MU-IMP-POST'}]);
+  const postCommit=await request('/api/maintenance/dispatch-import/commit',{method:'POST',cookie,body:{requestId:'test_import_post_001',rows:[{...preRow,workKind:'航后',flightNo:'/MU-IMP-POST',matchedFlightId:post.id,expectedUpdatedAt:postPreview.results[0].expectedUpdatedAt}]}});assert.equal(postCommit.payload.success,1,JSON.stringify(postCommit.payload));
+  const postAssignments=db.prepare('select person_id,role from maintenance_assignments where flight_id=?').all(post.id);
+  assert.deepEqual(postAssignments.filter(a=>a.person_id===release.personId).map(a=>a.role).sort(),['放行','例行机外','例行发动机','例行L/G','接机'].sort());assert.equal(postAssignments.filter(a=>a.person_id===mechanic.personId).length,4);
+  const flightDry=await request('/api/maintenance/flights/import',{method:'POST',cookie,body:{validateOnly:true,rows:[{date:'2026-10-09',flightNo:'MU-DRY',aircraftNo:'BDRY',aircraftType:'A320',workKind:'航后'}]}});
+  assert.equal(flightDry.res.statusCode,200);assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-DRY'").get().n,0);
+});
+// Explicit test-only configuration; production must not infer aircraft groups.
+db.prepare("insert into settings(key,value,updated_at) values(?,?,?)").run("maintenance_aircraft_hours_v1", JSON.stringify({ version: 1, groups: [{ id: "test-models", name: "测试机型组", codes: ["A319", "A320", "A321", "A330", "B737", "B787"], enabled: true, hours: Object.fromEntries(db.prepare("select name,value from maintenance_hour_rules where rule_type='workType'").all().map(row => [row.name, row.value])) }] }), new Date().toISOString());
 
 class MockResponse extends EventEmitter {
   headers = {};
@@ -40,6 +91,7 @@ class MockResponse extends EventEmitter {
     this.emit("finish");
   }
 }
+
 
 test("capability SSE sends changed versions only, keeps heartbeats and revokes expired access", async t => {
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
@@ -93,6 +145,13 @@ async function requestRaw(url, { method = "GET", body, cookie = "", headers = {}
   const res = new MockResponse();
   await measuredRoute(req, res);
   return res;
+}
+
+async function reportVersion(flightId, cookie) {
+  const opened = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie });
+  assert.equal(opened.res.statusCode, 200, JSON.stringify(opened.payload));
+  assert.ok(opened.payload.report.flight.updatedAt, "报工接口必须返回版本，不能从数据库代填");
+  return opened.payload.report.flight.updatedAt;
 }
 
 test("unsafe requests reject cross-origin and simple text bodies before writing", async () => {
@@ -291,7 +350,7 @@ test("self-scoped participants can report eligible people across teams without w
   db.prepare("delete from rbac_user_roles where user_id=?").run(colleague.id);
   db.prepare("delete from rbac_user_scopes where user_id=?").run(colleague.id);
   db.prepare("delete from users where id=?").run(colleague.id);
-  const flight = await request("/api/maintenance/flights", { method: "POST", cookie: adminCookie, body: { date: "2026-09-01", flightNo: "MUCAND", aircraftNo: "BCAND", workKind: "短停", standardHours: 2 } });
+  const flight = await request("/api/maintenance/flights", { method: "POST", cookie: adminCookie, body: { date: "2026-09-01", flightNo: "MUCAND", aircraftNo: "BCAND", aircraftType: "A320", workKind: "短停", standardHours: 2 } });
   const flightId = flight.payload.flight.id;
   const stamp = new Date().toISOString();
   for (const role of ["放行", "接机"]) db.prepare(`insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,team,role,status,assigned_by,assigned_at)
@@ -351,14 +410,14 @@ test("self-scoped participants can report eligible people across teams without w
   const version = updated.payload.report.routine.draft.version;
   const groupId = db.prepare("select personnel_group_id from personnel where id=?").get(colleague.personId).personnel_group_id;
   db.prepare("update personnel set personnel_group_id=null where id=?").run(colleague.personId);
-  const outside = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  const outside = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
   assert.equal(outside.res.statusCode, 400);
   db.prepare("update personnel set personnel_group_id=? where id=?").run(groupId, colleague.personId);
   db.prepare("update personnel set employment_status='停职' where id=?").run(colleague.personId);
-  const rejected = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  const rejected = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
   assert.equal(rejected.res.statusCode, 400, JSON.stringify(rejected.payload));
   db.prepare("update personnel set employment_status='在职' where id=?").run(colleague.personId);
-  const submitted = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version } });
+  const submitted = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
   assert.equal(submitted.res.statusCode, 200, JSON.stringify(submitted.payload));
   const nonroutineItems = [{ temporary: true, title: "跨范围非例行", category: "其他", standardHours: 2, entries: [{ role: "主做", personId: colleague.personId }] }];
   const draft = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine/draft`, { method: "PUT", cookie: secondCookie, body: { items: nonroutineItems, version: 0 } });
@@ -491,6 +550,101 @@ test("range requests are parsed safely", () => {
   assert.equal(parseRangeHeader("bytes=100-120", 100), null);
 });
 
+test('information incremental sync, scoped summaries, edit conflicts and 10MiB limits',async()=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}});
+  const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const initial=await request('/api/records?summary=1',{cookie});
+  const created=await request('/api/records',{method:'POST',cookie,body:{date:'2026-10-09',title:'realtime test',original:'safe test',category:'其他',allInScope:true}});
+  assert.equal(created.res.statusCode,201);const record=created.payload.record;
+  const sync=await request('/api/info/sync',{method:'POST',cookie,body:{cursor:initial.payload.cursor,knownIds:[]}});
+  assert.equal(sync.res.statusCode,200);assert.equal(sync.payload.reset,false);
+  assert.ok(sync.payload.records.some(r=>r.id===record.id));assert.ok(sync.payload.records.every(r=>r.receipts.every(x=>x.userId==='54002010')));
+  const body={date:record.date,title:'edited',original:record.original,category:record.category,expectedUpdatedAt:record.updatedAt};
+  assert.equal((await request(`/api/records/${record.id}`,{method:'PUT',cookie,body})).res.statusCode,200);
+  assert.equal((await request(`/api/records/${record.id}`,{method:'PUT',cookie,body})).res.statusCode,409);
+  const sign=size=>request(`/api/records/${record.id}/attachments/presign`,{method:'POST',cookie,body:{name:'limit.txt',type:'text/plain',size}});
+  assert.equal((await sign(10*1024*1024)).res.statusCode,200);
+  assert.equal((await sign(10*1024*1024+1)).res.statusCode,413);
+  const fake=await request(`/api/records/${record.id}/attachments/complete`,{method:'POST',cookie,body:{attachmentId:'att-limit',objectKey:`attachments/record/${record.id}/att-limit-limit.txt`,name:'limit.txt',size:10*1024*1024+1}});
+  assert.equal(fake.res.statusCode,413);assert.equal(db.prepare('select 1 from attachments where id=?').get('att-limit'),undefined);
+  const denied=await request('/api/info/sync',{method:'POST',body:{cursor:sync.payload.cursor,knownIds:[]}});assert.equal(denied.res.statusCode,401);
+});
+
+test('information SSE delivers only lightweight signals and closes revoked sessions',async t=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const req=Readable.from([]);req.method='GET';req.url='/api/info/events';req.headers={host:'127.0.0.1:8788',cookie};
+  const res=new MockResponse();t.after(()=>res.emit('close'));
+  await measuredRoute(req,res);assert.equal(res.statusCode,200);assert.equal(res.headers['X-Accel-Buffering'],'no');
+  const created=await request('/api/records',{method:'POST',cookie,body:{date:'2026-10-09',title:'private SSE title',original:'private original',category:'其他',allInScope:true}});
+  pumpInfoSync();assert.match(res.body.toString(),/"kind":"content"/);assert.ok(!res.body.toString().includes(created.payload.record.id));assert.ok(!res.body.toString().includes('private SSE title'));
+  req.headers.cookie='';pumpInfoSync(true);assert.match(res.body.toString(),/access-revoked/);
+});
+
+test('new recipients receive publication signals without waiting for the permission heartbeat',async t=>{
+  const template=db.prepare("select * from users where id='54002010'").get();
+  const reader=createMaintenanceTestAccount(template,{id:'info-new-recipient',name:'实时新接收人'});
+  const outsider=createMaintenanceTestAccount(template,{id:'info-not-recipient',name:'实时非接收人'});
+  const connect=async account=>{
+    const login=await request('/api/login',{method:'POST',body:{username:account.username,password:'muc2026'}});
+    const req=Readable.from([]);req.method='GET';req.url='/api/info/events';req.headers={host:'127.0.0.1:8788',cookie:String(login.res.headers['Set-Cookie']).split(';')[0]};
+    const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,200);t.after(()=>res.emit('close'));return res;
+  };
+  pumpInfoSync();const received=await connect(reader),notReceived=await connect(outsider);
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const published=await request('/api/records',{method:'POST',cookie,body:{date:'2026-10-09',title:'recipient cache regression',original:'test',category:'其他',recipients:[reader.personId]}});
+  assert.equal(published.res.statusCode,201);
+  pumpInfoSync();
+  assert.match(received.body.toString(),/"kind":"content"/);
+  assert.ok(!notReceived.body.toString().includes('"kind":"content"'));
+  assert.ok(!received.body.toString().includes(published.payload.record.id));
+});
+
+test('200 scoped accounts and 500 historical records use bounded incremental queries',async t=>{
+  db.exec('begin');let transactionOpen=true;
+  t.after(()=>{if(transactionOpen)db.exec('rollback');});
+  const template=db.prepare("select * from users where id='54002010'").get(),stamp=new Date().toISOString();
+  const people=Array.from({length:200},(_,i)=>createMaintenanceTestAccount(template,{id:`info-load-${i}`,name:`同步测试${i}`}));
+  try{
+    for(const person of people){
+      db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,'info','self','','','',?,?)").run(`info-scope-${person.id}`,person.id,stamp,stamp);
+      db.prepare('insert into sessions(id,user_id,created_at,expires_at,credential_version) values(?,?,?,?,?)').run(`test-session-${person.id}`,person.id,stamp,'2099-01-01T00:00:00Z',person.credential_version||1);
+    }
+    for(let n=0;n<500;n++){
+      const id=`info-history-${n}`;
+      db.prepare("insert into records(id,date,publisher,category,title,original,created_by,updated_by,created_at,updated_at,publisher_id) values(?,'2026-10-09','test','其他',?,'test','54002010','54002010',?,?,'54002010')").run(id,id,stamp,stamp);
+      for(const person of people)db.prepare('insert into record_recipients(record_id,user_id,person_id,name,department,team) values(?,?,?,?,?,?)').run(id,person.id,person.personId,person.name,'test','test');
+    }
+  }catch(error){db.exec('rollback');transactionOpen=false;throw error;}
+  const snapshots=[],loadStarted=performance.now();
+  for(const person of people){
+    const cookie=`muc_sid=test-session-${person.id}`;
+    const response=await request('/api/records?summary=1',{cookie});assert.equal(response.res.statusCode,200);
+    assert.equal(response.payload.records.length,500);
+    assert.ok(response.payload.records.every(r=>r.recipients.length===1 && r.recipients[0].id===person.id));
+    snapshots.push({cookie,cursor:response.payload.cursor,knownIds:response.payload.records.map(r=>r.id)});
+  }
+  const initialMs=performance.now()-loadStarted;
+  pumpInfoSync();
+  const streams=[];
+  t.after(()=>streams.forEach(stream=>stream.emit('close')));
+  for(const snapshot of snapshots){
+    const req=Readable.from([]);req.method='GET';req.url='/api/info/events';req.headers={host:'127.0.0.1:8788',cookie:snapshot.cookie};
+    const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,200);streams.push(res);
+  }
+  for(const person of people)db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values('info-history-0',?,?,0,0,'')").run(person.id,stamp);
+  const fanoutStarted=performance.now();pumpInfoSync();const fanoutMs=performance.now()-fanoutStarted;
+  assert.ok(streams.every(stream=>(stream.body.toString().match(/event: info/g)||[]).length>=2));
+  assert.ok(streams.every(stream=>!stream.body.toString().includes('info-history-')));
+  const started=performance.now(),before=db.queryStats().count;
+  for(const snapshot of snapshots){
+    const response=await request('/api/info/sync',{method:'POST',cookie:snapshot.cookie,body:{cursor:snapshot.cursor,knownIds:snapshot.knownIds}});
+    assert.equal(response.res.statusCode,200);assert.equal(response.payload.reset,false);assert.equal(response.payload.records.length,0);assert.equal(response.payload.updates.length,1);assert.equal(response.payload.updates[0].ownReceipts.length,1);
+  }
+  const queries=db.queryStats().count-before;
+  assert.ok(queries<=200*50,`unexpected query amplification: ${queries}`);
+  console.log(JSON.stringify({infoAccounts:200,history:500,recipientRelations:100000,initialMs:Math.round(initialMs),fanoutMs:Math.round(fanoutMs),deltaMs:Math.round(performance.now()-started),queries,fullReloads:0,network:'mock streams, not live sockets'}));
+});
+
 test("COS upload verification distinguishes authorization, missing objects, service failures and size mismatches", async () => {
   const response = (status, length = "12") => new Response(null, { status, headers: { "content-length": length, "x-cos-request-id": "cos-test-request" } });
   const check = (status, length) => verifyCosUploadedAttachment("attachments/record/test/att-test-中文.xlsx", 12, async (url, options) => {
@@ -519,12 +673,71 @@ test("COS upload verification distinguishes authorization, missing objects, serv
 test("COS download signature includes response metadata", () => {
   const disposition = attachmentDisposition({ name: "维修 说明.txt", type: "text/plain" });
   assert.match(disposition, /^inline; filename\*=UTF-8''/);
+  assert.match(attachmentDisposition({ name: "维修 说明.txt", type: "text/plain" }, true), /^attachment; filename\*=UTF-8''/);
   const url = new URL(cosSignedUrl("GET", "attachments/record/1/维修 说明.txt", 300, {
     "response-content-type": "text/plain; charset=utf-8",
     "response-content-disposition": disposition
   }));
   assert.equal(url.searchParams.get("response-content-type"), "text/plain; charset=utf-8");
   assert.match(url.searchParams.get("q-url-param-list") || "", /response-content-disposition/);
+});
+
+test('attachment preview and original download reauthorize and sign distinct dispositions', async () => {
+  const login = await request('/api/login', { method: 'POST', body: { username: '54002010', password: 'muc2026' } });
+  const cookie = String(login.res.headers['Set-Cookie']).split(';')[0];
+  const template = db.prepare("select * from users where id='54002010'").get();
+  const reader = createMaintenanceTestAccount(template, { id: 'attachment-reader', name: '附件接收者' });
+  const created = await request('/api/records', { method: 'POST', cookie, body: { date: '2026-10-11', title: '附件权限测试', original: 'test', category: '其他', recipients: [reader.personId] } });
+  assert.equal(created.res.statusCode, 201);
+  const record = created.payload.record;
+  db.prepare('insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)')
+    .run('viewer-download-test', 'record', record.id, '中文 原文件.pdf', 'application/pdf', 100, 'cos', `attachments/record/${record.id}/viewer-download-test.pdf`, '54002010', new Date().toISOString());
+  const readerLogin = await request('/api/login', { method: 'POST', body: { username: reader.username, password: 'muc2026' } });
+  const readerCookie = String(readerLogin.res.headers['Set-Cookie']).split(';')[0];
+  const base = '/api/attachments/viewer-download-test';
+  const preview = await request(`${base}/access`, { cookie: readerCookie });
+  assert.equal(preview.res.statusCode, 200);
+  assert.match(new URL(preview.payload.url).searchParams.get('response-content-disposition'), /^inline;/);
+  const access = await request(`${base}/access?download=1`, { cookie: readerCookie });
+  assert.equal(access.res.statusCode, 200);
+  assert.match(new URL(access.payload.url).searchParams.get('response-content-disposition'), /^attachment;/);
+  const download = await request(`${base}?download=1`, { cookie: readerCookie });
+  assert.equal(download.res.statusCode, 302);
+  assert.match(new URL(download.res.headers.Location).searchParams.get('response-content-disposition'), /^attachment;/);
+  assert.equal((await request(`${base}?download=1`)).res.statusCode, 401);
+  db.prepare('delete from record_recipients where record_id=? and user_id=?').run(record.id, reader.id);
+  assert.equal((await request(`${base}/access`, { cookie: readerCookie })).res.statusCode, 403);
+  assert.equal((await requestRaw(`${base}?download=1`, { cookie: readerCookie })).statusCode, 403);
+});
+
+test('PPTX local upload and COS signing retain limits and block legacy and macro formats', async t => {
+  const login = await request('/api/login', { method: 'POST', body: { username: '54002010', password: 'muc2026' } });
+  const cookie = String(login.res.headers['Set-Cookie']).split(';')[0];
+  const created = await request('/api/records', { method: 'POST', cookie, body: { date: '2026-10-12', title: 'PPTX上传测试', original: 'test', category: '其他', allInScope: true } });
+  assert.equal(created.res.statusCode, 201);
+  const base = `/api/records/${created.payload.record.id}/attachments`;
+  const mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  for (const name of ['课件.ppt', '课件.pptm']) {
+    assert.equal((await request(`${base}/presign`, { method: 'POST', cookie, body: { name, size: 100, type: mime } })).res.statusCode, 415);
+    assert.equal((await request(`${base}/complete`, { method: 'POST', cookie, body: { name, size: 100, type: mime, attachmentId: 'att-test', objectKey: `attachments/record/${created.payload.record.id}/att-test-${name}` } })).res.statusCode, 415);
+  }
+  const signed = await request(`${base}/presign`, { method: 'POST', cookie, body: { name: '课件.pptx', size: 1024, type: mime } });
+  assert.equal(signed.res.statusCode, 200);
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, status: 200, headers: new Headers({ 'content-length': '1024' }) }));
+  const completed = await request(`${base}/complete`, { method: 'POST', cookie, body: { name: '课件.pptx', size: 1024, type: mime, attachmentId: signed.payload.attachmentId, objectKey: signed.payload.objectKey } });
+  assert.equal(completed.res.statusCode, 201, JSON.stringify(completed.payload));
+  assert.equal((await request(`${base}/presign`, { method: 'POST', cookie, body: { name: '课件.pptx', size: 10 * 1024 ** 2 + 1, type: mime } })).res.statusCode, 413);
+  const bytes = pptxFixture(), boundary = 'pptx-test-boundary';
+  const data = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="课件.pptx"\r\nContent-Type: ${mime}\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  const req = Readable.from([data]); req.method = 'POST'; req.url = base;
+  req.headers = { host: '127.0.0.1:8788', origin: 'http://127.0.0.1:8788', cookie, 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(data.length) };
+  const res = new MockResponse(); await measuredRoute(req, res);
+  assert.equal(res.statusCode, 201, res.body.toString());
+  const attachment = JSON.parse(res.body).attachments[0];
+  assert.equal(attachment.name, '课件.pptx');
+  const row = db.prepare('select * from attachments where id=?').get(attachment.id);
+  assert.deepEqual(await fs.readFile(path.join(process.env.UPLOAD_DIR, row.path)), bytes);
+  assert.match(attachmentDisposition(row, true), /^attachment;/);
 });
 
 test("health endpoint reports version and protected APIs require login", async () => {
@@ -702,6 +915,11 @@ test("cadres are dispatchable and reportable but remain outside capability and d
     const dispatchDirectory = await request("/api/personnel/directory?purpose=maintenance_dispatch&pageSize=200", { cookie: dispatchLogin.cookie });
     assert.equal(dispatchDirectory.res.statusCode, 200);
     assert.ok(dispatchDirectory.payload.items.some(person => person.personId === cadre.personId));
+    assert.equal(dispatchDirectory.payload.items.find(person => person.personId === cadre.personId).personnelGroupCode, "GROUP-LINE-CADRE");
+    const adminCookie = String(adminLogin.res.headers["Set-Cookie"] || adminLogin.res.headers["set-cookie"] || "").split(";")[0];
+    const infoDirectory = await request("/api/personnel/directory?purpose=info&pageSize=200", { cookie: adminCookie });
+    assert.equal(infoDirectory.res.statusCode, 200);
+    assert.equal(infoDirectory.payload.items.find(person => person.personId === cadre.personId).personnelGroupCode, "GROUP-LINE-CADRE");
     const capabilityDirectory = await request("/api/personnel/directory?purpose=maintenance&pageSize=200", { cookie: dispatchLogin.cookie });
     assert.ok(!capabilityDirectory.payload.items.some(person => person.personId === cadre.personId));
 
@@ -740,6 +958,19 @@ test("cadres are dispatchable and reportable but remain outside capability and d
     const partialStats = await request("/api/maintenance/stats/personal?month=2026-10", { cookie:dispatchLogin.cookie });
     assert.equal(partialStats.payload.departmentComparison.available, false);
     assert.equal(partialStats.payload.departmentComparison.reason, "incomplete_scope");
+    db.prepare("update rbac_user_scopes set scope_type='self',scope_id='' where user_id=? and module='maintenance'").run(dispatcher.id);
+    const selfStats = await request("/api/maintenance/stats/personal?month=2026-10", { cookie:dispatchLogin.cookie });
+    assert.equal(selfStats.res.statusCode,200);
+    assert.equal(selfStats.payload.teamComparison.available,false);
+    assert.equal(selfStats.payload.teamComparison.reason,'incomplete_scope');
+    assert.equal(selfStats.payload.teamComparison.memberCount,undefined);
+    assert.equal(selfStats.payload.teamComparison.contributionPercent,undefined);
+    assert.equal(selfStats.payload.teamRanking.available,false);
+    assert.equal(selfStats.payload.teamRanking.reason,'incomplete_scope');
+    for (const key of ['rank','teamCount','totalHours','gapHours']) assert.equal(selfStats.payload.teamRanking[key],undefined);
+    const restrictedDirectory = await request("/api/personnel/directory?purpose=maintenance_dispatch&pageSize=200", { cookie:dispatchLogin.cookie });
+    assert.equal(restrictedDirectory.res.statusCode, 200);
+    assert.ok(!restrictedDirectory.payload.items.some(person => person.personId === cadre.personId));
 
     capabilityService.syncMaster();
     const spaces = capabilityService.spaces(adminLogin.payload.user);
@@ -765,6 +996,41 @@ test("cadres are dispatchable and reportable but remain outside capability and d
   }
 });
 
+test("departure-only preflights support editing, repeat imports and additional work without merging distinct departures", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
+  const base = { date: "2026-10-06", flightNo: "", departureFlightNo: "MU-PRE-1", aircraftNo: "B-PRE-TEST", workKind: "航前" };
+  const created = await request("/api/maintenance/flights", { method: "POST", cookie, body: base });
+  assert.equal(created.res.statusCode, 201, JSON.stringify(created.payload));
+  const id = created.payload.flight.id;
+  assert.equal(created.payload.flight.flightNo, "");
+  assert.equal(created.payload.flight.departureFlightNo, base.departureFlightNo);
+  const updated = await request(`/api/maintenance/flights/${id}`, { method: "PUT", cookie, body: { ...base, stand: "123" } });
+  assert.equal(updated.res.statusCode, 200, JSON.stringify(updated.payload));
+  const invalid = await request(`/api/maintenance/flights/${id}`, { method: "PUT", cookie, body: { ...base, departureFlightNo: "" } });
+  assert.equal(invalid.res.statusCode, 400);
+  assert.equal(db.prepare("select departure_flight_no from maintenance_flights where id=?").get(id).departure_flight_no, base.departureFlightNo);
+  const rows = [base, { ...base, departureFlightNo: "MU-PRE-2" }];
+  const imported = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows } });
+  assert.equal(imported.res.statusCode, 200, JSON.stringify(imported.payload));
+  assert.equal(imported.payload.created, 1);
+  const repeated = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows } });
+  assert.equal(repeated.payload.created, 0);
+  assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where aircraft_no=?").get(base.aircraftNo).n), 2);
+  const extra = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows: [
+    { ...base, chapter: "05", title: "航前检查", category: "单项工作", standardHours: 1 }
+  ] } });
+  assert.equal(extra.res.statusCode, 200, JSON.stringify(extra.payload));
+  assert.equal(db.prepare("select flight_id from maintenance_subtasks where flight_id=? and card_no='05' and title='航前检查'").get(id).flight_id, id);
+  const missing = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [
+    { ...base, departureFlightNo: "MU-PRE-NOT-WRITTEN" }, { ...base, departureFlightNo: "" }
+  ] } });
+  assert.equal(missing.res.statusCode, 400);
+  assert.equal(Number(db.prepare("select count(*) as n from maintenance_flights where departure_flight_no='MU-PRE-NOT-WRITTEN'").get().n), 0);
+  const ground = await request("/api/maintenance/flights", { method: "POST", cookie, body: { ...base, workKind: "停场", departureFlightNo: "" } });
+  assert.equal(ground.res.statusCode, 201, JSON.stringify(ground.payload));
+});
+
 test("flight import rejects shifted columns before inserting any rows and normalizes dates", async () => {
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const cookie = String(login.res.headers["Set-Cookie"] || login.res.headers["set-cookie"] || "").split(";")[0];
@@ -776,7 +1042,8 @@ test("flight import rejects shifted columns before inserting any rows and normal
       method: "POST", cookie, body: { rows: [valid, { ...valid, date, aircraftNo: "BINVALID" }] }
     });
     assert.equal(failed.res.statusCode, 400);
-    assert.match(failed.payload.error, /第 2 条.*日期/);
+    assert.equal(failed.payload.errors[0].rowNumber,2);
+    assert.match(failed.payload.errors[0].detail,/日期/);
     assert.equal(count(), before);
   }
   const imported = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [valid] } });
@@ -786,7 +1053,33 @@ test("flight import rejects shifted columns before inserting any rows and normal
   assert.ok(list.payload.flights.some(flight => flight.aircraftNo === "BIMPORT" && flight.date === "2026-09-01"));
 });
 
-test("additional work import only appends unique subtasks and rolls back the whole file on errors", async () => {
+test('flight plan preview counts unique opportunities, lists original error rows and protects existing work',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}});
+ const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const base={date:'2026-10-11',flightNo:'MU-SUMMARY',aircraftNo:'B-SUMMARY',aircraftType:'A320',workKind:'航后'};
+ const created=await request('/api/maintenance/flights',{method:'POST',cookie,body:base});const id=created.payload.flight.id;
+ const worker=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'summary-worker',name:'汇总测试人'});
+ const dispatch=await request(`/api/maintenance/flights/${id}/dispatch`,{method:'POST',cookie,body:{expectedUpdatedAt:created.payload.flight.updatedAt,assignments:[{personId:worker.personId,role:'放行'}]}});assert.equal(dispatch.res.statusCode,200);
+ const assignmentsBefore=db.prepare('select * from maintenance_assignments where flight_id=?').all(id);
+ const rows=[{...base,rowNumber:3,departureFlightNo:'MU-FILL'},{...base,rowNumber:5,departureFlightNo:'MU-FILL'},{...base,rowNumber:8,flightNo:'MU-NEW-SUM',aircraftNo:'B-NEW-SUM'}];
+ const call=body=>request('/api/maintenance/flights/import',{method:'POST',cookie,body});
+ const preview=await call({validateOnly:true,rows});assert.equal(preview.payload.valid,true);
+ assert.deepEqual(preview.payload.summary,{dataRows:3,total:2,matched:1,updated:1,created:1,abnormal:0});
+ assert.equal(preview.payload.flights,undefined);assert.equal(preview.payload.rows,undefined);
+ assert.equal(db.prepare('select departure_flight_no from maintenance_flights where id=?').get(id).departure_flight_no,'');
+ const errors=await call({validateOnly:true,rows:[{...base,rowNumber:14,date:'bad'},{...base,rowNumber:20,locationName:'不存在地点'}]});
+ assert.equal(errors.payload.valid,false);assert.deepEqual(errors.payload.errors.map(e=>e.rowNumber),[14,20]);assert.equal(errors.payload.summary.abnormal,2);
+ const rejected=await call({rows:[rows[2],{...base,rowNumber:20,date:'bad'}]});assert.equal(rejected.res.statusCode,400);
+ assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no='MU-NEW-SUM'").get().n,0);
+ const done=await call({rows});assert.equal(done.res.statusCode,200);assert.equal(done.payload.created,1);assert.equal(done.payload.summary.updated,1);
+ assert.deepEqual(db.prepare('select * from maintenance_assignments where flight_id=?').all(id),assignmentsBefore);
+ assert.equal(db.prepare('select status from maintenance_flights where id=?').get(id).status,'已派工');
+ const second=await call({validateOnly:true,rows:[{...base,departureFlightNo:'DO-NOT-OVERWRITE'}]});assert.equal(second.payload.summary.updated,0);
+ const existing=await call({rows:[{...base,departureFlightNo:'DO-NOT-OVERWRITE'}]});assert.equal(existing.payload.created,0);
+ assert.equal(db.prepare('select departure_flight_no from maintenance_flights where id=?').get(id).departure_flight_no,'MU-FILL');
+});
+
+test("additional work import requires chapters, skips duplicate projects and rolls back the whole file on errors", async () => {
   const unauthorized = await request("/api/maintenance/subtasks/import", { method: "POST", body: { rows: [{}] } });
   assert.equal(unauthorized.res.statusCode, 401);
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
@@ -811,34 +1104,59 @@ test("additional work import only appends unique subtasks and rolls back the who
   assert.equal(imported.payload.created, 4);
   assert.equal(imported.payload.matchedFlights, 1);
   assert.ok(imported.payload.auditId);
-  const stored = db.prepare("select * from maintenance_subtasks where flight_id=? order by external_work_no").all(flightId);
-  assert.deepEqual(stored.map(row => row.external_work_no), ["NR-001", "NR-002", "NR-003", "NR-004"]);
-  assert.deepEqual(stored.map(row => row.category), ["工卡指令", "单项工作", "拖机", "其他"]);
+  const stored = db.prepare("select * from maintenance_subtasks where flight_id=? order by card_no").all(flightId);
+  assert.ok(stored.every(row => row.external_work_no === ''));
+  assert.deepEqual(stored.map(row => row.card_no), ['09','25','26','27']);
   assert.ok(stored.every(row => row.status === "未派工"));
   assert.equal(stored[3].content, "说明");
   const flightAfter = db.prepare("select * from maintenance_flights where id=?").get(flightId);
-  assert.deepEqual(flightAfter, flightBefore);
+  assert.ok(flightAfter.updated_at > flightBefore.updated_at, "新增工作必须使已打开报工页面的版本失效");
+  assert.deepEqual({ ...flightAfter, updated_at: flightBefore.updated_at }, { ...flightBefore });
 
   const duplicate = await request("/api/maintenance/subtasks/import", { method: "POST", cookie, body: { rows: [rows[0]] } });
-  assert.equal(duplicate.res.statusCode, 400);
-  assert.match(duplicate.payload.error, /工作编号已存在/);
+  assert.equal(duplicate.res.statusCode, 200);
+  assert.equal(duplicate.payload.created,0);assert.equal(duplicate.payload.skipped,1);
   assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+  const sameFile = await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[rows[0],rows[0]]}});
+  assert.equal(sameFile.res.statusCode,200);
+  assert.equal(sameFile.payload.created,0);assert.equal(sameFile.payload.skipped,2);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+  const missingChapter=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[{...rows[0],chapter:' '}]}});
+  assert.equal(missingChapter.res.statusCode,200);assert.equal(missingChapter.payload.valid,false);assert.match(missingChapter.payload.errors[0].detail,/章节/);
+  const checked=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[rows[0]]}});
+  assert.equal(checked.res.statusCode,200);
+  assert.deepEqual(checked.payload.summary,{total:1,matched:1,created:0,skipped:1,abnormal:0});
+  const fresh={...rows[0],chapter:'28',title:'新项目',rowNumber:9};
+  const freshPreview=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[fresh,fresh]}});
+  assert.deepEqual(freshPreview.payload.summary,{total:2,matched:2,created:1,skipped:1,abnormal:0});
+  assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n,4);
+  const freshCommit=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[fresh,fresh]}});
+  assert.equal(freshCommit.payload.created,1);assert.equal(freshCommit.payload.skipped,1);
+  const mismatch=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...fresh,standardHours:2}]}});
+  assert.equal(mismatch.res.statusCode,400);assert.equal(mismatch.payload.errors[0].rowNumber,9);assert.match(mismatch.payload.errors[0].detail,/工时不一致/);
+  const fileMismatch=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...fresh,title:'同批冲突'},{...fresh,title:'同批冲突',standardHours:2}]}});
+  assert.equal(fileMismatch.res.statusCode,400);assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(flightId).n,5);
+  const rowErrors=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{validateOnly:true,rows:[{...fresh,date:'bad',rowNumber:7},{...fresh,chapter:'',rowNumber:12}]}});
+  assert.deepEqual(rowErrors.payload.errors.map(r=>r.rowNumber),[7,12]);assert.equal(rowErrors.payload.valid,false);
+  const secondFlight=await request('/api/maintenance/flights',{method:'POST',cookie,body:{...flightPayload,aircraftNo:'B-ADD2'}});
+  const independent=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...rows[0],aircraftNo:'B-ADD2'}]}});
+  assert.equal(independent.payload.created,1);assert.equal(db.prepare('select count(*) as n from maintenance_subtasks where flight_id=?').get(secondFlight.payload.flight.id).n,1);
 
   const atomic = await request("/api/maintenance/subtasks/import", {
     method: "POST", cookie, body: { rows: [
-      { ...base, externalWorkNo: "NR-005", title: "应回滚", category: "其他", standardHours: 0.5 },
-      { ...base, externalWorkNo: "NR-006", title: "非法工时", category: "其他", standardHours: 0.55 }
+      { ...base, chapter: "25", title: "应回滚", category: "其他", standardHours: 0.5 },
+      { ...base, chapter: "25", title: "非法工时", category: "其他", standardHours: 0.55 }
     ] }
   });
   assert.equal(atomic.res.statusCode, 400);
-  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 5);
 
   db.prepare("update maintenance_flights set status='待复核' where id=?").run(flightId);
   const protectedImport = await request("/api/maintenance/subtasks/import", {
-    method: "POST", cookie, body: { rows: [{ ...base, externalWorkNo: "NR-007", title: "状态保护", category: "其他", standardHours: 0.5 }] }
+    method: "POST", cookie, body: { rows: [{ ...base, chapter: "25", title: "状态保护", category: "其他", standardHours: 0.5 }] }
   });
   assert.equal(protectedImport.res.statusCode, 409);
-  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 4);
+  assert.equal(Number(db.prepare("select count(*) as total from maintenance_subtasks where flight_id=?").get(flightId).total), 5);
   const adminId = login.payload.user.id;
   const adminTemplate = db.prepare("select * from users where id=?").get(adminId);
   const worker = createMaintenanceTestAccount(adminTemplate, { id: "subtask-import-worker", name: "附加工作只读测试" });
@@ -952,7 +1270,11 @@ test("release-only report confirmation always waits for task-tree review", async
     assignments: task.assignments.map(item => ({ personId: item.personId, role: item.role }))
   }));
   const endpoint = `/api/maintenance/flights/${encodeURIComponent(flightId)}/review`;
-  const putReview = fields => request(endpoint, { method: "PUT", cookie, body: { mode: "save", tasks: reviewTasks, ...fields } });
+  const putReview = async fields => {
+    const opened = (await request(endpoint, { cookie })).payload.review;
+    assert.ok(opened.flight.updatedAt);
+    return request(endpoint, { method: "PUT", cookie, body: { mode: "save", tasks: reviewTasks, expectedUpdatedAt: opened.flight.updatedAt, ...fields } });
+  };
   assert.equal(reviewView.payload.review.flight.routineElectronicSigned, null);
   assert.equal((await putReview({})).res.statusCode, 200);
   const missingSignature = await putReview({ mode: "confirm" });
@@ -983,7 +1305,7 @@ test("release-only report confirmation always waits for task-tree review", async
   const confirmed = await request(`/api/maintenance/flights/${encodeURIComponent(flightId)}/review`, {
     method: "PUT",
     cookie,
-    body: { mode: "confirm", tasks: reviewTasks }
+    body: { mode: "confirm", tasks: reviewTasks, expectedUpdatedAt: (await request(endpoint, { cookie })).payload.review.flight.updatedAt }
   });
   assert.equal(confirmed.res.statusCode, 200);
   assert.equal(confirmed.payload.review.flight.status, "已确认");
@@ -1071,9 +1393,9 @@ test("both signature groups may select paper signing when confirming a complete 
   const url = `/api/maintenance/flights/${flight.id}/review`;
   const tree = (await request(url, { cookie })).payload.review;
   const tasks = tree.tasks.map(task => ({ ownerType: task.ownerType, ownerId: task.ownerId, assignments: task.ownerType === "subtask" ? [{personId:user.personId,role:"主作"}] : task.assignments.map(a=>({personId:a.personId,role:a.role})) }));
-  const saved = await request(url, { method: "PUT", cookie, body: { mode: "save", tasks, routineElectronicSigned: false, nonroutineElectronicSigned: false } });
+  const saved = await request(url, { method: "PUT", cookie, body: { mode: "save", tasks, routineElectronicSigned: false, nonroutineElectronicSigned: false, expectedUpdatedAt: tree.flight.updatedAt } });
   assert.equal(saved.res.statusCode,200,JSON.stringify(saved.payload));
-  const confirmed = await request(url, { method: "PUT", cookie, body: { mode: "confirm", tasks } });
+  const confirmed = await request(url, { method: "PUT", cookie, body: { mode: "confirm", tasks, expectedUpdatedAt: saved.payload.review.flight.updatedAt } });
   assert.equal(confirmed.res.statusCode,200);
   assert.equal(confirmed.payload.review.flight.status,"已确认");
   assert.equal(confirmed.payload.review.flight.routineElectronicSigned,false);
@@ -1108,7 +1430,8 @@ async function supplementalWorkFixture(name) {
   const putReview = async fields => {
     const tree = await getReview();
     const tasks = tree.tasks.map(t => ({ ownerType: t.ownerType, ownerId: t.ownerId, assignments: t.assignments.map(a => ({ personId: a.personId, role: a.role })) }));
-    return request(`/api/maintenance/flights/${id}/review`, { method: "PUT", cookie, body: { mode: "save", tasks, ...fields } });
+    assert.ok(tree.flight.updatedAt);
+    return request(`/api/maintenance/flights/${id}/review`, { method: "PUT", cookie, body: { mode: "save", tasks, expectedUpdatedAt: tree.flight.updatedAt, ...fields } });
   };
   return { id, cookie, user, item, report, getReview, putReview };
 }
@@ -1376,6 +1699,25 @@ test("maintenance report separates data grains, signatures and selective export"
   const exportResponse = await requestRaw(`${base.replace("/report?", "/report/export.xlsx?")}&sections=people,signatures,sorties`, { cookie });
   assert.equal(exportResponse.statusCode, 200);
   assert.equal(exportResponse.body.subarray(0, 2).toString(), "PK");
+  try {
+    for (const [kind,incoming,outgoing,expected] of [
+      ['航前','','QA-DEPART','QA-DEPART'],
+      ['航后','QA-ARRIVE','','QA-ARRIVE'],
+      ['短停','QA-IN','QA-OUT','QA-IN']
+    ]) {
+      db.prepare('update maintenance_flights set work_kind=?,flight_no=?,departure_flight_no=? where id=?').run(kind,incoming,outgoing,routineFlight);
+      const detail=await request(`${base}&view=personDetails&personId=${encodeURIComponent(user.personId)}`,{cookie});
+      assert.equal(detail.res.statusCode,200);
+      const actualHours=detail.payload.hours.filter(row=>row.flightId===routineFlight);
+      const actualSorties=detail.payload.sorties.filter(row=>row.flightId===routineFlight);
+      assert.equal(actualHours.length,2);assert.equal(actualSorties.length,1);
+      assert.ok(actualHours.every(row=>row.flightNo===expected),JSON.stringify(actualHours));
+      assert.equal(actualSorties[0].flightNo,expected);
+      assert.equal(Number(actualHours.reduce((sum,row)=>sum+row.finalHours,0).toFixed(2)),1.7);
+    }
+  } finally {
+    db.prepare("update maintenance_flights set work_kind='短停',flight_no='MUREPORT1',departure_flight_no='' where id=?").run(routineFlight);
+  }
 });
 
 test("maintenance report options and every report view stay within current maintenance scope", async () => {
@@ -1679,6 +2021,8 @@ test("capability reads batch states and scopes with a bounded query count and un
       assert.equal(expanded.count,baseline.count,"adding 120 people must not add per-person queries");
       assert.ok(expanded.count<=20,`snapshot used ${expanded.count} queries`);
       assert.equal(expanded.value.states.length,baseline.value.states.length+120);
+      assert.deepEqual(expanded.value.returnTargets,baseline.value.returnTargets);
+      const expandedStates=new Map(expanded.value.states.map(s=>[s.personId,s]));
       for(const scopes of [
         [{module:"personnel",scopeType:"self"}],
         [{module:"personnel",scopeType:"department"}],
@@ -1688,13 +2032,311 @@ test("capability reads batch states and scopes with a bounded query count and un
       ]) {
         const actor={id:"query-test-account",personId:template.id,dataScopes:scopes};
         const expected=expanded.value.people.filter(p=>access.allows(actor,"personnel",p.id)).map(p=>p.id);
-        const scoped=measured(actor).value;
+        const scopedRead=measured(actor),scoped=scopedRead.value;
+        assert.ok(scopedRead.count<=21,`scoped snapshot used ${scopedRead.count} queries`);
         assert.deepEqual(scoped.people.map(p=>p.id),expected);
         assert.ok(scoped.states.every(s=>expected.includes(s.personId)));
         assert.ok(scoped.records.every(r=>expected.includes(r.person_id)));
+        const expectedTargets=expanded.value.returnTargets.filter(target=>{
+          const group=['一组','二组','三组','四组'].includes(target)?target:null;
+          const members=expanded.value.people.filter(p=>p.administrativeGroup===group||expandedStates.get(p.id)?.workingGroup===group);
+          return members.every(p=>expected.includes(p.id))&&(members.length>0||!scoped.partial);
+        });
+        assert.deepEqual(scoped.returnTargets,expectedTargets,'target visibility must still require every target member in scope');
       }
+      const noAllocation=createCapabilityService({db,hasRbac:(actor,permission)=>permission!=='capability.allocation.submit',personnelAccess:access,audit:()=>{}});
+      assert.deepEqual(noAllocation.snapshot(admin,workspace).returnTargets,[]);
       assert.throws(()=>service.snapshot({id:"query-denied",dataScopes:[]},workspace),e=>e.status===403);
       console.log(`快照查询预算：${baseline.count} → ${expanded.count}（增加120人），权限范围一致`);
     } finally {db.exec("rollback");}
   } finally {if(previousEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previousEnv;}
+});
+
+test('routine report and review persist exactly the postflight budget without rounding inflation', async () => {
+  const login = await request('/api/login', { method: 'POST', body: { username: '54002010', password: 'muc2026' } });
+  const cookie = String(login.res.headers['Set-Cookie']).split(';')[0];
+  const person = maintenancePerson(login.payload.user);
+  const created = await request('/api/maintenance/flights', { method: 'POST', cookie, body: {
+    date: '2026-10-15', flightNo: 'ROUND500', aircraftNo: 'B-ROUND500', aircraftType: 'A319', workKind: '航后'
+  } });
+  assert.equal(created.res.statusCode, 201, JSON.stringify(created.payload));
+  const id = created.payload.flight.id;
+  const roles = ['接机', '勤务', '例行机内', '例行L/G', '例行发动机', '例行机外', '例行电子'];
+  const ratios = Object.fromEntries(roles.map((role, i) => [role, [0.08, 0.24, 0.34, 0.085, 0.085, 0.085, 0.085][i]]));
+  db.prepare('update maintenance_flights set routine_hours_snapshot=? where id=?')
+    .run(JSON.stringify({ baseHours: 5, ratios, aircraftCode: 'A319', opportunity: '航后', version: 5 }), id);
+  const entries = roles.map(role => ({ role, personId: person.personId }));
+  const dispatch = await request(`/api/maintenance/flights/${id}/dispatch`, { method: 'POST', cookie, body: {
+    expectedUpdatedAt: created.payload.flight.updatedAt, assignments: [{ role: '放行', personId: person.personId }, ...entries]
+  } });
+  assert.equal(dispatch.res.statusCode, 200, JSON.stringify(dispatch.payload));
+  const submit = async (type, fields = {}) => request(`/api/maintenance/flights/${id}/reports/${type}`, {
+    method: 'PUT', cookie, body: { expectedUpdatedAt: await reportVersion(id, cookie), ...fields }
+  });
+  assert.equal((await submit('release')).res.statusCode, 200);
+  const routine = await submit('routine', { entries });
+  assert.equal(routine.res.statusCode, 200, JSON.stringify(routine.payload));
+  const saved = () => db.prepare('select role,hours,status from maintenance_hour_results where flight_id=? order by role').all(id);
+  const sumCents = () => saved().reduce((sum, row) => sum + Math.round(row.hours * 100), 0);
+  assert.equal(sumCents(), 500);
+  const confirmation = await request(`/api/maintenance/flights/${id}/report-confirmation`, { method: 'POST', cookie, body: { routineEntries: entries } });
+  assert.equal(confirmation.res.statusCode, 200, JSON.stringify(confirmation.payload));
+  const view = (await request(`/api/maintenance/flights/${id}/review`, { cookie })).payload.review;
+  const tasks = view.tasks.map(task => ({ ownerType: task.ownerType, ownerId: task.ownerId,
+    assignments: task.assignments.map(item => ({ role: item.role, personId: item.personId })) }));
+  const confirmed = await request(`/api/maintenance/flights/${id}/review`, { method: 'PUT', cookie, body: {
+    mode: 'confirm', tasks, routineElectronicSigned: true, expectedUpdatedAt: view.flight.updatedAt
+  } });
+  assert.equal(confirmed.res.statusCode, 200, JSON.stringify(confirmed.payload));
+  assert.equal(confirmed.payload.review.flight.status, '已确认');
+  assert.equal(sumCents(), 500);
+  assert.ok(saved().every(row => row.status === '已确认'));
+});
+
+test('aircraft matrix saves atomically, freezes reported hours and blocks unmatched models', async () => {
+  const login = await request('/api/login', { method: 'POST', body: { username: '54002010', password: 'muc2026' } });
+  const cookie = String(login.res.headers['Set-Cookie']).split(';')[0];
+  const user = maintenancePerson(login.payload.user);
+  const original = db.prepare("select value from settings where key='maintenance_aircraft_hours_v1'").get().value;
+  const initial = (await request('/api/maintenance/rules', { cookie })).payload;
+  assert.ok(initial.rules.every(rule => rule.rule_type !== 'workType'));
+  try {
+    const create = async aircraftType => (await request('/api/maintenance/flights', { method: 'POST', cookie, body: { date: '2026-10-06', flightNo: `MU-${aircraftType || 'EMPTY'}`, aircraftNo: 'B-AIRHOUR', aircraftType, workKind: '短停' } })).payload.flight;
+    const flight = await create('320');
+    const config = { ...initial.aircraftHours, groups: [...initial.aircraftHours.groups, { id: 'multi-model', name: '同工时组', codes: '32n 320 32N 325', enabled: true, hours: { 短停: 4, 航前: 2 } }] };
+    const save = (aircraftHours, fields = {}) => request('/api/maintenance/rules', { method: 'PUT', cookie, body: { rules: initial.rules, aircraftHours, reason: '机型规则验收', ...fields } });
+    const legacyBefore = db.prepare("select * from maintenance_hour_rules where rule_type='workType' and name='短停'").get();
+    for (const key of ['rule_type', 'ruleType']) {
+      const rejected = await save(config, { rules: [...initial.rules, { [key]: 'workType', name: '短停', value: 999 }] });
+      assert.equal(rejected.res.statusCode, 400);
+      assert.match(rejected.payload.error, /旧标准工时已停止维护/);
+      assert.deepEqual(db.prepare("select * from maintenance_hour_rules where rule_type='workType' and name='短停'").get(), legacyBefore);
+      assert.equal(db.prepare("select value from settings where key='maintenance_aircraft_hours_v1'").get().value, original);
+    }
+    assert.equal((await save(config)).res.statusCode, 409);
+    assert.equal(db.prepare("select value from settings where key='maintenance_aircraft_hours_v1'").get().value, original);
+    const preview = await request('/api/maintenance/rules/aircraft-preview', { method: 'POST', cookie, body: { aircraftHours: config } });
+    assert.ok(preview.payload.affected.some(item => item.id === flight.id));
+    const saved = await save(config, { confirmation: preview.payload.confirmation });
+    assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
+    assert.deepEqual(saved.payload.aircraftHours.groups.at(-1).codes, ['32N', '320', '325']);
+    const duplicated = { ...saved.payload.aircraftHours, groups: [...saved.payload.aircraftHours.groups, { id: 'duplicate', name: '重复组', codes: '320', hours: {} }] };
+    assert.equal((await save(duplicated)).res.statusCode, 400);
+    const savedJson = db.prepare("select value from settings where key='maintenance_aircraft_hours_v1'").get().value;
+    const dispatch = async id => {
+      const current = (await request(`/api/maintenance/flights/${id}`, { cookie })).payload.flight;
+      const result = await request(`/api/maintenance/flights/${id}/dispatch`, { method: 'POST', cookie, body: { expectedUpdatedAt: current.updatedAt, assignments: [{ personId: user.personId, role: '接机' }, { personId: user.personId, role: '放行' }] } });
+      assert.equal(result.res.statusCode, 200, JSON.stringify(result.payload));
+    };
+    const report = async id => request(`/api/maintenance/flights/${id}/reports/routine`, { method: 'PUT', cookie, body: { entries: [{ personId: user.personId, role: '接机' }], expectedUpdatedAt: await reportVersion(id, cookie) } });
+    await dispatch(flight.id);
+    assert.equal((await report(flight.id)).res.statusCode, 200);
+    const snapshot = JSON.parse(db.prepare('select routine_hours_snapshot from maintenance_flights where id=?').get(flight.id).routine_hours_snapshot);
+    assert.equal(snapshot.baseHours, 4);
+    assert.equal(snapshot.aircraftCode, '320');
+    const resultBefore = db.prepare("select hours from maintenance_hour_results where owner_type='flight' and owner_id=?").all(flight.id);
+    const changed = structuredClone(saved.payload.aircraftHours);
+    changed.groups.at(-1).hours.短停 = 8;
+    const repreview = (await request('/api/maintenance/rules/aircraft-preview', { method: 'POST', cookie, body: { aircraftHours: changed } })).payload;
+    assert.ok(!repreview.affected.some(item => item.id === flight.id));
+    assert.equal((await save(changed, { confirmation: repreview.confirmation })).res.statusCode, 200);
+    assert.deepEqual(db.prepare("select hours from maintenance_hour_results where owner_type='flight' and owner_id=?").all(flight.id), resultBefore);
+    assert.equal((await save(config)).res.statusCode, 409);
+    assert.notEqual(savedJson, original);
+    for (const model of ['UNKNOWN', '']) {
+      const missing = await create(model);
+      assert.equal(missing.aircraftType, model);
+      await dispatch(missing.id);
+      const blocked = await report(missing.id);
+      assert.equal(blocked.res.statusCode, 400);
+      assert.match(blocked.payload.error, /未配置/);
+      assert.equal(db.prepare('select routine_hours_snapshot from maintenance_flights where id=?').get(missing.id).routine_hours_snapshot, null);
+      assert.equal(Number(db.prepare('select count(*) as total from maintenance_hour_results where flight_id=?').get(missing.id).total), 0);
+    }
+  } finally {
+    db.prepare("update settings set value=? where key='maintenance_aircraft_hours_v1'").run(original);
+  }
+});
+
+test("work locations default to Qingdao, separate import identities and reject invalid sites atomically", async () => {
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"] || "").split(";")[0];
+  const locations = await request("/api/maintenance/locations", { cookie });
+  assert.equal(locations.res.statusCode, 200);
+  const qingdao = locations.payload.locations.find(item => item.name === "青岛");
+  const yanji = locations.payload.locations.find(item => item.name === "延吉");
+  assert.ok(qingdao && yanji);
+  const base = { date: "2099-11-16", flightNo: "MU-LOC-TEST", aircraftNo: "B-LOC-TEST", workKind: "航后" };
+  const invalid = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [base, { ...base, locationName: "拼错地点" }] } });
+  assert.equal(invalid.res.statusCode, 400);
+  assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n, 0);
+  const invalidChoice = await request("/api/maintenance/flights", { method: "POST", cookie, body: { ...base, locationId: "", locationName: "拼错地点" } });
+  assert.equal(invalidChoice.res.statusCode, 400);
+  assert.equal(db.prepare("select count(*) as n from maintenance_flights where flight_no=?").get(base.flightNo).n, 0);
+  const imported = await request("/api/maintenance/flights/import", { method: "POST", cookie, body: { rows: [base, { ...base, locationName: "延吉" }] } });
+  assert.equal(imported.res.statusCode, 200);
+  assert.equal(imported.payload.created, 2);
+  const rows = db.prepare("select location_id from maintenance_flights where flight_no=?").all(base.flightNo);
+  assert.deepEqual(new Set(rows.map(row => row.location_id)), new Set([qingdao.id, yanji.id]));
+  const additional={...base,chapter:'27',title:'地点独立附加',category:'其他',standardHours:1};
+  const both=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[additional,{...additional,locationName:'延吉'}]}});
+  assert.equal(both.res.statusCode,200,JSON.stringify(both.payload));assert.equal(both.payload.created,2);assert.equal(both.payload.matchedFlights,2);
+  const repeat=await request('/api/maintenance/subtasks/import',{method:'POST',cookie,body:{rows:[{...additional,locationName:'延吉'}]}});
+  assert.equal(repeat.payload.created,0);assert.equal(repeat.payload.skipped,1);
+  const atLocations=db.prepare('select f.location_id,count(s.id) as n from maintenance_flights f join maintenance_subtasks s on s.flight_id=f.id where f.flight_no=? group by f.location_id').all(base.flightNo);
+  assert.equal(atLocations.length,2);assert.ok(atLocations.every(row=>row.n===1));
+  const filtered = await request(`/api/maintenance/flights?scope=dispatch&dateFrom=${base.date}&dateTo=${base.date}&locationId=${encodeURIComponent(yanji.id)}&view=summary`, { cookie });
+  assert.equal(filtered.payload.flights.length, 1);
+  assert.equal(filtered.payload.flights[0].locationName, "延吉");
+  const newLocation = await request("/api/maintenance/locations", { method: "POST", cookie, body: { name: "地点目录测试" } });
+  assert.equal(newLocation.res.statusCode, 201);
+  const custom = newLocation.payload.locations.find(item => item.name === "地点目录测试");
+  const changed = await request(`/api/maintenance/locations/${custom.id}`, { method: "PUT", cookie, body: { name: "地点目录测试改名", reason: "验证目录变更" } });
+  assert.equal(changed.res.statusCode, 200);
+  assert.equal(changed.payload.locations.find(item => item.id === custom.id).name, "地点目录测试改名");
+  const using = await request("/api/maintenance/flights", { method: "POST", cookie, body: { ...base, flightNo: "MU-LOC-CUSTOM", locationId: custom.id } });
+  assert.equal(using.res.statusCode, 201);
+  const protectedDelete = await request(`/api/maintenance/locations/${custom.id}`, { method: "DELETE", cookie });
+  assert.equal(protectedDelete.res.statusCode, 409);
+  db.prepare("update maintenance_flights set location_id=null,location_name_snapshot=null where id=?").run(using.payload.flight.id);
+  const missingReason = await request(`/api/maintenance/flights/${using.payload.flight.id}/location`, { method: "PUT", cookie, body: { locationId: qingdao.id } });
+  assert.equal(missingReason.res.statusCode, 400);
+  const corrected = await request(`/api/maintenance/flights/${using.payload.flight.id}/location`, { method: "PUT", cookie, body: { locationId: qingdao.id, reason: "补录历史作业地点" } });
+  assert.equal(corrected.res.statusCode, 200);
+  assert.equal(corrected.payload.flight.locationName, "青岛");
+  assert.equal(db.prepare("select location_id from maintenance_flights where id=?").get(using.payload.flight.id).location_id, qingdao.id);
+});
+
+test("pure routine auto confirmation shares finalization, exclusions, rollback and concurrency", async () => {
+  // Execute the actual frontend request builder against the real route, without adding fields.
+  const frontend = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const serviceStart = frontend.indexOf("  async saveReview(flightId,");
+  const serviceEnd = frontend.indexOf("  async getReports(", serviceStart);
+  assert.ok(serviceStart >= 0 && serviceEnd > serviceStart);
+  const browserReview = async (review, cookie, mode, tasks) => {
+    const context = vm.createContext({ state: { maintenanceReviewDraft: { review } }, apiRequest: (url, options) => request(`/api${url}`, { method: options.method, body: options.body, cookie }) });
+    vm.runInContext(`service = {${frontend.slice(serviceStart, serviceEnd)}}`, context);
+    return context.service.saveReview(review.flight.id, mode, tasks, "", [], { routineElectronicSigned: true });
+  };
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"]).split(";")[0];
+  const person = maintenancePerson(login.payload.user);
+  let sequence = 0;
+  const create = async (kind = "短停") => {
+    const result = await request("/api/maintenance/flights", { method: "POST", cookie, body: { date: "2026-10-11", flightNo: `MUAUTO${++sequence}`, departureFlightNo: "MUAUTOOUT", aircraftNo: "BAUTO", aircraftType: "A320", workKind: kind } });
+    assert.equal(result.res.statusCode, 201, JSON.stringify(result.payload));
+    const id = result.payload.flight.id;
+    const assigned = await request(`/api/maintenance/flights/${id}/dispatch`, { method: "POST", cookie, body: { expectedUpdatedAt: result.payload.flight.updatedAt, assignments: [{ role: "放行", personId: person.personId }, { role: "接机", personId: person.personId }] } });
+    assert.equal(assigned.res.statusCode, 200, JSON.stringify(assigned.payload));
+    return id;
+  };
+  const submit = async (id, type, extra = {}) => request(`/api/maintenance/flights/${id}/reports/${type}`, { method: "PUT", cookie, body: { ...(type === "routine" ? { entries: [{ role: "接机", personId: person.personId }] } : {}), expectedUpdatedAt: await reportVersion(id, cookie), ...extra } });
+  for (const first of ["release", "routine"]) {
+    const id = await create();
+    const initial = await submit(id, first);
+    assert.equal(initial.res.statusCode, 200, JSON.stringify(initial.payload));
+    assert.equal(initial.payload.flight.status, "已提报");
+    const stale = initial.payload.flight.updatedAt;
+    const final = await submit(id, first === "release" ? "routine" : "release");
+    assert.equal(final.res.statusCode, 200, JSON.stringify(final.payload));
+    assert.equal(final.payload.flight.status, "待复核");
+    assert.equal(final.payload.flight.reportFinalizationMode, "automatic");
+    assert.equal(final.payload.flight.reportFinalizedBy, "");
+    assert.equal(final.payload.flight.archivedAt, "");
+    assert.equal(db.prepare("select count(*) as n from maintenance_logs where flight_id=? and action='report_auto_finalize'").get(id).n, 1);
+    assert.ok(db.prepare("select status from maintenance_report_batches where flight_id=?").all(id).every(row => row.status === "待复核"));
+    assert.ok(db.prepare("select status from maintenance_hour_results where flight_id=?").all(id).every(row => row.status === "待复核"));
+    assert.equal((await submit(id, "routine", { expectedUpdatedAt: stale })).res.statusCode, 409);
+    const view = await request(`/api/maintenance/flights/${id}/review`, { cookie });
+    const tasks = view.payload.review.tasks.map(task => ({ ownerType: task.ownerType, ownerId: task.ownerId, assignments: task.assignments.map(item => ({ role: item.role, personId: item.personId })) }));
+    assert.ok(view.payload.review.flight.updatedAt, "复核版本必须由打开页面的接口提供");
+    const missingVersion = await request(`/api/maintenance/flights/${id}/review`, { method: "PUT", cookie, body: { mode: "confirm", tasks, routineElectronicSigned: true } });
+    assert.equal(missingVersion.res.statusCode, 409, "通用请求辅助逻辑不得补填版本");
+    assert.equal(missingVersion.payload.code, "MAINTENANCE_REPORT_CONFLICT");
+    const saved = await browserReview(view.payload.review, cookie, "save", tasks);
+    assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
+    assert.notEqual(saved.payload.review.flight.updatedAt, view.payload.review.flight.updatedAt);
+    const staleSaved = await request(`/api/maintenance/flights/${id}/review`, { method: "PUT", cookie, body: { mode: "confirm", tasks, routineElectronicSigned: true, expectedUpdatedAt: view.payload.review.flight.updatedAt } });
+    assert.equal(staleSaved.res.statusCode, 409);
+    assert.equal(db.prepare("select status from maintenance_flights where id=?").get(id).status, "待复核");
+    const confirmed = await browserReview(saved.payload.review, cookie, "confirm", tasks);
+    assert.equal(confirmed.res.statusCode, 200, JSON.stringify(confirmed.payload));
+    assert.equal(confirmed.payload.review.flight.status, "已确认");
+    assert.equal((await request(`/api/maintenance/flights/${id}/review`, { method: "PUT", cookie, body: { mode: "save", tasks, reason: "并发校验", expectedUpdatedAt: stale } })).res.statusCode, 409);
+  }
+  for (const kind of ["航后", "三方航后", "航后/航前"]) {
+    const id = await create(kind);
+    assert.equal((await submit(id, "release")).res.statusCode, 200);
+    const routine = await submit(id, "routine", { automatic: true });
+    assert.equal(routine.res.statusCode, 200, JSON.stringify(routine.payload));
+    assert.equal(routine.payload.flight.status, "已提报");
+    assert.equal(routine.payload.flight.reportFinalizedAt, "");
+    const manual = await request(`/api/maintenance/flights/${id}/report-confirmation`, { method: "POST", cookie, body: { routineEntries: [{ role: "接机", personId: person.personId }] } });
+    assert.equal(manual.res.statusCode, 200, JSON.stringify(manual.payload));
+    assert.equal(manual.payload.flight.status, "待复核");
+    assert.equal(manual.payload.flight.reportFinalizationMode, "manual");
+  }
+  const peer = createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(), { id: "auto-routine-peer", name: "自动确认例行人员" });
+  const peerLogin = await request("/api/login", { method: "POST", body: { username: peer.username, password: "muc2026" } });
+  const peerCookie = String(peerLogin.res.headers["Set-Cookie"]).split(";")[0];
+  const shared = await create();
+  db.prepare("update maintenance_assignments set person_id=?,user_name=? where flight_id=? and role='接机'").run(peer.personId, peer.name, shared);
+  assert.equal((await submit(shared, "release")).res.statusCode, 200);
+  const peerResult = await request(`/api/maintenance/flights/${shared}/reports/routine`, { method: "PUT", cookie: peerCookie, body: { entries: [{ role: "接机", personId: peer.personId }], expectedUpdatedAt: await reportVersion(shared, peerCookie) } });
+  assert.equal(peerResult.res.statusCode, 200, JSON.stringify(peerResult.payload));
+  assert.equal(peerResult.payload.flight.status, "待复核");
+  const autoLog = db.prepare("select * from maintenance_logs where flight_id=? and action='report_auto_finalize'").get(shared);
+  assert.equal(autoLog.user_id, "");
+  assert.equal(JSON.parse(autoLog.detail).triggerUserId, peer.id);
+  assert.equal(JSON.parse(autoLog.detail).originalReleaseReporter, login.payload.user.id);
+
+  const drafted = await create();
+  db.prepare("insert into maintenance_report_drafts(id,flight_id,report_type,payload_json,version,created_at,updated_at) values(?,?,'nonroutine',?,1,'test',?)")
+    .run(`draft-${drafted}`, drafted, JSON.stringify({ items: [{ title: "待录入工作" }] }), new Date().toISOString());
+  assert.equal((await submit(drafted, "release")).res.statusCode, 200);
+  assert.equal((await submit(drafted, "routine")).payload.flight.status, "已提报");
+  assert.equal(db.prepare("select count(*) as n from maintenance_report_drafts where flight_id=?").get(drafted).n, 1);
+
+  const broken = await create();
+  assert.equal((await submit(broken, "routine")).res.statusCode, 200);
+  db.prepare("update personnel set employment_status='停职' where id=?").run(person.personId);
+  try {
+    const release = await submit(broken, "release");
+    assert.ok(release.res.statusCode >= 400, JSON.stringify(release.payload));
+    assert.equal(db.prepare("select count(*) as n from maintenance_report_batches where flight_id=? and report_type='release'").get(broken).n, 0);
+    assert.equal(db.prepare("select count(*) as n from maintenance_sortie_results where flight_id=?").get(broken).n, 0);
+    assert.equal(db.prepare("select report_finalized_at from maintenance_flights where id=?").get(broken).report_finalized_at || "", "");
+  } finally { db.prepare("update personnel set employment_status='在职' where id=?").run(person.personId); }
+  const blocked = await create();
+  const sub = await request(`/api/maintenance/flights/${blocked}/subtasks`, { method: "POST", cookie, body: { title: "非例行", category: "其他", standardHours: 1 } });
+  assert.equal(sub.res.statusCode, 201, JSON.stringify(sub.payload));
+  assert.equal((await submit(blocked, "release")).res.statusCode, 200);
+  assert.equal((await submit(blocked, "routine")).payload.flight.status, "已提报");
+});
+
+test('attendance endpoints enforce login and distinguish real missing coverage',async()=>{
+  assert.equal((await request('/api/attendance/status')).res.statusCode,401);
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const status=await request('/api/attendance/status',{cookie});assert.equal(status.res.statusCode,200);assert.equal(typeof status.payload.configuration.configured,'boolean');assert.ok(!JSON.stringify(status.payload).includes('appSecret'));
+  const days=await request('/api/attendance/days?month=2026-09',{cookie});assert.equal(days.res.statusCode,200);assert.equal(days.payload.dates.length,30);assert.ok(days.payload.people.every(p=>p.days.length===30));
+  assert.equal((await request('/api/attendance/days?month=2026-13',{cookie})).res.statusCode,400);
+  const excel=await requestRaw('/api/attendance/export/xlsx?month=2026-09&scope=all',{cookie});assert.equal(excel.statusCode,200);assert.equal(excel.body.readUInt32LE(0),0x04034b50);assert.match(excel.headers['Content-Disposition'],/attachment/);
+  const html=await requestRaw('/api/attendance/export/html?month=2026-09&scope=all',{cookie});assert.equal(html.statusCode,200);assert.ok(html.body.toString().includes('offline:true'));assert.equal(html.headers['Cache-Control'],'no-store');
+  const stranger=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'attendance-denied-user',name:'考勤无权用户'});
+  const other=await request('/api/login',{method:'POST',body:{username:stranger.username,password:'muc2026'}}),otherCookie=String(other.res.headers['Set-Cookie']).split(';')[0];
+  assert.equal((await request('/api/attendance/days?month=2026-09',{cookie:otherCookie})).res.statusCode,403);
+});
+test('attendance export category filter validates input, keeps complete month and all scope ignores it',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const seed=response=>JSON.parse(response.body.toString().match(/<script id="attendanceSeed" type="application\/json">(.*?)<\/script>/s)[1]);
+ const filtered=await requestRaw('/api/attendance/export/html?month=2026-09&scope=filtered&categories='+encodeURIComponent(JSON.stringify(['未同步','不存在'])),{cookie});assert.equal(filtered.statusCode,200);const data=seed(filtered);assert.ok(data.people.length>0);assert.ok(data.people.every(p=>p.days.length===30&&p.counts['未同步']>0));assert.deepEqual(data.filters.categories,['未同步','不存在']);
+ const empty=await requestRaw('/api/attendance/export/html?month=2026-09&scope=filtered&categories='+encodeURIComponent('["不存在"]'),{cookie});assert.equal(seed(empty).people.length,0);assert.ok(seed(empty).categories.length>0);
+ const all=await requestRaw('/api/attendance/export/html?month=2026-09&scope=all&query=does-not-exist&categories=invalid',{cookie});assert.equal(all.statusCode,200);assert.ok(seed(all).people.length>0);assert.equal(seed(all).filters.categories,undefined);
+ for(const value of ['invalid','{}','[1]','[""]'])assert.equal((await requestRaw('/api/attendance/export/html?month=2026-09&scope=filtered&categories='+encodeURIComponent(value),{cookie})).statusCode,400);
+});
+test('leave directory metadata is visible to attendance readers and refresh cannot bypass maintenance permission',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const days=await request('/api/attendance/days?month=2026-09',{cookie});assert.equal(days.res.statusCode,200);assert.ok(Array.isArray(days.payload.leaveTypes.names));assert.equal((await request('/api/attendance/status',{cookie})).payload.leaveTypes.status,'not_loaded');
+ assert.equal((await request('/api/attendance/leave-types/refresh',{method:'POST',cookie,body:{}})).res.statusCode,409);
+ const user=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'leave-refresh-no-access',name:'假期目录无权用户'});const other=await request('/api/login',{method:'POST',body:{username:user.username,password:'muc2026'}}),otherCookie=String(other.res.headers['Set-Cookie']).split(';')[0];assert.equal((await request('/api/attendance/leave-types/refresh',{method:'POST',cookie:otherCookie,body:{}})).res.statusCode,403);
 });

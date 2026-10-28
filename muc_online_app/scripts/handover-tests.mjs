@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {today} from '../capability-core.mjs';
+import {createCapabilityService} from '../capability-service.mjs';
+import {seedCapabilityFixture} from './capability-fixture.mjs';
+const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'handover-tests-'));
+Object.assign(process.env,{NODE_ENV:'test',MUC_NO_LISTEN:'1',DATABASE_URL:'',DB_PATH:path.join(tmp,'test.sqlite'),UPLOAD_DIR:path.join(tmp,'uploads')});
+const {db}=await import('../server.mjs');
+try{
+  const {workspace}=await seedCapabilityFixture(db);
+  const service=createCapabilityService({db,hasRbac:(a,p)=>!a.denied?.includes(p),personnelAccess:{allows:(a,m,id)=>!a.ids||a.ids.includes(id)},audit:()=>{},superAccountId:'tester'});
+  service.init();service.init();service.syncMaster();
+  const actor={id:'tester'},snapshot=()=>service.snapshot(actor,workspace);
+  const cmd=(op,p={},a=actor)=>service.command(a,workspace,op,{requestId:crypto.randomUUID(),revision:service.revision(),...p});
+  cmd('createDeploymentLocation',{name:'交接测试'});
+  const location=snapshot().deploymentLocations.find(l=>l.name==='交接测试'),[a,b,c]=snapshot().people;
+  const get=id=>db.prepare('select * from capability_status_records where id=?').get(id);
+  const clear=()=>{for(const r of snapshot().records)cmd('deleteStatus',{recordId:r.id,reason:'隔离测试清理'});};
+  const make=(person,start='2099-01-01',extra={})=>{cmd('status',{personId:person.id,kind:'DEPLOYED',deploymentLocationId:location.id,startDate:start,...extra});return snapshot().records.find(r=>r.person_id===person.id);};
+  const replace=(old,person,days,start='2099-02-01',extra={})=>cmd('replaceDeployment',{personId:person.id,deploymentLocationId:location.id,startDate:start,replacesRecordId:old.id,...(days===undefined?{}:{handoverDays:days}),...extra});
+  const update=(r,p={},who=actor)=>cmd('updateStatus',{recordId:r.id,startDate:r.start_date,endDate:r.end_date||'',deploymentLocationId:location.id,...p},who);
+  for(const n of [undefined,2,3]){
+    const old=make(a);replace(old,b,n);const incoming=snapshot().records.find(r=>r.replaces_record_id===old.id);
+    assert.equal(incoming.handover_days,n||1);assert.equal(get(old.id).end_date,`2099-02-0${n||1}`);
+    service.init();assert.equal(get(incoming.id).handover_days,n||1);assert.equal(get(old.id).end_date,`2099-02-0${n||1}`);
+    clear();
+  }
+  let old=make(a);for(const n of [0,4,1.5,'invalid'])assert.throws(()=>replace(old,b,n),/1～3/);
+  assert.ok(!get(old.id).end_date);
+  assert.throws(()=>replace(old,b,3,'2099-02-01',{endDate:'2099-02-02'}),/不能早于交接结束/);
+  update(old,{endDate:'2099-01-31'});
+  cmd('status',{personId:a.id,kind:'TRAINING',label:'冲突培训',startDate:'2099-02-03',endDate:'2099-02-04'});
+  assert.throws(()=>replace(old,b,3),/其他状态计划/);
+  assert.equal(get(old.id).end_date,'2099-01-31');
+  assert.equal(snapshot().records.filter(r=>r.person_id===b.id).length,0);
+  clear();old=make(a);replace(old,b,3);
+  let incoming=snapshot().records.find(r=>r.replaces_record_id===old.id);
+  assert.throws(()=>replace(incoming,c,1,'2099-02-03'),/上一段交接完成/);
+  replace(incoming,c,2,'2099-02-04');
+  assert.equal(get(incoming.id).end_date,'2099-02-05');
+  incoming=get(incoming.id);
+  assert.throws(()=>update(incoming,{startDate:'2099-02-02'}),/尚未完成/);
+  assert.throws(()=>update(get(old.id),{endDate:'2099-02-01'}),/交接关系固定/);
+  assert.throws(()=>update(incoming,{handoverDays:2},{id:'limited',ids:[b.id]}),e=>[403,404].includes(e.status));
+  update(incoming,{handoverDays:2});assert.equal(get(old.id).end_date,'2099-02-02');
+  clear();old=make(a,today());replace(old,b,3,today());
+  incoming=snapshot().records.find(r=>r.replaces_record_id===old.id);
+  assert.throws(()=>update(incoming,{handoverDays:2}),/必须填写原因/);
+  update(incoming,{handoverDays:2,reason:'交接提前完成'});
+  assert.equal(get(incoming.id).handover_days,2);
+  assert.throws(()=>cmd('end',{recordId:old.id,endDate:today()}),/交接关系固定/);
+  service.schedule();assert.equal(get(old.id).phase,'ACTIVE');
+  assert.ok(snapshot().history.some(h=>h.type==='STATUS_UPDATED'&&h.payload?.reason==='交接提前完成'));
+  console.log('HANDOVER_TESTS_PASS: defaults, 2/3 days, idempotent init, invalid inputs, transactional conflicts, chain order, range, reason and inclusive expiry');
+}finally{db.close();}

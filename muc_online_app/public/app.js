@@ -1,11 +1,12 @@
+let attendanceModule = null, attendanceImport = null;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const pageSizes = Array.from({ length: 9 }, (_, index) => 10 + index * 5);
 const ataOptions = Array.from({ length: 100 }, (_, index) => String(index).padStart(2, "0"));
-const receiverStatusFilters = ["全部", "未读", "已读", "超期", "收藏"];
-const publisherStatusFilters = ["全部", "未读", "已读", "超期", "收藏", "我发布"];
-const adminStatusFilters = ["全部", "未读", "已读", "超期", "收藏", "我发布", "作废"];
+const receiverStatusFilters = ["全部", "未读", "超期", "收藏"];
+const publisherStatusFilters = ["全部", "未读", "超期", "收藏", "我发布"];
+const adminStatusFilters = ["全部", "未读", "超期", "收藏", "我发布", "作废"];
 const LOGIN_STORAGE_KEY = "muc_saved_login_v1";
 const AUTO_LOGIN_SKIP_KEY = "muc_skip_auto_login_once";
 const MAINTENANCE_RULE_GROUPS_STORAGE_KEY = "muc_maintenance_rule_groups_open_v1";
@@ -98,15 +99,17 @@ const state = {
   activeMonth: "全部",
   page: 1,
   pageSize: 15,
-  viewerZoom: 1,
-  viewerMode: "",
-  viewerDownloadUrl: "",
-  viewerDownloadName: "",
   maintenanceTab: "dispatch",
   maintenanceLeftStatuses: new Set(["未派工"]),
   maintenanceRightStatuses: new Set(["已派工"]),
-  maintenanceLeftSort: "default",
-  maintenanceRightSort: "default",
+  maintenanceLocations: [],
+  maintenanceLocationFormBackup: null,
+  maintenanceLeftLocations: new Set(),
+  maintenanceRightLocations: new Set(),
+  maintenanceExecuteLocation: "maintenance-location-qingdao",
+  maintenanceReportLocations: new Set(),
+  maintenanceLeftSort: "plannedArrival:asc",
+  maintenanceRightSort: "plannedArrival:asc",
   maintenanceStartDate: new Date().toISOString().slice(0, 10),
   maintenanceEndDate: new Date().toISOString().slice(0, 10),
   maintenanceOpportunityFilters: new Set(["航前", "航后", "航后/航前", "短停", "热备机", "停场", "附加", "其他", "三方短停", "三方航后", "三方航前"]),
@@ -116,6 +119,8 @@ const state = {
   maintenanceFlights: [],
   maintenanceNextCursor: "",
   maintenanceRules: [],
+  maintenanceAircraftHours: { version: 0, groups: [] },
+  maintenanceAircraftHoursDraft: null,
   maintenanceStats: null,
   maintenanceRuleGroupsOpen: loadMaintenanceRuleGroupsOpen(),
   maintenancePersonalStats: null,
@@ -455,6 +460,7 @@ async function apiRequest(path, options = {}) {
     error.status = response.status;
     error.code = data?.code || "";
     error.details = data?.errors || data?.issues || [];
+    error.summary = data?.summary || null;
     error.blockers = data?.blockers || [];
     throw error;
   }
@@ -722,6 +728,33 @@ function normalizePeople(people) {
   });
 }
 
+function isCadrePerson(person) {
+  return person?.personnelGroupCode === "GROUP-LINE-CADRE";
+}
+
+function personnelSelectionLabel(person) {
+  return isCadrePerson(person) ? "干部" : person.currentWorkingTeamName || person.administrativeTeamName || person.team || "未设置";
+}
+
+function personnelSelectionOptions(people) {
+  const teams = [...new Set(people.filter(person => !isCadrePerson(person)).map(personnelSelectionLabel))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  return [{ value: "", label: "全部人员" }, ...teams.map(team => ({ value: `team:${team}`, label: team })), ...(people.some(isCadrePerson) ? [{ value: "group:GROUP-LINE-CADRE", label: "干部" }] : [])];
+}
+
+function personnelSelectionMatches(person, selected) {
+  if (!selected) return true;
+  if (selected === "group:GROUP-LINE-CADRE") return isCadrePerson(person);
+  return !isCadrePerson(person) && selected === `team:${personnelSelectionLabel(person)}`;
+}
+
+function personnelSelectionOptionsHtml(people, selected = "", allLabel = "全部人员") {
+  return personnelSelectionOptions(people).map(item => `<option value="${escapeHtml(item.value)}" ${selected === item.value ? "selected" : ""}>${escapeHtml(item.value === "" ? allLabel : item.label)}</option>`).join("");
+}
+
+function personnelCadreBadgeHtml(person) {
+  return isCadrePerson(person) ? '<span class="personnel-cadre-badge">干部</span>' : "";
+}
+
 function parsePeopleLines(text) {
   let skipped = 0;
   const people = String(text || "").split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => {
@@ -762,7 +795,9 @@ function enrichRecord(record, index = 0) {
     attachments: Array.isArray(record.attachments) ? record.attachments : [],
     favorite: record.favorite === true,
     importedRead: record.importedRead === true || record.importedReadComplete === true,
-    recipients: Array.isArray(record.recipients) && record.recipients.length ? record.recipients.map((item, itemIndex) => typeof item === "object" ? { id: item.id, personId:item.personId,accountId:item.accountId, name: item.name, department: item.department || "未设置", team: item.team || "未设置" } : normalizeRecipients([item])[0]).filter(Boolean) : normalizeRecipients([]),
+    recipients: Array.isArray(record.recipients) ? record.recipients.map((item, itemIndex) => typeof item === "object" ? { id: item.id, personId:item.personId,accountId:item.accountId, name: item.name, department: item.department || "未设置", team: item.team || "未设置" } : normalizeRecipients([item])[0]).filter(Boolean) : normalizeRecipients([]),
+    feedbackSummary: record.feedbackSummary,
+    serverVisible: record.serverVisible === true,
     deadline,
     priority: record.priority || (index % 7 === 0 ? "重要" : "普通"),
     publishStatus: record.publishStatus || "已发布",
@@ -780,7 +815,9 @@ function enrichRecord(record, index = 0) {
 
 const recordService = {
   async list() {
-    const data = await apiRequest("/records");
+    infoRealtime.epoch++;
+    const data = await apiRequest(state.activeSubpage==='statsSubpage'?'/records':'/records?summary=1');
+    infoRealtime.cursor = data.cursor || '';
     if (data.settings) state.settings = data.settings;
     state.receipts = data.receipts || [];
     return (data.records || []).map(enrichRecord);
@@ -790,7 +827,7 @@ const recordService = {
     return enrichRecord(data.record);
   },
   async update(id, payload) {
-    const data = await apiRequest(`/records/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+    const data = await apiRequest(`/records/${encodeURIComponent(id)}`, { method: "PUT", body: {...payload,expectedUpdatedAt:$('#entryDialog')?.dataset.expectedUpdatedAt || state.records.find(r=>r.id===id)?.updatedAt || ''} });
     return enrichRecord(data.record);
   },
   async remove(id) {
@@ -808,6 +845,99 @@ const recordService = {
     return await apiRequest("/records/import", { method: "POST", body: { rows } });
   },
 };
+
+const infoRealtime={cursor:'',source:null,timer:null,retry:null,pending:false,busy:false,epoch:0,delay:3000,newIds:new Set(),status:'',deferred:false};
+function infoSyncStatus(text='') {
+  infoRealtime.status=text;
+  const normal=['','实时同步','自动同步','连接中'].includes(text);
+  let bar=$('#infoSyncBar');
+  if(!bar&&normal&&!infoRealtime.newIds.size)return;
+  if(!bar){bar=document.createElement('div');bar.id='infoSyncBar';bar.style.cssText='font-size:12px;color:#64748b;display:flex;gap:8px;align-items:center;padding:4px 0';$('#resultStatus')?.after(bar);}
+  bar.replaceChildren();
+  if(!normal)bar.append(document.createTextNode(text));
+  bar.hidden=state.activePage!=='infoPage' || state.activeSubpage!=='infoListSubpage' || (normal&&!infoRealtime.newIds.size);
+  bar.style.display=bar.hidden?'none':'flex';
+  if(infoRealtime.newIds.size){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=`有 ${infoRealtime.newIds.size} 条新信息`;button.onclick=()=>{infoRealtime.newIds.clear();renderRecords();infoSyncStatus(infoRealtime.status);};bar.append(button);}
+}
+function stopInfoSync() {
+  infoRealtime.epoch++;infoRealtime.source?.close();infoRealtime.source=null;
+  clearInterval(infoRealtime.timer);clearTimeout(infoRealtime.retry);infoRealtime.timer=null;infoRealtime.retry=null;
+}
+function infoSyncBlocked(){return ['entryDialog','viewerDialog','feedbackDialog'].some(id=>$(`#${id}`)?.open);}
+async function syncInformation(checkPermissions=false) {
+  if(!isLoggedIn() || !['homePage','infoPage'].includes(state.activePage) || document.hidden)return;
+  if(infoSyncBlocked() && !checkPermissions){infoRealtime.deferred=true;return;}
+  if(infoRealtime.busy){infoRealtime.pending=true;infoRealtime.pendingPermissions ||= checkPermissions;return;}
+  infoRealtime.busy=true;infoRealtime.pending=false;
+  const epoch=infoRealtime.epoch,account=state.user.id;
+  try{
+    const delta=await apiRequest('/info/sync',{method:'POST',body:{cursor:infoRealtime.cursor,knownIds:state.records.map(r=>r.id),details:state.activeSubpage==='statsSubpage'}});
+    if(epoch!==infoRealtime.epoch || account!==state.user.id)return;
+    if(infoSyncBlocked()){
+      infoRealtime.deferred=true;
+      if(checkPermissions && delta.removed.length){
+        const removed=new Set(delta.removed);state.records=state.records.filter(r=>!removed.has(r.id));state.receipts=state.receipts.filter(r=>!removed.has(r.recordId));
+        for(const id of removed)document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`)?.remove();
+        if(removed.has($('#feedbackDialog')?.dataset.recordId))$('#feedbackDialog')?.close();
+        if($('#viewerDialog')?.open)$('#viewerDialog').close();
+        if(removed.has($('#entryId')?.value))infoSyncStatus('该信息已不可访问，当前草稿保留；保存时将重新校验权限');
+      }
+      return;
+    }
+    const changed=new Set([...delta.records.map(r=>r.id),...delta.removed]);
+    for(const id of delta.removed)infoRealtime.newIds.delete(id);
+    const originalIds=new Set(state.records.map(r=>r.id));
+    const hold=window.scrollY>150 || !!$('#cards .original-panel:not([hidden])');
+    for(const record of delta.records){if(!originalIds.has(record.id) && hold)infoRealtime.newIds.add(record.id);}
+    if(delta.reset)state.records=delta.records.map(enrichRecord);
+    else state.records=[...state.records.filter(r=>!changed.has(r.id)),...delta.records.map(enrichRecord)];
+    state.receipts=state.receipts.filter(r=>!changed.has(r.recordId));state.receipts.push(...delta.receipts);
+    for(const update of delta.updates){
+      const record=state.records.find(r=>r.id===update.id);if(!record)continue;
+      record.feedbackSummary=update.feedbackSummary;
+      state.receipts=state.receipts.filter(r=>r.recordId!==update.id || r.userId!==account);
+      state.receipts.push(...update.ownReceipts);
+    }
+    infoRealtime.cursor=delta.cursor;infoRealtime.deferred=false;
+    if(changed.size || delta.reset || delta.updates.length){
+      const opened=new Map([...document.querySelectorAll('#cards article[data-record-id]')].filter(a=>!a.querySelector('.original-panel')?.hidden).map(a=>[a.dataset.recordId,a.querySelector('.read-note')?.textContent||'']));
+      const x=window.scrollX,y=window.scrollY;
+      state.records.sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.createdAt).localeCompare(String(a.createdAt)));
+      renderRecords();renderHome();if(state.activeSubpage==='statsSubpage')renderStats();
+      for(const [id,note] of opened){const article=document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`);if(!article)continue;article.querySelector('.original-panel').hidden=false;article.querySelector('[data-toggle-panel]').textContent='收起原文';const n=article.querySelector('.read-note');if(n&&note){n.textContent=note;n.hidden=false;}}
+      window.scrollTo(x,y);
+    }
+    infoSyncStatus(infoRealtime.source?'实时同步':'自动同步');
+  }catch(error){
+    infoSyncStatus('同步暂不可用，稍后重试');
+    if(isAuthExpired(error) || error.status===403){stopInfoSync();await handleAuthExpired('信息访问权限或登录状态已变化，请重新登录。');}
+  }finally{infoRealtime.busy=false;if(infoRealtime.pending){infoRealtime.pending=false;const permissions=infoRealtime.pendingPermissions;infoRealtime.pendingPermissions=false;queueMicrotask(()=>syncInformation(permissions));}}
+}
+function startInfoSync(){
+  if(!isLoggedIn() || !hasRbac('info.read') || !['homePage','infoPage'].includes(state.activePage) || document.hidden){stopInfoSync();return;}
+  if(!infoRealtime.timer)infoRealtime.timer=setInterval(()=>syncInformation(true),30000);
+  infoSyncStatus(infoRealtime.source?'实时同步':'连接中');
+  if(infoRealtime.source || typeof EventSource==='undefined')return;
+  const source=new EventSource(`${API_BASE_URL}/info/events`);infoRealtime.source=source;
+  source.onopen=()=>{infoRealtime.delay=3000;infoSyncStatus('实时同步');};
+  let coalesce=null,coalesceKind='';
+  source.addEventListener('info',event=>{
+    let kind='content';try{kind=JSON.parse(event.data).kind;}catch{}
+    // New content must not wait behind a pending 2s receipt update.
+    if(coalesce && coalesceKind==='receipt' && kind!=='receipt'){clearTimeout(coalesce);coalesce=null;}
+    if(!coalesce){coalesceKind=kind;coalesce=setTimeout(()=>{coalesce=null;syncInformation(coalesceKind!=='receipt');},kind==='receipt'?2000:50);}
+  });
+  source.addEventListener('access-revoked',()=>{stopInfoSync();state.records=[];state.receipts=[];renderRecords();handleAuthExpired('信息访问权限或登录状态已变化。');});
+  source.onerror=()=>{
+    source.close();clearTimeout(coalesce);if(infoRealtime.source===source)infoRealtime.source=null;
+    infoSyncStatus('连接中断，自动重试');clearTimeout(infoRealtime.retry);
+    infoRealtime.retry=setTimeout(()=>{infoRealtime.retry=null;startInfoSync();syncInformation(true);},infoRealtime.delay+Math.random()*2000);
+    infoRealtime.delay=Math.min(infoRealtime.delay*2,60000);
+  };
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopInfoSync();else{startInfoSync();syncInformation(true);}});
+window.addEventListener('online',()=>{startInfoSync();syncInformation(true);});
+document.addEventListener('close',()=>{if(infoRealtime.deferred)syncInformation();},true);
 
 const receiptService = {
   list() {
@@ -989,11 +1119,19 @@ const rbacService = {
   }
 };
 
+function maintenanceDispatchLoadLocations() {
+  const left=state.maintenanceLeftLocations, right=state.maintenanceRightLocations;
+  return !left.size || !right.size ? [] : [...new Set([...left,...right])];
+}
+
 const maintenanceService = {
   taskListQuery(cursor = "") {
     const scope = state.maintenanceTab === "execute" ? "execute" : "dispatch";
     const query = new URLSearchParams({ scope, view: "summary", limit: "100" });
     if (cursor) query.set("cursor", cursor);
+    if (scope === "execute") {
+      if (state.maintenanceExecuteLocation) query.append("locationId", state.maintenanceExecuteLocation);
+    } else for (const id of maintenanceDispatchLoadLocations()) query.append("locationId", id);
     if (scope !== "execute") {
       if (state.maintenanceStartDate) query.set("dateFrom", state.maintenanceStartDate);
       if (state.maintenanceEndDate) query.set("dateTo", state.maintenanceEndDate);
@@ -1011,12 +1149,15 @@ const maintenanceService = {
       return;
     }
     state.maintenanceStats = null;
+    state.maintenanceLocations = (await apiRequest("/maintenance/locations")).locations || [];
     if (state.maintenanceTab === "hours") {
       state.maintenanceFlights = [];
       state.maintenanceNextCursor = "";
       state.maintenancePersonalStats = null;
       const rulesData = await apiRequest("/maintenance/rules");
       state.maintenanceRules = rulesData.rules || [];
+      state.maintenanceAircraftHours = rulesData.aircraftHours || { version: 0, groups: [] };
+      state.maintenanceAircraftHoursDraft = null;
       return;
     }
     if (state.maintenanceTab === "data") {
@@ -1089,7 +1230,7 @@ const maintenanceService = {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`);
   },
   async saveReview(flightId, mode, tasks, reason = "", newSubtasks = [], signatures = {}) {
-    return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`, { method: "PUT", body: { mode, tasks, reason, newSubtasks, ...signatures } });
+    return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`, { method: "PUT", body: { mode, tasks, reason, newSubtasks, ...signatures, expectedUpdatedAt: state.maintenanceReviewDraft?.review?.flight?.updatedAt } });
   },
   async getReports(flightId) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/reports`);
@@ -1114,6 +1255,7 @@ const maintenanceService = {
       nonroutineCategory: state.maintenanceReportNonroutineCategory || "",
       workType: state.maintenanceReportWorkType || "all",
       status: state.maintenanceReportStatus || "已确认",
+      locationIds: [...state.maintenanceReportLocations].join(","),
       signature: state.maintenanceReportSignature || "all",
       search: state.maintenanceReportSearch || "",
       page: String(state.maintenanceReportPage || 1),
@@ -1134,6 +1276,7 @@ const maintenanceService = {
     return `${API_BASE_URL}/maintenance/report/export.xlsx?${new URLSearchParams(params).toString()}`;
   },
   async submitReport(flightId, type, payload = {}) {
+    if (["release", "routine"].includes(type)) payload = { ...payload, expectedUpdatedAt: state.maintenanceWorkReportDraft?.report?.flight?.updatedAt || state.maintenanceFlights.find(flight => flight.id === flightId)?.updatedAt };
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/reports/${encodeURIComponent(type)}`, { method: "PUT", body: payload });
   },
   async saveNonroutineDraft(flightId, payload = {}) {
@@ -1155,10 +1298,11 @@ const maintenanceService = {
     return await apiRequest("/maintenance/version");
   },
   async assignmentAction(id, action, payload = {}) {
+    if (action === "complete") payload = { ...payload, expectedUpdatedAt: state.maintenanceFlights.find(flight => (flight.assignments || []).some(assignment => assignment.id === id))?.updatedAt };
     return await apiRequest(`/maintenance/assignments/${encodeURIComponent(id)}/${action}`, { method: "POST", body: payload });
   },
-  async saveRules(rules) {
-    return await apiRequest("/maintenance/rules", { method: "PUT", body: { rules } });
+  async saveRules(rules, aircraft = {}) {
+    return await apiRequest("/maintenance/rules", { method: "PUT", body: { rules, ...aircraft } });
   },
   async adjustHour(id, adjustedHours) {
     return await apiRequest(`/maintenance/hours/${encodeURIComponent(id)}`, { method: "PUT", body: { adjustedHours } });
@@ -1507,7 +1651,7 @@ function canViewRecord(record) {
   if (!state.user.id) return false;
   if (!hasRbac("info.read")) return false;
   if (record?.publishStatus === "作废") return hasRbac("info.restore") || hasRbac("info.void.any");
-  return isRecipient(record) || isRecordOwner(record) || scopeHasAll("info");
+  return record.serverVisible || isRecipient(record) || isRecordOwner(record) || scopeHasAll("info");
 }
 
 function canTrackPersonalRead(record) {
@@ -1566,6 +1710,7 @@ function readState(record) {
 }
 
 function recordMetrics(record) {
+  if(record.feedbackSummary)return {...record.feedbackSummary,overdue:isPast(record.deadline)?record.feedbackSummary.unread:0};
   const rows = (record.recipients || []).map(person => ({ person, receipt: receiptService.list().find(item => item.recordId === record.id && item.userId === person.id) }));
   const read = rows.filter(row => row.receipt?.readAt).length;
   const overdue = rows.filter(row => !row.receipt?.readAt && isPast(record.deadline)).length;
@@ -1680,6 +1825,7 @@ function removeAttachmentFromState(attachmentId, ownerType, ownerId) {
 }
 
 function renderShell() {
+  if (attendanceModule && (!isLoggedIn() || state.activePage !== "attendancePage" || !hasRbac("attendance.read"))) attendanceModule.setActive(false);
   if (capabilityModule) capabilityModule.setActive(isLoggedIn() && state.activePage === "personnelPage" && personnelArea === "capability");
   if (!isLoggedIn()) {
     capabilityModule?.destroy(); capabilityModule = null; capabilityGeneration++; personnelArea = null;
@@ -1839,7 +1985,7 @@ function renderRecords() {
   renderCategoryControls();
   renderStatusControls();
   const term = $("#searchInput").value.trim().toLowerCase();
-  const filtered = filteredRecords();
+  const filtered = filteredRecords().filter(record=>!infoRealtime.newIds.has(record.id));
   const pageItems = filtered.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
   $("#cards").innerHTML = pageItems.map(record => {
     const metrics = recordMetrics(record);
@@ -2874,6 +3020,7 @@ function syncRecipientCheckboxes() {
   $$("#recipientOptions input[data-recipient]").forEach(input => {
     input.checked = state.selectedRecipientIds.has(input.dataset.recipient);
   });
+  syncRecipientSelectionCount();
 }
 
 function visibleRecipientIds() {
@@ -2882,15 +3029,41 @@ function visibleRecipientIds() {
 
 function renderRecipientPicker() {
   const people = normalizePeople(state.infoPeople || []);
-  const teams = ["全部", ...Array.from(new Set(people.map(person => person.team).filter(Boolean)))];
-  const currentTeam = $("#recipientTeamFilter")?.value || "全部";
+  const options = personnelSelectionOptions(people);
+  const selectedCategory = $("#recipientTeamFilter")?.value || "";
+  const currentTeam = options.some(item => item.value === selectedCategory) ? selectedCategory : "";
   const currentSearch = ($("#recipientSearch")?.value || "").trim().toLowerCase();
-  $("#recipientTeamFilter").innerHTML = teams.map(team => `<option value="${escapeHtml(team)}" ${team === currentTeam ? "selected" : ""}>${escapeHtml(team)}</option>`).join("");
+  $("#recipientTeamFilter").innerHTML = personnelSelectionOptionsHtml(people, currentTeam, "全部");
   const visible = people.filter(person => {
-    const text = [person.id, person.name, person.team].join(" ").toLowerCase();
-    return (currentTeam === "全部" || person.team === currentTeam) && (!currentSearch || text.includes(currentSearch));
+    const text = [person.id, person.employeeNo, person.name, personnelSelectionLabel(person)].join(" ").toLowerCase();
+    return personnelSelectionMatches(person, currentTeam) && (!currentSearch || text.includes(currentSearch));
   });
-  $("#recipientOptions").innerHTML = visible.map(person => `<label class="recipient-option"><span class="recipient-name">${escapeHtml(person.name)} · ${escapeHtml(person.team)}</span><input type="checkbox" data-recipient="${escapeHtml(person.id)}" ${state.selectedRecipientIds.has(person.id) ? "checked" : ""}></label>`).join("") || '<div class="status-line">没有匹配人员。</div>';
+  $("#recipientOptions").innerHTML = visible.map(person => `<label class="recipient-option"><span class="recipient-name">${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}${isCadrePerson(person) ? "" : ` · ${escapeHtml(personnelSelectionLabel(person))}`}</span><input type="checkbox" data-recipient="${escapeHtml(person.id)}" ${state.selectedRecipientIds.has(person.id) ? "checked" : ""}></label>`).join("") || '<div class="status-line">没有匹配人员。</div>';
+  syncRecipientSelectionCount();
+}
+
+function syncRecipientSelectionCount() {
+  const count = $("#recipientSelectedCount");
+  if (count) count.textContent = `已选 ${state.selectedRecipientIds.size} 人`;
+  const toggle = $("#recipientToggle");
+  if (toggle) {
+    const hasSelection = state.selectedRecipientIds.size > 0;
+    toggle.disabled = !hasSelection && visibleRecipientIds().length === 0;
+    const action = hasSelection ? "清空全部已选人员" : "全选当前搜索和分类中的人员";
+    toggle.setAttribute("aria-label", action);
+    toggle.title = action;
+  }
+}
+
+function toggleRecipientSelection() {
+  setRecipientSelection(state.selectedRecipientIds.size ? [] : visibleRecipientIds());
+}
+
+function setOriginalExpanded(expanded) {
+  $("#entryForm").classList.toggle("original-expanded", expanded);
+  const button = $("#entryOriginalResize");
+  button.textContent = expanded ? "收起" : "放大";
+  button.setAttribute("aria-expanded", String(expanded));
 }
 
 function renderFixedAtaOptions() {
@@ -2959,6 +3132,7 @@ async function ensureMaintenanceRules() {
   if ((state.maintenanceRules || []).some(item => item.rule_type === "nonroutineCategoryHours" && item.name === "拖机")) return;
   const data = await apiRequest("/maintenance/rules");
   state.maintenanceRules = data.rules || [];
+  state.maintenanceAircraftHours = data.aircraftHours || { version: 0, groups: [] };
 }
 
 function maintenanceOperationalTimeValue(value) {
@@ -3019,8 +3193,14 @@ function maintenanceAllowedTabs() {
       : key === "hours" && ["maintenance.rules.view", "maintenance.rules.manage"].some(hasRbac));
 }
 
+function maintenanceDisplayFlightNo(flight) {
+  return ["航前", "三方航前"].includes(flight.workKind || flight.workType || flight.opportunity)
+    ? flight.departureFlightNo || flight.flightNo || ""
+    : flight.flightNo || flight.departureFlightNo || "";
+}
+
 function maintenanceTitle(flight) {
-  return [flight.flightNo, flight.aircraftNo, flight.workKind || flight.workType].filter(Boolean).join(" · ") || "未命名航班任务";
+  return [maintenanceDisplayFlightNo(flight), flight.aircraftNo, flight.workKind || flight.workType].filter(Boolean).join(" · ") || "未命名航班任务";
 }
 
 function maintenanceOpportunityTag(flight) {
@@ -3044,11 +3224,14 @@ function maintenanceOpportunityTag(flight) {
 
 function maintenanceFlightPrimaryHtml(flight) {
   const date = maintenanceFlightMonthDay(flight.date);
-  return `<strong class="maintenance-flight-primary">${maintenanceOpportunityTag(flight)}<span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span><span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span><span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${date ? `<span class="maintenance-flight-date"> · ${escapeHtml(date)}</span>` : ""}</strong>`;
+  return `<strong class="maintenance-flight-primary">${maintenanceOpportunityTag(flight)}<span class="maintenance-aircraft-no">${escapeHtml(flight.aircraftNo || "-")}</span>${flight.flightNo ? `<span class="maintenance-flight-no">${escapeHtml(flight.flightNo)}</span>` : ""}<span class="maintenance-flight-separator"> · </span><span class="maintenance-aircraft-type">${escapeHtml(flight.aircraftType || "-")}</span>${date ? `<span class="maintenance-flight-date"> · ${escapeHtml(date)}</span>` : ""}</strong>`;
 }
 
 function maintenanceFlightSecondaryHtml(flight) {
-  return `<span class="maintenance-flight-secondary"><span class="maintenance-flight-no">${escapeHtml(flight.flightNo || "-")}</span><span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span><span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span>${flight.departureFlightNo ? `<span class="maintenance-flight-no">${escapeHtml(flight.departureFlightNo)}</span>` : ""}</span>`;
+  const location = `<span class="maintenance-location-tag">${escapeHtml(flight.locationName || "青岛")}</span>`;
+  const stand = `<span class="maintenance-stand-tag">机位 ${escapeHtml(flight.stand || "-")}</span>`;
+  const departure = flight.departureFlightNo ? `<span class="maintenance-flight-no">${escapeHtml(flight.departureFlightNo)}</span>` : "";
+  return `<span class="maintenance-flight-secondary">${stand}${flight.flightNo ? `<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span>` : ""}<span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span>${departure}${location}</span>`;
 }
 
 function maintenanceAssigneeGroups(item, ownerType = "flight") {
@@ -3079,12 +3262,6 @@ function maintenanceAssigneesHtml(item, ownerType = "flight") {
   const groups = maintenanceAssigneeGroups(item, ownerType);
   if (!groups.length) return '<span class="maintenance-assignment-names">未派工</span>';
   return groups.map(([role, names], index) => `${index ? '<span class="maintenance-assignment-separator">；</span>' : ""}<span class="maintenance-assignment-group"><strong class="maintenance-assignment-role">${escapeHtml(role)}：</strong><span class="maintenance-assignment-names">${escapeHtml(names.join("、"))}</span></span>`).join("");
-}
-
-function maintenanceAircraftTypeOptions(value = "A320") {
-  const current = String(value || "A320");
-  if (aircraftTypes.includes(current)) return optionList(aircraftTypes, current);
-  return optionList([...aircraftTypes.slice(0, -1), current, "其他"], current);
 }
 
 function maintenanceReportProgressHtml(flight, compact = false) {
@@ -3309,6 +3486,14 @@ function maintenanceStatusMenuHtml(side, selectedStatuses) {
   </details>`;
 }
 
+function maintenanceLocationMenuHtml(kind, selected) {
+  const locations = state.maintenanceLocations || [];
+  const selectedNames = locations.filter(item => selected.has(item.id)).map(item => item.name);
+  const label = selectedNames.length ? selectedNames.length === 1 ? selectedNames[0] : `${selectedNames.length} 个地点` : "全部地点";
+  return `<details class="maintenance-status-menu maintenance-location-menu"><summary class="maintenance-status-filter" aria-label="作业地点筛选" title="${escapeHtml(selectedNames.join("、") || "全部地点")}">${escapeHtml(label)}</summary>
+    <div class="maintenance-status-options" role="group" aria-label="作业地点">${locations.map(item => `<label><input type="checkbox" data-maint-location-option="${kind}" value="${escapeHtml(item.id)}" ${selected.has(item.id) ? "checked" : ""}><span>${escapeHtml(item.name)}</span></label>`).join("")}</div></details>`;
+}
+
 function maintenanceOpportunityMenuHtml() {
   const selected = state.maintenanceOpportunityFilters instanceof Set
     ? state.maintenanceOpportunityFilters
@@ -3353,10 +3538,12 @@ function renderMaintenanceDispatch() {
   });
   const renderColumn = (side, selectedStatuses) => {
     const sortValue = side === "left" ? state.maintenanceLeftSort : state.maintenanceRightSort;
-    const items = sortMaintenanceFlights(flights.filter(flight => selectedStatuses.has(flight.status || "未派工")), sortValue);
+    const selectedLocations = side === 'left' ? state.maintenanceLeftLocations : state.maintenanceRightLocations;
+    const items = sortMaintenanceFlights(flights.filter(flight => selectedStatuses.has(flight.status || "未派工") && (!selectedLocations.size || selectedLocations.has(flight.locationId))), sortValue);
     return `<section class="maintenance-dispatch-column maintenance-dispatch-column-${side}" data-maintenance-column="${side}">
       <div class="maintenance-column-tools">
         ${maintenanceStatusMenuHtml(side, selectedStatuses)}
+        ${maintenanceLocationMenuHtml(side, selectedLocations)}
         <select class="maintenance-sort-filter" data-maint-sort-filter="${side}" aria-label="${side === "left" ? "左侧" : "右侧"}任务排序">${maintenanceSortOptionsHtml(sortValue)}</select>
         <span>${items.length} 项</span>
       </div>
@@ -3377,8 +3564,9 @@ function renderMaintenanceDispatch() {
         ${maintenanceOpportunityMenuHtml()}
         <input id="maintenanceFlightSearch" class="search" type="search" placeholder="航班 / 机号 / 人员" value="${escapeHtml(state.maintenanceFlightSearch)}" aria-label="搜索航班、机号、机位、机型或人员">
       </div>
-      <div class="actions">${hasRbac("maintenance.opportunity.import") ? '<input id="maintenanceImportFile" type="file" accept=".xlsx,.csv" hidden><input id="maintenanceSubtaskImportFile" type="file" accept=".xlsx,.csv" hidden><button class="btn secondary" type="button" data-maint-import>导入航班计划</button><button class="btn secondary" type="button" data-maint-subtask-import>导入附加工作</button>' : ""}${hasRbac("maintenance.opportunity.create") ? '<button class="btn" type="button" data-maint-create-flight>新建维修机会</button>' : ""}</div>
+      <div class="actions">${hasRbac("maintenance.opportunity.import") || hasRbac("maintenance.assignment.manage") ? '<button class="btn secondary" type="button" data-maint-import>导入</button>' : ""}${hasRbac("maintenance.opportunity.create") ? '<button class="btn" type="button" data-maint-create-flight>新建维修机会</button>' : ""}</div>
     </div>
+    ${state.maintenanceImportNotice ? `<p class="status-line" role="status">${escapeHtml(state.maintenanceImportNotice)}</p>` : ''}
     <div class="maintenance-dispatch-board">${renderColumn("left", state.maintenanceLeftStatuses)}${renderColumn("right", state.maintenanceRightStatuses)}</div>
     ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
   </section>`;
@@ -3471,6 +3659,7 @@ function renderMaintenanceExecute() {
     const finalizeBlockedByDraft = releaseBatch?.submittedBy === state.user.id && progress.hasNonroutineDraft && !flight.reportFinalizedAt;
     const canFinalize = canSubmitReport && releaseBatch?.submittedBy === state.user.id && progress.ready && !progress.hasNonroutineDraft && !flight.reportFinalizedAt;
     return `<section class="execute-main-work">
+      ${flight.reportFinalizationMode === "automatic" ? '<small class="muted">系统自动报工确认</small>' : ""}
       <div class="execute-role-roster">${roles.map(role => {
         const submitted = role === "放行" ? Boolean(releaseBatch) : submittedRoutineRoles.has(role);
         return `<div class="execute-role-row ${submitted ? `submitted ${role === "放行" ? "release" : "routine"}` : ""}"><strong>${escapeHtml(role)}</strong><span>${personNamesHtml(peopleByRole.get(role) || [], role !== "放行")}</span></div>`;
@@ -3521,18 +3710,45 @@ function renderMaintenanceExecute() {
     </section>`;
   }).join("");
   const timeAscending = state.maintenanceExecuteTimeSort === "asc";
+  const locationOption = (id, name) => `<option value="${escapeHtml(id)}" ${state.maintenanceExecuteLocation === id ? "selected" : ""}>${escapeHtml(name)}</option>`;
   return `<section class="maintenance-panel maintenance-execute-panel">
-    <div class="execute-list-tools"><button class="execute-time-sort" type="button" data-maint-execute-time-sort title="切换计划时间排序" aria-label="计划时间${timeAscending ? "正序" : "倒序"}">时间 <span aria-hidden="true">${timeAscending ? "↑" : "↓"}</span></button></div>
+    <div class="execute-list-tools"><select data-maint-execute-location aria-label="作业地点" title="作业地点">${locationOption("", "全部地点")}${(state.maintenanceLocations || []).map(item => locationOption(item.id, item.name)).join("")}</select><button class="execute-time-sort" type="button" data-maint-execute-time-sort title="切换计划时间排序" aria-label="计划时间${timeAscending ? "正序" : "倒序"}">时间 <span aria-hidden="true">${timeAscending ? "↑" : "↓"}</span></button></div>
     <div class="maintenance-list execute-list">${listHtml || '<section class="data-panel execute-empty"><div class="status-line">暂无派给你的维修任务。</div></section>'}</div>
     ${state.maintenanceNextCursor ? '<div class="maintenance-list-more"><button class="btn secondary" type="button" data-maint-load-more>继续加载</button></div>' : ""}
   </section>`;
+}
+
+function readMaintenanceAircraftHours() {
+  return { version: state.maintenanceAircraftHours?.version || 0, groups: $$('[data-aircraft-group]').map(column => ({
+    id: column.dataset.aircraftGroup,
+    name: column.querySelector('[data-aircraft-name]').value,
+    codes: column.querySelector('[data-aircraft-codes]').value,
+    enabled: column.querySelector('[data-aircraft-enabled]').checked,
+    hours: Object.fromEntries([...column.querySelectorAll('[data-aircraft-hours]')].map(input => [input.dataset.aircraftHours, input.value === '' ? '' : Number(input.value)]))
+  })) };
+}
+
+function renderMaintenanceAircraftHours() {
+  const config = state.maintenanceAircraftHoursDraft || state.maintenanceAircraftHours || { version: 0, groups: [] };
+  const editable = hasRbac('maintenance.rules.manage');
+  return `<div style="overflow-x:auto;max-width:100%;overscroll-behavior-x:contain"><div style="display:flex;gap:12px;width:max-content;min-width:100%;padding:12px">
+    <div style="flex:none;width:90px;padding-top:132px">${maintenanceOpportunityOptions.map(opportunity => `<div style="height:44px;display:flex;align-items:center">${escapeHtml(opportunity)}</div>`).join('')}</div>
+    ${config.groups.map(group => `<div data-aircraft-group="${escapeHtml(group.id)}" style="flex:none;width:210px">
+      <div style="height:132px;display:grid;gap:4px;align-content:start">
+        <input aria-label="机型组名称" data-aircraft-name value="${escapeHtml(group.name)}" placeholder="机型组名称" ${editable ? '' : 'disabled'}>
+        <input aria-label="机型代码（空格分隔）" data-aircraft-codes value="${escapeHtml(Array.isArray(group.codes) ? group.codes.join(' ') : group.codes)}" placeholder="如 32N 320 325" ${editable ? '' : 'disabled'}>
+        <div><label><input type="checkbox" data-aircraft-enabled ${group.enabled !== false ? 'checked' : ''} ${editable ? '' : 'disabled'}>启用</label>${editable ? `<button type="button" class="btn secondary" data-aircraft-remove="${escapeHtml(group.id)}">删除组</button>` : ''}</div>
+      </div>
+      ${maintenanceOpportunityOptions.map(opportunity => `<div style="height:44px;display:flex;align-items:center;gap:6px"><input style="width:160px" type="number" min="0.01" step="0.01" aria-label="${escapeHtml(group.name)} ${escapeHtml(opportunity)}标准工时" data-aircraft-hours="${escapeHtml(opportunity)}" value="${escapeHtml(group.hours?.[opportunity] ?? '')}" placeholder="未配置" ${editable ? '' : 'disabled'}><small>小时</small></div>`).join('')}
+    </div>`).join('')}
+    ${editable ? '<button type="button" class="btn secondary" style="align-self:flex-start" data-aircraft-add>＋机型组</button>' : ''}
+  </div></div>`;
 }
 
 function renderMaintenanceHours() {
   const rules = state.maintenanceRules || [];
   const canManageRules = hasRbac("maintenance.rules.manage");
   const ruleByKey = new Map(rules.map(rule => [`${rule.rule_type}:${rule.name}`, rule]));
-  const standardRules = maintenanceOpportunityOptions.map(name => ruleByKey.get(`workType:${name}`)).filter(Boolean);
   const nonroutineCombinations = [
     ["主做", "检验", "辅助"], ["主做", "检验"], ["主做", "辅助"], ["检验", "辅助"],
     ["主做"], ["检验"], ["辅助"]
@@ -3571,7 +3787,7 @@ function renderMaintenanceHours() {
     <summary><span><strong>非例行工种分配比例</strong><small>7 种组合</small></span></summary>
     <div class="maintenance-rule-category-list">${nonroutineCategories}</div>
   </details>`;
-  const groupHtml = `${simpleGroup("workType", "维修机会标准工时", standardRules, "小时")}${routineGroup}${nonroutineGroup}${simpleGroup("towHours", "拖机工时规则", towRules, "小时")}`;
+  const groupHtml = `<details class="maintenance-rule-group" open><summary><strong>机型组 × 维修机会标准工时</strong></summary><p>同列机型共用标准工时；代码以空格、逗号或顿号分隔，精确匹配。空白表示未配置，不能提交例行工时。</p><div id="maintenanceAircraftMatrix">${renderMaintenanceAircraftHours()}</div></details>${routineGroup}${nonroutineGroup}${simpleGroup("towHours", "拖机工时规则", towRules, "小时")}`;
   return `<section class="data-panel maintenance-panel maintenance-rule-settings">
     <div class="panel-title"><div><strong>工时规则</strong><span>维护标准工时与人员分配比例。</span></div></div>
     <div class="maintenance-rule-groups">${groupHtml}</div>
@@ -3597,8 +3813,10 @@ function maintenanceDataComparisonCard(kind, comparison = {}) {
   };
   const [title, empty, explanation] = labels[kind] || labels.department;
   if (!comparison.available) {
-    const unavailable=comparison.reason==="incomplete_scope"?"需部门级数据范围":empty;
-    const detail=comparison.reason==="incomplete_scope"?"当前维修数据范围不完整，不生成局部部门排名。":explanation;
+    const scopeLabels={team:["需完整班组数据范围","当前维修数据范围未覆盖完整班组，不计算组内占比或排名。"],department:["需部门级数据范围","当前维修数据范围不完整，不生成局部部门排名。"],teamRanking:["需完整比较范围","当前维修数据范围未覆盖全部参评班组，不生成班组排名。"]};
+    const [scopeEmpty,scopeDetail]=scopeLabels[kind]||scopeLabels.department;
+    const unavailable=comparison.reason==="incomplete_scope"?scopeEmpty:empty;
+    const detail=comparison.reason==="incomplete_scope"?scopeDetail:explanation;
     return `<article class="maintenance-comparison-card"><span class="maintenance-card-kicker">${title}</span><strong class="maintenance-comparison-empty">${unavailable}</strong><p>${detail}</p></article>`;
   }
   const gap = comparison.isHighest ? "当前最高" : `距离上一名 ${maintenanceHoursLabel(comparison.gapHours)} 小时`;
@@ -3752,6 +3970,7 @@ function maintenanceReportFiltersHtml() {
     <label><span>维修机会</span><select data-maint-report-filter="opportunity">${option("", "全部类别", state.maintenanceReportOpportunity)}${maintenanceOpportunityOptions.map(item => option(item, item, state.maintenanceReportOpportunity)).join("")}</select></label>
     ${state.maintenanceReportView === "nonroutine" ? `<label><span>非例行类别</span><select data-maint-report-filter="nonroutineCategory">${option("", "全部类别", state.maintenanceReportNonroutineCategory)}${subtaskCategories.map(item => option(item, item, state.maintenanceReportNonroutineCategory)).join("")}</select></label>` : `<label><span>工时类型</span><select data-maint-report-filter="workType">${option("all", "全部", state.maintenanceReportWorkType)}${option("routine", "例行", state.maintenanceReportWorkType)}${option("nonroutine", "非例行", state.maintenanceReportWorkType)}</select></label>`}
     <label><span>状态</span><select data-maint-report-filter="status">${(state.maintenanceReportView === "nonroutine" ? ["未派工", "已派工", "已提报", "待复核", "已确认"] : ["已确认", "待复核", "已提报"]).map(item => option(item, item, state.maintenanceReportStatus)).join("")}</select></label>
+    <div class="maintenance-report-location-filter"><span>作业地点</span>${maintenanceLocationMenuHtml("report", state.maintenanceReportLocations)}</div>
     <label><span>签署方式</span><select data-maint-report-filter="signature" ${state.maintenanceReportStatus === "已确认" ? "" : "disabled"}>${option("all", "全部", state.maintenanceReportSignature)}${option("routineElectronic", "例行电签", state.maintenanceReportSignature)}${option("routinePaper", "例行纸签", state.maintenanceReportSignature)}${option("nonroutineElectronic", "非例行电签", state.maintenanceReportSignature)}${option("nonroutinePaper", "非例行纸签", state.maintenanceReportSignature)}</select></label>
     <label class="maintenance-report-search"><span>关键词</span><input type="search" id="maintenanceReportSearch" placeholder="航班 / 机号 / 姓名 / 工号" value="${escapeHtml(state.maintenanceReportSearch || "")}"></label>
     ${state.maintenanceReportView === "people" ? `<label><span>排序</span><select data-maint-report-filter="sort">${option("totalHours:desc", "总工时倒序", state.maintenanceReportSort || "totalHours:desc")}${option("routineHours:desc", "例行工时倒序", state.maintenanceReportSort)}${option("nonroutineHours:desc", "非例行工时倒序", state.maintenanceReportSort)}${option("sorties:desc", "放行架次倒序", state.maintenanceReportSort)}${option("name:asc", "姓名正序", state.maintenanceReportSort)}</select></label>` : state.maintenanceReportView === "opportunities" || state.maintenanceReportView === "nonroutine" ? `<label><span>排序</span><select data-maint-report-filter="sort">${option("date:desc", "日期倒序", state.maintenanceReportSort || "date:desc")}${option("date:asc", "日期正序", state.maintenanceReportSort)}${state.maintenanceReportView === "nonroutine" ? `${option("actualHours:desc", "实际工时倒序", state.maintenanceReportSort)}${option("actualHours:asc", "实际工时正序", state.maintenanceReportSort)}` : `${option("totalHours:desc", "总工时倒序", state.maintenanceReportSort)}${option("sorties:desc", "放行架次倒序", state.maintenanceReportSort)}`}</select></label>` : ""}
@@ -3781,7 +4000,7 @@ function maintenanceReportOpportunities(data) {
   const rows = data.rows || [];
   return `<div class="maintenance-report-list opportunities">
     <div class="maintenance-report-row head"><span>日期 / 航班</span><span>类别</span><span>人员</span><span>工时</span><span>放行</span><span>签署</span><span>状态</span></div>
-    ${rows.map(row => `<div class="maintenance-report-opportunity-entry"><button class="maintenance-report-row" type="button" data-maint-report-opportunity="${escapeHtml(row.id)}" aria-expanded="${state.maintenanceReportOpenOpportunityIds.has(row.id)}"><span data-label="日期 / 航班"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flightNo)}</strong><small>${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType)}</small></span><span data-label="类别">${escapeHtml(row.opportunity)}</span><span data-label="人员" class="wrap">${escapeHtml((row.participants || []).map(person => person.name).join("、") || "-")}</span><span data-label="工时"><b>${maintenanceHoursLabel(row.totalHours)}h</b><small>例 ${maintenanceHoursLabel(row.routineHours)} / 非 ${maintenanceHoursLabel(row.nonroutineHours)}</small></span><span data-label="放行"><b>${escapeHtml(row.sorties)} 架次</b><small>${escapeHtml((row.releasePeople || []).join("、") || "-")}</small></span><span data-label="签署"><b>例行 ${escapeHtml(row.routineSignature || "-")}</b><small>非例行 ${escapeHtml(row.nonroutineSignature || "-")}</small></span><span data-label="状态">${maintenanceStatusBadge(row.status)}</span></button>${state.maintenanceReportOpenOpportunityIds.has(row.id) ? `<div class="maintenance-report-opportunity-detail" data-maint-opportunity-detail="${escapeHtml(row.id)}">${state.maintenanceReportOpportunityDetails.has(row.id) ? maintenanceOpportunityAuditHtml(state.maintenanceReportOpportunityDetails.get(row.id)) : "正在读取..."}</div>` : ""}</div>`).join("") || '<div class="maintenance-report-empty">没有符合条件的维修机会。</div>'}
+    ${rows.map(row => `<div class="maintenance-report-opportunity-entry"><button class="maintenance-report-row" type="button" data-maint-report-opportunity="${escapeHtml(row.id)}" aria-expanded="${state.maintenanceReportOpenOpportunityIds.has(row.id)}"><span class="maintenance-report-identity" data-label="日期 / 航班"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flightNo)}</strong><small>${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType)} · ${escapeHtml(row.locationName || "青岛")}</small></span><span class="maintenance-report-category" data-label="类别">${escapeHtml(row.opportunity)}</span><span class="maintenance-report-mobile-meta">${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType)} · ${escapeHtml(row.locationName || "青岛")} · ${escapeHtml(row.opportunity)}</span><span data-label="人员" class="maintenance-report-people">${escapeHtml((row.participants || []).map(person => person.name).join("、") || "-")}</span><span class="maintenance-report-hours" data-label="工时"><b>${maintenanceHoursLabel(row.totalHours)}h</b><small>例 ${maintenanceHoursLabel(row.routineHours)} / 非 ${maintenanceHoursLabel(row.nonroutineHours)}</small></span><span class="maintenance-report-release" data-label="放行"><b>${escapeHtml(row.sorties)} 架次</b><small>${escapeHtml((row.releasePeople || []).join("、") || "-")}</small></span><span class="maintenance-report-signature-cell" data-label="签署"><b>例行<span class="maintenance-report-mobile-label">签署：</span> ${escapeHtml(row.routineSignature || "-")}</b><small><span class="maintenance-report-mobile-label">· </span>非例行<span class="maintenance-report-mobile-label">签署：</span> ${escapeHtml(row.nonroutineSignature || "-")}</small></span><span class="maintenance-report-status" data-label="状态">${maintenanceStatusBadge(row.status)}</span></button>${state.maintenanceReportOpenOpportunityIds.has(row.id) ? `<div class="maintenance-report-opportunity-detail" data-maint-opportunity-detail="${escapeHtml(row.id)}">${state.maintenanceReportOpportunityDetails.has(row.id) ? maintenanceOpportunityAuditHtml(state.maintenanceReportOpportunityDetails.get(row.id)) : "正在读取..."}</div>` : ""}</div>`).join("") || '<div class="maintenance-report-empty">没有符合条件的维修机会。</div>'}
   </div>${maintenanceReportPagination(data.pagination)}`;
 }
 
@@ -4005,7 +4224,7 @@ function openMaintenanceRemark(flightId, editing = false) {
   dialog.id = "maintenanceRemarkDialog";
   dialog.className = "maintenance-remark-dialog";
   dialog.setAttribute("aria-labelledby", "maintenanceRemarkTitle");
-  dialog.innerHTML = `<form class="dialog-body"><div class="dialog-head"><h2 id="maintenanceRemarkTitle">维修机会备注</h2><button type="button" class="icon-btn" data-close="maintenanceRemarkDialog" aria-label="关闭">×</button></div><div class="maintenance-remark-identity">${escapeHtml([flight.date, flight.flightNo, flight.aircraftNo].filter(Boolean).join(" · "))}</div>${editing ? `<label class="maintenance-remark-label">备注<textarea name="remark" maxlength="2000" rows="6">${escapeHtml(originalRemark)}</textarea></label>` : `<div class="maintenance-remark-content maintenance-remark-text">${escapeHtml(originalRemark)}</div>`}<div class="status-line error" role="alert"></div>${editing ? '<div class="actions"><button type="button" class="btn secondary" data-close="maintenanceRemarkDialog">取消</button><button type="submit" class="btn">保存</button></div>' : ""}</form>`;
+  dialog.innerHTML = `<form class="dialog-body"><div class="dialog-head"><h2 id="maintenanceRemarkTitle">维修机会备注</h2><button type="button" class="icon-btn" data-close="maintenanceRemarkDialog" aria-label="关闭">×</button></div><div class="maintenance-remark-identity">${escapeHtml([flight.date, maintenanceDisplayFlightNo(flight), flight.aircraftNo].filter(Boolean).join(" · "))}</div>${editing ? `<label class="maintenance-remark-label">备注<textarea name="remark" maxlength="2000" rows="6">${escapeHtml(originalRemark)}</textarea></label>` : `<div class="maintenance-remark-content maintenance-remark-text">${escapeHtml(originalRemark)}</div>`}<div class="status-line error" role="alert"></div>${editing ? '<div class="actions"><button type="button" class="btn secondary" data-close="maintenanceRemarkDialog">取消</button><button type="submit" class="btn">保存</button></div>' : ""}</form>`;
   document.body.append(dialog);
   let saving = false;
   dialog.addEventListener("close", () => { unlockMaintenanceDataDetailBackground(); dialog.remove(); });
@@ -4071,6 +4290,7 @@ function maintenancePersonalHourGroups(rows = []) {
         flightNo: row.flightNo || "-",
         aircraftNo: row.aircraftNo || "-",
         opportunity: row.opportunity || "其他",
+        locationName: row.locationName || "青岛",
         hours: 0,
         types: new Set(),
         items: []
@@ -4104,7 +4324,7 @@ function maintenancePersonalHourGroupHtml(group, index) {
   const groupLabel = `${group.date} ${group.flightNo} ${group.aircraftNo}`;
   return `<article class="maintenance-hour-detail-group">
     <button class="maintenance-detail-group-toggle" type="button" data-maint-hour-group-toggle aria-expanded="false" aria-controls="${detailId}" aria-label="展开维修机会 ${escapeHtml(groupLabel)}">
-      <span class="maintenance-detail-group-heading"><strong>${escapeHtml(group.date)} · ${escapeHtml(group.flightNo)} · ${escapeHtml(group.aircraftNo)}</strong><span class="maintenance-detail-task-line">${kindBadges}<span>${escapeHtml(group.opportunity)}</span></span></span>
+      <span class="maintenance-detail-group-heading"><strong>${escapeHtml(group.date)} · ${escapeHtml(group.flightNo)} · ${escapeHtml(group.aircraftNo)}</strong><span class="maintenance-detail-task-line">${kindBadges}<span>${escapeHtml(group.opportunity)} · ${escapeHtml(group.locationName)}</span></span></span>
       <span class="maintenance-detail-group-total"><span>合计</span><b>${maintenanceHoursLabel(group.hours)} 小时</b><i aria-hidden="true"></i></span>
     </button>
     <div class="maintenance-detail-work-items" id="${detailId}" hidden>${group.items.map(maintenancePersonalHourItemHtml).join("")}</div>
@@ -4122,6 +4342,7 @@ async function openMaintenanceDataDetails(trigger) {
   if (trigger.dataset.detailDate) params.date = trigger.dataset.detailDate;
   if (trigger.dataset.detailCategory) params.category = trigger.dataset.detailCategory;
   if (trigger.dataset.detailPeriod) params.period = trigger.dataset.detailPeriod;
+  if (trigger.dataset.detailLocation) params.locationId = trigger.dataset.detailLocation;
   body.innerHTML = `<div class="dialog-head"><h2>数据明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="maintenance-detail-loading">正在读取...</div>`;
   lockMaintenanceDataDetailBackground();
   dialog.showModal();
@@ -4129,7 +4350,7 @@ async function openMaintenanceDataDetails(trigger) {
     const result = await maintenanceService.getPersonalDetails(params);
     const rows = result.rows || [];
     const detailRowsHtml = result.unit === "架次"
-      ? rows.map(row => `<article><div><strong>${escapeHtml(row.date)}</strong><span>${escapeHtml(row.flightNo)} · ${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType || "-")}</span></div><div><span>${escapeHtml(row.opportunity)}</span><b>1 架次</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div></article>`).join("")
+      ? rows.map(row => `<article><div><strong>${escapeHtml(row.date)}</strong><span>${escapeHtml(row.flightNo)} · ${escapeHtml(row.aircraftNo)} · ${escapeHtml(row.aircraftType || "-")} · ${escapeHtml(row.locationName || "青岛")}</span></div><div><span>${escapeHtml(row.opportunity)}</span><b>1 架次</b><em class="maintenance-detail-status ${row.status === "已确认" ? "confirmed" : "pending"}">${escapeHtml(row.status)}</em></div></article>`).join("")
       : maintenancePersonalHourGroups(rows).map(maintenancePersonalHourGroupHtml).join("");
     body.innerHTML = `<div class="dialog-head"><h2>${escapeHtml(result.title || "数据明细")}</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div>
       ${result.unit === "小时" ? `<div class="maintenance-detail-summary">合计 <strong>${maintenanceHoursLabel(result.total)} 小时</strong></div>` : `<div class="maintenance-detail-summary">合计 <strong>${rows.length} 架次</strong></div>`}
@@ -4221,6 +4442,8 @@ function renderActivePage() {
     renderFixedProjects();
   } else if (state.activePage === "maintenancePage") {
     renderMaintenance();
+  } else if (state.activePage === "attendancePage") {
+    renderAttendancePage();
   } else if (state.activePage === "personnelPage") {
     renderPersonnelPage();
   }
@@ -4253,6 +4476,7 @@ async function renderAll(options = {}) {
   syncPeopleScopedState();
   renderActivePage();
   startMaintenanceSync();
+  startInfoSync();
 }
 
 const pullRefreshGesture = {
@@ -4381,7 +4605,7 @@ async function showPage(page) {
 async function showSubpage(subpage) {
   if (!canViewSubpage(subpage)) subpage = "infoListSubpage";
   state.activeSubpage = subpage;
-  await renderAll({ force: false });
+  await renderAll({ force: true });
 }
 
 function openInfoFromHome(filter) {
@@ -4401,6 +4625,8 @@ function openInfoFromHome(filter) {
 
 function resetRecordForm() {
   $("#entryForm").reset();
+  setOriginalExpanded(false);
+  $("#recipientTeamFilter").value = "";
   $("#entryId").value = "";
   state.recordFiles.length = 0;
   renderPending(state.recordFiles, $("#recordPending"));
@@ -4410,8 +4636,10 @@ function resetRecordForm() {
   $("#entryDate").value = inputDateValue();
 }
 
-function openRecordForm(record) {
+async function openRecordForm(record) {
+  if(record){try{const data=await apiRequest(`/records/${encodeURIComponent(record.id)}`);record=enrichRecord(data.record);}catch(error){alert(error.message);return;}}
   resetRecordForm();
+  $('#entryDialog').dataset.expectedUpdatedAt=record?.updatedAt || '';
   $("#entryTitleText").textContent = record ? "修改信息" : "发布信息";
   if (record) {
     $("#entryId").value = record.id;
@@ -4451,16 +4679,21 @@ function renderPending(files, container) {
 }
 
 function setupDrop(zone, input, files, list) {
+  const append=selected=>{
+    const invalid=zone.id==='recordDrop'?selected.filter(file=>file.size>10*1024*1024):[];
+    if(invalid.length)alert(`${invalid.map(file=>file.name).join('、')}：单个附件不能超过 10MiB（约10MB）`);
+    files.push(...selected.filter(file=>!invalid.includes(file)));renderPending(files,list);
+  };
   zone.addEventListener("click", () => input.click());
   input.addEventListener("change", () => {
-    files.push(...Array.from(input.files || []));
+    append(Array.from(input.files || []));
     input.value = "";
     renderPending(files, list);
   });
   ["dragenter", "dragover"].forEach(type => zone.addEventListener(type, event => { event.preventDefault(); zone.classList.add("dragging"); }));
   ["dragleave", "drop"].forEach(type => zone.addEventListener(type, event => { event.preventDefault(); zone.classList.remove("dragging"); }));
   zone.addEventListener("drop", event => {
-    files.push(...Array.from(event.dataTransfer?.files || []));
+    append(Array.from(event.dataTransfer?.files || []));
     renderPending(files, list);
   });
   list.addEventListener("click", event => {
@@ -4490,6 +4723,7 @@ async function attachmentsFrom(files, ownerType, ownerId) {
 
 async function uploadFiles(ownerType, ownerId, files, onProgress = null) {
   if (!files.length) return [];
+  if(ownerType==='record' && files.some(file=>file.size>10*1024*1024))throw new Error('单个附件不能超过 10MiB（约10MB），请移除超限附件后重试');
   const apiType = ownerType === "fixedProject" ? "fixed-projects" : "records";
   const uploaded = [];
   for (const [index, file] of files.entries()) {
@@ -4557,22 +4791,22 @@ function findAttachment(id, ownerType = "", ownerId = "") {
   return null;
 }
 
-async function attachmentSource(file) {
+async function attachmentSource(file, signal) {
   if (!file) return "";
-  if (file.storage === "cos" && (file.id || file.attachmentId)) {
+  if (file.id || file.attachmentId) {
     const attachmentId = file.id || file.attachmentId;
-    const access = await apiRequest(`/attachments/${encodeURIComponent(attachmentId)}/access`);
+    const access = await apiRequest(`/attachments/${encodeURIComponent(attachmentId)}/access`, { signal });
     return apiUrl(access.url || "");
   }
   return apiUrl(file.url || file.dataUrl || "");
 }
 
-async function attachmentBlob(file, sourceOverride = "") {
+async function attachmentBlob(file, sourceOverride = "", signal) {
   if (!file) return "";
   const source = sourceOverride || await attachmentSource(file);
   if (source && source.startsWith("data:")) {
     try {
-      return await (await fetch(source)).blob();
+      return await (await fetch(source, { signal })).blob();
     } catch {
       return null;
     }
@@ -4580,7 +4814,7 @@ async function attachmentBlob(file, sourceOverride = "") {
   if (source) {
     try {
       const targetOrigin = new URL(source, location.href).origin;
-      const response = await fetch(source, { credentials: targetOrigin === location.origin ? "include" : "omit" });
+      const response = await fetch(source, { credentials: targetOrigin === location.origin ? "include" : "omit", signal });
       if (!response.ok) return null;
       return await response.blob();
     } catch {
@@ -4656,85 +4890,23 @@ function mimeFromPath(path = "") {
 }
 
 function downloadLink(src, file) {
-  return src && src !== "#" ? `<p><a class="link-btn" href="${escapeHtml(src)}" download="${escapeHtml(file?.name || "附件")}" target="_blank">下载 / 外部打开</a></p>` : "";
+  return src && src !== "#" ? `<p><a class="link-btn" href="${escapeHtml(attachmentDownloadUrl(file, src))}" download="${escapeHtml(file?.name || "附件")}">下载原文件</a></p>` : "";
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+function attachmentDownloadUrl(file, fallback = "") {
+  const id = file?.id || file?.attachmentId;
+  return id ? apiUrl(`/api/attachments/${encodeURIComponent(id)}?download=1`) : fallback || file?.dataUrl || file?.url || "";
 }
 
-function setViewerDownload(src, name) {
-  state.viewerDownloadUrl = src && src !== "#" ? src : "";
-  state.viewerDownloadName = name || "附件";
-  const link = $("#viewerDownload");
-  if (!link) return;
-  if (state.viewerDownloadUrl) {
-    link.href = state.viewerDownloadUrl;
-    link.download = state.viewerDownloadName;
-    link.hidden = false;
-  } else {
-    link.removeAttribute("href");
-    link.hidden = true;
-  }
-}
-
-function applyViewerZoom() {
-  const scale = $("#viewerScale");
-  const label = $("#viewerZoomReset");
-  const zoomButtons = [$("#viewerZoomOut"), $("#viewerZoomIn"), $("#viewerZoomReset")];
-  const isNativePdf = state.viewerMode === "pdf-native";
-  zoomButtons.forEach(button => {
-    if (button) button.hidden = isNativePdf;
-  });
-  if (isNativePdf) {
-    if (scale) {
-      scale.style.transform = "none";
-      scale.style.width = "100%";
-      scale.style.height = "100%";
-    }
-    if (label) {
-      label.hidden = false;
-      label.disabled = true;
-      label.textContent = "PDF";
-    }
-    return;
-  }
-  if (label) label.disabled = false;
-  if (scale) {
-    scale.style.transform = `scale(${state.viewerZoom})`;
-    if (state.viewerMode === "image-fit") {
-      scale.style.width = "100%";
-      scale.style.height = "100%";
-    } else {
-      scale.style.width = `${100 / state.viewerZoom}%`;
-      scale.style.height = "";
-    }
-  }
-  if (label) label.textContent = `${Math.round(state.viewerZoom * 100)}%`;
-}
-
-function setViewerPreview(html, options = {}) {
-  state.viewerMode = options.mode || "";
-  const modeClass = state.viewerMode === "pdf-native" ? " pdf-native-scale" : state.viewerMode === "image-fit" ? " image-fit-scale" : "";
-  $("#viewerContent").innerHTML = `<div id="viewerScale" class="preview-scale${modeClass}">${html}</div>`;
-  applyViewerZoom();
-}
-
-function changeViewerZoom(delta) {
-  state.viewerZoom = clamp(Math.round((state.viewerZoom + delta) * 100) / 100, 0.5, 2);
-  applyViewerZoom();
-}
-
-function resetViewerZoom() {
-  state.viewerZoom = 1;
-  applyViewerZoom();
-}
+let attachmentViewer;
+const attachmentViewerReady = import('/attachment-viewer.mjs?v=20261012-3').then(({ AttachmentViewer }) => {
+  attachmentViewer = new AttachmentViewer({ source: attachmentSource, preview: renderAttachmentPreview, download: attachmentDownloadUrl, escape: escapeHtml });
+  return attachmentViewer;
+});
+attachmentViewerReady.catch(() => {});
 
 function resetViewerDialog() {
-  $("#viewerContent").innerHTML = "";
-  state.viewerMode = "";
-  setViewerDownload("", "");
-  resetViewerZoom();
+  attachmentViewer?.close();
 }
 
 function closeDialog(dialog) {
@@ -4756,7 +4928,7 @@ function renderSheetPreview(rows) {
   const visibleRows = rows.slice(0, 200);
   const maxCols = Math.min(30, Math.max(1, ...visibleRows.map(row => row.length)));
   const htmlRows = visibleRows.map(row => `<tr>${Array.from({ length: maxCols }, (_, index) => `<td>${escapeHtml(row[index] ?? "")}</td>`).join("")}</tr>`).join("");
-  const note = rows.length > visibleRows.length ? `<div class="status-line">仅预览前 ${visibleRows.length} 行。</div>` : "";
+  const note = `<div class="status-line">简化预览，最多显示前200行、30列；完整格式请下载原文件。</div>`;
   return `<div class="preview-table-wrap"><table class="preview-table">${htmlRows}</table></div>${note}`;
 }
 
@@ -4767,10 +4939,14 @@ function renderWorkbookPreview(sheets) {
   return `<div class="sheet-preview"><div class="sheet-tabs">${tabs}</div>${panels}</div>`;
 }
 
+function xmlElements(node, localName) {
+  return Array.from(node.getElementsByTagNameNS("*", localName));
+}
+
 function relsMap(xmlText) {
   if (!xmlText) return {};
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
-  return Array.from(xml.getElementsByTagName("Relationship")).reduce((map, item) => {
+  return xmlElements(xml, "Relationship").reduce((map, item) => {
     map[item.getAttribute("Id")] = item.getAttribute("Target") || "";
     return map;
   }, {});
@@ -4809,21 +4985,18 @@ async function renderDocxPreview(blob, file, src) {
     const images = blips.map(node => mediaHtml(node.getAttribute("r:embed") || node.getAttribute("r:link"))).filter(Boolean).join("");
     return (text.trim() || images) ? `<p>${escapeHtml(text)}</p>${images}` : "";
   }).filter(Boolean).join("");
-  return `<div class="preview-doc"><div class="status-line">当前为基础预览，完整格式请下载或外部打开。</div>${html || "<p>未识别到正文内容。</p>"}${downloadLink(src, file)}</div>`;
+  return `<div class="preview-doc"><div class="status-line">简化预览，完整格式请下载原文件。</div>${html || "<p>未识别到正文内容。</p>"}${downloadLink(src, file)}</div>`;
 }
 
-async function renderAttachmentPreview(file, src) {
+async function renderAttachmentPreview(file, src, signal) {
   const name = file?.name || "附件";
   const hasSource = !!src && src !== "#";
   if (isImageAttachment(file, name) && hasSource) return `<img class="image-fit-preview" src="${escapeHtml(src)}" alt="${escapeHtml(name)}">`;
-  if (isPdfAttachment(file, name) && hasSource) {
-    return `<div class="pdf-native-preview"><iframe class="pdf-native-frame" src="${escapeHtml(src)}" title="${escapeHtml(name)}"></iframe><div class="pdf-mobile-actions"><strong>PDF 附件</strong><p>如需放大查看细节，点击“打开查看”。</p><a class="btn secondary" href="${escapeHtml(src)}" target="_blank" rel="noopener">打开查看</a></div></div>`;
-  }
   if (isVideoAttachment(file, name) && hasSource) return `<video src="${escapeHtml(src)}" controls></video>`;
   if (isAudioAttachment(file, name) && hasSource) return `<audio src="${escapeHtml(src)}" controls></audio>${downloadLink(src, file)}`;
   if (attachmentExt(file, name) === "doc") return renderPreviewFallback(file, src, "doc 格式暂不支持页面内预览，请下载或另存为 docx 后预览。");
   if (attachmentExt(file, name) === "xls") return renderPreviewFallback(file, src, "xls 格式暂不支持页面内预览，请下载或另存为 xlsx 后预览。");
-  const blob = await attachmentBlob(file, src);
+  const blob = await attachmentBlob(file, src, signal);
   if (blob && isTextAttachment(file, name)) {
     const text = decodeAttachmentText(await blob.arrayBuffer());
     if (!text) return renderPreviewFallback(file, src, "无法识别附件文字编码，请下载原文件查看。");
@@ -4879,7 +5052,12 @@ function feedbackRows(record) {
   });
 }
 
-function openFeedback(record) {
+async function openFeedback(record) {
+  try{
+    const data=await apiRequest(`/records/${encodeURIComponent(record.id)}`);
+    record.recipients=data.record.recipients;delete record.feedbackSummary;
+    state.receipts=state.receipts.filter(r=>r.recordId!==record.id);state.receipts.push(...data.record.receipts);
+  }catch(error){alert(error.message);return;}
   $("#feedbackTitle").textContent = `反馈明细：${record.title}`;
   const rows = feedbackRows(record);
   const statusOptions = ["未读", "已读", "已超期", "超期已读"];
@@ -4893,7 +5071,8 @@ function openFeedback(record) {
   if (!dialog.open) dialog.showModal();
 }
 
-function exportFeedback(record) {
+async function exportFeedback(record) {
+  try{const data=await apiRequest(`/records/${encodeURIComponent(record.id)}`);record=enrichRecord(data.record);state.receipts=state.receipts.filter(r=>r.recordId!==record.id);state.receipts.push(...data.record.receipts);}catch(error){alert(error.message);return;}
   const lines = ["姓名,部门,班组,状态,阅读时间,提醒次数"].concat(feedbackRows(record).map(row => [row.person.name, row.person.department, row.person.team, row.status, row.receipt?.readAt || "", row.receipt?.remindCount || 0].map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
@@ -5186,8 +5365,17 @@ async function batchRowsFromFile(file) {
   return batchRowsFromRows(parseCsv(await file.text()));
 }
 
+function maintenanceFlightNumberError(item) {
+  const kind = item.workKind || "航后";
+  if (["航前", "三方航前"].includes(kind) && !item.departureFlightNo) return "航前请填写出港航班号";
+  if (["航后", "三方航后"].includes(kind) && !item.flightNo) return "航后进港航班号无效，请填写进港航班号";
+  if (["短停", "三方短停", "航后/航前"].includes(kind) && !item.flightNo && !item.departureFlightNo) return "进港或出港航班号至少填写一个";
+  return "";
+}
+
 function maintenanceRowsFromRows(rows) {
-  const filtered = rows.map(row => row.map(cell => String(cell ?? "").trim())).filter(row => row.some(Boolean));
+  const originalRows = rows.map((row,index)=>({rowNumber:row.sourceRowNumber||index+1,cells:row.map(cell => String(cell ?? "").trim())})).filter(item=>item.cells.some(Boolean));
+  const filtered=originalRows.map(item=>item.cells);
   if (!filtered.length) return { rows: [], skipped: 0 };
   const headers = filtered[0].map(normalizeHeader);
   const indexOf = names => headers.findIndex(header => names.includes(header));
@@ -5198,6 +5386,7 @@ function maintenanceRowsFromRows(rows) {
     aircraftNo: indexOf(["机号"]),
     aircraftType: indexOf(["机型"]),
     stand: indexOf(["机位"]),
+    locationName: indexOf(["作业地点", "作业地点（青岛可以不填）", "作业地点(青岛可以不填)"]),
     plannedArrival: indexOf(["计划落地时间", "落地时间"]),
     plannedDeparture: indexOf(["计划起飞时间", "起飞时间"]),
     workKind: indexOf(["维修机会", "工作类型", "工作种类"]),
@@ -5207,9 +5396,10 @@ function maintenanceRowsFromRows(rows) {
     status: indexOf(["状态"]),
     remark: indexOf(["备注"])
   };
-  const hasHeader = map.date >= 0 || map.flightNo >= 0 || map.cardName >= 0;
-  const missingHeaders = [["date", "日期"], ["flightNo", "航班号"], ["aircraftNo", "机号"]]
+  const hasHeader = map.date >= 0 || map.flightNo >= 0 || map.departureFlightNo >= 0 || map.cardName >= 0;
+  const missingHeaders = [["date", "日期"], ["aircraftNo", "机号"]]
     .filter(([key]) => map[key] < 0).map(([, label]) => label);
+  if (map.flightNo < 0 && map.departureFlightNo < 0) missingHeaders.push("航班号（进港或出港）");
   if (hasHeader && missingHeaders.length) {
     throw new Error(`航班计划缺少列：${missingHeaders.join("、")}。请核对表头，未导入任何数据。`);
   }
@@ -5217,20 +5407,21 @@ function maintenanceRowsFromRows(rows) {
     throw new Error("未识别到航班计划表头或有效日期。请使用包含日期、航班号、机号的导入格式，不能按固定列顺序导入此文件。");
   }
   let skipped = 0;
+  const errors=[];
   const sourceRows = hasHeader ? filtered.slice(1) : filtered;
   const parsed = sourceRows.map((row, index) => {
     const item = hasHeader ? Object.fromEntries(Object.entries(map).map(([key, index]) => [key, index >= 0 ? row[index] : ""])) : {
       date: row[0], flightNo: row[1], aircraftNo: row[2], aircraftType: row[3], stand: row[4],
       plannedArrival: row[5], plannedDeparture: row[6], workKind: row[7], cardNo: row[8],
-      cardName: row[9], standardHours: row[10], status: row[11], remark: row[12], departureFlightNo: row[13]
+      cardName: row[9], standardHours: row[10], status: row[11], remark: row[12], departureFlightNo: row[13], locationName: row[14] || ""
     };
-    const date = maintenanceImportDate(item.date);
-    if (!date || !item.flightNo || !item.aircraftNo) {
-      throw new Error(`第 ${index + (hasHeader ? 2 : 1)} 行日期、航班号或机号无效，请核对列对应关系。未导入任何数据。`);
-    }
-    return { ...item, date, standardHours: Number(item.standardHours || 0) || 0 };
+    const date = maintenanceImportDate(item.date) || String(item.date || '');
+    const rowNumber=originalRows[index+(hasHeader?1:0)].rowNumber;
+    const invalid=!maintenanceImportDate(item.date)||!item.aircraftNo?'日期或机号无效':maintenanceFlightNumberError(item);
+    if(invalid)errors.push({rowNumber,detail:invalid});
+    return { ...item, rowNumber, date, standardHours: Number(item.standardHours || 0) || 0 };
   }).filter(Boolean);
-  return { rows: parsed, skipped };
+  return { rows: parsed, skipped, errors };
 }
 
 function maintenanceImportDate(value) {
@@ -5250,9 +5441,9 @@ async function maintenanceRowsFromFile(file) {
 }
 
 function maintenanceSubtaskRowsFromRows(rows) {
-  const filtered = rows.map(row => row.map(cell => String(cell ?? "").trim())).filter(row => row.some(Boolean));
+  const filtered = rows.map((row,index) => ({row:row.map(cell => String(cell ?? "").trim()),rowNumber:row.sourceRowNumber || index+1})).filter(({row}) => row.some(Boolean));
   if (!filtered.length) return { rows: [], skipped: 0 };
-  const headers = filtered[0].map(normalizeHeader);
+  const headers = filtered[0].row.map(normalizeHeader);
   const indexOf = names => headers.findIndex(header => names.includes(header));
   const map = {
     date: indexOf(["日期", "航班日期", "计划日期"]),
@@ -5260,7 +5451,7 @@ function maintenanceSubtaskRowsFromRows(rows) {
     departureFlightNo: indexOf(["出港航班号"]),
     aircraftNo: indexOf(["机号"]),
     workKind: indexOf(["维修机会", "工作类型", "工作种类"]),
-    externalWorkNo: indexOf(["工作编号", "附加工作编号"]),
+    locationName: indexOf(["作业地点", "作业地点（不输入默认为青岛）", "作业地点(不输入默认为青岛)"]),
     chapter: indexOf(["章节", "工卡编号", "工卡号"]),
     title: indexOf(["工作标题", "工卡名称", "标题"]),
     category: indexOf(["非例行类别", "工作类别", "类别"]),
@@ -5270,16 +5461,15 @@ function maintenanceSubtaskRowsFromRows(rows) {
     remark: indexOf(["备注"])
   };
   const required = [
-    ["date", "日期"], ["flightNo", "进港航班号"], ["aircraftNo", "机号"], ["workKind", "维修机会"],
-    ["externalWorkNo", "工作编号"], ["title", "工作标题"], ["category", "非例行类别"], ["standardHours", "标准工时"]
+    ["date", "日期"], ["aircraftNo", "机号"], ["workKind", "维修机会"],
+    ["chapter", "章节"], ["title", "工作标题"], ["category", "非例行类别"], ["standardHours", "标准工时"]
   ];
   const missing = required.filter(([key]) => map[key] < 0).map(([, label]) => label);
   if (missing.length) throw new Error(`附加工作表缺少列：${missing.join("、")}。请核对表头，未导入任何数据。`);
-  const parsed = filtered.slice(1).map((row, index) => {
+  const parsed = filtered.slice(1).map(({row,rowNumber}) => {
     const item = Object.fromEntries(Object.entries(map).map(([key, column]) => [key, column >= 0 ? row[column] : ""]));
     const date = maintenanceImportDate(item.date);
-    if (!date) throw new Error(`第 ${index + 2} 行日期无效，请核对后重新导入。`);
-    return { ...item, date, standardHours: Number(item.standardHours) };
+    return { ...item, date:date || item.date, standardHours: Number(item.standardHours),rowNumber };
   });
   return { rows: parsed, skipped: 0 };
 }
@@ -5289,6 +5479,126 @@ async function maintenanceSubtaskRowsFromFile(file) {
   if (name.endsWith(".xls") && !name.endsWith(".xlsx")) throw new Error("xls 格式请先另存为 xlsx 或 CSV");
   if (name.endsWith(".xlsx")) return maintenanceSubtaskRowsFromRows(await parseXlsx(file));
   return maintenanceSubtaskRowsFromRows(parseCsv(await file.text()));
+}
+
+function maintenanceDispatchRowsFromRows(rows) {
+  const headers = (rows[0] || []).map(normalizeHeader);
+  const aliases = {date:['日期','航班日期'],flightNo:['航班号','进港航班号/出港航班号','航班号（进港/出港）'],workKind:['维修机会','维修机会类型'],releaseNames:['放行人员','放行人员（只能填一个人）'],mechanicNames:['维修人员','维修人员（xxx,xxx,xxx）'],releaseNumbers:['放行工号','放行工号（选填）'],mechanicNumbers:['维修工号','维修工号（选填）']};
+  const columns = Object.fromEntries(Object.entries(aliases).map(([key,names])=>[key,headers.findIndex(h=>names.includes(h))]));
+  const missing = ['date','flightNo','workKind','releaseNames','mechanicNames'].filter(key=>columns[key]<0);
+  if (missing.length) throw new Error('请使用含日期、航班号、维修机会、放行人员、维修人员列的派工模板');
+  return {rows:rows.slice(1).map((row,index)=>({row,index})).filter(({row})=>row.some(cell=>String(cell??'').trim())).map(({row,index})=>({...Object.fromEntries(Object.entries(columns).map(([key,col])=>[key,col<0?'':String(row[col]??'').trim()])),date:maintenanceImportDate(row[columns.date]) || String(row[columns.date]??''),rowNumber:row.sourceRowNumber || index+2})),skipped:0};
+}
+
+let maintenanceImportSession = null;
+function maintenanceImportDownload(rows,name,xlsx=false) {
+  const blob = xlsx ? buildXlsxWorkbook([{name:'导入模板',rows}]) : new Blob(['\ufeff'+rows.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function openMaintenanceImportDialog() {
+  if (!$('#maintenanceUnifiedImportDialog')) {
+    document.body.insertAdjacentHTML('beforeend','<dialog id="maintenanceUnifiedImportDialog" class="maintenance-unified-import"><div class="dialog-body"><div class="dialog-head"><h2>导入</h2><button type="button" class="icon-btn" data-close="maintenanceUnifiedImportDialog">×</button></div><div class="form-grid"><label>导入类型<select id="maintenanceImportType"></select></label><label>文件<input id="maintenanceUnifiedImportFile" type="file" accept=".xlsx,.csv"></label></div><p id="maintenanceImportHelp"></p><div class="actions"><button type="button" class="btn secondary" id="maintenanceImportTemplate">下载 Excel 模板</button><button type="button" class="btn secondary" id="maintenanceImportErrors">下载结果</button></div><p id="maintenanceImportProgress" role="status" aria-live="polite"></p><div id="maintenanceImportPreview"></div><div class="form-actions"><button type="button" class="btn secondary" id="maintenanceImportCheck">检查预览</button><button type="button" class="btn" id="maintenanceImportConfirm" disabled>确认导入</button></div></div></dialog>');
+    const dialog=$('#maintenanceUnifiedImportDialog');
+    dialog.addEventListener('close',()=>flushMaintenancePendingRefresh());
+    dialog.addEventListener('cancel',event=>{if(maintenanceImportSession?.busy)event.preventDefault();});
+    const invalidate=()=>{maintenanceImportSession.rows=null;maintenanceImportSession.results=null;maintenanceImportSession.summary=null;maintenanceImportSession.valid=false;maintenanceImportSession.done=false;maintenanceImportSession.requestId=`import_${Date.now()}_${Math.random().toString(36).slice(2)}`;$('#maintenanceImportConfirm').disabled=true;$('#maintenanceImportPreview').textContent='';$('#maintenanceImportProgress').textContent='选择文件 → 检查预览 → 确认导入 → 查看结果';};
+    $('#maintenanceImportType').addEventListener('change',()=>{if(maintenanceImportSession.rows && !confirm('切换类型将清除已校验结果，是否继续？')){$('#maintenanceImportType').value=maintenanceImportSession.type;return;}maintenanceImportSession.type=$('#maintenanceImportType').value;$('#maintenanceUnifiedImportFile').value='';invalidate();maintenanceImportHelp();});
+    $('#maintenanceUnifiedImportFile').addEventListener('change',invalidate);
+    $('#maintenanceImportTemplate').addEventListener('click',()=>{
+      const type=$('#maintenanceImportType').value;
+      if(type==='flights') {const a=document.createElement('a');a.href='/templates/flight-plan.xlsx';a.download='航班计划导入模板.xlsx';a.click();return;}
+      if(type==='dispatch') {const a=document.createElement('a');a.href='/templates/routine-dispatch.xlsx';a.download='例行派工导入模板.xlsx';a.click();return;}
+      if(type==='subtasks') {const a=document.createElement('a');a.href='/templates/additional-work.xlsx';a.download='附加工作导入模板.xlsx';a.click();return;}
+      const rows=type==='dispatch' ? [['日期','航班号','维修机会','放行人员','维修人员','放行工号','维修工号'],['2026-10-09','MU1234/MU5678','短停','张三','李四,王五','','']] : type==='flights' ? [['日期','进港航班号','出港航班号','机号','机型','维修机会','作业地点']] : [['日期','进港航班号','出港航班号','机号','维修机会','章节','工作标题','非例行类别','标准工时']];
+      maintenanceImportDownload(rows,`${type==='dispatch'?'例行派工':type==='flights'?'航班计划':'附加工作'}导入模板.xlsx`,true);
+    });
+    $('#maintenanceImportErrors').addEventListener('click',()=>maintenanceImportDownload([['行号','结果','说明'],...(maintenanceImportSession.results||[]).map(r=>[r.rowNumber,r.ok?'成功/通过':'失败',r.error||''])],'导入结果.csv'));
+    $('#maintenanceImportCheck').addEventListener('click',()=>runMaintenanceImport(false));
+    $('#maintenanceImportConfirm').addEventListener('click',()=>runMaintenanceImport(true));
+  }
+  const options=[];
+  if(hasRbac('maintenance.opportunity.import'))options.push(['flights','航班计划'],['subtasks','附加工作']);
+  if(hasRbac('maintenance.assignment.manage') && hasRbac('maintenance.dispatch.view'))options.push(['dispatch','例行派工']);
+  if(!options.length)return;
+  $('#maintenanceImportType').innerHTML=options.map(([value,label])=>`<option value="${value}">${label}</option>`).join('');
+  state.maintenanceImportNotice='';
+  maintenanceImportSession={type:options[0][0],rows:null,results:null,busy:false,done:false,valid:false,requestId:`import_${Date.now()}_${Math.random().toString(36).slice(2)}`};
+  $('#maintenanceUnifiedImportFile').value='';$('#maintenanceImportPreview').textContent='';$('#maintenanceImportProgress').textContent='选择文件 → 检查预览 → 确认导入 → 查看结果';$('#maintenanceImportConfirm').textContent='确认导入';$('#maintenanceImportConfirm').disabled=true;
+  maintenanceImportHelp();$('#maintenanceUnifiedImportDialog').showModal();
+}
+function maintenanceImportHelp() {
+  $('#maintenanceImportHelp').textContent=$('#maintenanceImportType').value==='dispatch' ? '仅导入未派工机会；放行必填一人，维修人员用逗号分隔。短停：进港/出港；航前：出港或/出港；航后：进港或/进港。放行与维修人员分别分工，成功条目保留，失败条目不修改。' : $('#maintenanceImportType').value==='subtasks' ? '新版模板在维修机会后增加作业地点列，未提供地点时默认按青岛匹配；左右地点筛选不会改变导入地点。章节每条必填。同一维修机会按章节、工作标题、非例行类别识别重复项目，重复上传不再次新增；工时不同时报错。检查不写入数据，确认时整批校验，不覆盖已有任务。' : '本类型独立处理，不清除已有派工。检查预览不写入数据，确认时再次校验。';
+}
+async function runMaintenanceImport(commit) {
+  const session=maintenanceImportSession;if(session.busy || session.done)return;
+  session.busy=true;
+  const controls=[...$('#maintenanceUnifiedImportDialog').querySelectorAll('button,input,select')];controls.forEach(el=>el.disabled=true);
+  try {
+    if(!commit) {
+      const file=$('#maintenanceUnifiedImportFile').files?.[0];if(!file)throw new Error('请先选择文件');
+      if(file.size>10*1024*1024)throw new Error('文件不能超过10MB');
+      if(!/\.(xlsx|csv)$/i.test(file.name))throw new Error('请使用 xlsx 或 CSV 文件');
+      const parsed=session.type==='dispatch' ? maintenanceDispatchRowsFromRows(file.name.toLowerCase().endsWith('.xlsx')?await parseXlsx(file):parseCsv(await file.text())) : session.type==='flights'?await maintenanceRowsFromFile(file):await maintenanceSubtaskRowsFromFile(file);
+      if(!parsed.rows.length)throw new Error('未识别到记录');
+      session.rows=parsed.rows;
+    }
+    $('#maintenanceImportProgress').textContent=commit?'正在导入，请勿关闭或重复提交…':'正在校验…';
+    const endpoint=session.type==='dispatch'?`dispatch-import/${commit?'commit':'preview'}`:session.type==='flights'?'flights/import':'subtasks/import';
+    const data=await apiRequest(`/maintenance/${endpoint}`,{method:'POST',body:{rows:session.rows,validateOnly:!commit,requestId:session.requestId}});
+    if(session.type==='dispatch') {
+      session.results=data.results;
+      if(!commit)session.rows=session.rows.map((row,index)=>({...row,matchedFlightId:data.results[index].flightId,expectedUpdatedAt:data.results[index].expectedUpdatedAt}));
+      $('#maintenanceImportPreview').innerHTML=maintenanceDispatchImportFeedback(session.rows.length,data,commit);
+      $('#maintenanceImportProgress').textContent=commit ? data.failed ? `${data.success}条已保存，${data.failed}条失败且保持原有数据。修改后只需重传失败项。` : `导入成功${data.success}条，匹配${data.success}条。` : data.failed ? data.success ? '存在异常，请按表格行号修改；可以确认导入通过项。' : '全部校验失败，请修改对应表格行后重新检查。' : '全部匹配，可以确认导入。';
+      $('#maintenanceImportConfirm').textContent=`导入校验通过的 ${data.success} 条`;
+    } else if(session.type==='flights') {
+      session.valid=!!data.valid || commit;
+      session.summary=data.summary;
+      session.results=(data.errors||[]).map(item=>({...item,ok:false,error:item.detail}));
+      $('#maintenanceImportPreview').innerHTML=maintenanceFlightImportFeedback(data.summary,data.errors||[],commit);
+      $('#maintenanceImportProgress').textContent=commit?'导入成功':data.valid?'全部通过，可以确认导入。':'存在异常，请修改对应表格行后重新检查。';
+      $('#maintenanceImportConfirm').textContent='确认导入';
+    } else {
+      session.valid=!!data.valid || commit;session.summary=data.summary;
+      session.results=(data.errors||[]).map(item=>({...item,ok:false,error:item.detail}));
+      $('#maintenanceImportPreview').innerHTML=maintenanceSubtaskImportFeedback(data.summary,data.errors||[],commit);
+      $('#maintenanceImportProgress').textContent=commit?'导入成功':data.valid?'全部匹配，可以确认导入。':'存在异常，请修改对应表格行后重新检查；本批次不会部分导入。';
+      $('#maintenanceImportConfirm').textContent='确认导入';
+    }
+    if(commit){session.done=true;
+      if(session.type==='flights') {state.maintenanceImportNotice=`航班计划导入成功。${maintenanceFlightImportSummary(data.summary,true)}`;closeDialog($('#maintenanceUnifiedImportDialog'));}
+      if(session.type==='dispatch' && !data.failed) {state.maintenanceImportNotice=`例行派工导入成功${data.success}条，匹配${data.success}条。`;closeDialog($('#maintenanceUnifiedImportDialog'));}
+      if(session.type==='subtasks') {state.maintenanceImportNotice=`附加工作导入成功。${maintenanceSubtaskImportSummary(data.summary,true)}`;closeDialog($('#maintenanceUnifiedImportDialog'));}
+      try {await refreshMaintenance();} catch {
+        if(session.type==='flights' || session.type==='subtasks' || (session.type==='dispatch' && !data.failed)){state.maintenanceImportNotice+=' 列表刷新失败，请稍后刷新页面。';renderMaintenance();}
+        else $('#maintenanceImportProgress').textContent+='；导入结果已保存，列表刷新失败，请稍后刷新页面。';
+      }
+    }
+  } catch(error) {$('#maintenanceImportProgress').textContent=error.message;
+    if(session.type==='flights') {session.valid=false;session.results=(error.details||[]).map(item=>({...item,ok:false,error:item.detail}));$('#maintenanceImportPreview').innerHTML=maintenanceFlightImportFeedback(error.summary||session.summary, error.details||[],false);}
+    else if(session.type==='subtasks') {session.valid=false;session.results=(error.details||[]).map(item=>({...item,ok:false,error:item.detail}));$('#maintenanceImportPreview').innerHTML=maintenanceSubtaskImportFeedback(error.summary||session.summary,error.details||[],false);}
+    else if(!commit){session.rows=null;session.results=null;}
+  }
+  finally {session.busy=false;controls.forEach(el=>el.disabled=false);$('#maintenanceImportConfirm').disabled=session.done || !session.rows || (['flights','subtasks'].includes(session.type) && !session.valid) || (session.type==='dispatch' && !session.results?.some(r=>r.ok));}
+}
+
+function maintenanceFlightImportSummary(summary,committed=false) {
+  if(!summary)return '';
+  return `数据行 ${summary.dataRows} 条，航班总数 ${summary.total}，匹配已有 ${summary.matched}，${committed?'已更新':'需要更新'} ${summary.updated}，${committed?'新增':'预计新增'} ${summary.created}，异常 ${summary.abnormal}。`;
+}
+function maintenanceDispatchImportFeedback(total,data,committed=false) {
+  const summary=committed ? `导入成功 ${data.success} 条，失败 ${data.failed} 条。` : `待导入 ${total} 条，匹配通过 ${data.success} 条，异常 ${data.failed} 条。`;
+  return `<p>${escapeHtml(summary)}</p>${data.results.filter(item=>!item.ok).map(item=>`<div class="maintenance-import-row">第 ${escapeHtml(item.rowNumber)} 行：${escapeHtml(item.error||'校验失败')}</div>`).join('')}`;
+}
+function maintenanceSubtaskImportSummary(summary,committed=false) {
+  if(!summary)return '';
+  return `导入 ${summary.total} 条，匹配 ${summary.matched} 条，${committed?'新增':'预计新增'} ${summary.created} 条，重复跳过 ${summary.skipped} 条，异常 ${summary.abnormal} 条。`;
+}
+function maintenanceSubtaskImportFeedback(summary,errors,committed=false) {
+  return `<p>${escapeHtml(maintenanceSubtaskImportSummary(summary,committed))}</p>${errors.map(item=>`<div class="maintenance-import-row">第 ${escapeHtml(item.rowNumber)} 行：${escapeHtml(item.detail||item.error||'校验失败')}</div>`).join('')}`;
+}
+function maintenanceFlightImportFeedback(summary,errors,committed=false) {
+  return `<p>${escapeHtml(maintenanceFlightImportSummary(summary,committed))}</p>${errors.map(item=>`<div class="maintenance-import-row">第 ${escapeHtml(item.rowNumber)} 行 · ${escapeHtml(item.field||'校验')}：${escapeHtml(item.detail||item.error||'校验失败')}</div>`).join('')}`;
 }
 
 async function refreshMaintenance() {
@@ -5303,7 +5613,7 @@ async function refreshMaintenance() {
 }
 
 function maintenanceHasOpenEditor() {
-  return Boolean(state.maintenanceDispatchDraft || state.maintenanceReviewDraft || state.maintenanceArchiveDeleteDraft || state.maintenanceWorkReportDraft || state.maintenanceReleaseConfirmSubmitting || ["maintenanceTaskDialog", "maintenanceDispatchDialog", "maintenanceReviewDialog", "maintenanceArchiveDeleteDialog", "maintenanceWorkReportDialog", "maintenanceReleaseConfirmDialog"].some(id => $( `#${id}` )?.open));
+  return Boolean(state.maintenanceDispatchDraft || state.maintenanceReviewDraft || state.maintenanceArchiveDeleteDraft || state.maintenanceWorkReportDraft || state.maintenanceReleaseConfirmSubmitting || ["maintenanceUnifiedImportDialog", "maintenanceTaskDialog", "maintenanceDispatchDialog", "maintenanceReviewDialog", "maintenanceArchiveDeleteDialog", "maintenanceWorkReportDialog", "maintenanceReleaseConfirmDialog"].some(id => $( `#${id}` )?.open));
 }
 
 async function refreshMaintenanceFromSync(version = 0) {
@@ -5493,7 +5803,7 @@ function openMaintenanceReleaseConfirm(assignmentId, flightId = "") {
   const summary = dialog.querySelector("[data-maint-release-summary]");
   if (summary) {
     summary.textContent = flight
-      ? `${flight.flightNo || "-"} · ${flight.aircraftNo || "-"} · ${flight.aircraftType || "-"} · ${flight.workKind || flight.workType || "其他"}`
+      ? `${maintenanceDisplayFlightNo(flight) || "-"} · ${flight.aircraftNo || "-"} · ${flight.aircraftType || "-"} · ${flight.workKind || flight.workType || "其他"}`
       : "";
     summary.hidden = !flight;
   }
@@ -5518,22 +5828,49 @@ function findMaintenanceSubtask(id) {
 }
 
 function maintenanceFlightFormHtml(flight = {}) {
+  const locations = state.maintenanceLocations || [];
+  const initialName = flight.locationName || "青岛";
+  const initialId = flight.locationId || locations.find(item => item.name === initialName)?.id || (initialName === "青岛" ? "maintenance-location-qingdao" : "");
   return `<div class="dialog-head"><h2>${flight.id ? "修改维修机会" : "新建维修机会"}</h2><button class="icon-btn" data-close="maintenanceTaskDialog" type="button">×</button></div>
     <form id="maintenanceFlightForm" class="entry-grid">
       <input id="maintFlightId" type="hidden" value="${escapeHtml(flight.id || "")}">
       <label class="maintenance-flight-date-field">日期<input id="maintDate" type="date" value="${escapeHtml(inputDateValue(flight.date || new Date()))}" required></label>
-      <label>进港航班号<input id="maintFlightNo" value="${escapeHtml(flight.flightNo || "")}" required></label>
+      <label>进港航班号<input id="maintFlightNo" value="${escapeHtml(flight.flightNo || "")}"></label>
       <label>出港航班号<input id="maintDepartureFlightNo" value="${escapeHtml(flight.departureFlightNo || "")}"></label>
       <label>机号<input id="maintAircraftNo" value="${escapeHtml(flight.aircraftNo || "")}" required></label>
-      <label>机型<select id="maintAircraftType">${maintenanceAircraftTypeOptions(flight.aircraftType || "A320")}</select></label>
+      <label>机型<input id="maintAircraftType" list="maintAircraftCodes" value="${escapeHtml(flight.aircraftType || '')}" placeholder="填写真实机型代码"><datalist id="maintAircraftCodes">${[...new Set([...(state.maintenanceAircraftHours?.groups || []).flatMap(group => Array.isArray(group.codes) ? group.codes : []), ...aircraftTypes])].map(code => `<option value="${escapeHtml(code)}">`).join('')}</datalist></label>
       <label>机位<input id="maintStand" value="${escapeHtml(flight.stand || "")}"></label>
+      <label>维修机会<select id="maintWorkKind">${optionList(maintenanceOpportunityOptions, flight.workKind || flight.workType || "航后")}</select></label>
       <label>计划落地时间<input id="maintArrival" type="text" inputmode="text" maxlength="8" placeholder="例如 1217、0238+" value="${escapeHtml(flight.plannedArrival ?? "")}" autocomplete="off"></label>
       <label>计划起飞时间<input id="maintDeparture" type="text" inputmode="text" maxlength="8" placeholder="例如 1345、-" value="${escapeHtml(flight.plannedDeparture ?? "")}" autocomplete="off"></label>
-      <label>维修机会<select id="maintWorkKind">${optionList(maintenanceOpportunityOptions, flight.workKind || flight.workType || "航后")}</select></label>
+      <div class="maintenance-location-field"><label for="maintLocationName">作业地点</label><div class="maintenance-location-inline"><div class="maintenance-location-picker" id="maintLocationPicker"><input id="maintLocationName" role="combobox" aria-autocomplete="list" aria-controls="maintLocationChoices" aria-expanded="false" value="${escapeHtml(initialName)}" placeholder="搜索并选择作业地点" autocomplete="off" required><input id="maintLocationId" type="hidden" value="${escapeHtml(initialId)}"><button type="button" class="maintenance-location-toggle" data-maint-location-toggle aria-label="显示全部作业地点" title="显示全部作业地点">⌄</button><div id="maintLocationChoices" class="maintenance-location-choices" role="listbox" hidden>${locations.filter(item => item.status === "active").map(item => `<button type="button" role="option" data-maint-location-choice="${escapeHtml(item.id)}" data-maint-location-name="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button>`).join("")}<div class="maintenance-location-empty" hidden>未找到地点${hasRbac("maintenance.rules.manage") ? ' · <button type="button" data-maint-manage-locations>管理地点</button>' : ""}</div></div></div>${hasRbac("maintenance.rules.manage") ? '<button class="maintenance-location-manage" type="button" data-maint-manage-locations>管理地点</button>' : ""}</div></div>
+      <div class="status-line">航前填写出港航班号；航后填写进港航班号；短停、航后/航前至少填写一个。停场、热备机、附加、其他可不填航班号。</div>
       <input id="maintStatus" type="hidden" value="${escapeHtml(flight.status || "未派工")}">
       <input id="maintRemark" type="hidden" value="${escapeHtml(flight.remark || "")}">
       <div class="form-actions"><button class="btn secondary" type="button" data-close="maintenanceTaskDialog">取消</button><button class="btn" type="submit">保存</button></div>
     </form>`;
+}
+
+function showMaintenanceLocationChoices({ open = true, all = false } = {}) {
+  const picker = $("#maintLocationPicker");
+  const list = $("#maintLocationChoices");
+  const input = $("#maintLocationName");
+  if (!picker || !list || !input) return;
+  const query = all ? "" : input.value.trim().toLocaleLowerCase();
+  let matches = 0;
+  for (const choice of list.querySelectorAll("[data-maint-location-choice]")) {
+    choice.hidden = Boolean(query) && !choice.dataset.maintLocationName.toLocaleLowerCase().includes(query);
+    if (!choice.hidden) matches++;
+  }
+  list.querySelector(".maintenance-location-empty").hidden = matches > 0;
+  list.hidden = !open;
+  input.setAttribute("aria-expanded", String(open));
+  picker.classList.toggle("open", open);
+  if (open) {
+    const bounds = picker.getBoundingClientRect();
+    const dialog = $("#maintenanceTaskDialogBody")?.getBoundingClientRect();
+    picker.classList.toggle("drop-up", Boolean(dialog && dialog.bottom - bounds.bottom < 170 && bounds.top - dialog.top > 170));
+  }
 }
 
 function maintenanceSubtaskFormHtml(flight, subtask = {}) {
@@ -5544,7 +5881,7 @@ function maintenanceSubtaskFormHtml(flight, subtask = {}) {
     <form id="maintenanceSubtaskForm" class="entry-grid">
       <input id="maintSubtaskId" type="hidden" value="${escapeHtml(subtask.id || "")}">
       <input id="maintSubtaskFlightId" type="hidden" value="${escapeHtml(flight.id || "")}">
-      <div class="status-line">继承维修机会：${escapeHtml(flight.date || "-")} · ${escapeHtml(flight.flightNo || "-")} · ${escapeHtml(flight.aircraftNo || "-")}</div>
+      <div class="status-line">继承维修机会：${escapeHtml(flight.date || "-")} · ${escapeHtml(maintenanceDisplayFlightNo(flight) || "-")} · ${escapeHtml(flight.aircraftNo || "-")}</div>
       <input id="maintSubPriority" type="hidden" value="${escapeHtml(subtask.priority || "普通")}">
       <input id="maintSubStatus" type="hidden" value="${escapeHtml(subtask.status || "未派工")}">
       <input id="maintSubRemark" type="hidden" value="${escapeHtml(subtask.remark || "")}">
@@ -5557,7 +5894,9 @@ function maintenanceSubtaskFormHtml(flight, subtask = {}) {
     </form>`;
 }
 
-function maintenanceFlightPayloadFromForm() {
+function maintenanceFlightPayloadFromForm(validateLocation = false) {
+  const locationId = $("#maintLocationId")?.value || "";
+  if (validateLocation && !locationId) throw new Error("请选择列表中的有效作业地点");
   return {
     date: $("#maintDate").value,
     flightNo: $("#maintFlightNo").value.trim(),
@@ -5565,6 +5904,8 @@ function maintenanceFlightPayloadFromForm() {
     aircraftNo: $("#maintAircraftNo").value.trim(),
     aircraftType: $("#maintAircraftType").value,
     stand: $("#maintStand").value.trim(),
+    locationId,
+    locationName: $("#maintLocationName").value.trim(),
     plannedArrival: $("#maintArrival").value.trim(),
     plannedDeparture: $("#maintDeparture").value.trim(),
     workKind: $("#maintWorkKind").value,
@@ -5590,6 +5931,12 @@ function openMaintenanceFlightDialog(flight = {}) {
   ensureMaintenanceDialogs();
   $("#maintenanceTaskDialogBody").innerHTML = maintenanceFlightFormHtml(flight);
   $("#maintenanceTaskDialog").showModal();
+}
+
+function renderMaintenanceLocationManager() {
+  $("#maintenanceTaskDialogBody").innerHTML = `<div class="dialog-head"><h2>管理作业地点</h2><button class="icon-btn" type="button" data-maint-location-back aria-label="返回维修机会">×</button></div>
+    <div class="maintenance-location-manager"><form data-maint-location-create class="maintenance-location-editor"><input name="name" maxlength="80" required placeholder="新增地点名称"><button class="btn" type="submit">新增</button></form>
+    ${(state.maintenanceLocations || []).map(item => `<form data-maint-location-edit="${escapeHtml(item.id)}" class="maintenance-location-editor"><input name="name" maxlength="80" value="${escapeHtml(item.name)}" aria-label="地点名称"><select name="status"><option value="active" ${item.status === "active" ? "selected" : ""}>启用</option><option value="inactive" ${item.status === "inactive" ? "selected" : ""}>停用</option></select><input name="reason" placeholder="变更原因" aria-label="变更原因"><button class="btn secondary" type="submit">保存</button><button class="btn secondary" type="button" data-maint-location-delete="${escapeHtml(item.id)}">删除</button></form>`).join("")}</div><div class="status-line error" data-maint-location-error></div><div class="form-actions"><button class="btn secondary" type="button" data-maint-location-back>返回登记</button></div>`;
 }
 
 async function openMaintenanceSubtaskDialog(flight, subtask = {}) {
@@ -5631,12 +5978,12 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
     selectionOrder,
     nextOrder,
     activeRole: availableRoles.find(role => !lockedRoles.has(role) && selections.get(role)?.size) || availableRoles.find(role => !lockedRoles.has(role)) || availableRoles[0],
-    team: "全部班组",
+    team: "",
     search: "",
     composing: false
   };
-  const teams = ["全部班组", ...Array.from(new Set(people.map(person => person.team || "未设置"))).sort((a, b) => a.localeCompare(b, "zh-CN"))];
-  const context = `${flight.flightNo || "-"} · ${flight.aircraftNo || "-"} · ${ownerType === "flight" ? opportunity : (item.title || "非例行")}`;
+  const categoryOptions = personnelSelectionOptionsHtml(people);
+  const context = `${maintenanceDisplayFlightNo(flight) || "-"} · ${flight.aircraftNo || "-"} · ${ownerType === "flight" ? opportunity : (item.title || "非例行")}`;
   $("#maintenanceDispatchDialogBody").innerHTML = `<div class="dialog-head maintenance-dispatch-head"><h2>派工 <small>${escapeHtml(context)}</small></h2><button class="icon-btn" data-close="maintenanceDispatchDialog" type="button">×</button></div>
     <form id="maintenanceDispatchForm" class="entry-grid">
       <input id="maintDispatchOwnerType" type="hidden" value="${escapeHtml(ownerType)}">
@@ -5644,7 +5991,7 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
       <input id="maintDispatchExpectedUpdatedAt" type="hidden" value="${escapeHtml(flight.updatedAt || "")}">
       <div id="maintenanceDispatchConflict" class="status-line error" hidden>航班已被其他人更新。<button class="link-btn" type="button" data-maint-dispatch-refresh>刷新最新派工</button></div>
       <div id="maintenanceRoleGroups" class="maintenance-role-groups ${ownerType === "subtask" ? "subtask-role-groups" : ""}"></div>
-      <div class="maintenance-picker-tools"><select id="maintDispatchTeam" aria-label="班组筛选">${teams.map(team => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`).join("")}</select><input id="maintDispatchSearch" class="search" type="search" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"><span id="maintDispatchSelectedCount" class="maintenance-selected-count">已选 0 人</span></div>
+      <div class="maintenance-picker-tools"><select id="maintDispatchTeam" aria-label="人员分类">${categoryOptions}</select><input id="maintDispatchSearch" class="search" type="search" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"><span id="maintDispatchSelectedCount" class="maintenance-selected-count">已选 0 人</span></div>
       <div id="maintenancePeoplePicker" class="maintenance-people-picker"></div>
       <div class="form-actions"><button class="btn secondary" type="button" data-close="maintenanceDispatchDialog">取消</button><button class="btn" type="submit">${lockedRoles.size ? "保存未提报派工" : "保存派工"}</button></div>
     </form>`;
@@ -5660,7 +6007,7 @@ function maintenanceDispatchPersonRow(person, selected) {
   const inputType = role === "放行" ? "radio" : "checkbox";
   const inputName = role === "放行" ? ' name="maintenance-release-person"' : "";
   const locked = draft?.lockedRoles?.has(role);
-  return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${locked ? "locked" : ""}"><input id="${escapeHtml(inputId)}" type="${inputType}"${inputName} data-maint-person="${escapeHtml(person.id)}" data-maint-role-category="${escapeHtml(role)}" ${selected ? "checked" : ""} ${locked ? "disabled" : ""}><label class="maintenance-person-info" for="${escapeHtml(inputId)}"><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(department)}</small></label><span class="maintenance-person-role">${locked ? "已提报" : escapeHtml(role)}</span></div>`;
+  return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${locked ? "locked" : ""}"><input id="${escapeHtml(inputId)}" type="${inputType}"${inputName} data-maint-person="${escapeHtml(person.id)}" data-maint-role-category="${escapeHtml(role)}" ${selected ? "checked" : ""} ${locked ? "disabled" : ""}><label class="maintenance-person-info" for="${escapeHtml(inputId)}"><strong>${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}</strong><small>${escapeHtml(department)}</small></label><span class="maintenance-person-role">${locked ? "已提报" : escapeHtml(role)}</span></div>`;
 }
 
 function renderMaintenanceDispatchRoleGroups() {
@@ -5684,11 +6031,11 @@ function renderMaintenanceDispatchPicker() {
   if (!draft || !picker) return;
   const activeSelection = draft.selections.get(draft.activeRole) || new Set();
   const activeOrder = draft.selectionOrder.get(draft.activeRole) || new Map();
-  const selected = draft.people.filter(person => activeSelection.has(person.id)).sort((a, b) => (activeOrder.get(a.id) ?? 0) - (activeOrder.get(b.id) ?? 0));
+  const selected = draft.people.filter(person => activeSelection.has(person.id) && personnelSelectionMatches(person, draft.team)).sort((a, b) => (activeOrder.get(a.id) ?? 0) - (activeOrder.get(b.id) ?? 0));
   const term = draft.search.trim().toLocaleLowerCase("zh-CN");
   const candidates = draft.people.filter(person => {
     if (activeSelection.has(person.id)) return false;
-    const teamMatches = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
+    const teamMatches = personnelSelectionMatches(person, draft.team);
     const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
@@ -5814,7 +6161,7 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
     nextOrder,
     activeContextKey: contexts[0]?.key || "",
     activeRole: contexts[0]?.roles?.[0] || "",
-    team: "全部班组",
+    team: "",
     search: "",
     feedback: reportType === "nonroutine" || isCreateNonroutine ? "" : report.routine.feedback || "",
     draftVersion: reportType === "routine" ? report.routine.draft?.version ?? 0 : report.nonroutine.draft?.version ?? 0,
@@ -5897,7 +6244,7 @@ function maintenanceWorkReportPersonRow(person, selected) {
   const id = `maint-work-person-${contextId}-${role}-${person.id}`;
   const isRelease = role === "放行";
   const editable = maintenanceWorkRoleEditable();
-  return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${editable ? "" : "locked"}"><input id="${escapeHtml(id)}" type="${isRelease ? "radio" : "checkbox"}" ${isRelease ? `name="maint-final-release-${escapeHtml(contextId)}"` : ""} data-maint-work-person="${escapeHtml(person.id)}" ${selected ? "checked" : ""} ${editable ? "" : "disabled"}><label class="maintenance-person-info" for="${escapeHtml(id)}"><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.team || "未设置")}</small></label><span class="maintenance-person-role">${escapeHtml(role)}</span></div>`;
+  return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${editable ? "" : "locked"}"><input id="${escapeHtml(id)}" type="${isRelease ? "radio" : "checkbox"}" ${isRelease ? `name="maint-final-release-${escapeHtml(contextId)}"` : ""} data-maint-work-person="${escapeHtml(person.id)}" ${selected ? "checked" : ""} ${editable ? "" : "disabled"}><label class="maintenance-person-info" for="${escapeHtml(id)}"><strong>${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}</strong><small>${escapeHtml(isCadrePerson(person) ? person.department || "未设置" : personnelSelectionLabel(person))}</small></label><span class="maintenance-person-role">${escapeHtml(role)}</span></div>`;
 }
 
 function renderMaintenanceWorkReportPicker() {
@@ -5908,10 +6255,10 @@ function renderMaintenanceWorkReportPicker() {
   const selectedIds = draft.selections.get(key) || new Set();
   const order = draft.selectionOrder.get(key) || new Map();
   const term = draft.search.trim().toLocaleLowerCase("zh-CN");
-  const selected = draft.people.filter(person => selectedIds.has(person.id)).sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  const selected = draft.people.filter(person => selectedIds.has(person.id) && personnelSelectionMatches(person, draft.team)).sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   const candidates = draft.people.filter(person => {
     if (selectedIds.has(person.id)) return false;
-    const teamMatch = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
+    const teamMatch = personnelSelectionMatches(person, draft.team);
     const searchable = [person.name, person.employeeNo, person.username, person.id]
       .filter(Boolean)
       .join(" ")
@@ -5930,7 +6277,7 @@ function renderMaintenanceWorkReportDialog() {
   const draft = state.maintenanceWorkReportDraft;
   const body = $("#maintenanceWorkReportDialogBody");
   if (!draft || !body) return;
-  const teams = ["全部班组", ...Array.from(new Set(draft.people.map(person => person.team || "未设置"))).sort((a, b) => a.localeCompare(b, "zh-CN"))];
+  const categoryOptions = personnelSelectionOptionsHtml(draft.people, draft.team);
   const context = maintenanceWorkActiveContext();
   const total = [...draft.selections.values()].reduce((sum, ids) => sum + ids.size, 0);
   const { flight } = draft.report;
@@ -5951,8 +6298,9 @@ function renderMaintenanceWorkReportDialog() {
   const lockedRelease = draft.reportType === "finalize" && draft.lockedRelease
     ? `<div class="maintenance-locked-release"><strong>放行（已锁定）</strong><span>${escapeHtml(draft.lockedRelease.userName || "-")} · ${escapeHtml(draft.lockedRelease.team || "未设置")}</span></div>`
     : "";
-  body.innerHTML = `<div class="dialog-head maintenance-dispatch-head"><h2>${title} <small>${escapeHtml(flight.flightNo)} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.aircraftType || "-")} · ${escapeHtml(flight.opportunity)}</small></h2><button class="icon-btn" data-close="maintenanceWorkReportDialog" type="button">×</button></div>
+  body.innerHTML = `<div class="dialog-head maintenance-dispatch-head"><h2>${title} <small>${escapeHtml(maintenanceDisplayFlightNo(flight))} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.aircraftType || "-")} · ${escapeHtml(flight.opportunity)}</small></h2><button class="icon-btn" data-close="maintenanceWorkReportDialog" type="button">×</button></div>
     <form id="maintenanceWorkReportForm" class="entry-grid">
+      ${draft.reportType === 'routine' && flight.routineHoursRule ? `<p class="status-line">${flight.routineHoursRule.baseHours > 0 ? `${escapeHtml(flight.routineHoursRule.groupName)} · 总标准工时 ${escapeHtml(flight.routineHoursRule.baseHours)} 小时 · 规则版本 ${escapeHtml(flight.routineHoursRule.version)}` : '此机型／维修机会未配置标准工时，可保存草稿，请联系管理员配置后再提交。'}</p>` : ''}
       ${contextTabs}
       ${["nonroutine", "finalize", "nonroutine-create"].includes(draft.reportType) && hasRbac("maintenance.nonroutine.create.own") ? `<button class="btn secondary maintenance-add-temp-report" type="button" data-maint-add-temp-nonroutine>${isCreateNonroutine ? "新增" : "增加临时非例行"}</button>` : ""}
       ${context?.ownerType === "subtask" ? `<div class="maintenance-temporary-fields">
@@ -5963,10 +6311,10 @@ function renderMaintenanceWorkReportDialog() {
       </div>` : ""}
       ${lockedRelease}
       <div class="maintenance-work-role-groups">${maintenanceWorkReportRoleGroups() || '<div class="status-line">当前没有需要选择人员的工种。</div>'}</div>
-      ${context ? `<div class="maintenance-picker-tools"><select id="maintWorkReportTeam" aria-label="班组筛选">${teams.map(team => `<option value="${escapeHtml(team)}" ${team === draft.team ? "selected" : ""}>${escapeHtml(team)}</option>`).join("")}</select><span class="maintenance-selected-count">已选 ${total} 人次</span><input id="maintWorkReportSearch" class="search" type="search" value="${escapeHtml(draft.search)}" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"></div><div id="maintenanceWorkReportPicker" class="maintenance-people-picker">${renderMaintenanceWorkReportPicker()}</div>` : ""}
+      ${context ? `<div class="maintenance-picker-tools"><select id="maintWorkReportTeam" aria-label="人员分类">${categoryOptions}</select><span class="maintenance-selected-count">已选 ${total} 人次</span><input id="maintWorkReportSearch" class="search" type="search" value="${escapeHtml(draft.search)}" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"></div><div id="maintenanceWorkReportPicker" class="maintenance-people-picker">${renderMaintenanceWorkReportPicker()}</div>` : ""}
       ${activeFeedback}
       <div class="maintenance-review-message ${draft.message ? "show" : ""}">${escapeHtml(draft.message)}</div>
-      <div class="form-actions maintenance-work-report-actions">${isCreateNonroutine && Number(draft.draftVersion || 0) > 0 && hasRbac("maintenance.nonroutine.delete.own") ? `<button class="btn danger secondary" type="button" data-maint-work-delete-draft ${draft.busy ? "disabled" : ""}>删除草稿</button>` : ""}<button class="btn secondary" type="button" data-close="maintenanceWorkReportDialog">取消</button>${isCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-work-save-draft ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "routine" ? `<button class="btn secondary" type="button" data-maint-work-save-routine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "nonroutine" ? `<button class="btn secondary" type="button" data-maint-work-save-nonroutine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "finalize" ? `<button class="btn secondary" type="button" data-maint-work-save-confirmation ${draft.busy ? "disabled" : ""}>保存</button>` : ""}<button class="btn" type="button" data-maint-work-submit ${draft.busy ? "disabled" : ""}>${draft.reportType === "finalize" ? "确认并提交复核" : "提交并锁定"}</button></div>
+<div class="form-actions maintenance-work-report-actions">${isCreateNonroutine && Number(draft.draftVersion || 0) > 0 && hasRbac("maintenance.nonroutine.delete.own") ? `<button class="btn danger secondary" type="button" data-maint-work-delete-draft ${draft.busy ? "disabled" : ""}>删除草稿</button>` : ""}<button class="btn secondary" type="button" data-close="maintenanceWorkReportDialog">取消</button>${isCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-work-save-draft ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "routine" ? `<button class="btn secondary" type="button" data-maint-work-save-routine ${draft.busy ? "disabled" : ""}>暂存</button>` : draft.reportType === "nonroutine" ? `<button class="btn secondary" type="button" data-maint-work-save-nonroutine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "finalize" ? `<button class="btn secondary" type="button" data-maint-work-save-confirmation ${draft.busy ? "disabled" : ""}>保存</button>` : ""}<button class="btn" type="button" data-maint-work-submit ${draft.busy ? "disabled" : ""}>${draft.reportType === "finalize" ? "确认并提交复核" : draft.reportType === "routine" ? "提交" : "提交并锁定"}</button></div>
     </form>`;
 }
 
@@ -6084,6 +6432,7 @@ async function saveMaintenanceNonroutineReport() {
 async function submitMaintenanceWorkReport() {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft || draft.busy) return;
+  if (draft.reportType === "routine" && !window.confirm("确认例行报工人员填写完整。")) return;
   draft.feedback = $("#maintWorkReportFeedback")?.value ?? draft.feedback ?? "";
   draft.releasePersonId = maintenanceWorkReleaseUserId() || draft.releasePersonId;
   draft.busy = true;
@@ -6215,7 +6564,7 @@ async function openMaintenanceReviewDialog(flightId, focusKey = "") {
     canEdit: hasRbac("maintenance.review.submit") && (!review.flight.requiresChangeReason || hasRbac("maintenance.archive.modify")),
     activeTaskKey: "",
     activeRole: "",
-    team: "全部班组",
+    team: "",
     search: "",
     composing: false,
     busy: false,
@@ -6231,8 +6580,26 @@ function maintenanceReviewPerson(task, role, personId) {
   return (task.assignments || []).find(item => item.role === role && item.personId === personId) || null;
 }
 
-function maintenanceReviewCalculatedHours(task, role) {
+function maintenanceReviewCalculatedHours(task, role, personId = "") {
   if (role === "放行") return 0;
+  if (task.ownerType === "flight") {
+    const saved = maintenanceReviewPerson(task, role, personId);
+    // Stored results are authoritative, including historical rounding/adjustments.
+    if (!task.changed && saved && Number.isFinite(saved.reportedHours)) return saved.reportedHours;
+    const roles = task.roles.filter(item => item.role !== "放行");
+    const totalCents = Math.round(Number(task.baseHours || 0) * 100);
+    const weighted = roles.map(item => totalCents * Math.round(Number(item.ratio || 0) * 1000));
+    const budgets = weighted.map(value => Math.floor(value / 1000));
+    const order = weighted.map((value, index) => ({ index, remainder: value % 1000 }))
+      .sort((left, right) => right.remainder - left.remainder || left.index - right.index);
+    const target = Math.round(weighted.reduce((sum, value) => sum + value, 0) / 1000);
+    for (let left = target - budgets.reduce((sum, value) => sum + value, 0), index = 0; left > 0; left--, index++) budgets[order[index].index]++;
+    const roleIndex = roles.findIndex(item => item.role === role);
+    const people = [...(task.selections.get(role) || [])].sort((left, right) => String(left).localeCompare(String(right)));
+    const personIndex = people.indexOf(personId);
+    if (roleIndex < 0 || personIndex < 0) return 0;
+    return (Math.floor(budgets[roleIndex] / people.length) + (personIndex < budgets[roleIndex] % people.length ? 1 : 0)) / 100;
+  }
   const count = task.selections.get(role)?.size || 0;
   const ratio = Number(task.roles.find(item => item.role === role)?.ratio || 0);
   return count ? Number(((Number(task.baseHours || 0) * ratio) / count).toFixed(2)) : 0;
@@ -6242,7 +6609,6 @@ function maintenanceReviewRoleHtml(task, roleInfo, peopleById) {
   const draft = state.maintenanceReviewDraft;
   const role = roleInfo.role;
   const selected = [...(task.selections.get(role) || [])];
-  const hours = maintenanceReviewCalculatedHours(task, role);
   const isSortie = roleInfo.metricType === "sorties" || role === "放行";
   const active = draft.activeTaskKey === maintenanceReviewTaskKey(task) && draft.activeRole === role;
   const people = selected.map(personId => {
@@ -6252,7 +6618,7 @@ function maintenanceReviewRoleHtml(task, roleInfo, peopleById) {
     const reportTime = saved?.submittedAt ? ` · ${formatDisplayDate(saved.submittedAt)}` : "";
     const resultText = isSortie
       ? (!saved || Number(saved.reportedSorties || 0) > 0 ? "1架次" : "待上报")
-      : `${escapeHtml(hours)}h`;
+      : `${escapeHtml(maintenanceReviewCalculatedHours(task, role, personId))}h`;
     return `<div class="maintenance-review-person"><span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.team || "未设置")}</small></span><span class="maintenance-review-feedback">${escapeHtml(feedbackState)}${escapeHtml(reportTime)}</span><b>${resultText}</b></div>`;
   }).join("") || '<div class="status-line compact">暂无人员</div>';
   return `<section class="maintenance-review-role ${active ? "active" : ""}">
@@ -6266,16 +6632,16 @@ function maintenanceReviewPickerHtml(task, role, peopleById) {
   const selected = task.selections.get(role) || new Set();
   const term = draft.search.trim().toLocaleLowerCase("zh-CN");
   const people = [...draft.review.people].filter(person => {
+    if (!personnelSelectionMatches(person, draft.team)) return false;
     if (selected.has(person.id)) return true;
-    const teamMatches = draft.team === "全部班组" || (person.team || "未设置") === draft.team;
-    return teamMatches && (!term || String(person.name || "").toLocaleLowerCase("zh-CN").includes(term));
+    return !term || String(person.name || "").toLocaleLowerCase("zh-CN").includes(term);
   }).sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)) || String(a.team || "").localeCompare(String(b.team || ""), "zh-CN") || String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"));
-  const teams = ["全部班组", ...Array.from(new Set(draft.review.people.map(person => person.team || "未设置"))).sort((a, b) => a.localeCompare(b, "zh-CN"))];
+  const categoryOptions = personnelSelectionOptionsHtml(draft.review.people, draft.team);
   const inputType = role === "放行" ? "radio" : "checkbox";
   const inputName = role === "放行" ? ` name="review-release-${escapeHtml(task.ownerId)}"` : "";
   return `<div class="maintenance-review-picker">
-    <div class="maintenance-picker-tools"><select data-maint-review-team>${teams.map(team => `<option value="${escapeHtml(team)}" ${team === draft.team ? "selected" : ""}>${escapeHtml(team)}</option>`).join("")}</select><input class="search" data-maint-review-search value="${escapeHtml(draft.search)}" placeholder="搜索姓名" autocomplete="off"><span class="maintenance-selected-count">已选 ${selected.size} 人</span></div>
-    <div class="maintenance-review-candidates">${people.map(person => `<label class="maintenance-person-row ${selected.has(person.id) ? "selected" : ""}"><input type="${inputType}"${inputName} data-maint-review-person="${escapeHtml(person.id)}" data-maint-review-role="${escapeHtml(role)}" data-maint-review-owner="${escapeHtml(maintenanceReviewTaskKey(task))}" ${selected.has(person.id) ? "checked" : ""}><span class="maintenance-person-info"><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.team || "未设置")}</small></span><span class="maintenance-person-role">${escapeHtml(role)}</span></label>`).join("") || '<div class="status-line">没有匹配人员。</div>'}</div>
+    <div class="maintenance-picker-tools"><select data-maint-review-team aria-label="人员分类">${categoryOptions}</select><input class="search" data-maint-review-search value="${escapeHtml(draft.search)}" placeholder="搜索姓名" autocomplete="off"><span class="maintenance-selected-count">已选 ${selected.size} 人</span></div>
+    <div class="maintenance-review-candidates">${people.map(person => `<label class="maintenance-person-row ${selected.has(person.id) ? "selected" : ""}"><input type="${inputType}"${inputName} data-maint-review-person="${escapeHtml(person.id)}" data-maint-review-role="${escapeHtml(role)}" data-maint-review-owner="${escapeHtml(maintenanceReviewTaskKey(task))}" ${selected.has(person.id) ? "checked" : ""}><span class="maintenance-person-info"><strong>${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}</strong><small>${escapeHtml(isCadrePerson(person) ? person.department || "未设置" : personnelSelectionLabel(person))}</small></span><span class="maintenance-person-role">${escapeHtml(role)}</span></label>`).join("") || '<div class="status-line">没有匹配人员。</div>'}</div>
   </div>`;
 }
 
@@ -6304,7 +6670,7 @@ function renderMaintenanceReviewDialog() {
   const signatureFields = [["routineElectronicSigned", "例行"], ...(hasNonroutine ? [["nonroutineElectronicSigned", "非例行"]] : [])];
   const signaturesHtml = `<section class="maintenance-review-signatures">${signatureFields.map(([key, label]) => `<fieldset data-review-signature-group="${key}" ${!draft.canEdit || draft.busy ? "disabled" : ""}><legend>${label}签署方式${!flight.requiresChangeReason ? "（确认时必选）" : ""}</legend><div class="maintenance-signature-row"><span class="maintenance-signature-title" aria-hidden="true">${label}：</span><div class="maintenance-signature-options">${[true, false].map(value => `<label><input type="radio" name="${key}" value="${value}" data-review-signature="${key}" ${draft[key] === value ? "checked" : ""}><span>${value ? "电签" : "纸签"}</span></label>`).join("")}</div>${draft[key] == null && (flight.requiresChangeReason || !draft.canEdit) ? "<small>未记录</small>" : ""}</div></fieldset>`).join("")}</section>`;
   const peopleById = new Map(draft.review.people.map(person => [person.id, person]));
-  body.innerHTML = `<div class="dialog-head maintenance-review-head"><h2>任务树复核 <small>${escapeHtml(flight.flightNo)} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.opportunity)}</small></h2><button class="icon-btn" data-close="maintenanceReviewDialog" type="button">×</button></div>
+  body.innerHTML = `<div class="dialog-head maintenance-review-head"><h2>任务树复核 <small>${escapeHtml(maintenanceDisplayFlightNo(flight))} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.opportunity)} · ${escapeHtml(flight.locationName || "青岛")}</small></h2><button class="icon-btn" data-close="maintenanceReviewDialog" type="button">×</button></div>
     <div class="maintenance-review-summary"><span>机型 ${escapeHtml(flight.aircraftType || "-")}</span><span>机位 ${escapeHtml(flight.stand || "-")}</span><span>${escapeHtml(flight.date || "-")}</span>${(flight.requiresChangeReason || flight.status === "待复核") && draft.canEdit ? `<button class="btn secondary maintenance-review-add-new" type="button" data-maint-review-add-new ${draft.busy ? "disabled" : ""}>新增非例行</button>` : ""}</div>
     <div class="maintenance-review-tree">${draft.tasks.map((task, index) => `<article class="maintenance-review-task" data-maint-review-task="${escapeHtml(maintenanceReviewTaskKey(task))}">
       <div class="maintenance-review-task-head"><div><strong>${index === 0 ? "主任务 · " : "非例行 · "}${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subtitle)} · ${escapeHtml(task.baseHoursSource)} · 基础 ${escapeHtml(task.baseHours)}h</span></div><div class="actions"><span class="status-badge ${task.status === "已确认" ? "ok" : task.status === "待复核" ? "warn" : task.status === "已提报" ? "submitted" : ""}">${escapeHtml(task.status)}</span>${index > 0 && draft.canEdit ? `<button class="link-btn danger-text" type="button" data-maint-review-delete-subtask="${escapeHtml(task.ownerId)}">删除</button>` : ""}</div></div>
@@ -6392,7 +6758,7 @@ async function submitMaintenanceReview(mode) {
       await refreshMaintenance();
       return;
     }
-    state.maintenanceReviewDraft = { ...draft, review, routineElectronicSigned: review.flight.routineElectronicSigned, nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned, tasks: review.tasks.map(maintenanceReviewTaskDraft), newSubtasks: [], activeTaskKey: "", activeRole: "", team: "全部班组", search: "", reason: "", busy: false, message: "已保存，任务状态保持不变。" };
+    state.maintenanceReviewDraft = { ...draft, review, routineElectronicSigned: review.flight.routineElectronicSigned, nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned, tasks: review.tasks.map(maintenanceReviewTaskDraft), newSubtasks: [], activeTaskKey: "", activeRole: "", team: "", search: "", reason: "", busy: false, message: "已保存，任务状态保持不变。" };
     renderMaintenanceReviewDialog();
     await refreshMaintenance();
   } catch (error) {
@@ -6410,7 +6776,7 @@ function renderMaintenanceArchiveDeleteDialog() {
   const isSubtask = draft.targetType === "subtask";
   const objectLabel = isSubtask ? "非例行" : "维修机会";
   body.innerHTML = `<div class="dialog-head"><h2>删除${status}${objectLabel}</h2><button class="icon-btn" data-close="maintenanceArchiveDeleteDialog" type="button">×</button></div>
-    <div class="maintenance-archive-delete-summary"><strong>${escapeHtml(draft.flight.flightNo || "-")} · ${escapeHtml(draft.flight.aircraftNo || "-")}</strong><span>${escapeHtml(draft.flight.date || "-")} · ${escapeHtml(draft.flight.workKind || draft.flight.workType || "其他")}</span></div>
+    <div class="maintenance-archive-delete-summary"><strong>${escapeHtml(maintenanceDisplayFlightNo(draft.flight) || "-")} · ${escapeHtml(draft.flight.aircraftNo || "-")}</strong><span>${escapeHtml(draft.flight.date || "-")} · ${escapeHtml(draft.flight.workKind || draft.flight.workType || "其他")}</span></div>
     ${isSubtask ? `<div class="maintenance-archive-delete-summary"><strong>${escapeHtml(draft.subtask?.title || "未命名非例行")}</strong><span>${escapeHtml(draft.subtask?.category || "其他")} · ${escapeHtml(draft.subtask?.standardHours || 0)}h</span></div>` : ""}
     <p class="maintenance-archive-delete-warning">${isSubtask ? "仅该非例行及其派工、反馈和工时数据将永久移除；同一维修机会的其他内容不受影响，审计记录会保留。" : "删除后维修机会、非例行、工时及架次等关联数据将永久移除，审计记录会保留。"}</p>
     <label class="maintenance-archive-delete-reason">删除原因<textarea rows="4" data-maint-archive-delete-reason placeholder="请填写删除原因">${escapeHtml(draft.reason || "")}</textarea></label>
@@ -6578,13 +6944,13 @@ function parseXlsxStyles(files, decoder, parser) {
   if (!file) return result;
   const xml = parser.parseFromString(decoder.decode(file), "application/xml");
   const customFormats = {};
-  Array.from(xml.getElementsByTagName("numFmt")).forEach(node => {
+  xmlElements(xml, "numFmt").forEach(node => {
     const id = Number(node.getAttribute("numFmtId"));
     if (Number.isFinite(id)) customFormats[id] = node.getAttribute("formatCode") || "";
   });
-  const cellXfs = xml.getElementsByTagName("cellXfs")[0];
+  const cellXfs = xmlElements(xml, "cellXfs")[0];
   if (!cellXfs) return result;
-  Array.from(cellXfs.getElementsByTagName("xf")).forEach(node => {
+  xmlElements(cellXfs, "xf").forEach(node => {
     const id = Number(node.getAttribute("numFmtId"));
     result.styleFormats.push(customFormats[id] || builtinXlsxFormats[id] || "");
   });
@@ -6685,13 +7051,13 @@ function formatExcelNumber(rawValue, format, date1904) {
 }
 
 function inlineXlsxText(cell) {
-  const inline = cell.getElementsByTagName("is")[0];
+  const inline = xmlElements(cell, "is")[0];
   return inline ? inline.textContent || "" : "";
 }
 
 function xlsxCellDisplayValue(cell, shared, styles, date1904) {
   const type = cell.getAttribute("t");
-  const valueNode = cell.getElementsByTagName("v")[0];
+  const valueNode = xmlElements(cell, "v")[0];
   const rawValue = valueNode ? valueNode.textContent || "" : inlineXlsxText(cell);
   if (!rawValue && type !== "inlineStr") return "";
   if (type === "s") return shared[Number(rawValue)] || "";
@@ -6705,9 +7071,9 @@ function xlsxCellDisplayValue(cell, shared, styles, date1904) {
 
 function parseSheetRows(sheetFile, shared, decoder, parser, styles = { styleFormats: [] }, date1904 = false) {
   const sheet = parser.parseFromString(decoder.decode(sheetFile), "application/xml"), rows = [];
-  Array.from(sheet.getElementsByTagName("row")).forEach(rowNode => {
+  xmlElements(sheet, "row").forEach(rowNode => {
     const row = [];
-    Array.from(rowNode.getElementsByTagName("c")).forEach(cell => {
+    xmlElements(rowNode, "c").forEach(cell => {
       const ref = cell.getAttribute("r") || "", column = (ref.match(/[A-Z]+/) || ["A"])[0].split("").reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
       row[column] = xlsxCellDisplayValue(cell, shared, styles, date1904);
     });
@@ -6723,7 +7089,7 @@ async function parseXlsxWorkbook(file) {
   const styles = parseXlsxStyles(files, decoder, parser);
   if (files["xl/sharedStrings.xml"]) {
     const sharedXml = parser.parseFromString(decoder.decode(files["xl/sharedStrings.xml"]), "application/xml");
-    Array.from(sharedXml.getElementsByTagName("si")).forEach(item => shared.push(item.textContent || ""));
+    xmlElements(sharedXml, "si").forEach(item => shared.push(item.textContent || ""));
   }
   const workbookFile = files["xl/workbook.xml"];
   if (!workbookFile) {
@@ -6732,11 +7098,11 @@ async function parseXlsxWorkbook(file) {
     return [{ name: "Sheet1", rows: parseSheetRows(fallback, shared, decoder, parser, styles, false) }];
   }
   const workbook = parser.parseFromString(decoder.decode(workbookFile), "application/xml");
-  const workbookPr = workbook.getElementsByTagName("workbookPr")[0];
+  const workbookPr = xmlElements(workbook, "workbookPr")[0];
   const date1904 = ["1", "true"].includes(String(workbookPr?.getAttribute("date1904") || "").toLowerCase());
   const rels = relsMap(files["xl/_rels/workbook.xml.rels"] ? decoder.decode(files["xl/_rels/workbook.xml.rels"]) : "");
-  const sheets = Array.from(workbook.getElementsByTagName("sheet")).map((sheet, index) => {
-    const relId = sheet.getAttribute("r:id");
+  const sheets = xmlElements(workbook, "sheet").map((sheet, index) => {
+    const relId = sheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || sheet.getAttribute("r:id");
     const target = rels[relId] || `worksheets/sheet${index + 1}.xml`;
     const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`.replace("xl//", "xl/");
     const sheetFile = files[path];
@@ -6920,6 +7286,27 @@ async function importBatchRecords() {
 }
 
 document.addEventListener("click", async event => {
+  const locationMenu = event.target.closest(".maintenance-location-menu");
+  for (const menu of document.querySelectorAll(".maintenance-location-menu[open]")) {
+    if (menu !== locationMenu) menu.open = false;
+  }
+  const locationPicker = event.target.closest("#maintLocationPicker");
+  if (!locationPicker) showMaintenanceLocationChoices({ open: false });
+  const locationChoice = event.target.closest("[data-maint-location-choice]");
+  if (locationChoice) {
+    $("#maintLocationName").value = locationChoice.dataset.maintLocationName;
+    $("#maintLocationId").value = locationChoice.dataset.maintLocationChoice;
+    showMaintenanceLocationChoices({ open: false });
+    return;
+  }
+  if (event.target.closest("[data-maint-location-toggle]")) {
+    showMaintenanceLocationChoices({ open: $("#maintLocationChoices").hidden, all: true });
+    return;
+  }
+  if (event.target.id === "maintLocationName") {
+    showMaintenanceLocationChoices({ open: true, all: true });
+    return;
+  }
   const remarkAction = event.target.closest("[data-maint-remark-edit], [data-maint-remark-view]");
   if (remarkAction) {
     event.preventDefault();
@@ -7144,7 +7531,7 @@ document.addEventListener("click", async event => {
     return;
   }
   if (event.target.closest("[data-maint-import]")) {
-    $("#maintenanceImportFile")?.click();
+    openMaintenanceImportDialog();
     return;
   }
   if (event.target.closest("[data-maint-subtask-import]")) {
@@ -7165,6 +7552,27 @@ document.addEventListener("click", async event => {
   }
   if (event.target.closest("[data-maint-create-flight]")) {
     openMaintenanceFlightDialog();
+    return;
+  }
+  if (event.target.closest("[data-maint-manage-locations]")) {
+    const id = $("#maintFlightId")?.value || "";
+    state.maintenanceLocationFormBackup = { ...(id ? findMaintenanceFlight(id) || { id } : {}), ...maintenanceFlightPayloadFromForm(), id };
+    renderMaintenanceLocationManager();
+    return;
+  }
+  if (event.target.closest("[data-maint-location-back]")) {
+    $("#maintenanceTaskDialogBody").innerHTML = maintenanceFlightFormHtml(state.maintenanceLocationFormBackup || {});
+    state.maintenanceLocationFormBackup = null;
+    return;
+  }
+  const deleteLocation = event.target.closest("[data-maint-location-delete]");
+  if (deleteLocation) {
+    if (!window.confirm("确认删除该地点？已使用的地点无法删除。")) return;
+    try {
+      const response = await apiRequest(`/maintenance/locations/${encodeURIComponent(deleteLocation.dataset.maintLocationDelete)}`, { method: "DELETE" });
+      state.maintenanceLocations = response.locations || [];
+      renderMaintenanceLocationManager();
+    } catch (error) { const target = document.querySelector("[data-maint-location-error]"); if (target) target.textContent = error.message; }
     return;
   }
   const addonButton = event.target.closest("[data-maint-add-subtask]");
@@ -7245,7 +7653,7 @@ document.addEventListener("click", async event => {
     if (!context) return;
     draft.activeContextKey = context.key;
     draft.activeRole = context.roles[0] || "";
-    draft.team = "全部班组";
+    draft.team = "";
     draft.search = "";
     renderMaintenanceWorkReportDialog();
     return;
@@ -7265,7 +7673,7 @@ document.addEventListener("click", async event => {
     }
     draft.activeContextKey = key;
     draft.activeRole = context.roles[0] || "";
-    draft.team = "全部班组";
+    draft.team = "";
     draft.search = "";
     renderMaintenanceWorkReportDialog();
     return;
@@ -7289,7 +7697,7 @@ document.addEventListener("click", async event => {
     const next = draft.contexts[Math.min(index, draft.contexts.length - 1)];
     draft.activeContextKey = next.key;
     draft.activeRole = next.roles[0] || "";
-    draft.team = "全部班组";
+    draft.team = "";
     draft.search = "";
     renderMaintenanceWorkReportDialog();
     return;
@@ -7329,7 +7737,7 @@ document.addEventListener("click", async event => {
     const same = state.maintenanceReviewDraft.activeTaskKey === reviewRoleButton.dataset.maintReviewTaskKey && state.maintenanceReviewDraft.activeRole === reviewRoleButton.dataset.maintReviewEditRole;
     state.maintenanceReviewDraft.activeTaskKey = same ? "" : reviewRoleButton.dataset.maintReviewTaskKey;
     state.maintenanceReviewDraft.activeRole = same ? "" : reviewRoleButton.dataset.maintReviewEditRole;
-    state.maintenanceReviewDraft.team = "全部班组";
+    state.maintenanceReviewDraft.team = "";
     state.maintenanceReviewDraft.search = "";
     renderMaintenanceReviewDialog();
     if (!same) requestAnimationFrame(() => {
@@ -7343,7 +7751,7 @@ document.addEventListener("click", async event => {
     draft.newSubtasks.push(task);
     draft.activeTaskKey = maintenanceReviewTaskKey(task);
     draft.activeRole = "主做";
-    draft.team = "全部班组";
+    draft.team = "";
     draft.search = "";
     renderMaintenanceReviewDialog();
     requestAnimationFrame(() => document.querySelector(`[data-maint-review-task="${CSS.escape(maintenanceReviewTaskKey(task))}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
@@ -7483,6 +7891,19 @@ document.addEventListener("click", async event => {
     });
     return;
   }
+  if (event.target.closest('[data-aircraft-add], [data-aircraft-remove]')) {
+    const draft = readMaintenanceAircraftHours();
+    const remove = event.target.closest('[data-aircraft-remove]');
+    if (remove) {
+      if (!confirm('删除此机型组？保存时会核对受影响的未报工航班，历史工时不变。')) return;
+      draft.groups = draft.groups.filter(group => group.id !== remove.dataset.aircraftRemove);
+    } else {
+      draft.groups.push({ id: `aircraft-${Date.now()}-${Math.random().toString(36).slice(2)}`, name: '', codes: '', enabled: true, hours: {} });
+    }
+    state.maintenanceAircraftHoursDraft = draft;
+    $('#maintenanceAircraftMatrix').innerHTML = renderMaintenanceAircraftHours();
+    return;
+  }
   if (event.target.closest("[data-maint-save-rules]")) {
     (async () => {
       const inputs = $$("[data-maint-rule]");
@@ -7540,7 +7961,12 @@ document.addEventListener("click", async event => {
         role: input.dataset.ruleRole || undefined,
         value: Number(input.value || 0)
       }));
-      await maintenanceService.saveRules(rules);
+      const aircraftHours = readMaintenanceAircraftHours();
+      const preview = await apiRequest('/maintenance/rules/aircraft-preview', { method: 'POST', body: { aircraftHours } });
+      if (preview.affectedCount && !confirm(`将影响 ${preview.affectedCount} 个未报工航班，已报工工时不变。以下仅列出您有权查看的航班：\n${preview.affected.slice(0, 15).map(flight => `${flight.date} ${flight.flightNo || '-'} ${flight.aircraftType || '未填机型'} ${flight.opportunity}`).join('\n')}\n是否继续？`)) return;
+      const reason = prompt('请填写本次工时规则修改原因（首次配置也须说明）：');
+      if (!reason?.trim()) return;
+      await maintenanceService.saveRules(rules, { aircraftHours, reason, confirmation: preview.confirmation });
       await refreshMaintenance();
       alert("规则已保存。");
     })().catch(error => alert(error.message));
@@ -7640,6 +8066,7 @@ $("#accountPasswordBtn").addEventListener("click", openChangePasswordDialog);
 $("#logoutBtn").addEventListener("click", async () => {
   sessionStorage.setItem(AUTO_LOGIN_SKIP_KEY, "1");
   stopMaintenanceSync();
+  stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
   await authService.logout();
   state.user = emptyUser();
   state.loadedData = new Set();
@@ -7647,9 +8074,6 @@ $("#logoutBtn").addEventListener("click", async () => {
 });
 $("#openEntryBtn").addEventListener("click", () => openRecordForm());
 $("#openFixedBtn").addEventListener("click", () => openFixedForm());
-$("#viewerZoomOut").addEventListener("click", () => changeViewerZoom(-0.1));
-$("#viewerZoomIn").addEventListener("click", () => changeViewerZoom(0.1));
-$("#viewerZoomReset").addEventListener("click", resetViewerZoom);
 
 $("#rememberPassword").addEventListener("change", () => {
   if (!$("#rememberPassword").checked) $("#autoLogin").checked = false;
@@ -7688,6 +8112,7 @@ $("#entryForm").addEventListener("submit", async event => {
     const existing = state.records.find(record => record.id === id);
     const payload = entryPayload(existing);
     const queuedFiles = collectQueuedFiles(state.recordFiles, $("#recordFiles"));
+    if(queuedFiles.some(file=>file.size>10*1024*1024))throw new Error('单个附件不能超过 10MiB（约10MB），请移除超限附件后重试');
     let saved;
     if (id) saved = await recordService.update(id, payload);
     else saved = await recordService.create(payload);
@@ -7793,16 +8218,19 @@ $("#recipientOptions").addEventListener("change", event => {
   state.allRecipientsInScope = false;
   if (input.checked) state.selectedRecipientIds.add(input.dataset.recipient);
   else state.selectedRecipientIds.delete(input.dataset.recipient);
+  syncRecipientSelectionCount();
 });
-$("#recipientSelectAll").addEventListener("click", () => {
-  state.allRecipientsInScope = true;
-  state.infoPeople.forEach(person => state.selectedRecipientIds.add(person.id));
-  syncRecipientCheckboxes();
+$("#recipientToggle").addEventListener("click", toggleRecipientSelection);
+$("#entryOriginalResize").addEventListener("pointerdown", event => {
+  if (document.activeElement === $("#entryOriginal")) event.preventDefault();
 });
-$("#recipientClearAll").addEventListener("click", () => {
-  state.allRecipientsInScope = false;
-  state.selectedRecipientIds.clear();
-  syncRecipientCheckboxes();
+$("#entryOriginalResize").addEventListener("click", () => {
+  const input = $("#entryOriginal");
+  const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
+  const scrollTop = input.scrollTop;
+  setOriginalExpanded(!$("#entryForm").classList.contains("original-expanded"));
+  input.setSelectionRange(start, end, direction);
+  input.scrollTop = scrollTop;
 });
 $("#entryDate").closest("label").addEventListener("click", event => {
   const input = $("#entryDate");
@@ -8107,19 +8535,12 @@ document.addEventListener("click", async event => {
   if (attachment) {
     event.preventDefault();
     const file = findAttachment(attachment.dataset.attachment, attachment.dataset.ownerType, attachment.dataset.ownerId);
-    const src = await attachmentSource(file) || attachment.getAttribute("href");
     if (!file) {
       alert("未找到附件内容。请重新上传该附件。");
       return;
     }
-    $("#viewerTitle").textContent = attachment.dataset.name || "附件";
-    resetViewerZoom();
-    setViewerDownload(src, file.name || attachment.dataset.name || "附件");
-    $("#viewerContent").innerHTML = '<div class="status-line">正在生成预览...</div>';
-    $("#viewerDialog").showModal();
-    const attachmentName = file?.name || attachment.dataset.name || "";
-    const viewerMode = isPdfAttachment(file, attachmentName) ? "pdf-native" : isImageAttachment(file, attachmentName) ? "image-fit" : "";
-    setViewerPreview(await renderAttachmentPreview(file, src), viewerMode ? { mode: viewerMode } : {});
+    try { await (await attachmentViewerReady).open(file); }
+    catch (error) { alert(`无法打开附件预览：${error.message}`); }
   }
   const sheetTab = event.target.closest("[data-sheet-tab]");
   if (sheetTab) {
@@ -8197,6 +8618,11 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("input", event => {
+  if (event.target.id === "maintLocationName") {
+    $("#maintLocationId").value = "";
+    showMaintenanceLocationChoices({ open: true });
+    return;
+  }
   if (event.target.id === "userUsername") {
     scheduleUserAvailabilityCheck();
     return;
@@ -8314,6 +8740,29 @@ document.addEventListener("compositionend", event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    const openLocationMenus = [...document.querySelectorAll(".maintenance-location-menu[open]")];
+    const openPicker = $("#maintLocationChoices") && !$("#maintLocationChoices").hidden;
+    if (openLocationMenus.length || openPicker) {
+      event.preventDefault();
+      for (const menu of openLocationMenus) menu.open = false;
+      if (openPicker) { showMaintenanceLocationChoices({ open: false }); $("#maintLocationName")?.focus(); }
+      return;
+    }
+  }
+  if (event.target.id === "maintLocationName" && event.key === "ArrowDown") {
+    event.preventDefault();
+    showMaintenanceLocationChoices({ open: true, all: true });
+    $("#maintLocationChoices")?.querySelector("[data-maint-location-choice]:not([hidden])")?.focus();
+    return;
+  }
+  if (event.target.matches("[data-maint-location-choice]") && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+    event.preventDefault();
+    const choices = [...$("#maintLocationChoices").querySelectorAll("[data-maint-location-choice]:not([hidden])")];
+    const next = Math.max(0, Math.min(choices.length - 1, choices.indexOf(event.target) + (event.key === "ArrowDown" ? 1 : -1)));
+    choices[next]?.focus();
+    return;
+  }
   if (event.target.id !== "personnelSearch" || event.key !== "Enter" || event.isComposing || state.personnelSearchComposing) return;
   event.preventDefault();
   runPersonnelSearch();
@@ -8401,11 +8850,26 @@ document.addEventListener("compositionend", event => {
 });
 
 document.addEventListener("submit", event => {
+  if (event.target.matches("[data-maint-location-create], [data-maint-location-edit]")) {
+    event.preventDefault();
+    (async () => {
+      const form = event.target;
+      const editId = form.dataset.maintLocationEdit || "";
+      const body = { name: form.elements.name.value.trim() };
+      if (editId) { body.status = form.elements.status.value; body.reason = form.elements.reason.value.trim(); }
+      const response = await apiRequest(editId ? `/maintenance/locations/${encodeURIComponent(editId)}` : "/maintenance/locations", { method: editId ? "PUT" : "POST", body });
+      state.maintenanceLocations = response.locations || [];
+      renderMaintenanceLocationManager();
+    })().catch(error => { const target = document.querySelector("[data-maint-location-error]"); if (target) target.textContent = error.message; });
+    return;
+  }
   if (event.target.id === "maintenanceFlightForm") {
     event.preventDefault();
     (async () => {
       const id = $("#maintFlightId").value;
-      const payload = maintenanceFlightPayloadFromForm();
+      const payload = maintenanceFlightPayloadFromForm(true);
+      const numberError = maintenanceFlightNumberError(payload);
+      if (numberError) throw new Error(numberError);
       const result = id
         ? await maintenanceService.updateFlight(id, payload)
         : await maintenanceService.createFlight(payload);
@@ -8709,6 +9173,22 @@ document.addEventListener("change", async event => {
     renderMaintenanceDispatchPicker();
     return;
   }
+  if (event.target.matches("[data-maint-location-option]")) {
+    const kind = event.target.dataset.maintLocationOption;
+    const side = event.target.closest(".maintenance-dispatch-column-left") ? "left" : "right";
+    const selected = kind === "report" ? state.maintenanceReportLocations : kind === "left" ? state.maintenanceLeftLocations : state.maintenanceRightLocations;
+    if (event.target.checked) selected.add(event.target.value);
+    else selected.delete(event.target.value);
+    if (kind === "report") state.maintenanceReportPage = 1;
+    await refreshMaintenance();
+    requestAnimationFrame(() => { const selector = kind === "report" ? ".maintenance-report-location-filter .maintenance-location-menu" : `.maintenance-dispatch-column-${side} .maintenance-location-menu`; const menu = document.querySelector(selector); if (menu) menu.open = true; });
+    return;
+  }
+  if (event.target.matches("[data-maint-execute-location]")) {
+    state.maintenanceExecuteLocation = event.target.value;
+    await refreshMaintenance();
+    return;
+  }
   const maintenanceReportFilter = event.target.closest("[data-maint-report-filter]");
   if (maintenanceReportFilter) {
     const key = maintenanceReportFilter.dataset.maintReportFilter;
@@ -8955,3 +9435,16 @@ async function init() {
 }
 
 init();
+
+async function renderAttendancePage() {
+  const active=()=>isLoggedIn() && state.activePage==='attendancePage' && hasRbac('attendance.read');
+  if(!active())return;
+  const host=document.getElementById('attendanceHost');
+  try {
+    attendanceImport ||= import('/attendance.mjs?v=2');
+    const module=await attendanceImport;
+    if(!active())return;
+    attendanceModule ||= module.createAttendanceModule({host,api:apiRequest,hasPermission:hasRbac,isActive:active,onAuthExpired:()=>handleAuthExpired('登录状态已失效，请重新登录。')});
+    attendanceModule.setActive(true);
+  } catch(error) { attendanceImport=null;host.textContent='考勤页面加载失败：'+error.message; }
+}

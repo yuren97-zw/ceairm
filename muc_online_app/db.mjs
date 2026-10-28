@@ -13,6 +13,7 @@ export const requestQueryStats = new AsyncLocalStorage();
 
 function sqliteDatabase(dbPath) {
   const sqlite = new DatabaseSync(dbPath);
+  sqlite.exec("pragma busy_timeout=5000");
   sqlite.kind = "sqlite";
   return sqlite;
 }

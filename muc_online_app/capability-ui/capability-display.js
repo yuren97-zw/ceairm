@@ -3,6 +3,7 @@ const rank={release:0,test_run:1,maintenance:2,special:3,third_party:4,other:5};
 export const sortedCapabilities=person=>[...person.capabilities].sort((a,b)=>(rank[a.category]??7)-(rank[b.category]??7)||a.code.localeCompare(b.code));
 export function capabilityLabel(p){return p.shortName.replaceAll('A319/A320/A321','A320系列').replace('航线维修放行','放行').replace('飞机维修','维修').replace('发动机试车（慢车）','慢车').replace('发动机试车（高功率）','高功率');}
 export function matchesCapabilityFilters(p,filters){return !filters.length||p.capabilities.some(c=>filters.includes(c.category));}
+export function headcountTone(actual,target){return Number.isFinite(actual)&&Number.isFinite(target)&&target>=0?(actual>=target?'sufficient':'shortage'):'';}
 
 // Display-only aggregation. Stable project codes prevent administrator edits to
 // project names from silently changing which authorizations are paired.
