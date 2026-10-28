@@ -1,3 +1,4 @@
+import {sourceImportFingerprint,targetImportFingerprint,assertDataImportTarget,lockImportTables,recordDataImport} from '../migration-data-guard.mjs';
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +26,8 @@ const capabilityIntegrity=preflightCapabilityIntegrity(sqlite);
 if(!capabilityIntegrity.ok)throw Object.assign(new Error("能力与人员身份预检未通过，禁止迁移到PostgreSQL"),{details:capabilityIntegrity.issues});
 const client = new Client(postgresConnectionOptions(databaseUrl));
 await client.connect();
+const sourceHash=sourceImportFingerprint(sqlite);
+const targetMode=await assertDataImportTarget(client,sourceHash);
 await client.query('create table if not exists schema_migrations(version text primary key,applied_at text not null)');
 for(let index=0;index<schemas.length;index++){
   const version=migrationFiles[index];if((await client.query('select 1 from schema_migrations where version=$1',[version])).rowCount)continue;
@@ -37,6 +40,7 @@ try{
   for(const table of PERSON_TABLES){const columns=targetAdapter.prepare('pragma table_info('+table+')').all().map(row=>row.name);if(columns.includes('user_id')&&Number(targetAdapter.prepare('select count(*) n from '+table).get().n)>0)throw new Error('目标含旧人员身份业务数据，禁止自动覆盖: '+table);}
   migrateIdentity(targetAdapter);
 }finally{targetAdapter.close();}
+const bootstrapHash=targetMode==='fresh'?await targetImportFingerprint(client):null;
 
 const tables = [
   "users",
@@ -100,6 +104,11 @@ function placeholders(count) {
 
 await client.query("begin");
 try {
+  await lockImportTables(client);
+  await assertDataImportTarget(client,sourceHash,{bootstrapHash});
+  // Fresh-target migrations seed defaults. Replace only these newly initialized
+  // rows so renamed organizations, capability revision and locations remain exact.
+  if(targetMode==='fresh')for(const table of ['capability_meta','organization_units','maintenance_work_locations'])await client.query('delete from '+table);
   for (const table of tables) {
     const exists = sqlite.prepare("select 1 from sqlite_master where type='table' and name=?").get(table);
     if (!exists) continue;
@@ -134,6 +143,7 @@ try {
     console.log(`${table}: ${rows.length}`);
   }
   if(attendanceTables.includes('attendance_approval_plan_history'))await client.query("select setval(pg_get_serial_sequence('attendance_approval_plan_history','id'), greatest(coalesce(max(id),0),1), count(*)>0) from attendance_approval_plan_history");
+  await recordDataImport(client,sourceHash);
   await client.query("commit");
 } catch (error) {
   await client.query("rollback");

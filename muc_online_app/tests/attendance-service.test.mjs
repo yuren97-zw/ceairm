@@ -106,3 +106,11 @@ test('new API leave types automatically appear before no-record/future, remain z
 });
 
 test('excluded leave is not stored by catalog refresh and old persisted catalog cannot rediscover it',async()=>{const f=fixture({client:{leaveTypes:async()=>[{name:'新冠关爱假',code:'excluded'},{name:'婚假',code:'marriage'}]}});await f.service.refreshLeaveTypes(admin);assert.deepEqual(f.service.status(admin).leaveTypes.names,['婚假']);assert.ok(!f.db.prepare("select types_json from attendance_leave_catalog where id='enterprise'").get().types_json.includes('新冠关爱假'));f.db.prepare("update attendance_leave_catalog set types_json=? where id='enterprise'").run(JSON.stringify([{name:'新冠关爱假'},{name:'婚假'}]));assert.deepEqual(f.service.status(admin).leaveTypes.names,['婚假']);f.db.close();});
+
+ test('global approval operations are hidden from scoped and non-managing viewers',()=>{
+ const f=fixture({config:{approvalPlansEnabled:true}});f.service.approvalPlans.queue('outside-instance');
+ for(const user of [reader,{...reader,all:true},{...reader,permissions:[...reader.permissions,'attendance.stats.read','attendance.record.manage']}]){
+  assert.deepEqual(f.service.snapshot(user,{month:'2026-10'}).approvalPlanStatus,{enabled:true});assert.equal(f.service.status(user).approvalPlans,null);
+ }
+ assert.equal(Number(f.service.snapshot(admin,{month:'2026-10'}).approvalPlanStatus.queue.pending),1);f.db.close();
+ });

@@ -1,3 +1,4 @@
+import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
 import {attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
@@ -7017,8 +7018,7 @@ async function routeRequest(req, res) {
       if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
       if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,attendanceService.status(actor));
       if(method==='GET' && ['/api/attendance/days','/api/attendance/summary','/api/attendance/exceptions','/api/attendance/person'].includes(url.pathname)){
-        const snapshot=attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read');
-        if(!hasRbac(actor,'attendance.stats.read'))for(const p of snapshot.people){delete p.counts;delete p.overtimeSeconds;delete p.computedDays;delete p.uncomputableDays;}
+        const snapshot=attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read'),hasRbac(actor,'attendance.stats.read'));
         if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:p.days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
         return send(res,200,snapshot);
       }
