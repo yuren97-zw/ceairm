@@ -37,14 +37,18 @@ import { createDatabase, requestQueryStats } from "./db.mjs";
 import { createLoginProtection, loginAddress } from "./login-protection.mjs";
 import { createAuthorizationProjects } from "./authorization-projects.mjs";
 import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./personnel-deletion.mjs";
+import { approvedLocalDevelopment, localSessionCookieName } from './local-development.mjs';
 
-if (process.env.ATTENDANCE_ENV_FILE) process.loadEnvFile(process.env.ATTENDANCE_ENV_FILE);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isLocalDevelopment = approvedLocalDevelopment(__dirname, process.env);
+if (process.env.MUC_LOCAL_DEVELOPMENT_PROFILE && !isLocalDevelopment) throw new Error('本机开发配置不安全：仅允许回环地址、独立SQLite和关闭真实同步的开发环境');
+const sessionCookieName = localSessionCookieName(__dirname,process.env);
+if (process.env.ATTENDANCE_ENV_FILE) process.loadEnvFile(process.env.ATTENDANCE_ENV_FILE);
 const isCodexWorktree = __dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`);
 if (isCodexWorktree && process.env.MUC_NO_LISTEN !== "1") {
   const missing = ["PORT", "DB_PATH", "UPLOAD_DIR"].filter(key => !String(process.env[key] || "").trim());
   if (missing.length) throw new Error(`Codex工作树禁止使用默认运行参数，缺少：${missing.join("、")}。请执行 npm run start:worktree`);
-  if (Number(process.env.PORT) === 8787) throw new Error("Codex工作树禁止占用主站8787端口，请使用8788或其他隔离端口");
+  if (Number(process.env.PORT) === 8787 && !isLocalDevelopment) throw new Error("Codex工作树禁止占用主站8787端口，请使用8788或其他隔离端口");
   if (path.resolve(process.env.DB_PATH) === path.join(__dirname, "data", "muc.sqlite")) throw new Error("Codex工作树禁止连接默认data/muc.sqlite，请显式使用隔离数据库");
 }
 const rootDir = path.resolve(__dirname, "..");
@@ -363,13 +367,13 @@ function parseCookies(req) {
 
 function sessionCookie(value, maxAge = 604800) {
   const secure = process.env.COOKIE_SECURE === "true";
-  const parts = [`muc_sid=${encodeURIComponent(value || "")}`, "HttpOnly", "SameSite=Lax", "Path=/", `Max-Age=${maxAge}`];
+  const parts = [`${sessionCookieName}=${encodeURIComponent(value || "")}`, "HttpOnly", "SameSite=Lax", "Path=/", `Max-Age=${maxAge}`];
   if (secure) parts.splice(2, 0, "Secure");
   return parts.join("; ");
 }
 
 function currentUser(req) {
-  const sid = parseCookies(req).muc_sid;
+  const sid = parseCookies(req)[sessionCookieName];
   const savedSession = sid ? db.prepare("select user_id,credential_version from sessions where id=? and expires_at>?").get(sid, now()) : null;
   if (!savedSession?.user_id) {
     if (sid) sessions.delete(sid);
@@ -7111,7 +7115,7 @@ async function routeRequest(req, res) {
       return send(res, 200, { ok: true });
     }
     if (method === "POST" && url.pathname === "/api/logout") {
-      const sid = parseCookies(req).muc_sid;
+      const sid = parseCookies(req)[sessionCookieName];
       if (sid) {
         sessions.delete(sid);
         db.prepare("delete from sessions where id=?").run(sid);
