@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {validateImportDecision,sourceImportFingerprint} from '../migration-data-guard.mjs';
+test('fresh target or exact replay only; conflicting credentials and source increments fail closed',()=>{
+ assert.equal(validateImportDecision({sourceHash:'s',nonempty:[]}), 'fresh');assert.throws(()=>validateImportDecision({sourceHash:'s',nonempty:['users']}),/不是空业务库/);
+ const checkpoint={source_sha:'s',target_sha:'t'};assert.equal(validateImportDecision({checkpoint,sourceHash:'s',targetHash:'t'}),'repeat');assert.throws(()=>validateImportDecision({checkpoint,sourceHash:'s2',targetHash:'t'}),/已变化/);assert.throws(()=>validateImportDecision({checkpoint,sourceHash:'s',targetHash:'t2'}),/已变化/);
+});
+test('source fingerprint includes business changes but excludes sessions',()=>{const db=new DatabaseSync(':memory:');db.exec('create table users(id text,salt text);create table sessions(id text);insert into users values(1,2)');const first=sourceImportFingerprint(db);db.exec('insert into sessions values(3)');assert.equal(sourceImportFingerprint(db),first);db.exec('update users set salt=4');assert.notEqual(sourceImportFingerprint(db),first);db.close();});

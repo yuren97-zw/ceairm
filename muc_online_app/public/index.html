@@ -13,6 +13,7 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <title>航线运行中心</title>
   <style>
+    .maintenance-unified-import{width:min(92vw,860px);max-width:92vw}.maintenance-unified-import .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.maintenance-unified-import label{display:grid;gap:6px;min-width:0}.maintenance-unified-import input,.maintenance-unified-import select{max-width:100%;min-width:0}.maintenance-import-row{padding:9px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.maintenance-import-row p{margin:5px 0}.maintenance-unified-import .icon-btn{min-width:44px;min-height:44px}.maintenance-unified-import .form-actions{position:sticky;bottom:-14px;background:#fff;padding:10px 0}.maintenance-unified-import .actions{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:600px){.maintenance-unified-import{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border-radius:0}.maintenance-unified-import .dialog-body{height:100%;max-height:100dvh;box-sizing:border-box}.maintenance-unified-import .form-grid{grid-template-columns:1fr}.maintenance-unified-import .form-actions{flex-wrap:wrap}}
     :root{--bg:#f5f6f8;--panel:#fff;--ink:#1d1d1f;--muted:#6e737b;--line:#e3e6eb;--brand:#0f5f7a;--brand-soft:#e8f4f7;--shadow:0 8px 24px rgba(20,30,40,.06);--danger:#B42318;--danger-soft:#FFF1F0;--q:#D97706;--q-soft:#FFF7E6;--r:#7C3AED;--r-soft:#F3E8FF;--w:#2563EB;--w-soft:#EAF2FF;--a:#059669;--a-soft:#E8F7F0;--t:#0891B2;--t-soft:#E6F7FB}
     *{box-sizing:border-box}html,body{overscroll-behavior-y:contain}body{margin:0;padding-bottom:62px;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
     .login-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#f7f8fa 0%,#eef3f6 100%)}.login-card{width:min(92vw,420px);background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 70px rgba(15,36,51,.16);padding:24px;backdrop-filter:saturate(180%) blur(18px)}.login-card h1{margin:0 0 6px;font-size:26px;letter-spacing:0}.login-card p{margin:0 0 16px;color:var(--muted);font-size:13px}.login-options{display:grid;gap:8px}.login-check{display:flex!important;grid-template-columns:none!important;align-items:center;gap:8px;color:#39404a!important;font-size:13px!important}.login-check input{width:16px!important;height:16px!important}.app-booting .top-tabs,.app-booting .page,.app-booting .pager,.app-booting #loginPage,.app-locked .top-tabs,.app-locked .page,.app-locked .pager{display:none!important}.app-booting,.app-locked{padding-bottom:0}.app-booting{min-height:100vh;background:linear-gradient(180deg,#f7f8fa 0%,#eef3f6 100%)}.app-booting::before{content:"正在进入系统...";position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 18px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.88);box-shadow:0 18px 46px rgba(15,36,51,.12);color:var(--muted);font-size:14px;backdrop-filter:saturate(180%) blur(16px)}.top-tabs{position:sticky;top:0;z-index:35;background:rgba(255,255,255,.92);border-bottom:1px solid var(--line);backdrop-filter:saturate(180%) blur(16px)}.tab-wrap{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:6px;padding:8px 14px;align-items:center}.top-tab{border:1px solid transparent;background:#f2f3f5;color:#555b64;border-radius:10px;padding:8px 4px;font-size:14px;font-weight:650;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-tab.active{background:var(--brand);border-color:var(--brand);color:#fff}.top-tab[hidden]{display:none}.top-auth{grid-column:-2/-1;display:flex;gap:5px;align-items:center;justify-content:flex-end;min-width:0}.top-auth .btn{padding:6px 10px;font-size:12px;background:#fff;color:var(--brand);box-shadow:none}.pull-refresh-indicator{position:fixed;z-index:34;top:50px;left:50%;display:flex;align-items:center;gap:5px;min-height:28px;padding:5px 10px;border:1px solid #D7E1E8;border-radius:999px;background:rgba(255,255,255,.96);box-shadow:0 8px 20px rgba(15,36,51,.12);color:#52657A;font-size:12px;font-weight:650;pointer-events:none;opacity:0;transform:translate(-50%,-115%);transition:opacity .15s ease,transform .22s ease}.pull-refresh-indicator-icon{display:inline-grid;width:14px;height:14px;place-items:center;color:var(--brand);font-size:13px;line-height:1;transition:transform .15s ease}.pull-refresh-ready .pull-refresh-indicator-icon{transform:rotate(180deg)}.pull-refresh-refreshing .pull-refresh-indicator-icon{animation:pullRefreshSpin .8s linear infinite}.pull-refresh-tracking .pull-refresh-indicator,.pull-refresh-refreshing .pull-refresh-indicator,.pull-refresh-settling .pull-refresh-indicator{opacity:1;transform:translate(-50%,calc(-115% + var(--pull-refresh-offset,0px)))}.pull-refresh-tracking .page.active,.pull-refresh-refreshing .page.active,.pull-refresh-settling .page.active{transform:translateY(var(--pull-refresh-offset,0px));will-change:transform}.pull-refresh-tracking .page.active{transition:none}.pull-refresh-refreshing .page.active,.pull-refresh-settling .page.active{transition:transform .22s ease}.app-booting .pull-refresh-indicator,.app-locked .pull-refresh-indicator{display:none}@keyframes pullRefreshSpin{to{transform:rotate(360deg)}}.page,.subpage{display:none}.page.active,.subpage.active{display:block}.subpage-menu-wrap{position:relative;min-width:0}.menu-btn{border:1px solid #d0d6dd;background:#fff;color:var(--brand);border-radius:10px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer}.menu-btn:hover,.menu-btn.active{border-color:var(--brand);background:var(--brand-soft)}.subpage-menu{position:absolute;left:0;top:44px;display:grid;gap:4px;min-width:138px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:5px;box-shadow:0 14px 34px rgba(20,30,40,.16);z-index:40}.subpage-menu[hidden]{display:none}.subtab{border:0;background:#fff;border-radius:9px;padding:8px 10px;cursor:pointer;font-size:13px;white-space:nowrap;text-align:left;color:#39404a}.subtab.active{background:var(--brand-soft);color:var(--brand);font-weight:650}.demo-note{margin-top:8px;padding:8px 10px;border:1px solid #c7e0e7;background:var(--brand-soft);border-radius:10px;color:#28556a;font-size:12px}
@@ -713,9 +714,34 @@
     .maintenance-dispatch-column-left{background:#F7F9FC;border-color:#DFE6EE}
     .maintenance-dispatch-column-right{background:#F2F7F8;border-color:#D8E6E9}
     .maintenance-dispatch-column:has(.maintenance-status-menu[open]){z-index:70}
-    .maintenance-column-tools{position:relative;z-index:2;display:grid;grid-template-columns:minmax(96px,118px) minmax(112px,1fr) auto;align-items:center;gap:6px;min-width:0;overflow:visible}
+    .maintenance-column-tools{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:5px;min-width:0;overflow:visible}
+    .maintenance-column-tools>span{grid-column:1/-1;justify-self:end}
+    .maintenance-column-tools select,.maintenance-column-tools summary{font-size:12px!important;height:36px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .maintenance-column-tools .maintenance-status-menu>summary{display:block;line-height:34px}
     .maintenance-column-tools span{color:var(--muted);font-size:12px;white-space:nowrap}
     .maintenance-status-filter,.maintenance-sort-filter{height:36px;min-width:0;width:100%;padding:0 28px 0 9px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);font:inherit;font-size:12px}
+    .maintenance-location-tag{display:inline-flex;align-items:center;padding:1px 5px;border:1px solid #d9e3e9;border-radius:5px;background:#f5f8fa;color:#65798b;font-size:10px;font-weight:500;white-space:nowrap}
+    .personnel-cadre-badge{display:inline-block;margin-left:5px;padding:1px 4px;border-radius:4px;background:#f1f5f9;color:#64748b;font-size:10px;font-weight:500;line-height:1.3;white-space:nowrap;vertical-align:middle}
+    .recipient-selected-count{margin-left:8px;color:var(--muted);font-size:12px;white-space:nowrap}
+    .maintenance-location-manager{display:grid;gap:8px;max-height:min(58vh,430px);overflow-y:auto;overscroll-behavior:contain}
+    .maintenance-location-editor{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px;border:1px solid var(--line);border-radius:9px}
+    .maintenance-location-editor input[name=name]{flex:2 1 110px;min-width:0}.maintenance-location-editor input[name=reason]{flex:1 1 100px;min-width:0}.maintenance-location-editor select{min-height:34px}
+    .maintenance-location-field{display:grid;gap:4px;min-width:0;color:var(--muted);font-size:12px}
+    .maintenance-location-inline{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:6px;min-width:0}
+    .maintenance-location-picker{position:relative;min-width:0}
+    .maintenance-location-picker>input#maintLocationName{min-width:0;width:100%;padding-right:44px}
+    .maintenance-location-manage{min-width:66px;padding:0 8px;border:1px solid #d8e2ea;border-radius:8px;background:#f8fafb;color:#607487;font:inherit;font-size:11px;font-weight:500;white-space:nowrap;cursor:pointer}
+    .maintenance-location-manage:hover,.maintenance-location-manage:focus-visible{border-color:#a9c3d1;background:#eef5f7;color:#24566b}
+    .maintenance-location-toggle{position:absolute;right:2px;top:2px;bottom:2px;width:38px;border:0;border-radius:9px;background:transparent;color:#536b7c;font:inherit;font-size:20px;cursor:pointer}
+    .maintenance-location-choices{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:10;display:grid;max-height:min(220px,34vh);overflow-y:auto;padding:4px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 12px 28px rgba(15,23,42,.15);overscroll-behavior:contain}
+    .maintenance-location-choices[hidden],.maintenance-location-choices [hidden]{display:none}
+    .maintenance-location-picker.drop-up .maintenance-location-choices{top:auto;bottom:calc(100% + 4px)}
+    .maintenance-location-choices button{min-height:36px;padding:6px 9px;border:0;border-radius:7px;background:#fff;color:var(--ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+    .maintenance-location-choices button:hover,.maintenance-location-choices button:focus-visible{background:#eef6f8;outline:0}
+    .maintenance-location-empty{padding:8px;color:var(--muted);font-size:12px}
+    .maintenance-report-filters .maintenance-location-menu{min-width:110px}
+    .execute-list-tools{align-items:center;gap:6px}
+    .execute-list-tools select{width:66px;max-width:66px;height:28px;min-height:28px;padding:3px 4px;border:1px solid #d8e2ea;border-radius:8px;background:#fff;color:#607487;font:inherit;font-size:11px!important;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .maintenance-status-menu{position:relative;min-width:0;width:100%}
     .maintenance-status-menu[open]{z-index:80}
     .maintenance-status-menu>summary{display:flex;align-items:center;position:relative;list-style:none;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -736,7 +762,7 @@
     .maintenance-flight-identity strong{display:flex;align-items:baseline;flex-wrap:wrap;row-gap:1px;min-width:0}
     .maintenance-flight-identity strong span{display:inline;margin:0}
     .maintenance-flight-identity .maintenance-flight-primary{align-items:center;column-gap:5px;row-gap:3px}
-    .maintenance-flight-primary .maintenance-opportunity-tag,.maintenance-flight-primary .maintenance-stand-tag{display:inline-flex;align-items:center;padding:3px 7px;border-radius:8px;font-size:11px!important;font-weight:750;line-height:1.2;white-space:nowrap}
+    .maintenance-flight-primary .maintenance-opportunity-tag,.maintenance-flight-secondary .maintenance-stand-tag{display:inline-flex;align-items:center;padding:3px 7px;border-radius:8px;font-size:11px!important;font-weight:750;line-height:1.2;white-space:nowrap}
     .maintenance-flight-primary .maintenance-opportunity-tag{background:var(--opportunity-bg);color:var(--opportunity-color)!important}
     .maintenance-flight-primary .maintenance-stand-tag{background:#EEF2F7;color:#334155!important}
     .maintenance-flight-primary .maintenance-flight-separator{padding:0;color:#94A3B8!important}
@@ -932,6 +958,7 @@
     .maintenance-report-views button.active{background:#fff;color:#0F6B7D;box-shadow:0 1px 4px rgba(15,23,42,.12)}
     .maintenance-report-filters{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:7px;min-width:0;padding:9px;border:1px solid #E3EAF0;border-radius:12px;background:#F8FAFC}
     .maintenance-report-filters label{display:grid;gap:4px;min-width:0;color:#64748B;font-size:10px;font-weight:700}
+    .maintenance-report-location-filter{display:grid;gap:4px;min-width:0;color:#64748B;font-size:10px;font-weight:700}
     .maintenance-report-filters input,.maintenance-report-filters select{width:100%;min-width:0;height:36px;margin:0;padding:0 8px;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font:inherit;font-size:12px}
     .maintenance-report-filters .maintenance-report-search{grid-column:span 2}
     .maintenance-report-content{min-width:0}
@@ -980,6 +1007,8 @@
     .maintenance-report-row>span.wrap{line-height:1.45}
     .maintenance-report-row strong,.maintenance-report-row b{color:#102033;font-size:12px}
     .maintenance-report-row small{color:#718096;font-size:10px;font-weight:500}
+    .maintenance-report-row>.maintenance-report-mobile-meta,.maintenance-report-mobile-label{display:none}
+    .maintenance-report-people{line-height:1.45}
     .maintenance-report-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:9px;color:#64748B;font-size:11px}
     .maintenance-report-pagination>div{display:flex;gap:6px}
     .maintenance-report-pagination .btn{min-height:34px;padding:0 11px;font-size:11px}
@@ -1014,7 +1043,22 @@
       .maintenance-report-list{border:0;gap:7px;overflow:visible}
       .maintenance-report-row.head{display:none}
       .maintenance-report-list.people .maintenance-report-row,.maintenance-report-list.opportunities .maintenance-report-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid #DCE5ED;border-radius:10px}
-      .maintenance-report-list.opportunities .maintenance-report-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .maintenance-report-list.opportunities button.maintenance-report-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"identity status" "meta meta" "people people" "hours release" "signature signature";align-items:start;gap:4px 7px;padding:9px;font-size:12px;line-height:1.4;text-align:left}
+      .maintenance-report-list.opportunities button.maintenance-report-row>span::before{display:none}
+      .maintenance-report-list.opportunities .maintenance-report-identity{grid-area:identity}
+      .maintenance-report-list.opportunities .maintenance-report-identity>small,.maintenance-report-list.opportunities .maintenance-report-category{display:none}
+      .maintenance-report-list.opportunities .maintenance-report-row>.maintenance-report-mobile-meta{grid-area:meta;display:block;color:#718096;font-size:11px}
+      .maintenance-report-list.opportunities .maintenance-report-people{grid-area:people;display:block}
+      .maintenance-report-list.opportunities .maintenance-report-people::before{content:"人员：";display:inline!important;color:#718096;font-size:11px;font-weight:500}
+      .maintenance-report-list.opportunities .maintenance-report-hours{grid-area:hours;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px}
+      .maintenance-report-list.opportunities .maintenance-report-release{grid-area:release;max-width:110px}
+      .maintenance-report-list.opportunities .maintenance-report-signature-cell{grid-area:signature;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px;color:#718096;font-size:11px}
+      .maintenance-report-list.opportunities .maintenance-report-signature-cell>b{font-size:11px;font-weight:500;color:inherit}
+      .maintenance-report-list.opportunities .maintenance-report-status{grid-area:status;justify-self:end}
+      .maintenance-report-list.opportunities .maintenance-report-status .status-badge{width:auto;min-height:22px;padding:3px 7px;font-size:10px;white-space:nowrap}
+      .maintenance-report-list.opportunities .maintenance-report-row strong,.maintenance-report-list.opportunities .maintenance-report-hours>b{font-size:13px}
+      .maintenance-report-list.opportunities .maintenance-report-row small{font-size:11px}
+      .maintenance-report-list.opportunities .maintenance-report-mobile-label{display:inline}
       .maintenance-report-list.nonroutine .maintenance-report-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px;border:1px solid #DCE5ED;border-radius:8px}
       .maintenance-report-nonroutine-entry,.maintenance-report-opportunity-entry{border:0}
       .maintenance-audit-person{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1569,7 +1613,16 @@
     .personnel-detail-tabs{display:flex;gap:0;overflow-x:auto;border-bottom:1px solid var(--line);margin:0 0 12px}
     .personnel-detail-tab{border:0;border-radius:0;background:transparent;padding:11px 14px;margin-bottom:-1px;white-space:nowrap;color:var(--muted)}
     .personnel-detail-tab.active{color:var(--brand);font-weight:700;border-bottom:3px solid var(--brand)}
-    .personnel-detail-content{min-width:0;padding:0}
+    .personnel-detail-content{min-width:0;max-width:100%;padding:0;overflow-wrap:anywhere}
+    @media(max-width:720px){
+      #personnelPanel,.personnel-list-panel,.personnel-table,.personnel-detail-panel{min-width:0;max-width:100%;box-sizing:border-box}
+      .personnel-list-panel .personnel-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .personnel-row>*{min-width:0;overflow-wrap:anywhere}
+      .personnel-detail-head>*{min-width:0;max-width:100%}
+      .personnel-detail-head .actions{flex-wrap:wrap}
+      .personnel-detail-content{overflow-x:auto}
+      .personnel-detail-tabs{max-width:100%}
+    }
     .authorization-accordion{border-top:1px solid var(--line)}
     .authorization-category-section{border:0;margin:0;padding:0}
     .authorization-category-row{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;border-radius:0;border-bottom:1px solid var(--line);background:#fff;padding:13px 0;text-align:left}
@@ -1619,6 +1672,47 @@
     @media(max-width:360px){.auth-overview-panel{padding:9px}.auth-overview-filters{grid-template-columns:minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,.8fr);gap:5px}.auth-overview-filters select{padding-left:3px;padding-right:2px;font-size:11px}.auth-overview-filters [data-auth-overview-clear]{padding-inline:3px;font-size:11px}}
     @media(max-width:720px){.personnel-import-batch{grid-template-columns:1fr}.personnel-list-panel .module-head{align-items:stretch}.personnel-list-panel .search{max-width:none}.personnel-filter-grid{grid-template-columns:1fr}.personnel-filter-grid .search{grid-column:auto}.personnel-row{min-width:0;grid-template-columns:1fr 1fr;padding:12px}.personnel-row.head{display:none}.personnel-row>span:nth-child(3),.personnel-row>span:nth-child(6),.personnel-row>span:nth-child(7){grid-column:1/-1}.personnel-row>span:last-child{text-align:right}.personnel-pagination{justify-content:flex-start}.personnel-detail-panel{margin:0;padding:0 12px 14px}.personnel-detail-head{display:grid}.personnel-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.personnel-detail-tab{padding:10px}.authorization-category-content{padding:2px 0 12px}.personnel-qualification-table{border:0;overflow:visible}.personnel-qualification-table table,.personnel-qualification-table tbody,.personnel-qualification-table tr,.personnel-qualification-table td{display:block;min-width:0;width:100%}.personnel-qualification-table thead{display:none}.personnel-qualification-table tr{border:1px solid var(--line);border-radius:0;margin-bottom:8px;padding:8px;background:#fff}.personnel-qualification-table td{display:grid;grid-template-columns:86px 1fr;gap:8px;border:0;padding:5px}.personnel-qualification-table td::before{content:attr(data-label);color:var(--muted);font-weight:700}}
   </style>
+  <style>
+    /* Information entry only: keep later mobile input rules local to this dialog. */
+    #entryDialog .dialog-body,#entryForm,#entryForm>*{min-width:0;max-width:100%;box-sizing:border-box}
+    #entryForm input,#entryForm select,#entryForm textarea{min-width:0;max-width:100%;box-sizing:border-box}
+    #entryForm .entry-meta{display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
+    #entryForm .entry-meta>label{width:100%;min-width:0;max-width:100%;grid-template-columns:minmax(0,1fr);align-content:start}
+    #entryForm .entry-original-field{display:grid;gap:4px;color:var(--muted);font-size:12px;min-width:0}
+    #entryForm .entry-field-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+    #entryOriginalResize{display:none;border:0;background:transparent;color:var(--brand);font:inherit;padding:0 4px;cursor:pointer}
+    #entryDialog .recipient-tools{grid-template-columns:minmax(0,1fr) minmax(0,128px) auto}
+    #entryDialog .recipient-tools>*{min-width:0;max-width:100%;grid-column:auto}
+    #entryDialog .recipient-tools select{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #entryDate{width:100%;min-inline-size:0;max-inline-size:100%}
+    #entryDate::-webkit-date-and-time-value{min-width:0;text-align:left}
+    #entryDate::-webkit-datetime-edit{min-width:0;padding:0}
+    @media(max-width:760px){
+      #infoFilters .info-month-filter{width:89.5px;max-width:100%;flex:0 0 auto;column-gap:1px;padding-inline:8px}
+      #infoFilters .info-month-filter #monthSelect{flex:1 1 0;min-width:0;max-width:100%;font-size:13px!important}
+    }
+    @media(max-width:520px){
+      #entryForm .entry-meta{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:8px}
+      #entryForm #entryDate,#entryForm #entryCategory,#entryForm #recipientTeamFilter{font-size:13px!important}
+      #entryForm .entry-meta>label{grid-template-rows:auto 44px;align-items:start}
+      #entryForm #entryDate,#entryForm #entryCategory{display:block;width:100%;inline-size:100%;min-width:0;min-inline-size:0;height:44px;min-height:44px;max-height:44px;block-size:44px;box-sizing:border-box;margin:0;padding:8px 6px;line-height:normal}
+      #entryForm #entryDate{-webkit-appearance:none;appearance:none}
+      #entryForm #entryDate::-webkit-date-and-time-value{display:flex;align-items:center;min-inline-size:0;height:100%;margin:0;padding:0}
+      #entryForm #entryDate::-webkit-calendar-picker-indicator{flex:0 0 auto;margin:0;padding:0}
+      #entryDialog .recipient-tools{grid-template-columns:minmax(0,1fr) minmax(0,74px) minmax(0,48px);gap:5px}
+      #entryDialog .recipient-tools input{grid-column:auto;font-size:16px!important;padding:8px 6px}
+      #entryDialog .recipient-tools select,#entryDialog .recipient-tools .btn{width:100%;padding:0 4px}
+      #entryDialog .recipient-tools>*{height:44px;min-height:44px}
+      #entryDialog #recipientToggle{font-size:12px;white-space:nowrap}
+      #entryOriginalResize{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px}
+      #entryForm #entryOriginal{height:144px;min-height:144px;resize:none;overflow:auto;overscroll-behavior:contain}
+      #entryForm.original-expanded #entryOriginal{height:clamp(144px,45dvh,320px)}
+      #entryDialog .dialog-head .icon-btn{flex:0 0 44px;width:44px;height:44px}
+    }
+  </style>
+<!-- Local viewer resources; no third-party preview service. -->
+<link rel="stylesheet" href="/attachment-viewer.css?v=20261012-1">
+<link rel="stylesheet" href="/attendance.css?v=1">
 </head>
 <body class="app-booting">
   <section id="loginPage" class="login-page">
@@ -1629,8 +1723,7 @@
         <label>账号<input id="loginUser" name="username" autocomplete="username" required></label>
         <label>密码<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
         <div class="login-options">
-          <label class="login-check"><input id="rememberPassword" type="checkbox">保存密码</label>
-          <label class="login-check"><input id="autoLogin" type="checkbox">自动登录</label>
+          <label class="login-check"><input id="rememberPassword" type="checkbox">记住账号</label>
         </div>
         <div id="loginMessage" class="status-line" hidden></div>
         <div class="form-actions"><button id="loginSubmit" class="btn" type="submit">登录</button></div>
@@ -1660,7 +1753,7 @@
   <section id="infoPage" class="page">
     <header class="sticky-head"><div class="wrap">
       <div class="titlebar info-titlebar"><div class="subpage-menu-wrap"><button id="subpageMenuBtn" class="menu-btn" type="button" aria-label="页面菜单" aria-expanded="false">☰</button><div id="subpageMenu" class="subpage-menu" hidden><button class="subtab active" type="button" data-subpage="infoListSubpage">信息传达</button><button class="subtab" type="button" data-subpage="statsSubpage">统计分析</button></div></div><input id="searchInput" class="search" type="search" placeholder="搜索：标题、发布人、机号、关键词"><div class="actions"><button id="openEntryBtn" class="btn" type="button" hidden>发布</button></div></div>
-      <div id="infoFilters"><div class="filter-strip"><div id="statusChips" class="chips"></div><label class="select-pill">月份<select id="monthSelect"></select></label></div>
+      <div id="infoFilters"><div class="filter-strip"><div id="statusChips" class="chips"></div><label class="select-pill info-month-filter">月份<select id="monthSelect" aria-label="月份"></select></label></div>
       <div id="categoryChips" class="chips"></div></div>
       <div id="resultStatus" class="status-line">加载中...</div>
     </div></header>
@@ -1687,17 +1780,18 @@
     <section class="data-panel"><strong>功能建设中</strong><div class="status-line">后续接入工时明细、调整、确认和导出时，将分别使用对应的工时权限控制。</div></section>
   </div></main></section>
 
-  <section id="attendancePage" class="page"><main><div class="wrap module-grid">
-    <div class="module-head"><div><h1>考勤管理</h1><p>一级页面及 RBAC 权限已预留，业务功能尚未启用。</p></div></div>
-    <section class="data-panel"><strong>功能建设中</strong><div class="status-line">后续接入考勤记录、异常处理、统计和导出时，将分别使用对应的考勤权限控制。</div></section>
-  </div></main></section>
+  <section id="attendancePage" class="page"><main><div id="attendanceHost" class="attendance" aria-live="polite"></div></main></section>
 
   <section id="settingsPage" class="page"><main><div class="wrap"><div id="settingsPanel" class="module-grid"></div></div></main></section>
 
   <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
 
   <dialog id="entryDialog"><div class="dialog-body"><div class="dialog-head"><h2 id="entryTitleText">新增信息</h2><button class="icon-btn" data-close="entryDialog" type="button">×</button></div><form id="entryForm" class="entry-grid">
-    <input id="entryId" type="hidden"><label class="date-label" for="entryDate">日期<input id="entryDate" type="date" required></label><label>类别<select id="entryCategory"></select></label><label>标题<input id="entryTitle" placeholder="概述原文，作为标题。" required></label><label>原文<textarea id="entryOriginal" required></textarea></label><div><span class="status-line">接收对象</span><div id="recipientPicker" class="recipient-picker"><div class="recipient-tools"><input id="recipientSearch" type="search" placeholder="搜索姓名、班组、工号"><select id="recipientTeamFilter"></select><button id="recipientSelectAll" class="btn secondary" type="button">选择可发送范围内全部人员</button><button id="recipientClearAll" class="btn secondary" type="button">清空</button></div><div id="recipientOptions" class="recipient-options"></div></div></div><label>信息等级<select id="entryPriority"><option>普通</option><option>重要</option><option>紧急</option></select></label>
+    <input id="entryId" type="hidden">
+    <div class="entry-meta"><label class="date-label" for="entryDate">日期<input id="entryDate" type="date" required></label><label>类别<select id="entryCategory"></select></label></div>
+    <label>标题<input id="entryTitle" placeholder="概述原文，作为标题。" required></label>
+    <div class="entry-original-field"><div class="entry-field-heading"><label for="entryOriginal">原文</label><button id="entryOriginalResize" type="button" aria-controls="entryOriginal" aria-expanded="false">放大</button></div><textarea id="entryOriginal" required></textarea></div>
+    <div><span class="status-line">接收对象</span><span id="recipientSelectedCount" class="recipient-selected-count"></span><div id="recipientPicker" class="recipient-picker"><div class="recipient-tools"><input id="recipientSearch" type="search" placeholder="搜索姓名、分类、工号" aria-label="搜索接收人员"><select id="recipientTeamFilter" aria-label="人员分类"></select><button id="recipientToggle" class="btn secondary" type="button" aria-label="清空全部已选人员">选择</button></div><div id="recipientOptions" class="recipient-options"></div></div></div><label>信息等级<select id="entryPriority"><option>普通</option><option>重要</option><option>紧急</option></select></label>
     <div><div class="upload-zone" id="recordDrop"><strong>拖入附件或点击选择</strong><div id="recordHint">可分多次选择或拖入。</div></div><input id="recordFiles" class="file-input" type="file" multiple><div id="recordExistingAttachments" class="existing-attachments" hidden></div><div id="recordPending" class="pending-list"></div></div>
     <div class="form-actions"><button class="btn secondary" type="button" data-close="entryDialog">取消</button><button class="btn" type="submit">保存</button></div>
   </form></div></dialog>
@@ -1724,7 +1818,7 @@
     <div class="form-actions"><button class="btn secondary" type="button" data-close="changePasswordDialog">取消</button><button id="changePasswordSubmit" class="btn" type="submit">确认修改</button></div>
   </form></div></dialog>
 
-  <dialog id="viewerDialog"><div class="dialog-body viewer"><div class="dialog-head"><h2 id="viewerTitle">附件</h2><div class="viewer-tools"><button id="viewerZoomOut" class="icon-btn" type="button" title="缩小">−</button><button id="viewerZoomReset" class="viewer-zoom-text" type="button">100%</button><button id="viewerZoomIn" class="icon-btn" type="button" title="放大">＋</button><a id="viewerDownload" class="btn secondary viewer-download" href="#" download hidden>下载</a><button class="icon-btn" data-close="viewerDialog" type="button">×</button></div></div><div id="viewerContent" class="viewer-content"></div></div></dialog>
+  <dialog id="viewerDialog" aria-labelledby="viewerTitle"><div class="dialog-body viewer"><header class="viewer-header"><div class="viewer-heading"><h2 id="viewerTitle">附件</h2><a id="viewerDownload" class="viewer-download" href="#" download hidden aria-label="下载原附件">下载</a><button type="button" data-close="viewerDialog" aria-label="关闭附件预览">×</button></div><div class="viewer-controls"><div id="viewerZoomTools"><button id="viewerZoomOut" type="button" data-viewer-action="out" title="缩小" aria-label="缩小">−</button><button id="viewerZoomReset" type="button" data-viewer-action="reset" title="恢复100%">100%</button><button id="viewerZoomIn" type="button" data-viewer-action="in" title="放大" aria-label="放大">＋</button><button id="viewerFit" type="button" data-viewer-action="fit" title="适应宽度">适宽</button></div><div id="viewerPageTools" hidden><button id="viewerPrevious" type="button" data-viewer-action="prev" aria-label="上一页">‹</button><span id="viewerPageLabel" aria-live="polite">1 / …</span><button id="viewerNext" type="button" data-viewer-action="next" aria-label="下一页">›</button></div></div></header><div id="viewerContent" class="viewer-content"></div></div></dialog>
   <dialog id="feedbackDialog"><div class="dialog-body"><div class="dialog-head"><h2 id="feedbackTitle">反馈明细</h2><button class="icon-btn" data-close="feedbackDialog" type="button">×</button></div><div id="feedbackBody"></div></div></dialog>
   <div id="printArea" class="print-area" hidden></div>
 

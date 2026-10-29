@@ -25,6 +25,19 @@ set_app_version() {
 [[ -f "$ARCHIVE.sha256" ]] || { echo "Release checksum not found: $ARCHIVE.sha256" >&2; exit 1; }
 (cd "$(dirname "$ARCHIVE")" && sha256sum -c "$(basename "$ARCHIVE").sha256")
 
+ARCHIVE_LIST="$(mktemp)"
+if ! tar -tzf "$ARCHIVE" > "$ARCHIVE_LIST"; then
+  rm -f "$ARCHIVE_LIST"
+  echo "Release archive cannot be listed" >&2
+  exit 1
+fi
+if grep -Eq '(^/|(^|/)\.\.(/|$))' "$ARCHIVE_LIST"; then
+  rm -f "$ARCHIVE_LIST"
+  echo "Release archive contains unsafe paths" >&2
+  exit 1
+fi
+rm -f "$ARCHIVE_LIST"
+
 "$APP_ROOT/scripts/backup.sh"
 if [[ ! -d "$RELEASE_DIR" ]]; then
   mkdir -p "$STAGE_DIR"

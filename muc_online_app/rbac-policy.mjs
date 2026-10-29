@@ -49,7 +49,7 @@ const maintenanceV2 = [
   ["maintenance.assignment.manage", "维修派工与换人", "maintenance"],
   ["maintenance.hours.adjust", "调整未确认工时", "maintenance"],
   ["maintenance.review.view", "查看维修复核", "maintenance"],
-  ["maintenance.review.submit", "复核和退回维修报工", "maintenance"],
+  ["maintenance.review.submit", "复核维修报工", "maintenance"],
   ["maintenance.stats.self.view", "查看本人维修统计", "maintenance"],
   ["maintenance.stats.manage.view", "查看管理范围维修统计", "maintenance"]
 ];
@@ -167,7 +167,7 @@ export const RBAC_ROLE_DESCRIPTIONS = {
   manager: "包含工作者和派工人员权限；另可发布信息、维护人员一般资料和进行能力调配。",
   addon_capability_readonly: "可选只读能力看板。",
   addon_fixed_readonly: "查看固化项目。",
-  addon_maintenance_review: "查看、复核和退回维修报工。",
+  addon_maintenance_review: "查看并复核维修报工。",
   addon_hours_confirm: "确认维修工时和架次。",
   addon_maintenance_import: "导入维修机会。",
   addon_maintenance_delete: "删除未确认维修机会。",

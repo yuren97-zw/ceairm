@@ -9,10 +9,12 @@ import { DatabaseSync } from "node:sqlite";
 import { postgresConnectionOptions } from "./postgres-connection.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
+const REQUEST_TIMEOUT_MS = 120000;
 export const requestQueryStats = new AsyncLocalStorage();
 
 function sqliteDatabase(dbPath) {
   const sqlite = new DatabaseSync(dbPath);
+  sqlite.exec("pragma busy_timeout=5000");
   sqlite.kind = "sqlite";
   return sqlite;
 }
@@ -91,8 +93,10 @@ function instrumentDatabase(database) {
 class PostgresSyncDatabase {
   constructor(databaseUrl) {
     this.kind = "postgres";
+    this.failure = null;
+    this.requestCounter = 0;
     this.worker = new Worker(__filename, { workerData: { databaseUrl } });
-    this.worker.on("error", error => { throw error; });
+    this.worker.on("error", error => { this.failure = error; });
     this.worker.unref();
   }
 
@@ -109,14 +113,28 @@ class PostgresSyncDatabase {
   }
 
   _request(mode, sql, params) {
+    if (this.failure) {
+      const error = new Error('数据库连接异常');
+      error.status = 503;
+      throw error;
+    }
     const sab = new SharedArrayBuffer(4);
     const signal = new Int32Array(sab);
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}-${++this.requestCounter}`;
     const file = path.join(os.tmpdir(), `muc-pg-${id}.json`);
     this.worker.postMessage({ mode, sql, params, file, sab });
-    Atomics.wait(signal, 0, 0);
-    const raw = fs.readFileSync(file, "utf8");
-    fs.rmSync(file, { force: true });
+    if (Atomics.wait(signal, 0, 0, REQUEST_TIMEOUT_MS) === 'timed-out') {
+      // Never reuse a connection with an unknown transaction outcome.
+      this.failure = new Error('数据库查询超时');
+      this.worker.terminate();
+      fs.rmSync(file, { force: true });
+      const error = new Error('数据库查询超时，请稍后重试');
+      error.status = 503;
+      throw error;
+    }
+    let raw;
+    try { raw = fs.readFileSync(file, 'utf8'); }
+    finally { fs.rmSync(file, { force: true }); }
     const payload = JSON.parse(raw);
     if (!payload.ok) {
       const error = new Error(payload.error || "PostgreSQL query failed");
@@ -182,9 +200,9 @@ if (!isMainThread) {
         else if (mode === "all") result = response.rows;
         else result = { changes: response.rowCount || 0 };
       }
-      await fsp.writeFile(file, JSON.stringify({ ok: true, result }));
+      await fsp.writeFile(file, JSON.stringify({ ok: true, result }), { flag: 'wx', mode: 0o600 });
     } catch (error) {
-      await fsp.writeFile(file, JSON.stringify({ ok: false, error: error.message, code: error.code }));
+      await fsp.writeFile(file, JSON.stringify({ ok: false, error: error.message, code: error.code }), { flag: 'wx', mode: 0o600 });
     } finally {
       Atomics.store(signal, 0, 1);
       Atomics.notify(signal, 0);

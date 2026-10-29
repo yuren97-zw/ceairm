@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>附件预览隔离验收</title><link rel="stylesheet" href="/attachment-viewer.css"><style>body{font-family:system-ui;margin:16px;background:#f3f6fa}dialog{padding:0;border:0;border-radius:10px}dialog::backdrop{background:#0005}button{padding:10px}a{color:#0f6b7d}</style></head><body><h1>附件预览隔离验收</h1><p>仅使用合成附件，不读写业务数据。</p><button id="pdf">两页PDF</button><button id="image">图片</button><button id="broken">损坏PDF</button><button id="race">快速切换</button><button id="doc">简化文档</button><script type="module">
+import { AttachmentViewer } from '/attachment-viewer.mjs';
+const index = await (await fetch('/index.html')).text();
+document.body.append(new DOMParser().parseFromString(index,'text/html').querySelector('#viewerDialog'));
+function pdfFixture(){
+ const contents=['BT /F1 24 Tf 50 720 Td (Attachment preview - Page 1) Tj ET','BT /F1 24 Tf 50 400 Td (Landscape - Page 2) Tj ET'];
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',...contents.map(x=>`<< /Length ${x.length} >>\nstream\n${x}\nendstream`)];
+ let output='%PDF-1.4\n';const offsets=[0];objects.forEach((x,i)=>{offsets.push(output.length);output+=`${i+1} 0 obj\n${x}\nendobj\n`;});const xref=output.length;output+=`xref\n0 8\n0000000000 65535 f \n${offsets.slice(1).map(x=>String(x).padStart(10,'0')+' 00000 n ').join('\n')}\ntrailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+ return URL.createObjectURL(new Blob([output],{type:'application/pdf'}));
+}
+const pdf={name:'信息传达附件—超长标题用于检查手机顶部工具栏和关闭按钮不会被挤出屏幕.pdf',type:'application/pdf',url:pdfFixture()};
+const image={name:'图片附件.svg',type:'image/svg+xml',url:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000"><rect width="1600" height="1000" fill="#eef6fa"/><rect x="10" y="10" width="1580" height="980" fill="none" stroke="#0f6b7d" stroke-width="20"/><text x="100" y="200" font-size="80" fill="#0f6b7d">Image preview</text><text x="1200" y="900" font-size="60">Edge</text></svg>')};
+const viewer=new AttachmentViewer({source:async file=>{if(file.slow)await new Promise(r=>setTimeout(r,500));return file.url;},download:file=>file.url,escape:s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;'),preview:async()=>'<div>简化预览，完整格式请下载原文件。</div><table><tr><td>测试内容</td></tr></table>'});
+document.querySelector('[data-close]').onclick=()=>viewer.dialog.close();
+document.querySelector('#pdf').onclick=()=>viewer.open(pdf);
+document.querySelector('#image').onclick=()=>viewer.open(image);
+document.querySelector('#broken').onclick=()=>viewer.open({name:'损坏.pdf',type:'application/pdf',url:URL.createObjectURL(new Blob(['invalid']))});
+document.querySelector('#race').onclick=()=>{viewer.open({...pdf,slow:true});viewer.open(image);};
+document.querySelector('#doc').onclick=()=>viewer.open({name:'说明.docx',url:'data:text/plain,fixture'});
+</script></body></html>

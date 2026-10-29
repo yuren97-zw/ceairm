@@ -1,0 +1,42 @@
+#viewerDialog{width:min(96vw,1120px);max-width:96vw;max-height:94dvh;padding:0}
+#viewerDialog .viewer{padding:0;width:100%;height:min(92dvh,900px);max-height:92dvh;overflow:hidden;display:flex;flex-direction:column}
+#viewerDialog .viewer-header{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;padding:4px 8px;background:#fff;border-bottom:1px solid var(--line);flex:none;min-width:0}
+#viewerDialog .viewer-heading{display:flex;align-items:center;flex:1 1 150px;min-width:0;gap:4px}
+#viewerDialog #viewerTitle{flex:1;min-width:0;margin:0;font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#viewerDialog .viewer-controls{display:flex;align-items:center;justify-content:flex-end;flex:0 0 auto;gap:2px;min-width:0}
+#viewerDialog .viewer-controls>div{display:flex;align-items:center;gap:2px}
+#viewerDialog [hidden]{display:none!important}
+#viewerDialog button,#viewerDialog .viewer-download{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 6px;border:0;background:transparent;color:#526779;border-radius:6px;font-size:12px;white-space:nowrap;cursor:pointer;text-decoration:none;touch-action:manipulation}
+#viewerDialog button:hover,#viewerDialog .viewer-download:hover{background:#edf3f7}
+#viewerDialog button:disabled{opacity:.35;cursor:default}
+#viewerDialog #viewerPageLabel{font-size:11px;color:#64748b;white-space:nowrap;min-width:36px;text-align:center}
+#viewerDialog #viewerZoomReset{min-width:43px}
+#viewerDialog .viewer-content{padding:10px;min-width:0;min-height:0;flex:1;overflow:auto;background:#edf1f5;overscroll-behavior:contain;position:relative}
+#viewerDialog .viewer-interactive{touch-action:none;cursor:grab}
+#viewerDialog .viewer-interactive:active{cursor:grabbing}
+#viewerDialog .viewer-stage{display:flex;justify-content:flex-start;align-items:flex-start;width:max-content;min-width:100%;min-height:100%}
+#viewerDialog .viewer-stage>canvas,#viewerDialog .viewer-stage>img{display:block;flex:none;margin:auto;max-width:none;max-height:none;border-radius:0;box-shadow:0 1px 5px #0002;object-fit:contain}
+#viewerDialog .viewer-pdf-stage>canvas{margin:0 auto}
+#viewerDialog .viewer-message{font-size:13px;padding:16px;line-height:1.5;background:#fff;border-radius:8px}
+#viewerDialog .viewer-simple{min-width:0;transform-origin:top left}
+#viewerDialog .pptx-stage{width:max-content;min-width:100%;display:flex;align-items:flex-start;justify-content:flex-start}
+#viewerDialog .pptx-slide{box-sizing:border-box;width:900px;flex:none;margin:0 auto;padding:18px 24px;background:#fff;color:#1e293b;box-shadow:0 1px 5px #0002;font-size:18px;line-height:1.5;overflow-wrap:anywhere}
+#viewerDialog .pptx-slide p{margin:8px 0;white-space:pre-wrap}
+#viewerDialog .pptx-slide .pptx-notice{font-size:15px;color:#64748b;border-bottom:1px solid #e2e8f0;padding-bottom:6px}
+#viewerDialog .pptx-slide img{display:block;max-width:100%;max-height:900px;width:auto;height:auto;min-height:0;object-fit:contain;margin:10px auto}
+#viewerDialog .pptx-table{max-width:100%;overflow:auto}
+#viewerDialog .pptx-table table{border-collapse:collapse;width:100%;table-layout:fixed}
+#viewerDialog .pptx-table td{border:1px solid #dbe3ec;padding:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+#viewerDialog .viewer-simple video{width:100%;min-height:0;height:auto;max-height:75dvh}
+@media(max-width:680px){
+  #viewerDialog{width:96vw;max-width:96vw}
+  #viewerDialog .viewer-header{padding:0 4px}
+  #viewerDialog .viewer-heading{flex:1 1 100%}
+  #viewerDialog .viewer-controls{margin-left:auto}
+  #viewerDialog .viewer-controls,#viewerDialog .viewer-controls>div{gap:0}
+  #viewerDialog button,#viewerDialog .viewer-download{height:44px;min-width:44px;padding:0 2px;font-size:11px}
+  #viewerDialog #viewerPageLabel{min-width:35px;font-size:10px}
+  #viewerDialog .viewer-content{padding:10px}
+  #viewerDialog .pptx-slide{font-size:16px;padding:12px}
+  #viewerDialog .pptx-slide .pptx-notice{font-size:12px}
+}

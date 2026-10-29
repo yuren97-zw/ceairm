@@ -1,0 +1,75 @@
+[
+  {
+    "date": "2026-09-21",
+    "day": {
+      "approve_list": [],
+      "attendance_result_list": [
+        {
+          "check_type": "OnDuty",
+          "plan_check_time": "2026-09-21 19:40:00",
+          "plan_id": "098",
+          "record_id": "record-sample",
+          "source_type": "USER",
+          "time_result": "Normal",
+          "user_check_time": "2026-09-21 18:01:57"
+        },
+        {
+          "check_type": "OffDuty",
+          "plan_check_time": "2026-09-22 08:30:00",
+          "plan_id": "099",
+          "source_type": "SYSTEM",
+          "time_result": "NotSigned",
+          "user_check_time": "2026-09-22 08:30:00"
+        }
+      ],
+      "check_record_list": [
+        {
+          "record_id": "record-sample",
+          "source_type": "USER",
+          "user_check_time": "2026-09-21 18:01:57"
+        }
+      ],
+      "userid": "sample-user",
+      "work_date": "2026-09-21 00:00:00"
+    },
+    "schedules": [
+      {
+        "check_type": "OnDuty",
+        "id": "098",
+        "is_rest": "N",
+        "plan_check_time": "2026-09-21 19:40:00",
+        "time_zone_id": "Asia/Shanghai",
+        "work_date": "2026-09-21 00:00:00",
+        "userid": "sample-user"
+      },
+      {
+        "check_type": "OffDuty",
+        "id": "099",
+        "is_rest": "N",
+        "plan_check_time": "2026-09-22 08:30:00",
+        "time_zone_id": "Asia/Shanghai",
+        "work_date": "2026-09-21 00:00:00",
+        "userid": "sample-user"
+      }
+    ]
+  },
+  {
+    "date": "2026-09-22",
+    "day": {
+      "approve_list": [],
+      "attendance_result_list": [],
+      "check_record_list": [],
+      "userid": "sample-user",
+      "work_date": "2026-09-22 00:00:00"
+    },
+    "schedules": [
+      {
+        "id": "070",
+        "is_rest": "Y",
+        "time_zone_id": "Asia/Shanghai",
+        "work_date": "2026-09-22 00:00:00",
+        "userid": "sample-user"
+      }
+    ]
+  }
+]

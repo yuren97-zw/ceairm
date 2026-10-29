@@ -1,8 +1,16 @@
+import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
+import {attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
+import { createAttendanceService } from './attendance-service.mjs';
+import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
 import {createImportWorkspace,IMPORT_WORKSPACE_SCHEMA} from './import-workspace.mjs';
 import { importHistoryContext } from './personnel-import-history.mjs';
 import {organizationLanes,resolveOrganizationPath} from './organization-lanes.mjs';
 import http from "node:http";
+import { dispatchImportIdentity, dispatchImportAssignments } from './maintenance-dispatch-import.mjs';
+import { installInfoSync, createInfoSync } from './info-sync.mjs';
+import { normalizeAircraftHours, resolveAircraftHours } from "./maintenance-aircraft-hours.mjs";
 import { createCapabilityService } from "./capability-service.mjs";
 import {
   RBAC_PERMISSION_DEFINITIONS,
@@ -20,6 +28,7 @@ import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import {safeAttachmentMime,isInlineSafeName,validateUploadContent} from './attachment-policy.mjs';
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
@@ -29,6 +38,7 @@ import { createLoginProtection, loginAddress } from "./login-protection.mjs";
 import { createAuthorizationProjects } from "./authorization-projects.mjs";
 import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./personnel-deletion.mjs";
 
+if (process.env.ATTENDANCE_ENV_FILE) process.loadEnvFile(process.env.ATTENDANCE_ENV_FILE);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isCodexWorktree = __dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`);
 if (isCodexWorktree && process.env.MUC_NO_LISTEN !== "1") {
@@ -70,9 +80,20 @@ const requestContext = new AsyncLocalStorage();
 const requestUser = () => { const req = requestContext.getStore()?.req; return req ? currentUser(req) : null; };
 const maintenanceEventClients = new Set();
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const INFO_UPLOAD_BYTES = 10 * 1024 * 1024;
+const uploadLimit = ownerType => ownerType === 'record' ? INFO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+const uploadLimitMessage = ownerType => ownerType === 'record' ? '单个附件不能超过 10MiB（约10MB）' : '单个附件不能超过100MB';
+let infoSync;
+let infoPushTimer=null;
+function scheduleInfoSync(){
+  if(infoPushTimer || !infoEventClients.size)return;
+  infoPushTimer=setTimeout(()=>{infoPushTimer=null;if(infoEventClients.size)pumpInfoSync();},20);
+  infoPushTimer.unref?.();
+}
+const infoEventClients = new Set();
 const MAX_FILES_PER_REQUEST = 10;
 const MAX_JSON_BYTES = 5 * 1024 * 1024;
-const ALLOWED_ATTACHMENT_EXTS = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "xlsx", "xls", "docx", "doc", "mp4", "mov", "m4v", "webm", "avi", "mp3", "wav", "m4a", "aac"]);
+const ALLOWED_ATTACHMENT_EXTS = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "xlsx", "xls", "docx", "doc", "pptx", "mp4", "mov", "m4v", "webm", "avi", "mp3", "wav", "m4a", "aac"]);
 const BLOCKED_ATTACHMENT_EXTS = new Set(["html", "htm", "svg", "js", "mjs"]);
 const SUPER_ACCOUNT_ID = "54002010";
 const INCORRECT_SUPER_ACCOUNT_ID = "5400210";
@@ -288,6 +309,7 @@ function hasAnyRbac(user, permissions) {
 }
 
 function dataScopeAllowsUser(user, targetAccountId, module = "info") {
+ if(module==='info' && user?.infoAllowedAccounts)return user.infoAllowedAccounts.has(targetAccountId);
  const account=db.prepare("select person_id from users where id=?").get(targetAccountId || "");
  return !!account?.person_id && personnelAccess.allows(user,module,account.person_id);
 }
@@ -851,6 +873,8 @@ async function initDb() {
       aircraft_no text,
       aircraft_type text,
       stand text,
+      location_id text,
+      location_name_snapshot text,
       planned_arrival text,
       planned_departure text,
       work_type text,
@@ -864,6 +888,13 @@ async function initDb() {
       source text,
       created_by text,
       updated_by text,
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists maintenance_work_locations(
+      id text primary key,
+      name text not null unique,
+      status text not null default 'active',
       created_at text not null,
       updated_at text not null
     );
@@ -1079,8 +1110,16 @@ async function initDb() {
   ensureColumn("records", "imported_read", "integer default 0");
   ensureColumn("maintenance_flights", "report_finalized_by", "text");
   ensureColumn("maintenance_flights", "departure_flight_no", "text");
+  ensureColumn("maintenance_flights", "location_id", "text");
+  ensureColumn("maintenance_flights", "location_name_snapshot", "text");
+  for (const [id, name] of [["maintenance-location-qingdao", "青岛"], ["maintenance-location-yanji", "延吉"], ["maintenance-location-shenyang", "沈阳"]]) {
+    db.prepare("insert or ignore into maintenance_work_locations(id,name,status,created_at,updated_at) values(?,?,'active',?,?)").run(id, name, now(), now());
+  }
+  db.prepare("update maintenance_flights set location_id='maintenance-location-qingdao',location_name_snapshot='青岛' where location_id is null or trim(location_id)=''").run();
+  ensureColumn("maintenance_flights", "routine_hours_snapshot", "text");
   ensureColumn("maintenance_flights", "report_finalized_by_name", "text");
   ensureColumn("maintenance_flights", "report_finalized_at", "text");
+  ensureColumn("maintenance_flights", "report_finalized_mode", "text");
   ensureColumn("maintenance_flights", "archived_at", "text");
   ensureColumn("maintenance_flights", "routine_electronic_signed", "integer");
   ensureColumn("maintenance_flights", "nonroutine_electronic_signed", "integer");
@@ -1117,6 +1156,7 @@ async function initDb() {
   migrateMaintenanceSubtaskRoles();
   normalizeMaintenanceTowAndPrimaryRole();
   normalizeMaintenanceNonroutineCombinationRules();
+  freezeLegacyMaintenanceHours();
   migrateMaintenanceReleaseResults();
   migrateMaintenanceThreeLineReports();
   reconcileActiveMaintenanceStatuses();
@@ -1295,7 +1335,7 @@ function maintenanceRoutineRuleName(opportunity, role) {
 }
 
 function maintenanceRulesResponse() {
-  return db.prepare("select * from maintenance_hour_rules order by rule_type,name").all().map(row => {
+  return db.prepare("select * from maintenance_hour_rules where rule_type<>'workType' order by rule_type,name").all().map(row => {
     if (row.rule_type === "nonroutineCombinationRatio") {
       const [combination, role] = row.name.split("::");
       return { ...row, combination, role };
@@ -1844,6 +1884,7 @@ function publicRecord(row, user) {
   return {
     id: row.id,
     date: row.date,
+    serverVisible:canViewRecord(user,row),
     publisher: row.publisher,
     publisherId: row.publisher_id || "",
     category: row.category,
@@ -1852,7 +1893,7 @@ function publicRecord(row, user) {
     original: row.original,
     sourceSet: row.source_set || "",
     attachments: attachments("record", row.id),
-    recipients: canSeeFullFeedback ? recordRecipients : recordRecipients.filter(person => person.id === user.id),
+    recipients: recordRecipients.filter(person => person.id === user.id || canSeeFullFeedback && dataScopeAllowsUser(user,person.id,'info')),
     receipts: canSeeFullFeedback ? recordReceipts : recordReceipts.filter(receipt => receipt.userId === user.id),
     deadline: row.deadline || deadlineFor(row.date),
     priority: row.priority || "普通",
@@ -1866,7 +1907,7 @@ function publicRecord(row, user) {
   };
 }
 
-function publicRecords(rows, user) {
+function publicRecords(rows, user, {summary=false}={}) {
   if (!rows.length) return { records: [], receipts: [] };
   const ids = rows.map(row => row.id);
   const placeholders = ids.map(() => "?").join(",");
@@ -1874,11 +1915,11 @@ function publicRecords(rows, user) {
       coalesce(u.name,rr.name) as name,coalesce(u.department,rr.department,'未设置') as department,
       coalesce(u.team,rr.team,'未设置') as team
     from record_recipients rr left join users u on u.id=rr.user_id
-    where rr.record_id in (${placeholders}) order by rr.record_id,rr.user_id`).all(...ids);
+    where rr.record_id in (${placeholders}) ${summary?'and rr.user_id=?':''} order by rr.record_id,rr.user_id`).all(...ids,...(summary?[user.id]:[]));
   const receiptRows = db.prepare(`select r.record_id as recordId,r.user_id as userId,r.read_at as readAt,
       r.is_overdue as isOverdue,r.remind_count as remindCount,r.last_reminded_at as lastRemindedAt
     from read_receipts r join record_recipients rr on rr.record_id=r.record_id and rr.user_id=r.user_id
-    where r.record_id in (${placeholders})`).all(...ids).map(item => ({ ...item, isOverdue: !!item.isOverdue }));
+    where r.record_id in (${placeholders}) ${summary?'and r.user_id=?':''}`).all(...ids,...(summary?[user.id]:[])).map(item => ({ ...item, isOverdue: !!item.isOverdue }));
   const attachmentRows = db.prepare(`select * from attachments where owner_type='record' and owner_id in (${placeholders}) order by created_at`).all(...ids);
   const favoriteRows = db.prepare(`select record_id from favorites where user_id=? and record_id in (${placeholders})`).all(user.id, ...ids);
   const recipientsByRecord = groupedRows(recipientRows, "record_id");
@@ -1886,7 +1927,13 @@ function publicRecords(rows, user) {
   const attachmentsByRecord = groupedRows(attachmentRows, "owner_id");
   const favorites = new Set(favoriteRows.map(item => item.record_id));
   const canSeeFullFeedback = hasAnyRbac(user, ["info.receipt.manage", "info.stats.read"]);
-  const visibleReceipts = canSeeFullFeedback ? receiptRows : receiptRows.filter(item => item.userId === user.id);
+  const allowedIds=canSeeFullFeedback?[...(user.infoAllowedAccounts || [])]:[];
+  if(!allowedIds.includes(user.id))allowedIds.push(user.id);
+  const metrics=summary?new Map(db.prepare(`select rr.record_id,count(*) as total,
+    sum(case when coalesce(r.read_at,'')<>'' then 1 else 0 end) as read
+    from record_recipients rr left join read_receipts r on r.record_id=rr.record_id and r.user_id=rr.user_id
+    where rr.record_id in (${placeholders}) and rr.user_id in (${allowedIds.map(()=>'?').join(',')}) group by rr.record_id`).all(...ids,...allowedIds).map(row=>[row.record_id,row])):new Map();
+  const visibleReceipts = receiptRows.filter(item => item.userId === user.id || canSeeFullFeedback && dataScopeAllowsUser(user,item.userId,'info'));
   return {
     receipts: visibleReceipts,
     records: rows.map(row => {
@@ -1895,6 +1942,8 @@ function publicRecords(rows, user) {
       return {
         id: row.id,
         date: row.date,
+        serverVisible:canViewRecord(user,row),
+        ...(summary?{feedbackSummary:(()=>{const m=metrics.get(row.id)||{},total=Number(m.total||0),read=Number(m.read||0);return{total,read,unread:total-read,overdue:parseRecordDate(row.deadline)?.getTime()<Date.now()?total-read:0};})()}:{}),
         publisher: row.publisher,
         publisherId: row.publisher_id || "",
         category: row.category,
@@ -1903,8 +1952,8 @@ function publicRecords(rows, user) {
         original: row.original,
         sourceSet: row.source_set || "",
         attachments: (attachmentsByRecord.get(row.id) || []).map(item => publicAttachment(item, "record", row.id)),
-        recipients: canSeeFullFeedback ? recordRecipients : recordRecipients.filter(person => person.id === user.id),
-        receipts: canSeeFullFeedback ? recordReceipts : recordReceipts.filter(receipt => receipt.userId === user.id),
+        recipients: recordRecipients.filter(person => person.id === user.id || canSeeFullFeedback && dataScopeAllowsUser(user,person.id,'info')),
+        receipts: recordReceipts.filter(receipt => visibleReceipts.includes(receipt)),
         deadline: row.deadline || deadlineFor(row.date),
         priority: row.priority || "普通",
         publishStatus: row.publish_status || "已发布",
@@ -2069,8 +2118,43 @@ function normalizeMaintenanceAssignments(ownerType, owner, assignments) {
 }
 
 const maintenanceOpportunityCategories = ["航前", "航后", "航后/航前", "短停", "热备机", "停场", "附加", "其他", "三方短停", "三方航后", "三方航前"];
+const defaultMaintenanceLocationId = "maintenance-location-qingdao";
 
-function maintenanceFlightPayload(input = {}) {
+function maintenanceWorkLocations() {
+  return db.prepare("select * from maintenance_work_locations order by name,id").all().map(row => ({ id: row.id, name: row.name, status: row.status }));
+}
+
+function maintenanceLocationName(row) {
+  if (!row?.location_id) return "青岛";
+  return db.prepare("select name from maintenance_work_locations where id=?").get(row.location_id)?.name || row.location_name_snapshot || "青岛";
+}
+
+function maintenanceLocationForInput(input, existing = null) {
+  const provided = Object.keys(input).some(key => ["locationId", "location_id", "作业地点", "locationName"].includes(key));
+  if (!provided && existing?.location_id) return { id: existing.location_id, name: maintenanceLocationName(existing) };
+  const raw = [input.locationId, input.location_id, input["作业地点"], input.locationName].map(value => String(value ?? "").trim()).find(Boolean) || defaultMaintenanceLocationId;
+  const row = db.prepare("select * from maintenance_work_locations where id=? or name=?").get(raw, raw);
+  if (!row || row.status !== "active" && row.id !== existing?.location_id) throw maintenanceReviewError(`作业地点“${raw}”不存在或已停用，请选择有效地点`);
+  return { id: row.id, name: row.name };
+}
+
+function maintenanceFlightValidationError(payload) {
+  const date = normalizeMaintenanceStatsDate(payload.date);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(date + "T00:00:00Z") : null;
+  if (!parsed || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date || !payload.aircraftNo) return "航班日期或机号无效";
+  if (["航前", "三方航前"].includes(payload.workKind) && !payload.departureFlightNo) return "航前请填写出港航班号";
+  if (["航后", "三方航后"].includes(payload.workKind) && !payload.flightNo) return "航后进港航班号无效，请填写进港航班号";
+  if (["短停", "三方短停", "航后/航前"].includes(payload.workKind) && !payload.flightNo && !payload.departureFlightNo) return "进港或出港航班号至少填写一个";
+  return "";
+}
+
+function maintenanceDisplayFlightNo(row) {
+  return ["航前", "三方航前"].includes(row.work_kind || row.work_type)
+    ? row.departure_flight_no || row.flight_no || ""
+    : row.flight_no || row.departure_flight_no || "";
+}
+
+function maintenanceFlightPayload(input = {}, existing = null) {
   const rawOpportunity = String(input.maintenanceOpportunity || input.maintenance_opportunity || input.workKind || input.work_kind || input["维修机会"] || input.workType || input.work_type || input["工作类型"] || input["工作种类"] || "航后").trim();
   const maintenanceOpportunity = maintenanceOpportunityCategories.includes(rawOpportunity) ? rawOpportunity : "其他";
   return {
@@ -2079,8 +2163,9 @@ function maintenanceFlightPayload(input = {}) {
     departureFlightNo: ["departureFlightNo", "departure_flight_no", "出港航班号"].some(key => Object.hasOwn(input, key))
       ? String(input.departureFlightNo ?? input.departure_flight_no ?? input["出港航班号"] ?? "").trim() : undefined,
     aircraftNo: String(input.aircraftNo || input.aircraft_no || input["机号"] || "").trim(),
-    aircraftType: String(input.aircraftType || input.aircraft_type || input["机型"] || "A320").trim(),
+    aircraftType: String(input.aircraftType || input.aircraft_type || input["机型"] || "").trim().toUpperCase(),
     stand: String(input.stand || input["机位"] || "").trim(),
+    location: maintenanceLocationForInput(input, existing),
     plannedArrival: String(input.plannedArrival || input.planned_arrival || input["计划落地时间"] || "").trim(),
     plannedDeparture: String(input.plannedDeparture || input.planned_departure || input["计划起飞时间"] || "").trim(),
     workType: maintenanceOpportunity,
@@ -2218,6 +2303,20 @@ function maintenanceWorkReport(flightId) {
     finalizedAt: row?.finalized_at || "",
     entries
   };
+}
+
+function touchMaintenanceFlight(flightId) {
+  const row = db.prepare("select updated_at from maintenance_flights where id=?").get(flightId);
+  if (!row) return;
+  const stamp = new Date(Math.max(Date.now(), (Date.parse(row.updated_at) || 0) + 1)).toISOString();
+  db.prepare("update maintenance_flights set updated_at=? where id=?").run(stamp, flightId);
+}
+
+function assertMaintenanceFlightVersion(flightId, payload) {
+  const row = db.prepare("select updated_at from maintenance_flights where id=?").get(flightId);
+  if (!payload?.expectedUpdatedAt || payload.expectedUpdatedAt !== row?.updated_at) {
+    throw Object.assign(maintenanceReviewError("维修机会已更新，请刷新后重试", 409), { code: "MAINTENANCE_REPORT_CONFLICT" });
+  }
 }
 
 function maintenanceTransaction(callback, reportFlightId = "") {
@@ -2696,7 +2795,10 @@ function publicMaintenanceFlight(row) {
     departureFlightNo: row.departure_flight_no || "",
     aircraftNo: row.aircraft_no || "",
     aircraftType: row.aircraft_type || "",
+    routineHoursRule: maintenanceAircraftResolution(row),
     stand: row.stand || "",
+    locationId: row.location_id || "",
+    locationName: maintenanceLocationName(row),
     plannedArrival: row.planned_arrival || "",
     plannedDeparture: row.planned_departure || "",
     workType: row.work_type || "",
@@ -2713,6 +2815,7 @@ function publicMaintenanceFlight(row) {
     reportFinalizedBy: row.report_finalized_by || "",
     reportFinalizedByName: row.report_finalized_by_name || "",
     reportFinalizedAt: row.report_finalized_at || "",
+    reportFinalizationMode: row.report_finalized_mode || "manual",
     archivedAt: row.archived_at || "",
     hours: maintenanceHours("flight", row.id),
     sorties: maintenanceSorties("flight", row.id),
@@ -2871,6 +2974,8 @@ function publicMaintenanceBatch(rows, scope, user) {
       aircraftNo: row.aircraft_no || "",
       aircraftType: row.aircraft_type || "",
       stand: row.stand || "",
+      locationId: row.location_id || "",
+      locationName: maintenanceLocationName(row),
       plannedArrival: row.planned_arrival || "",
       plannedDeparture: row.planned_departure || "",
       workType: row.work_type || "",
@@ -2887,6 +2992,7 @@ function publicMaintenanceBatch(rows, scope, user) {
       reportFinalizedBy: row.report_finalized_by || "",
       reportFinalizedByName: row.report_finalized_by_name || "",
       reportFinalizedAt: row.report_finalized_at || "",
+      reportFinalizationMode: row.report_finalized_mode || "manual",
       archivedAt: row.archived_at || "",
       hours: [],
       sorties: [],
@@ -2922,6 +3028,7 @@ function publicMaintenanceBatch(rows, scope, user) {
 function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
   const conditions = [];
   const params = [];
+  if (filters.flightId) { conditions.push("maintenance_flights.id=?"); params.push(filters.flightId); }
   if (!(maintenanceCanManage(user) && scope !== "execute" && scope !== "data")) {
     conditions.push(`exists (select 1 from maintenance_assignments visible_assignment
       where visible_assignment.flight_id=maintenance_flights.id and visible_assignment.person_id=?
@@ -2948,6 +3055,10 @@ function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
   }
   if (filters.dateFrom) { conditions.push("date>=?"); params.push(filters.dateFrom); }
   if (filters.dateTo) { conditions.push("date<=?"); params.push(filters.dateTo); }
+  if (filters.locationIds?.length) {
+    conditions.push(`location_id in (${filters.locationIds.map(() => "?").join(",")})`);
+    params.push(...filters.locationIds);
+  }
   if (filters.opportunities?.length) {
     conditions.push(`coalesce(nullif(work_kind,''),work_type) in (${filters.opportunities.map(() => "?").join(",")})`);
     params.push(...filters.opportunities);
@@ -2971,11 +3082,12 @@ function maintenanceVisibleFlights(user, scope = "dispatch", filters = {}) {
 
 function maintenanceOwner(ownerType, ownerId) {
   if (ownerType === "flight") return db.prepare("select * from maintenance_flights where id=?").get(ownerId);
-  if (ownerType === "subtask") return db.prepare("select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.stand,f.planned_arrival,f.planned_departure,f.work_type,f.work_kind from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.id=?").get(ownerId);
+  if (ownerType === "subtask") return db.prepare("select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.stand,f.planned_arrival,f.planned_departure,f.work_type,f.work_kind from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.id=?").get(ownerId);
   return null;
 }
 
 function maintenanceLog(user, action, ownerType, ownerId, flightId = "", detail = "") {
+  if (flightId) touchMaintenanceFlight(flightId);
   db.prepare("insert into maintenance_logs(id,owner_type,owner_id,flight_id,user_id,user_name,action,detail,created_at) values(?,?,?,?,?,?,?,?,?)")
     .run(randomId("mtnlog"), ownerType || "", ownerId || "", flightId || "", user?.id || "", user?.name || "", action, detail, now());
 }
@@ -3002,10 +3114,12 @@ function maintenanceRoutineRoleRatioRule(opportunity, role) {
 function maintenanceRatioForOwner(ownerType, owner, role, assignments = []) {
   if (ownerType === "subtask") return owner?.category === "拖机" ? (normalizeMaintenanceSubtaskRole(role) === "主做" ? 1 : 0)
     : maintenanceRatioRuleForOwner(ownerType, owner, role, assignments) ?? 0;
-  return maintenanceRoutineRoleRatioRule(owner?.work_kind || owner?.work_type || "其他", role) ?? 0;
+  return maintenanceRatioRuleForOwner(ownerType, owner, role, assignments) ?? 0;
 }
 
 function maintenanceRatioRuleForOwner(ownerType, owner, role, assignments = []) {
+  const snapshot = ownerType === "flight" ? json(owner?.routine_hours_snapshot, null) : null;
+  if (snapshot?.ratios && Object.hasOwn(snapshot.ratios, role)) return snapshot.ratios[role];
   if (ownerType === "subtask" && owner?.category !== "拖机") {
     const combination = maintenanceNonroutineCombinationName(assignments.map(item => normalizeMaintenanceSubtaskRole(item.role)));
     const row = db.prepare("select value from maintenance_hour_rules where rule_type='nonroutineCombinationRatio' and name=?")
@@ -3020,9 +3134,49 @@ function maintenanceRatioRuleForOwner(ownerType, owner, role, assignments = []) 
 
 function maintenanceBaseHours(ownerType, owner) {
   if (ownerType === "subtask") return Number(owner?.standard_hours || 0) || 0;
-  const opportunity = owner?.work_kind || owner?.work_type || "其他";
-  const row = db.prepare("select value from maintenance_hour_rules where rule_type='workType' and name=?").get(opportunity);
-  return Number(row?.value || 0) || 0;
+  return maintenanceAircraftResolution(owner).baseHours;
+}
+
+function maintenanceAircraftConfig() {
+  return settingValue("maintenance_aircraft_hours_v1", { version: 0, groups: [] });
+}
+
+function maintenanceAircraftImpact(config) {
+  const current = maintenanceAircraftConfig();
+  return db.prepare("select * from maintenance_flights where routine_hours_snapshot is null").all().filter(flight => {
+    const left = resolveAircraftHours(current, flight.aircraft_type, flight.work_kind || flight.work_type || "其他");
+    const right = resolveAircraftHours(config, flight.aircraft_type, flight.work_kind || flight.work_type || "其他");
+    return left.groupId !== right.groupId || left.baseHours !== right.baseHours;
+  }).map(flight => ({ id: flight.id, date: flight.date, aircraftType: flight.aircraft_type, flightNo: maintenanceDisplayFlightNo(flight), opportunity: flight.work_kind || flight.work_type }));
+}
+
+function maintenanceAircraftResolution(flight) {
+  return json(flight?.routine_hours_snapshot, null) || resolveAircraftHours(maintenanceAircraftConfig(), flight?.aircraft_type, flight?.work_kind || flight?.work_type || "其他");
+}
+
+function freezeLegacyMaintenanceHours() {
+  // Preserve existing reports without allocating old default rules to new groups.
+  for (const flight of db.prepare("select * from maintenance_flights where routine_hours_snapshot is null").all()) {
+    const entry = db.prepare("select standard_hours from maintenance_report_entries where flight_id=? and owner_type='flight' and role<>'放行' order by created_at limit 1").get(flight.id);
+    const reported = entry || db.prepare("select id from maintenance_hour_results where owner_type='flight' and owner_id=? limit 1").get(flight.id);
+    if (!reported) continue;
+    const opportunity = flight.work_kind || flight.work_type || "其他";
+    const oldRule = db.prepare("select value from maintenance_hour_rules where rule_type='workType' and name=?").get(opportunity);
+    const ratios = Object.fromEntries(maintenanceRolesForOpportunity(opportunity).filter(role => role !== "放行").map(role => [role, maintenanceRoutineRoleRatioRule(opportunity, role)]));
+    const snapshot = { aircraftCode: flight.aircraft_type || "", groupId: "legacy", groupName: "历史规则", opportunity, baseHours: Number(entry?.standard_hours ?? oldRule?.value) || 0, version: 0, ratios, capturedAt: now(), legacy: true };
+    db.prepare("update maintenance_flights set routine_hours_snapshot=? where id=?").run(JSON.stringify(snapshot), flight.id);
+  }
+}
+
+function captureMaintenanceAircraftHours(flight, user) {
+  if (flight.routine_hours_snapshot) return;
+  const snapshot = maintenanceAircraftResolution(flight);
+  if (!(snapshot.baseHours > 0)) throw maintenanceDispatchError(`机型 ${snapshot.aircraftCode || "未填写"} / ${snapshot.opportunity} 未配置有效标准工时，请联系规则管理员`);
+  snapshot.ratios = Object.fromEntries(maintenanceRolesForOpportunity(snapshot.opportunity).filter(role => role !== "放行").map(role => [role, maintenanceRoutineRoleRatioRule(snapshot.opportunity, role)]));
+  snapshot.capturedAt = now();
+  flight.routine_hours_snapshot = JSON.stringify(snapshot);
+  db.prepare("update maintenance_flights set routine_hours_snapshot=? where id=?").run(flight.routine_hours_snapshot, flight.id);
+  maintenanceLog(user, "routine_hours_snapshot", "flight", flight.id, flight.id, JSON.stringify(snapshot));
 }
 
 function maintenanceCalculatedHours(ownerType, owner, assignments) {
@@ -3053,14 +3207,29 @@ function maintenanceCalculatedHours(ownerType, owner, assignments) {
     });
     return result;
   }
-  const counts = assignments.reduce((result, item) => {
-    result[item.role] = (result[item.role] || 0) + 1;
-    return result;
-  }, {});
-  return new Map(assignments.map(item => [
-    item.id,
-    Number(((baseHours * maintenanceRatioForOwner(ownerType, owner, item.role)) / Math.max(1, counts[item.role] || 1)).toFixed(2))
-  ]));
+  // Allocate hundredths to all configured roles first, then split each role's
+  // budget between its people. Missing roles must not donate hours to others.
+  // Ratios are validated to three decimals; integer weights avoid float tie drift.
+  const roles = maintenanceRolesForOpportunity(owner?.work_kind || owner?.work_type || "其他").filter(role => role !== "放行");
+  const totalCents = Math.round(baseHours * 100);
+  const weighted = roles.map(role => totalCents * Math.round((maintenanceRatioForOwner(ownerType, owner, role) || 0) * 1000));
+  const roleCents = weighted.map(value => Math.floor(value / 1000));
+  const order = weighted.map((value, index) => ({ index, remainder: value % 1000 }))
+    .sort((left, right) => right.remainder - left.remainder || left.index - right.index);
+  const targetCents = Math.round(weighted.reduce((sum, value) => sum + value, 0) / 1000);
+  for (let remaining = targetCents - roleCents.reduce((sum, value) => sum + value, 0), index = 0; remaining > 0; remaining--, index++) {
+    roleCents[order[index].index]++;
+  }
+  const result = new Map(assignments.map(item => [item.id, 0]));
+  roles.forEach((role, index) => {
+    const people = assignments.filter(item => item.role === role).sort((left, right) =>
+      String(left.person_id || left.personId || left.id).localeCompare(String(right.person_id || right.personId || right.id)) || String(left.id).localeCompare(String(right.id)));
+    if (!people.length) return;
+    const shared = Math.floor(roleCents[index] / people.length);
+    const remainder = roleCents[index] % people.length;
+    people.forEach((item, personIndex) => result.set(item.id, (shared + (personIndex < remainder ? 1 : 0)) / 100));
+  });
+  return result;
 }
 
 function updateMaintenanceOwnerStatus(ownerType, ownerId, status, personId = "") {
@@ -3125,6 +3294,7 @@ function regenerateMaintenanceHours(ownerType, ownerId, resultStatus = "待复�
   const owner = maintenanceOwner(ownerType, ownerId);
   if (!owner) return [];
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? and status=? and role<>'放行'").all(ownerType, ownerId, resultStatus);
+  if (ownerType === "flight" && assignments.length) captureMaintenanceAircraftHours(owner, null);
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=? and status=?").run(ownerType, ownerId, resultStatus);
   if (!assignments.length) return maintenanceHours(ownerType, ownerId);
   const insert = db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,adjusted_hours,status,confirmed_by,confirmed_at,created_at,updated_at)
@@ -3229,14 +3399,16 @@ function maintenanceReviewTree(flightId) {
     flight: {
       id: flight.id,
       date: flight.date || "",
-      flightNo: flight.flight_no || "",
+      flightNo: maintenanceDisplayFlightNo(flight) || "",
       aircraftNo: flight.aircraft_no || "",
       aircraftType: flight.aircraft_type || "",
       stand: flight.stand || "",
+      locationName: maintenanceLocationName(flight),
       opportunity: flight.work_kind || flight.work_type || "其他",
       status: flight.status || "未派工",
       archivedAt: flight.archived_at || "",
       requiresChangeReason: flight.status === "已确认" || Boolean(flight.archived_at),
+      updatedAt: flight.updated_at || "",
       routineElectronicSigned: flight.routine_electronic_signed == null ? null : Boolean(flight.routine_electronic_signed),
       nonroutineElectronicSigned: flight.nonroutine_electronic_signed == null ? null : Boolean(flight.nonroutine_electronic_signed)
     },
@@ -3384,6 +3556,7 @@ function rebuildMaintenanceReviewResults(row, manager, mode) {
   const assignments = db.prepare("select * from maintenance_assignments where owner_type=? and owner_id=? order by user_name").all(row.ownerType, row.ownerId);
   const existingHours = new Map(db.prepare("select * from maintenance_hour_results where owner_type=? and owner_id=?").all(row.ownerType, row.ownerId).map(item => [item.assignment_id, item]));
   const existingSorties = new Map(db.prepare("select * from maintenance_sortie_results where owner_type=? and owner_id=?").all(row.ownerType, row.ownerId).map(item => [item.assignment_id, item]));
+  if (row.ownerType === "flight" && assignments.some(item => item.role !== "放行")) captureMaintenanceAircraftHours(row.owner, manager);
   const calculatedHours = maintenanceCalculatedHours(row.ownerType, row.owner, assignments.filter(item => item.role !== "放行"));
   db.prepare("delete from maintenance_hour_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
   db.prepare("delete from maintenance_sortie_results where owner_type=? and owner_id=?").run(row.ownerType, row.ownerId);
@@ -3418,11 +3591,14 @@ function saveMaintenanceReview(flightId, payload, manager) {
   if (!flight) throw maintenanceReviewError("未找到维修机会", 404);
   const editingConfirmed = flight.status === "已确认" || Boolean(flight.archived_at);
   if (editingConfirmed && !hasRbac(manager, "maintenance.archive.modify")) throw maintenanceReviewError("当前账号没有修改已确认数据的权限", 403);
+  assertMaintenanceFlightVersion(flightId, payload);
   const reason = String(payload?.reason || "").trim();
   if (editingConfirmed && !reason) throw maintenanceReviewError("修改已确认数据必须填写修改原因");
   if (editingConfirmed && mode === "confirm") throw maintenanceReviewError("已确认数据请使用保存归档修改");
   db.exec("begin immediate");
   try {
+    if (db.kind === "postgres") db.exec("select pg_advisory_xact_lock(54002010,31)");
+    assertMaintenanceFlightVersion(flightId, payload);
     const current = db.prepare("select * from maintenance_flights where id=?").get(flightId);
     if (current.status !== flight.status || current.archived_at !== flight.archived_at) throw maintenanceReviewError("维修机会状态已变化，请刷新后重试", 409);
     const newSubtasks = maintenanceArchivedNewSubtasks(flightId, payload?.newSubtasks, editingConfirmed ? "已确认" : "待复核");
@@ -3645,10 +3821,10 @@ function syncMaintenanceOwnerConfirmation(ownerType, ownerId, personId = "") {
 }
 
 function maintenanceStats(params = {}, user = null) {
-  const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
+  const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_hour_results h join maintenance_flights f on f.id=h.flight_id
     order by f.date desc,h.user_name`).all();
-  const sortieRows = db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
+  const sortieRows = db.prepare(`select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_sortie_results s join maintenance_flights f on f.id=s.flight_id
     order by f.date desc,s.user_name`).all();
   const search = String(params.search || "").trim().toLowerCase();
@@ -3659,7 +3835,7 @@ function maintenanceStats(params = {}, user = null) {
     if (month && month !== "全部" && !String(row.date || "").startsWith(month)) return false;
     if (status && status !== "全部" && row.status !== status) return false;
     if (!search) return true;
-    return [row.user_name, row.team, row.flight_no, row.aircraft_no, row.work_type, row.card_no, row.card_name].some(value => String(value || "").toLowerCase().includes(search));
+    return [row.user_name, row.team, row.flight_no, row.departure_flight_no, row.aircraft_no, row.work_type, row.card_no, row.card_name].some(value => String(value || "").toLowerCase().includes(search));
   });
   const visibleHours = filterRows(hourRows);
   const visibleSorties = filterRows(sortieRows);
@@ -3709,11 +3885,13 @@ function maintenanceReportFilters(params = {}) {
   const compatiblePersonId = requestedPersonId
     ? (db.prepare("select person_id from users where id=?").get(requestedPersonId)?.person_id || requestedPersonId)
     : "";
+  const locationIds = String(params.locationIds || "").split(",").map(value => value.trim()).filter(Boolean);
   return {
     view,
     dateFrom: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateFrom || "")) ? String(params.dateFrom) : monthStart,
     dateTo: /^\d{4}-\d{2}-\d{2}$/.test(String(params.dateTo || "")) ? String(params.dateTo) : today,
     team: String(params.team || "").trim(),
+    locationIds,
     userId: compatiblePersonId,
     opportunity: String(params.opportunity || "").trim(),
     nonroutineCategory: maintenanceNonroutineCategories.includes(String(params.nonroutineCategory || "")) ? String(params.nonroutineCategory) : "",
@@ -3786,6 +3964,9 @@ function maintenanceReportDataset(params = {}, user) {
     subtasksByFlight.set(row.flight_id, [...(subtasksByFlight.get(row.flight_id) || []), row]);
   }
   const flightById = new Map(flightRows.map(row => [row.id, row]));
+  if (filters.locationIds.length) for (const [id, flight] of flightById) {
+    if (!filters.locationIds.includes(flight.location_id || defaultMaintenanceLocationId)) flightById.delete(id);
+  }
   if (allowedIds) {
     const visibleFlightIds = new Set();
     for (const table of ["maintenance_assignments", "maintenance_hour_results", "maintenance_sortie_results"]) {
@@ -3828,7 +4009,7 @@ function maintenanceReportDataset(params = {}, user) {
     if (includeWorkType && filters.workType !== "all" && (row.owner_type === "subtask" ? "nonroutine" : "routine") !== filters.workType) return false;
     const flight = flightById.get(row.flight_id);
     const subtask = row.owner_type === "subtask" ? subtaskById.get(row.owner_id) : null;
-    const flightText = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
+    const flightText = [flight.date, flight.flight_no, flight.departure_flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
     const rowText = [row.person_id, employeeNoFor(row.person_id), row.user_name, row.team, row.role, row.source, subtask?.title, subtask?.category].join(" ").toLowerCase();
     return !filters.search || flightText.includes(filters.search) || rowText.includes(filters.search);
   };
@@ -3852,7 +4033,7 @@ function maintenanceReportDataset(params = {}, user) {
     }
     if (filters.search) {
       for (const [id, flight] of flightById) {
-        const text = [flight.date, flight.flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
+        const text = [flight.date, flight.flight_no, flight.departure_flight_no, flight.aircraft_no, flight.aircraft_type, flight.work_kind, flight.work_type].join(" ").toLowerCase();
         if (text.includes(filters.search) && !needsParticipantMatch) eligible.add(id);
       }
     }
@@ -3893,9 +4074,11 @@ function maintenanceReportDataset(params = {}, user) {
   const opportunityMap = new Map([...flightById.values()].map(flight => [flight.id, {
     id: flight.id,
     date: flight.date || "",
-    flightNo: flight.flight_no || "-",
+    flightNo: maintenanceDisplayFlightNo(flight) || "-",
     aircraftNo: flight.aircraft_no || "-",
     aircraftType: flight.aircraft_type || "-",
+    locationId: flight.location_id || "",
+    locationName: maintenanceLocationName(flight),
     opportunity: flight.work_kind || flight.work_type || "其他",
     status: flight.status,
     routineHours: 0,
@@ -3961,11 +4144,11 @@ function maintenanceReportDataset(params = {}, user) {
   const hourDetails = hours.map(row => {
     const flight = flightById.get(row.flight_id);
     const subtask = row.owner_type === "subtask" ? subtaskById.get(row.owner_id) : null;
-    return { ...publicMaintenanceHour(row), date: flight?.date || "", flightNo: flight?.flight_no || "-", aircraftNo: flight?.aircraft_no || "-", opportunity: flight?.work_kind || flight?.work_type || "其他", type: row.owner_type === "subtask" ? "非例行" : "例行", taskName: subtask?.title || row.role || "" };
+    return { ...publicMaintenanceHour(row), date: flight?.date || "", flightNo: maintenanceDisplayFlightNo(flight || {}) || "-", aircraftNo: flight?.aircraft_no || "-", locationName: maintenanceLocationName(flight), opportunity: flight?.work_kind || flight?.work_type || "其他", type: row.owner_type === "subtask" ? "非例行" : "例行", taskName: subtask?.title || row.role || "" };
   });
   const sortieDetails = sorties.map(row => {
     const flight = flightById.get(row.flight_id);
-    return { ...publicMaintenanceSortie(row), date: flight?.date || "", flightNo: flight?.flight_no || "-", aircraftNo: flight?.aircraft_no || "-", aircraftType: flight?.aircraft_type || "-", opportunity: flight?.work_kind || flight?.work_type || "其他" };
+    return { ...publicMaintenanceSortie(row), date: flight?.date || "", flightNo: maintenanceDisplayFlightNo(flight || {}) || "-", aircraftNo: flight?.aircraft_no || "-", aircraftType: flight?.aircraft_type || "-", locationName: maintenanceLocationName(flight), opportunity: flight?.work_kind || flight?.work_type || "其他" };
   });
   return { filters, summary, people: peopleRows, teams: teamRows, opportunities, hours: hourDetails, sorties: sortieDetails };
 }
@@ -3998,7 +4181,7 @@ function maintenanceNonroutineAuditRow(row, assignments = null, results = null) 
   for (const result of byAssignment.values()) people.push({ userId: result.person_id, personId: result.person_id, userName: result.user_name, team: result.team || "未设置", role: result.role,
     assignmentStatus: "派工记录缺失", resultHours: Number(result.hours || 0), adjustedHours: result.adjusted_hours == null ? null : Number(result.adjusted_hours),
     finalHours: maintenanceFinalHours(result), resultStatus: result.status });
-  return { id: row.id, flightId: row.flight_id, date: row.date, flightNo: row.flight_no, aircraftNo: row.aircraft_no,
+  return { id: row.id, flightId: row.flight_id, date: row.date, flightNo: maintenanceDisplayFlightNo(row) || "", aircraftNo: row.aircraft_no, locationName: maintenanceLocationName(row),
     aircraftType: row.aircraft_type, opportunity: row.work_kind || row.work_type || "其他", chapter: row.card_no || "", title: row.title,
     category: row.category || "其他", reportExplanation: row.content || "", standardHours: Number(row.standard_hours || 0), status: row.status,
     assignedCount: new Set(assignments.map(item => item.person_id)).size,
@@ -4027,6 +4210,10 @@ function maintenanceNonroutineAuditRows(rows, allowedIds = null) {
 function maintenanceNonroutineAuditQuery(filters, { paged = true, user, allowedIds = maintenanceReportAllowedPersonIds(user) } = {}) {
   const conditions = ["f.date>=?", "f.date<=?", "s.status=?"];
   const values = [filters.dateFrom, filters.dateTo, filters.status];
+  if (filters.locationIds?.length) {
+    conditions.push(`f.location_id in (${filters.locationIds.map(() => "?").join(",")})`);
+    values.push(...filters.locationIds);
+  }
   const scope = allowedIds ? personnelAccess.predicate(user, "maintenance", "sp") : null;
   if (scope) {
     conditions.push(`(exists(select 1 from maintenance_assignments p join personnel sp on sp.id=p.person_id where p.owner_type='subtask' and p.owner_id=s.id and ${scope.sql})
@@ -4054,7 +4241,7 @@ function maintenanceNonroutineAuditQuery(filters, { paged = true, user, allowedI
     const pattern = `%${filters.search.replace(/[!%_]/g, character => `!${character}`)}%`;
     const personSearch = table => `exists(select 1 from ${table} a left join personnel p on p.id=a.person_id where a.owner_type='subtask' and a.owner_id=s.id
       and lower(coalesce(a.user_name,'') || ' ' || coalesce(a.person_id,'') || ' ' || coalesce(p.employee_no,'')) like ? escape '!'${scope ? ` and ${scope.sql.replaceAll("sp.", "p.")}` : ""})`;
-    conditions.push(`(lower(coalesce(f.flight_no,'') || ' ' || coalesce(f.aircraft_no,'') || ' ' || coalesce(f.work_kind,'') || ' ' || coalesce(f.work_type,'') || ' ' || coalesce(s.card_no,'') || ' ' || coalesce(s.title,'') || ' ' || coalesce(s.category,'') || ' ' || coalesce(s.content,'')) like ? escape '!'
+    conditions.push(`(lower(coalesce(f.flight_no,'') || ' ' || coalesce(f.departure_flight_no,'') || ' ' || coalesce(f.aircraft_no,'') || ' ' || coalesce(f.work_kind,'') || ' ' || coalesce(f.work_type,'') || ' ' || coalesce(s.card_no,'') || ' ' || coalesce(s.title,'') || ' ' || coalesce(s.category,'') || ' ' || coalesce(s.content,'')) like ? escape '!'
       or ${personSearch("maintenance_assignments")} or ${personSearch("maintenance_hour_results")})`);
     values.push(pattern, pattern, ...(scope?.params || []), pattern, ...(scope?.params || []));
   }
@@ -4065,12 +4252,12 @@ function maintenanceNonroutineAuditQuery(filters, { paged = true, user, allowedI
     : "f.date desc,s.id desc";
   const limit = paged ? " limit ? offset ?" : "";
   const args = paged ? [...values, filters.pageSize, (filters.page - 1) * filters.pageSize] : values;
-  const rows = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type ${from} order by ${sort}${limit}`).all(...args), allowedIds);
+  const rows = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type,f.location_id,f.location_name_snapshot ${from} order by ${sort}${limit}`).all(...args), allowedIds);
   return { rows, pagination: { page: filters.page, pageSize: filters.pageSize, total, pages: Math.max(1, Math.ceil(total / filters.pageSize)) } };
 }
 
 function maintenanceNonroutineAuditDetail(id, user) {
-  const row = db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type
+  const row = db.prepare(`select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type,f.location_id,f.location_name_snapshot
     from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.id=?`).get(id);
   if (!row) return null;
   if (!maintenanceCanManage(user)) {
@@ -4115,12 +4302,12 @@ function maintenanceOpportunityAuditDetail(id, allowedIds = null) {
       adjustedHours: row.adjusted_hours == null ? null : Number(row.adjusted_hours), finalHours: row.role === "放行" ? null : maintenanceFinalHours(row),
       resultStatus: row.status, sorties: row.role === "放行" ? Number(row.sorties || 0) : null });
   }
-  const subtasks = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type
+  const subtasks = maintenanceNonroutineAuditRows(db.prepare(`select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.work_kind,f.work_type,f.location_id,f.location_name_snapshot
     from maintenance_subtasks s join maintenance_flights f on f.id=s.flight_id where s.flight_id=? order by s.created_at,s.id`).all(id), allowedIds)
     .filter(row => !allowedIds || row.people.length);
   const routineHours = hours.reduce((sum, row) => sum + maintenanceFinalHours(row), 0);
   const nonroutineHours = subtasks.reduce((sum, row) => sum + row.actualHours, 0);
-  return { id, date: flight.date, flightNo: flight.flight_no, aircraftNo: flight.aircraft_no, opportunity: flight.work_kind || flight.work_type || "其他",
+  return { id, date: flight.date, flightNo: maintenanceDisplayFlightNo(flight) || "", aircraftNo: flight.aircraft_no, locationName: maintenanceLocationName(flight), opportunity: flight.work_kind || flight.work_type || "其他",
     status: flight.status, routineHours: Number(routineHours.toFixed(2)), nonroutineHours: Number(nonroutineHours.toFixed(2)),
     totalHours: Number((routineHours + nonroutineHours).toFixed(2)), sorties: sorties.reduce((sum, row) => sum + Number(row.sorties || 0), 0),
     people, subtasks };
@@ -4190,7 +4377,7 @@ function maintenanceMonthBounds(month) {
 }
 
 function maintenancePersonalHourRows() {
-  return db.prepare(`select h.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_type,f.work_kind,
+  return db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.work_type,f.work_kind,f.location_id,f.location_name_snapshot,
       st.title as subtask_title,st.category as subtask_category,st.card_no as subtask_card_no
     from maintenance_hour_results h
     join maintenance_flights f on f.id=h.flight_id
@@ -4201,7 +4388,7 @@ function maintenancePersonalHourRows() {
 }
 
 function maintenancePersonalSortieRows() {
-  return db.prepare(`select s.*,f.date,f.flight_no,f.aircraft_no,f.aircraft_type,f.work_type,f.work_kind
+  return db.prepare(`select s.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.aircraft_type,f.work_type,f.work_kind,f.location_id,f.location_name_snapshot
     from maintenance_sortie_results s join maintenance_flights f on f.id=s.flight_id
     where s.status in ('已提报','待复核','已确认')
     order by f.date desc,s.updated_at desc,s.id`).all()
@@ -4229,10 +4416,11 @@ function maintenancePersonalHourDetail(row) {
     flightId: row.flight_id || "",
     subtaskId: row.owner_type === "subtask" ? row.owner_id : "",
     date: row.date || "",
-    flightNo: row.flight_no || "-",
+    flightNo: maintenanceDisplayFlightNo(row) || "-",
     aircraftNo: row.aircraft_no || "-",
     aircraftType: row.aircraft_type || "-",
     opportunity: row.work_kind || row.work_type || "其他",
+    locationName: maintenanceLocationName(row),
     taskName: row.owner_type === "subtask" ? (row.subtask_title || row.subtask_card_no || "非例行") : (row.work_kind || row.work_type || "维修机会"),
     role: row.role || "-",
     category: maintenancePersonalCategory(row),
@@ -4287,6 +4475,13 @@ function maintenancePersonalStats(params, user) {
   const weekHours = ownConfirmedHours.filter(row => row.date >= weekStart && row.date <= weekEnd);
   const weekPendingHours = ownPendingHours.filter(row => row.date >= weekStart && row.date <= weekEnd);
   const monthSorties = ownConfirmedSorties.filter(row => String(row.date || "").startsWith(bounds.month));
+  const locationIds = new Set([...selectedMonthHours, ...monthSorties].map(row => row.location_id || defaultMaintenanceLocationId));
+  const locationBreakdown = [...locationIds].map(id => ({
+    id,
+    name: maintenanceLocationName({ location_id: id }),
+    hours: Number(selectedMonthHours.filter(row => (row.location_id || defaultMaintenanceLocationId) === id).reduce((sum, row) => sum + maintenanceFinalHours(row), 0).toFixed(2)),
+    sorties: monthSorties.filter(row => (row.location_id || defaultMaintenanceLocationId) === id).reduce((sum, row) => sum + Number(row.sorties || 1), 0)
+  })).sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
   const monthPendingSorties = ownPendingSorties.filter(row => String(row.date || "").startsWith(bounds.month));
   const sumHours = rows => Number(rows.reduce((sum, row) => sum + maintenanceFinalHours(row), 0).toFixed(2));
   const sumSorties = rows => rows.reduce((sum, row) => sum + Number(row.sorties || 1), 0);
@@ -4346,16 +4541,22 @@ function maintenancePersonalStats(params, user) {
     monthTotals.set(row.person_id, (monthTotals.get(row.person_id) || 0) + maintenanceFinalHours(row));
   }
   const currentPerson=activeMembers.find(member=>member.id===user.personId);
+  // Full populations are used only to check completeness, never returned to a
+  // partially scoped caller or used to expand their maintenance result rows.
+  const fullMembers = currentPerson ? maintenanceCapabilityPeople({sql:"1=1",params:[]}) : [];
+  const scopedIds = new Set(activeMembers.map(member=>member.id));
   const teamMembers = currentPerson?.teamId ? activeMembers.filter(member => member.teamId === currentPerson.teamId) : [];
-  const teamComparison = maintenancePersonalComparison(teamMembers, monthTotals, user.personId);
+  const teamScopeComplete = !!currentPerson?.teamId && fullMembers.filter(member=>member.teamId===currentPerson.teamId).every(member=>scopedIds.has(member.id));
+  const teamComparison = teamScopeComplete ? maintenancePersonalComparison(teamMembers, monthTotals, user.personId) : {};
   const teamTotal = teamMembers.reduce((sum, member) => sum + Number(monthTotals.get(member.id) || 0), 0);
-  teamComparison.available = !!teamMembers.some(member => member.id === user.personId);
+  teamComparison.available = teamScopeComplete && teamMembers.some(member => member.id === user.personId);
+  teamComparison.reason = currentPerson?.teamId ? (teamScopeComplete?"":"incomplete_scope") : "not_participant";
   teamComparison.team = currentPerson?.team || "未设置";
-  teamComparison.contributionPercent = teamTotal ? Number((teamComparison.ownHours / teamTotal * 100).toFixed(1)) : 0;
+  if (teamComparison.available) teamComparison.contributionPercent = teamTotal ? Number((teamComparison.ownHours / teamTotal * 100).toFixed(1)) : 0;
 
   const departmentMembers = currentPerson?.departmentId ? activeMembers.filter(member => member.departmentId===currentPerson.departmentId) : [];
   const fullDepartmentMembers = currentPerson?.departmentId
-    ? maintenanceCapabilityPeople({sql:"p.department_id=?",params:[currentPerson.departmentId]})
+    ? fullMembers.filter(member=>member.departmentId===currentPerson.departmentId)
     : [];
   const scopedDepartmentIds = new Set(departmentMembers.map(member=>member.id));
   const departmentScopeComplete = !!currentPerson?.departmentId
@@ -4370,8 +4571,12 @@ function maintenancePersonalStats(params, user) {
   const groupComparison = {...departmentComparison};
 
   const rankingTeams=organizationLanes(db).filter(team=>team.organizationId);
-  const teamRanking = { available: rankingTeams.some(team=>team.organizationId===currentPerson?.teamId), team: currentPerson?.team || "未设置", teamCount: rankingTeams.length };
+  const rankingTeamIds = new Set(rankingTeams.map(team=>team.organizationId));
+  const ranksParticipate = rankingTeamIds.has(currentPerson?.teamId);
+  const rankingScopeComplete = ranksParticipate && fullMembers.filter(member=>rankingTeamIds.has(member.teamId)).every(member=>scopedIds.has(member.id));
+  const teamRanking = { available: rankingScopeComplete, team: currentPerson?.team || "未设置", reason:ranksParticipate?(rankingScopeComplete?"":"incomplete_scope"):"not_participant" };
   if (teamRanking.available) {
+    teamRanking.teamCount = rankingTeams.length;
     const teamTotals = rankingTeams.map(team => ({
       team:team.name,teamId:team.organizationId,
       hours: Number(activeMembers.filter(member => member.teamId === team.organizationId).reduce((sum, member) => sum + Number(monthTotals.get(member.id) || 0), 0).toFixed(2))
@@ -4388,6 +4593,7 @@ function maintenancePersonalStats(params, user) {
   }
 
   return {
+    locationBreakdown,
     period: { month: bounds.month, range, today, weekStart, weekEnd, trendStart: rangeStart, trendEnd: rangeEnd },
     metrics: {
       todayHours: sumHours(todayHours),
@@ -4417,17 +4623,18 @@ function maintenancePersonalDetails(params, user) {
   const resultStatus = params.status === "pending" ? "pending" : "confirmed";
   const matchesStatus = row => resultStatus === "pending" ? row.status !== "已确认" : row.status === "已确认";
   if (type === "sortie") {
-    const rows = maintenancePersonalSortieRows().filter(row => row.person_id === user.personId && matchesStatus(row) && String(row.date || "").startsWith(bounds.month));
+    const rows = maintenancePersonalSortieRows().filter(row => row.person_id === user.personId && matchesStatus(row) && String(row.date || "").startsWith(bounds.month) && (!params.locationId || (row.location_id || defaultMaintenanceLocationId) === params.locationId));
     return {
       title: `${bounds.month} ${resultStatus === "pending" ? "待复核" : ""}放行架次明细`,
       unit: "架次",
       rows: rows.map(row => ({
         id: row.id,
         date: row.date || "",
-        flightNo: row.flight_no || "-",
+        flightNo: maintenanceDisplayFlightNo(row) || "-",
         aircraftNo: row.aircraft_no || "-",
         aircraftType: row.aircraft_type || "-",
         opportunity: row.work_kind || row.work_type || "其他",
+        locationName: maintenanceLocationName(row),
         role: "放行",
         sorties: 1,
         status: row.status
@@ -4438,6 +4645,7 @@ function maintenancePersonalDetails(params, user) {
   const period = params.period === "month" ? "month" : "day";
   const category = String(params.category || "").trim();
   let rows = maintenancePersonalHourRows().filter(row => row.person_id === user.personId && matchesStatus(row));
+  if (params.locationId) rows = rows.filter(row => (row.location_id || defaultMaintenanceLocationId) === params.locationId);
   if (date) rows = rows.filter(row => row.date === date);
   else if (period === "month") rows = rows.filter(row => String(row.date || "").startsWith(bounds.month));
   if (type === "routine") rows = rows.filter(row => row.owner_type !== "subtask");
@@ -4454,9 +4662,9 @@ function maintenancePersonalDetails(params, user) {
 
 function insertMaintenanceFlight(payload, user) {
   const id = randomId("mtnf");
-  db.prepare(`insert into maintenance_flights(id,date,flight_no,departure_flight_no,aircraft_no,aircraft_type,stand,planned_arrival,planned_departure,work_type,card_no,card_name,work_kind,standard_hours,status,remark,source,created_by,updated_by,created_at,updated_at)
-    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, payload.date, payload.flightNo, payload.departureFlightNo || "", payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, payload.status, payload.remark, payload.source, user.id, user.id, now(), now());
+  db.prepare(`insert into maintenance_flights(id,date,flight_no,departure_flight_no,aircraft_no,aircraft_type,stand,planned_arrival,planned_departure,work_type,card_no,card_name,work_kind,standard_hours,status,remark,source,created_by,updated_by,created_at,updated_at,location_id,location_name_snapshot)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, payload.date, payload.flightNo, payload.departureFlightNo || "", payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, payload.status, payload.remark, payload.source, user.id, user.id, now(), now(), payload.location.id, payload.location.name);
   maintenanceLog(user, "create_flight", "flight", id, id, payload.flightNo || "");
   return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id));
 }
@@ -4464,8 +4672,8 @@ function insertMaintenanceFlight(payload, user) {
 function updateMaintenanceFlight(id, payload, user) {
   const existing = db.prepare("select * from maintenance_flights where id=?").get(id);
   if (!existing) return null;
-  db.prepare(`update maintenance_flights set date=?,flight_no=?,departure_flight_no=?,aircraft_no=?,aircraft_type=?,stand=?,planned_arrival=?,planned_departure=?,work_type=?,card_no=?,card_name=?,work_kind=?,standard_hours=?,status=?,remark=?,updated_by=?,updated_at=? where id=?`)
-    .run(payload.date, payload.flightNo, payload.departureFlightNo === undefined ? existing.departure_flight_no || "" : payload.departureFlightNo, payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, existing.status, payload.remark, user.id, now(), id);
+  db.prepare(`update maintenance_flights set date=?,flight_no=?,departure_flight_no=?,aircraft_no=?,aircraft_type=?,stand=?,planned_arrival=?,planned_departure=?,work_type=?,card_no=?,card_name=?,work_kind=?,standard_hours=?,status=?,remark=?,updated_by=?,updated_at=?,location_id=?,location_name_snapshot=? where id=?`)
+    .run(payload.date, payload.flightNo, payload.departureFlightNo === undefined ? existing.departure_flight_no || "" : payload.departureFlightNo, payload.aircraftNo, payload.aircraftType, payload.stand, payload.plannedArrival, payload.plannedDeparture, payload.workType, payload.cardNo, payload.cardName, payload.workKind, payload.standardHours, existing.status, payload.remark, user.id, now(), payload.location.id, payload.location.name, id);
   maintenanceLog(user, "update_flight", "flight", id, id, payload.flightNo || "");
   reconcileMaintenanceTreeStatus(id, user.id);
   return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id));
@@ -4528,8 +4736,41 @@ function invalidateMaintenanceReportCategory(flightId, reportType, user, reason 
   return true;
 }
 
-function setMaintenanceAssignments(ownerType, ownerId, assignments, user, expectedUpdatedAt) {
-  return maintenanceTransaction(() => {
+function prepareMaintenanceFlightImport(rows) {
+  const prepared=[], errors=[], groups=new Map(), keys=new Set();
+  for (const [index,raw] of rows.entries()) {
+    const rowNumber=Number.isInteger(raw?.rowNumber) && raw.rowNumber>0 ? raw.rowNumber : index+1;
+    let rowKey='';
+    try {
+      const payload={...maintenanceFlightPayload(raw),source:'Excel导入',status:'未派工'};
+      payload.date=normalizeMaintenanceStatsDate(payload.date);
+      const invalid=maintenanceFlightValidationError(payload);
+      if(invalid)throw new Error(invalid);
+      const primaryNo=['航前','三方航前'].includes(payload.workKind)?payload.departureFlightNo:payload.flightNo||payload.departureFlightNo||'';
+      const key=[payload.date,payload.aircraftNo.toLowerCase(),payload.workKind,primaryNo.toLowerCase(),payload.location.id].join('|');
+      rowKey=key;keys.add(key);
+      let group=groups.get(key);
+      if(!group) {
+        const column=['航前','三方航前'].includes(payload.workKind)||!payload.flightNo && payload.departureFlightNo?'departure_flight_no':'flight_no';
+        const matches=db.prepare(`select * from maintenance_flights where date=? and lower(trim(aircraft_no))=? and work_kind=? and lower(trim(${column}))=? and location_id=?`).all(payload.date,payload.aircraftNo.toLowerCase(),payload.workKind,primaryNo.toLowerCase(),payload.location.id);
+        if(matches.length>1)throw new Error('匹配到多个维修机会，请核对航班计划');
+        group={existing:matches[0]||null,update:false};groups.set(key,group);
+      }
+      if(group.existing && !group.existing.departure_flight_no && payload.departureFlightNo)group.update=true;
+      prepared.push({raw,payload});
+    } catch(error) {
+      if(!rowKey) keys.add(JSON.stringify([String(raw?.date||''),String(raw?.aircraftNo||'').toLowerCase(),String(raw?.workKind||'航后'),String(raw?.flightNo||raw?.departureFlightNo||'').toLowerCase(),String(raw?.locationName||raw?.locationId||defaultMaintenanceLocationId)]));
+      const message=error.message || '校验失败';
+      const field=/地点/.test(message)?'作业地点':/出港/.test(message)?'出港航班号':/进港|航班号/.test(message)?'航班号':/日期|机号/.test(message)?'日期/机号':/机型|工时/.test(message)?'机型':'匹配';
+      errors.push({rowNumber,field,detail:message});
+    }
+  }
+  const items=[...groups.values()];
+  return {prepared,errors,summary:{dataRows:rows.length,total:keys.size,matched:items.filter(g=>g.existing).length,updated:items.filter(g=>g.update).length,created:items.filter(g=>!g.existing).length,abnormal:errors.length}};
+}
+
+function setMaintenanceAssignments(ownerType, ownerId, assignments, user, expectedUpdatedAt, inTransaction = false) {
+  const apply = () => {
     const owner = maintenanceOwner(ownerType, ownerId);
     if (!owner) return null;
     const flightId = ownerType === "flight" ? owner.id : owner.flight_id;
@@ -4593,7 +4834,8 @@ function setMaintenanceAssignments(ownerType, ownerId, assignments, user, expect
       assignments: editableAssignments.length
     }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  };
+  return inTransaction ? apply() : maintenanceTransaction(apply);
 }
 
 function normalizeMaintenanceReportEntries(rawEntries, allowedRoles, { ownerType = "flight", ownerId = "", standardHours = 0, source = "报工补录" } = {}) {
@@ -4690,7 +4932,7 @@ function maintenanceReportsView(flightId, user) {
     ...routineRoles.map(role => [role, submittedRoutineRoles.has(role) ? "已提报" : "未提报"])
   ]);
   return {
-    flight: { id: flight.id, flightNo: flight.flightNo, aircraftNo: flight.aircraftNo, aircraftType: flight.aircraftType, opportunity: flight.workKind, status: flight.status },
+    flight: { id: flight.id, flightNo: flight.flightNo, departureFlightNo: flight.departureFlightNo, aircraftNo: flight.aircraftNo, aircraftType: flight.aircraftType, opportunity: flight.workKind, status: flight.status, routineHoursRule: flight.routineHoursRule, updatedAt: flight.updatedAt },
     people: maintenanceReportPeople(flightId),
     defaults: { towStandardHours: maintenanceTowDefaultHours() },
     progress,
@@ -4736,6 +4978,7 @@ function submitMaintenanceRelease(flightId, payload, user) {
   if (!release || release.person_id !== user.personId) throw maintenanceDispatchError("只有当前维修机会的放行人员可以上报架次");
   if (release.status !== "已派工") throw maintenanceReviewError("放行已经提报，请刷新页面", 409);
   return maintenanceTransaction(() => {
+    assertMaintenanceFlightVersion(flightId, payload);
     const batch = upsertMaintenanceReportBatch(flightId, "release", {
       status: "已提报", feedback: "", user, expectedVersion: payload?.version ?? null,
       entries: [{ ownerType: "flight", ownerId: flightId, role: "放行", person: allPeople().find(row => row.id === release.person_id) || { id: release.person_id, name: release.user_name, team: release.team }, standardHours: 0, source: "放行架次" }]
@@ -4745,8 +4988,9 @@ function submitMaintenanceRelease(flightId, payload, user) {
     regenerateMaintenanceSorties("flight", flightId, "已提报");
     reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     maintenanceLog(user, "release_report_submit", "flight", flightId, flightId, JSON.stringify({ batchId: batch.id, assignmentId: release.id, sorties: 1 }));
+    autoConfirmMaintenanceRoutine(flightId, user);
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  });
+  }, flightId);
 }
 
 function submitMaintenanceRoutine(flightId, payload, user) {
@@ -4754,13 +4998,15 @@ function submitMaintenanceRoutine(flightId, payload, user) {
   if (!flight) throw maintenanceDispatchError("未找到维修机会");
   if (!maintenanceCanSubmitReport(user, flightId)) throw maintenanceDispatchError("只有该维修机会的派工人员可以提交例行报工");
   return maintenanceTransaction(() => {
+    assertMaintenanceFlightVersion(flightId, payload);
     assertMaintenanceReportDraftVersion(flightId, "routine", payload?.draftVersion);
+    if (Array.isArray(payload?.entries) && payload.entries.length) captureMaintenanceAircraftHours(flight, user);
     applyMaintenanceReleaseSelection(flightId, payload?.releasePersonId, user);
     const roles = maintenanceRolesForOpportunity(flight.work_kind || flight.work_type).filter(role => role !== "放行");
     const entries = normalizeMaintenanceReportEntries(payload?.entries, roles, { ownerType: "flight", ownerId: flightId, standardHours: maintenanceBaseHours("flight", flight), source: "例行报工" });
     const submittedRoles = [...new Set(entries.map(item => item.role))];
     if (entries.length && !(maintenanceBaseHours("flight", flight) > 0)) throw maintenanceDispatchError("当前维修机会缺少有效标准工时规则");
-    for (const role of submittedRoles) if (maintenanceRoutineRoleRatioRule(flight.work_kind || flight.work_type || "其他", role) === null) throw maintenanceDispatchError(`${role}缺少当前维修机会的有效工时比例`);
+    for (const role of submittedRoles) if (maintenanceRatioRuleForOwner("flight", flight, role) === null) throw maintenanceDispatchError(`${role}缺少当前维修机会的有效工时比例`);
     const before = maintenanceReviewSnapshot(flightId);
     const batch = upsertMaintenanceReportBatch(flightId, "routine", { status: "已提报", feedback: String(payload?.feedback || "").trim(), user, entries, expectedVersion: payload?.version ?? null });
     replaceMaintenanceAssignmentsFromEntries("flight", flightId, flightId, entries, user, "已提报", batch.feedback, ["放行"]);
@@ -4768,6 +5014,7 @@ function submitMaintenanceRoutine(flightId, payload, user) {
     db.prepare("delete from maintenance_report_drafts where flight_id=? and report_type='routine'").run(flightId);
     reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     maintenanceLog(user, "routine_report_submit", "flight", flightId, flightId, JSON.stringify({ before, after: maintenanceReviewSnapshot(flightId), batchId: batch.id }));
+    autoConfirmMaintenanceRoutine(flightId, user);
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
   }, flightId);
 }
@@ -4951,25 +5198,40 @@ function deleteMaintenanceSubtaskForReport(subtask, user) {
   maintenanceLog(user, "delete_subtask_during_report_confirmation", "subtask", subtask.id, subtask.flight_id, subtask.title || "");
 }
 
-function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize = false } = {}) {
+// Internal-only automation: callers cannot enable this through request payloads.
+function autoConfirmMaintenanceRoutine(flightId, triggerUser) {
+  const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+  const progress = maintenanceReportProgress(flightId);
+  if (!flight || flight.report_finalized_at || ["航后", "三方航后", "航后/航前"].includes(flight.work_kind || flight.work_type)
+      || !progress?.ready || progress.hasFormalNonroutine || progress.hasNonroutineDraft) return false;
+  saveMaintenanceReportConfirmation(flightId, {
+    routineEntries: (progress.batches.routine?.entries || []).map(entry => ({ role: entry.role, personId: entry.personId })),
+    feedback: progress.batches.routine?.feedback || "",
+    releasePersonId: progress.batches.release?.entries.find(entry => entry.role === "放行")?.personId
+  }, triggerUser, { finalize: true, automatic: true, inTransaction: true });
+  return true;
+}
+
+function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize = false, automatic = false, inTransaction = false } = {}) {
   const flight = db.prepare("select * from maintenance_flights where id=?").get(flightId);
   if (!flight) throw maintenanceDispatchError("未找到维修机会");
   const progress = maintenanceReportProgress(flightId);
   const releaseBatch = progress?.batches.release;
-  if (!releaseBatch || releaseBatch.submittedBy !== user.id) throw maintenanceDispatchError("只有原放行报工人可以完成报工确认");
+  if (!releaseBatch || (!automatic && releaseBatch.submittedBy !== user.id)) throw maintenanceDispatchError("只有原放行报工人可以完成报工确认");
   if (progress.hasNonroutineDraft) throw maintenanceReviewError("存在未提交的非例行草稿，请先提交或删除草稿", 409);
   if (!progress.ready) {
     const missing = progress.segments.filter(item => !["已提报", "无需报工"].includes(item.status)).map(item => item.label);
     throw maintenanceDispatchError(`以下报工尚未完成：${missing.join("、")}`);
   }
   if (flight.report_finalized_at) throw maintenanceReviewError("该维修机会已经报工确认", 409);
-  return maintenanceTransaction(() => {
+  const confirm = () => {
     const before = { review: maintenanceReviewSnapshot(flightId), progress: maintenanceReportProgress(flightId) };
     const currentProgress = maintenanceReportProgress(flightId);
     const deletedIds = [...new Set((Array.isArray(payload?.deletedSubtaskIds) ? payload.deletedSubtaskIds : []).map(value => String(value || "").trim()).filter(Boolean))];
     for (const id of deletedIds) {
       const subtask = db.prepare("select * from maintenance_subtasks where id=? and flight_id=?").get(id, flightId);
       if (!subtask) throw maintenanceDispatchError("待删除的非例行项目已变化，请刷新后重试");
+      if(subtask.status==='已确认'||db.prepare("select 1 from maintenance_hour_results where owner_type='subtask' and owner_id=? and status='已确认' limit 1").get(id))throw maintenanceDispatchError('已确认的非例行项目不能通过报工确认删除');
       deleteMaintenanceSubtaskForReport(subtask, user);
     }
 
@@ -4978,6 +5240,11 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
       if (!routineBatch) throw maintenanceDispatchError("例行报工数据已变化，请刷新后重试");
       const roles = maintenanceRolesForOpportunity(flight.work_kind || flight.work_type).filter(role => role !== "放行");
       const routineEntries = normalizeMaintenanceReportEntries(payload?.routineEntries, roles, { ownerType: "flight", ownerId: flightId, standardHours: maintenanceBaseHours("flight", flight), source: "放行人报工确认" });
+      if (!routineEntries.length) throw maintenanceDispatchError("例行报工人员不能为空");
+      if (!(maintenanceBaseHours("flight", flight) > 0)) throw maintenanceDispatchError("当前维修机会缺少有效标准工时规则");
+      for (const role of new Set(routineEntries.map(item => item.role))) {
+        if (maintenanceRatioRuleForOwner("flight", flight, role) === null) throw maintenanceDispatchError(`${role}缺少当前维修机会的有效工时比例`);
+      }
       const routineFeedback = payload && Object.prototype.hasOwnProperty.call(payload, "feedback")
         ? String(payload.feedback ?? "").trim()
         : String(routineBatch.feedback || "");
@@ -4985,8 +5252,10 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
         .all(flightId).map(row => `${row.role}\u0000${row.person_id}`));
       const nextRoutineKeys = new Set(routineEntries.map(item => `${item.role}\u0000${item.person.id}`));
       const routinePeopleChanged = currentRoutineKeys.size !== nextRoutineKeys.size || [...nextRoutineKeys].some(key => !currentRoutineKeys.has(key));
-      replaceMaintenanceAssignmentsFromEntries("flight", flightId, flightId, routineEntries, user, "已提报", routineFeedback, ["放行"]);
-      replaceMaintenanceReportEntries(routineBatch.id, flightId, routineEntries, { feedback: routineFeedback });
+      if (!automatic) {
+        replaceMaintenanceAssignmentsFromEntries("flight", flightId, flightId, routineEntries, user, "已提报", routineFeedback, ["放行"]);
+        replaceMaintenanceReportEntries(routineBatch.id, flightId, routineEntries, { feedback: routineFeedback });
+      }
       if (routinePeopleChanged) regenerateMaintenanceHours("flight", flightId, "已提报");
     }
 
@@ -5017,6 +5286,7 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
     if (!releasePerson) throw maintenanceDispatchError("最终放行人员不存在或已停用");
     const releaseAssignment = db.prepare("select * from maintenance_assignments where owner_type='flight' and owner_id=? and role='放行'").get(flightId);
     if (!releaseAssignment) throw maintenanceDispatchError("未找到放行派工记录");
+    if (releaseAssignment.person_id !== lockedReleaseUserId) throw maintenanceReviewError("放行派工与已提报人员不一致，请核对后重试", 409);
     const targetStatus = finalize ? "待复核" : "已提报";
     db.prepare("update maintenance_assignments set person_id=?,user_name=?,team=?,status=?,modified_at=? where id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
     db.prepare("update maintenance_sortie_results set person_id=?,user_name=?,team=?,sorties=1,status=?,updated_at=? where assignment_id=?").run(releasePerson.id, releasePerson.name, releasePerson.team || "未设置", targetStatus, now(), releaseAssignment.id);
@@ -5030,15 +5300,16 @@ function saveMaintenanceReportConfirmation(flightId, payload, user, { finalize =
       db.prepare("update maintenance_report_batches set status='待复核',updated_at=? where flight_id=? and status='已提报'").run(stamp, flightId);
       db.prepare("update maintenance_subtasks set status='待复核',updated_by=?,updated_at=? where flight_id=? and status='已提报'").run(user.id, stamp, flightId);
       db.prepare("delete from maintenance_report_drafts where flight_id=?").run(flightId);
-      db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=?,status='待复核',updated_by=?,updated_at=? where id=?")
-        .run(user.id, user.name, stamp, user.id, stamp, flightId);
+      db.prepare("update maintenance_flights set report_finalized_by=?,report_finalized_by_name=?,report_finalized_at=?,report_finalized_mode=?,status='待复核',updated_by=?,updated_at=? where id=?")
+        .run(automatic ? "" : user.id, automatic ? "系统自动报工确认" : user.name, stamp, automatic ? "automatic" : "manual", user.id, stamp, flightId);
     } else {
       reconcileMaintenanceTreeStatus(flightId, user.id, { preserveConfirmed: false });
     }
     const after = { review: maintenanceReviewSnapshot(flightId), progress: maintenanceReportProgress(flightId), releaseOwner: releasePerson.id };
-    maintenanceLog(user, finalize ? "report_finalize" : "report_confirmation_save", "flight", flightId, flightId, JSON.stringify({ before, after, originalReleaseReporter: releaseBatch.submittedBy, releaseOwner: releasePerson.id, deletedSubtaskIds: deletedIds }));
+    maintenanceLog(automatic ? { id: "", name: "系统自动报工确认" } : user, automatic ? "report_auto_finalize" : finalize ? "report_finalize" : "report_confirmation_save", "flight", flightId, flightId, JSON.stringify({ before, after, triggerUserId: user.id, triggerUserName: user.name, originalReleaseReporter: releaseBatch.submittedBy, releaseOwner: releasePerson.id, deletedSubtaskIds: deletedIds }));
     return publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(flightId));
-  }, flightId);
+  };
+  return inTransaction ? confirm() : maintenanceTransaction(confirm, flightId);
 }
 
 function finalizeMaintenanceReports(flightId, payload, user) {
@@ -5084,7 +5355,7 @@ function maintenanceWorkReportView(flightId, user) {
   return {
     flight: {
       id: flight.id,
-      flightNo: flight.flight_no || "",
+      flightNo: maintenanceDisplayFlightNo(flight) || "",
       aircraftNo: flight.aircraft_no || "",
       opportunity: flight.work_kind || flight.work_type || "其他",
       status: flight.status || "未派工"
@@ -5114,13 +5385,14 @@ function saveMaintenanceWorkReport(flightId, payload, user) {
     const baseHours = maintenanceBaseHours("flight", normalized.flight);
     if (normalized.entries.length && !(baseHours > 0)) throw maintenanceDispatchError("当前维修机会缺少有效的标准工时规则");
     const submittedRoles = [...new Set(normalized.entries.map(item => item.role))];
-    const missingRules = submittedRoles.filter(role => maintenanceRoutineRoleRatioRule(normalized.flight.work_kind || normalized.flight.work_type || "其他", role) === null);
+    const missingRules = submittedRoles.filter(role => maintenanceRatioRuleForOwner("flight", normalized.flight, role) === null);
     if (missingRules.length) throw maintenanceDispatchError(`以下工种缺少有效工时比例：${missingRules.join("、")}`);
     const subtaskBlockers = maintenanceSubtaskCompletionBlockers(flightId);
     if (subtaskBlockers.length) throw maintenanceDispatchError(`以下非例行尚未完成：${subtaskBlockers.join("；")}`);
   }
 
   return maintenanceTransaction(() => {
+    if (mode === "finalize" && normalized.entries.length) captureMaintenanceAircraftHours(normalized.flight, user);
     const before = {
       status: normalized.flight.status,
       report: maintenanceWorkReport(flightId),
@@ -5235,9 +5507,15 @@ function sanitizeRichHtml(value) {
   return html;
 }
 
+function withInfoAccess(user){
+  const predicate=personnelAccess.predicate(user,'info');
+  return {...user,infoAllowedAccounts:new Set(db.prepare(`select u.id from users u join personnel p on p.id=u.person_id where ${predicate.sql}`).all(...predicate.params).map(row=>row.id)),
+    infoRecipientRecords:new Set(db.prepare('select record_id from record_recipients where user_id=?').all(user.id).map(row=>row.record_id))};
+}
+
 function canViewRecord(user,record) {
  if(!user?.id || !record || !hasRbac(user,"info.read"))return false;
- const visible=personnelAccess.hasAll(user,"info") || isRecordRecipient(user,record) || isRecordOwner(user,record) || dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info");
+ const visible=personnelAccess.hasAll(user,"info") || (user.infoRecipientRecords?user.infoRecipientRecords.has(record.id):isRecordRecipient(user,record)) || isRecordOwner(user,record) || dataScopeAllowsUser(user,record.publisher_id || record.created_by,"info");
  return visible && (record.publish_status!=="作废" || hasAnyRbac(user,["info.restore","info.void.any"]));
 }
 
@@ -5434,13 +5712,13 @@ async function cleanupUploadedFiles(files = []) {
   await Promise.all(files.map(file => file?.fullPath ? fs.unlink(file.fullPath).catch(() => null) : null));
 }
 
-async function receiveMultipartUploads(req) {
+async function receiveMultipartUploads(req, ownerType = 'fixedProject') {
   const boundaryText = multipartBoundary(req.headers["content-type"]);
   if (!boundaryText) throw uploadHttpError(400, "上传请求格式无效");
   const firstBoundary = Buffer.from(`--${boundaryText}`);
   const boundary = Buffer.from(`\r\n--${boundaryText}`);
   const headerBreak = Buffer.from("\r\n\r\n");
-  const requestLimit = MAX_UPLOAD_BYTES * MAX_FILES_PER_REQUEST + 1024 * 1024;
+  const requestLimit = uploadLimit(ownerType) * MAX_FILES_PER_REQUEST + 1024 * 1024;
   const saved = [];
   let total = 0;
   let buffer = Buffer.alloc(0);
@@ -5477,7 +5755,7 @@ async function receiveMultipartUploads(req) {
   const writeCurrent = async chunk => {
     if (!current || !chunk.length) return;
     current.size += chunk.length;
-    if (current.size > MAX_UPLOAD_BYTES) throw uploadHttpError(413, "单个附件不能超过100MB");
+    if (current.size > uploadLimit(ownerType)) throw uploadHttpError(413, uploadLimitMessage(ownerType));
     await writeUploadChunk(current.stream, chunk);
   };
 
@@ -5486,6 +5764,11 @@ async function receiveMultipartUploads(req) {
     await closeUploadStream(current.stream);
     delete current.stream;
     if (!current.size) throw uploadHttpError(400, "空文件不能上传");
+    const head=Buffer.alloc(Math.min(current.size,512));
+    const handle=await fs.open(current.fullPath,'r');
+    try{await handle.read(head,0,head.length,0);}finally{await handle.close();}
+    validateUploadContent(current.name,head);
+    current.type=safeAttachmentMime(current.name);
     saved.push(current);
     current = null;
   };
@@ -5592,34 +5875,24 @@ function validateUpload(file) {
 }
 
 function contentTypeForAttachment(row) {
-  const ext = attachmentExt(row?.name || row?.path);
-  if (BLOCKED_ATTACHMENT_EXTS.has(ext)) return "application/octet-stream";
-  return row?.type || "application/octet-stream";
+  return safeAttachmentMime(row?.name || row?.path);
 }
 
 function isInlineSafeAttachment(row) {
-  const ext = attachmentExt(row?.name || row?.path);
-  if (BLOCKED_ATTACHMENT_EXTS.has(ext)) return false;
-  const type = String(row?.type || "").toLowerCase();
-  return type.startsWith("image/")
-    || type.startsWith("video/")
-    || type.startsWith("audio/")
-    || type === "application/pdf"
-    || type.startsWith("text/")
-    || ["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "txt", "csv", "log", "md", "mp4", "mov", "m4v", "webm", "mp3", "wav", "m4a", "aac"].includes(ext);
+  return isInlineSafeName(row?.name || row?.path);
 }
 
-function attachmentDisposition(row) {
-  const disposition = isInlineSafeAttachment(row) ? "inline" : "attachment";
+function attachmentDisposition(row, download = false) {
+  const disposition = !download && isInlineSafeAttachment(row) ? "inline" : "attachment";
   return `${disposition}; filename*=UTF-8''${encodeURIComponent(row?.name || "附件")}`;
 }
 
-function signedCosAttachment(row, expiresSeconds = 300) {
+function signedCosAttachment(row, expiresSeconds = 300, download = false) {
   const expiresIn = Math.max(60, Math.min(300, Number(expiresSeconds) || 300));
   return {
     url: cosSignedUrl("GET", row.path, expiresIn, {
       "response-content-type": contentTypeForAttachment(row),
-      "response-content-disposition": attachmentDisposition(row)
+      "response-content-disposition": attachmentDisposition(row, download)
     }),
     expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     expiresIn,
@@ -5661,7 +5934,7 @@ function parseRangeHeader(rangeHeader, size) {
   return { start, end: Math.min(end, size - 1) };
 }
 
-async function streamAttachment(req, res, row, filePath) {
+async function streamAttachment(req, res, row, filePath, download = false) {
   const stat = await fs.stat(filePath);
   const type = contentTypeForAttachment(row);
   const disposition = isInlineSafeAttachment(row) ? "inline" : "attachment";
@@ -5669,8 +5942,9 @@ async function streamAttachment(req, res, row, filePath) {
     ...securityHeaders(),
     ...attachmentCacheHeaders(row, stat),
     "Content-Type": type,
-    "Content-Disposition": attachmentDisposition(row)
+    "Content-Disposition": attachmentDisposition(row, download)
   };
+  if (download) baseHeaders["Cache-Control"] = "private, no-store";
   if (req.headers["if-none-match"] === baseHeaders.ETag) {
     res.writeHead(304, baseHeaders);
     return res.end();
@@ -5704,7 +5978,7 @@ async function addUploadedAttachments(req, res, ownerType, ownerId) {
   if (!permission.ok) return send(res, 403, { error: permission.error || "无权管理该项目附件" });
   let files;
   try {
-    files = await receiveMultipartUploads(req);
+    files = await receiveMultipartUploads(req, ownerType);
   } catch (error) {
     return send(res, error.status || 400, { error: error.message || "附件上传失败" });
   }
@@ -5759,7 +6033,7 @@ async function createCosUpload(req, res, ownerType, ownerId) {
   const size = Number(payload.size || 0);
   validateUploadName(name);
   if (!Number.isFinite(size) || size <= 0) return send(res, 400, { error: "空文件不能上传" });
-  if (size > MAX_UPLOAD_BYTES) return send(res, 413, { error: "单个附件不能超过100MB" });
+  if (size > uploadLimit(ownerType)) return send(res, 413, { error: uploadLimitMessage(ownerType) });
   const attachmentId = randomId("att");
   const objectKey = `attachments/${ownerType}/${ownerId}/${attachmentId}-${name}`;
   return send(res, 200, {
@@ -5767,7 +6041,7 @@ async function createCosUpload(req, res, ownerType, ownerId) {
     objectKey,
     uploadUrl: cosSignedUrl("PUT", objectKey, 600),
     expiresIn: 600,
-    headers: { "Content-Type": String(payload.type || "application/octet-stream") }
+    headers: { "Content-Type": safeAttachmentMime(name) }
   });
 }
 
@@ -5787,7 +6061,7 @@ async function verifyCosUploadedAttachment(objectKey, size, fetchImpl = fetch) {
     return { ok: false, status: 502, cosStatus: head.status, requestId, code: "COS_UPLOAD_CHECK_FAILED", error: "COS 附件校验失败，请稍后重试" };
   }
   const actualSize = Number(head.headers.get("content-length") || 0);
-  if (actualSize && actualSize !== size) return { ok: false, status: 409, requestId, code: "COS_UPLOAD_SIZE_MISMATCH", error: "附件大小校验失败" };
+  if (!Number.isSafeInteger(actualSize) || actualSize !== size) return { ok: false, status: 409, requestId, code: "COS_UPLOAD_SIZE_MISMATCH", error: "附件大小校验失败" };
   return { ok: true };
 }
 
@@ -5803,15 +6077,17 @@ async function completeCosUpload(req, res, ownerType, ownerId) {
   const expectedPrefix = `attachments/${ownerType}/${ownerId}/${attachmentId}-`;
   if (!attachmentId || !objectKey.startsWith(expectedPrefix)) return send(res, 400, { error: "附件上传凭据无效" });
   validateUploadName(name);
-  if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return send(res, 400, { error: "附件大小无效" });
+  if (!Number.isSafeInteger(size) || size <= 0) return send(res, 400, { error: "附件大小无效" });
+  if (size > uploadLimit(ownerType)) return send(res, 413, { error: uploadLimitMessage(ownerType) });
   const check = await verifyCosUploadedAttachment(objectKey, size);
   if (!check.ok) {
     console.warn(JSON.stringify({ event: "cos_upload_check_failed", attachmentId, code: check.code, cosStatus: check.cosStatus, requestId: check.requestId }));
     return send(res, check.status, { error: check.error, code: check.code, requestId: check.requestId || "" });
   }
   if (attachmentRow(attachmentId)) return send(res, 409, { error: "附件已登记" });
+  if(!canManageAttachmentCheck(currentUser(req),{owner_type:ownerType,owner_id:ownerId}).ok)return send(res,403,{error:'当前权限或范围已变化，上传未生效'});
   db.prepare("insert into attachments(id,owner_type,owner_id,name,type,size,storage,path,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)")
-    .run(attachmentId, ownerType, ownerId, name, String(payload.type || "application/octet-stream"), size, "cos", objectKey, user.id, now());
+    .run(attachmentId, ownerType, ownerId, name, safeAttachmentMime(name), size, "cos", objectKey, user.id, now());
   audit(user, "upload_attachment", ownerType, ownerId, `${name}(${size}B):COS`);
   return send(res, 201, { attachment: attachments(ownerType, ownerId).find(item => item.id === attachmentId) });
 }
@@ -5826,7 +6102,7 @@ async function serveStatic(req, res) {
     const stat = await fs.stat(filePath);
     const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
     const immutable = /\.[a-f0-9]{12,}\.(?:js|css)$/i.test(filePath);
-    const noCache = [".html", ".webmanifest"].includes(path.extname(filePath).toLowerCase()) || ["sw.js", "app.js"].includes(path.basename(filePath)) || requested === "/capability/module.js";
+    const noCache = requested.startsWith("/attendance") || [".html", ".webmanifest"].includes(path.extname(filePath).toLowerCase()) || ["sw.js", "app.js"].includes(path.basename(filePath)) || requested === "/capability/module.js" || ["/templates/flight-plan.xlsx", "/templates/routine-dispatch.xlsx", "/templates/additional-work.xlsx"].includes(requested);
     const cacheControl = immutable ? "public, max-age=31536000, immutable" : noCache ? "no-cache" : "public, max-age=3600";
     if (req.headers["if-none-match"] === etag) {
       res.writeHead(304, { ...securityHeaders(), "ETag": etag, "Cache-Control": cacheControl });
@@ -5836,9 +6112,11 @@ async function serveStatic(req, res) {
     const ext = path.extname(filePath).toLowerCase();
     const type = ext === ".html" ? "text/html; charset=utf-8"
       : ext === ".css" ? "text/css; charset=utf-8"
-      : ext === ".js" ? "text/javascript; charset=utf-8"
+      : [".js", ".mjs"].includes(ext) ? "text/javascript; charset=utf-8"
+      : ext === ".wasm" ? "application/wasm"
       : ext === ".webmanifest" ? "application/manifest+json; charset=utf-8"
       : ext === ".json" ? "application/json; charset=utf-8"
+      : ext === ".xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       : ext === ".png" ? "image/png"
       : ext === ".ico" ? "image/x-icon"
       : "application/octet-stream";
@@ -6041,30 +6319,30 @@ function maintenanceReportXlsx(data, selectedSections = []) {
   });
   if (selected.includes("hours")) tables.push({
     name: "工时明细",
-    rows: [["日期", "航班号", "机号", "维修机会", "姓名", "班组", "类型", "任务", "工种", "工时", "状态"], ...data.hours.map(row => [row.date, row.flightNo, row.aircraftNo, row.opportunity, row.userName, row.team, row.type, row.taskName, row.role, row.finalHours, row.status])]
+    rows: [["日期", "航班号", "机号", "作业地点", "维修机会", "姓名", "班组", "类型", "任务", "工种", "工时", "状态"], ...data.hours.map(row => [row.date, row.flightNo, row.aircraftNo, row.locationName, row.opportunity, row.userName, row.team, row.type, row.taskName, row.role, row.finalHours, row.status])]
   });
   if (selected.includes("signatures")) tables.push({
     name: "签署明细",
-    rows: [["日期", "航班号", "机号", "机型", "维修机会", "例行签署", "非例行签署", "状态"], ...maintenanceReportSort(data.opportunities, "opportunities", "date:desc").map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.opportunity, row.routineSignature, row.nonroutineSignature, row.status])]
+    rows: [["日期", "航班号", "机号", "机型", "作业地点", "维修机会", "例行签署", "非例行签署", "状态"], ...maintenanceReportSort(data.opportunities, "opportunities", "date:desc").map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.locationName, row.opportunity, row.routineSignature, row.nonroutineSignature, row.status])]
   });
   if (selected.includes("sorties")) tables.push({
     name: "放行明细",
-    rows: [["日期", "航班号", "机号", "机型", "维修机会", "放行人", "班组", "架次", "状态"], ...data.sorties.map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.opportunity, row.userName, row.team, row.sorties, row.status])]
+    rows: [["日期", "航班号", "机号", "机型", "作业地点", "维修机会", "放行人", "班组", "架次", "状态"], ...data.sorties.map(row => [row.date, row.flightNo, row.aircraftNo, row.aircraftType, row.locationName, row.opportunity, row.userName, row.team, row.sorties, row.status])]
   });
   if (selected.includes("teams")) tables.push({
     name: "班组汇总",
     rows: [["班组", "人数", "例行工时", "非例行工时", "总工时", "放行架次", "维修机会数"], ...data.teams.sort((a, b) => b.totalHours - a.totalHours || a.team.localeCompare(b.team, "zh-Hans-CN")).map(row => [row.team, row.peopleCount, row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.opportunityCount])]
   });
   if (selected.includes("opportunities")) tables.push({
-    name: "维修机会核对", rows: [["维修机会ID", "日期", "航班号", "机号", "维修机会", "参与人员", "例行工时", "非例行工时", "总工时", "放行架次", "状态"],
-      ...maintenanceReportSort(data.opportunitiesAudit || [], "opportunities", "date:desc").map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.opportunity,
+    name: "维修机会核对", rows: [["维修机会ID", "日期", "航班号", "机号", "作业地点", "维修机会", "参与人员", "例行工时", "非例行工时", "总工时", "放行架次", "状态"],
+      ...maintenanceReportSort(data.opportunitiesAudit || [], "opportunities", "date:desc").map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.locationName, row.opportunity,
         row.participants.map(person => person.name).join("、"), row.routineHours, row.nonroutineHours, row.totalHours, row.sorties, row.status])] });
   if (selected.includes("nonroutine")) {
     const tasks = data.nonroutineAudit || [];
-    tables.push({ name: "非例行任务", rows: [["条目ID", "日期", "航班号", "机号", "维修机会", "章节", "标题", "类别", "标准总工时", "实际总工时", "派工人数", "状态"],
-      ...tasks.map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.opportunity, row.chapter, row.title, row.category, row.standardHours, row.hasResults ? row.actualHours : "尚无工时结果", row.assignedCount, row.status])] });
-    tables.push({ name: "非例行人员工时", rows: [["条目ID", "日期", "航班号", "标题", "姓名", "班组", "工种", "派工状态", "原始工时", "调整后工时", "最终工时", "结果状态"],
-      ...tasks.flatMap(row => row.people.map(person => [row.id, row.date, row.flightNo, row.title, person.userName, person.team, person.role, person.assignmentStatus,
+    tables.push({ name: "非例行任务", rows: [["条目ID", "日期", "航班号", "机号", "作业地点", "维修机会", "章节", "标题", "类别", "标准总工时", "实际总工时", "派工人数", "状态"],
+      ...tasks.map(row => [row.id, row.date, row.flightNo, row.aircraftNo, row.locationName, row.opportunity, row.chapter, row.title, row.category, row.standardHours, row.hasResults ? row.actualHours : "尚无工时结果", row.assignedCount, row.status])] });
+    tables.push({ name: "非例行人员工时", rows: [["条目ID", "日期", "航班号", "作业地点", "标题", "姓名", "班组", "工种", "派工状态", "原始工时", "调整后工时", "最终工时", "结果状态"],
+      ...tasks.flatMap(row => row.people.map(person => [row.id, row.date, row.flightNo, row.locationName, row.title, person.userName, person.team, person.role, person.assignmentStatus,
         person.resultHours ?? "", person.adjustedHours ?? "", person.finalHours ?? "", person.resultStatus || "尚无工时结果"]))] });
   }
   const workbook = `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${tables.map((table, index) => `<sheet name="${xmlEscape(table.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets></workbook>`;
@@ -6718,6 +6996,57 @@ async function routeRequest(req, res) {
     }
     if (!url.pathname.startsWith("/api/")) return serveStatic(req, res);
 
+    if (url.pathname.startsWith('/api/attendance/')) {
+      const actor = requireRbacPermission(req,res,'attendance.read'); if(!actor)return;
+      const filters=Object.fromEntries(['month','query','department','team','personId'].map(k=>[k,url.searchParams.get(k)||'']));
+      if(url.pathname.startsWith('/api/attendance/leave-balances')){
+        const f={month:url.searchParams.get('month')||'',year:url.searchParams.get('year'),query:url.searchParams.get('query')||'',department:url.searchParams.get('department')||'',team:url.searchParams.get('team')||'',personId:url.searchParams.get('personId')||'',group:url.searchParams.get('group')||''};
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances'){const data=attendanceService.leave.snapshot(actor,f);if(attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...f,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}return send(res,200,data);}
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances/details')return send(res,200,attendanceService.leave.details(actor,f));
+        if(method==='POST'&&url.pathname==='/api/attendance/leave-balances/refresh')return send(res,202,attendanceService.leave.refresh(actor,await bodyJson(req)));
+        if(method==='GET'&&['/api/attendance/leave-balances/export/xlsx','/api/attendance/leave-balances/export/html'].includes(url.pathname)){
+          const scope=url.searchParams.get('scope')||'filtered';if(!['all','filtered'].includes(scope))return send(res,400,{error:'导出范围无效'});
+          const selected=scope==='all'?{year:f.year}:f,data=attendanceService.leave.snapshot(actor,selected,'attendance.export');data.filters=selected;data.exportScope=scope==='all'?'全部有权查看人员':'当前筛选人员';data.exportedAt=new Date().toISOString();data.pageSize=attendanceService.displaySettings(actor).pageSize;
+          if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...selected,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}
+          const format=url.pathname.endsWith('/xlsx')?'xlsx':'html',content=format==='xlsx'?leaveXlsx(data):Buffer.from(leaveHtml(data));audit(actor,'attendance_leave_export','attendance',String(data.year),JSON.stringify({format,scope,people:data.people.length}));
+          return sendBinary(res,200,content,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="leave-${data.year}.${format}"`});
+        }
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/approval-plans')return send(res,200,attendanceService.approvalPlanDetails(actor,filters));
+      if(method==='POST'&&url.pathname==='/api/attendance/approval-plans/refresh')return send(res,202,attendanceService.approvalPlanRefresh(actor,await bodyJson(req)));
+      if(method==='GET' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.displaySettings(actor));
+      if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
+      if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,attendanceService.status(actor));
+      if(method==='GET' && ['/api/attendance/days','/api/attendance/summary','/api/attendance/exceptions','/api/attendance/person'].includes(url.pathname)){
+        const snapshot=attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read'),hasRbac(actor,'attendance.stats.read'));
+        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:p.days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
+        return send(res,200,snapshot);
+      }
+      if(method==='POST' && url.pathname==='/api/attendance/approval-reasons/backfill')return send(res,202,attendanceService.enqueueApprovalReasons(actor,await bodyJson(req)));
+      if(method==='POST' && url.pathname==='/api/attendance/leave-types/refresh')return send(res,200,await attendanceService.refreshLeaveTypes(actor));
+      if(method==='POST' && url.pathname==='/api/attendance/sync'){
+        const payload=await bodyJson(req);return send(res,202,attendanceService.enqueue({from:payload.from,to:payload.to,user:actor}));
+      }
+      if(method==='GET' && url.pathname==='/api/attendance/capability-statuses')return send(res,200,attendanceService.capabilityStatuses(actor,filters.personId));
+      if(method==='GET' && ['/api/attendance/export/xlsx','/api/attendance/export/html'].includes(url.pathname)){
+        if(!hasRbac(actor,'attendance.export'))return send(res,403,{error:'当前账号没有导出权限'});
+        const exportScope=url.searchParams.get('scope')||'filtered';if(!['all','filtered'].includes(exportScope))return send(res,400,{error:'导出范围无效'});
+        const selected=exportScope==='all'?{month:filters.month}:filters;
+        if(exportScope==='filtered'&&url.searchParams.has('categories')){
+          let categories;try{categories=JSON.parse(url.searchParams.get('categories'));}catch{return send(res,400,{error:'类别筛选格式无效'});}
+          if(!Array.isArray(categories)||categories.length>100||categories.some(c=>typeof c!=='string'||!c.trim()||c.length>100))return send(res,400,{error:'类别筛选格式无效'});
+          selected.categories=[...new Set(categories)];
+        }
+        const snapshot=attendanceService.snapshot(actor,selected,'attendance.export');
+        if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){snapshot.people=snapshot.people.map(p=>attendanceService.approvalPlans.decorate(p,snapshot.month));snapshot.categories=attendanceOrderedCategories([...new Set([...snapshot.categories,...snapshot.people.flatMap(p=>Object.keys(p.pendingCounts||{}))])]);}
+        snapshot.exportScope=exportScope==='all'?'全部有权查看人员':'当前筛选人员';snapshot.filters=selected;
+        const format=url.pathname.endsWith('/xlsx')?'xlsx':'html';
+        const body=format==='xlsx'?attendanceXlsx(snapshot,{changes:attendanceService.changes(actor,{...selected,month:snapshot.month}),runs:attendanceService.status(actor).runs}):Buffer.from(attendanceHtml(snapshot));
+        audit(actor,'attendance_export','attendance',snapshot.month,JSON.stringify({format,people:snapshot.people.length,scope:exportScope}));
+        return sendBinary(res,200,body,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="attendance-${snapshot.month}.${format}"`});
+      }
+      return send(res,404,{error:'未找到考勤接口'});
+    }
     if (method === "GET" && url.pathname === "/api/health") {
       let database = "unavailable";
       try {
@@ -7248,17 +7577,85 @@ async function routeRequest(req, res) {
       req.on("close", () => { clearInterval(heartbeat); maintenanceEventClients.delete(res); });
       return;
     }
+    if (url.pathname === "/api/maintenance/locations" && method === "GET") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      return send(res, 200, { locations: maintenanceWorkLocations(), defaultLocationId: defaultMaintenanceLocationId });
+    }
+    if (url.pathname === "/api/maintenance/locations" && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有地点目录维护权限" });
+      const input = await bodyJson(req);
+      const name = String(input.name || "").trim();
+      if (!name || name.length > 80) return send(res, 400, { error: "地点名称需为1至80字" });
+      if (db.prepare("select id from maintenance_work_locations where name=?").get(name)) return send(res, 409, { error: "地点名称已存在" });
+      const id = randomId("mloc");
+      db.prepare("insert into maintenance_work_locations(id,name,status,created_at,updated_at) values(?,?,'active',?,?)").run(id, name, now(), now());
+      audit(manager, "maintenance_location_create", "maintenance_location", id, name);
+      return send(res, 201, { locations: maintenanceWorkLocations() });
+    }
+    const maintenanceLocationRoute = url.pathname.match(/^\/api\/maintenance\/locations\/([^/]+)$/);
+    if (maintenanceLocationRoute && ["PUT", "DELETE"].includes(method)) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有地点目录维护权限" });
+      const id = routeParam(maintenanceLocationRoute[1]);
+      const existing = db.prepare("select * from maintenance_work_locations where id=?").get(id);
+      if (!existing) return send(res, 404, { error: "未找到作业地点" });
+      const references = db.prepare("select count(*) as count from maintenance_flights where location_id=?").get(id).count;
+      if (method === "DELETE") {
+        if (references) return send(res, 409, { error: `已有${references}条维修机会使用该地点，请先停用` });
+        db.prepare("delete from maintenance_work_locations where id=?").run(id);
+        audit(manager, "maintenance_location_delete", "maintenance_location", id, existing.name);
+        return send(res, 200, { locations: maintenanceWorkLocations() });
+      }
+      const input = await bodyJson(req);
+      const name = String(input.name ?? existing.name).trim();
+      const status = String(input.status ?? existing.status);
+      const reason = String(input.reason || "").trim();
+      if (!name || name.length > 80 || !["active", "inactive"].includes(status)) return send(res, 400, { error: "地点名称或状态无效" });
+      if ((name !== existing.name || status !== existing.status) && !reason) return send(res, 400, { error: "请填写变更原因" });
+      if (db.prepare("select id from maintenance_work_locations where name=? and id<>?").get(name, id)) return send(res, 409, { error: "地点名称已存在" });
+      db.prepare("update maintenance_work_locations set name=?,status=?,updated_at=? where id=?").run(name, status, now(), id);
+      audit(manager, "maintenance_location_update", "maintenance_location", id, JSON.stringify({ before: existing.name, after: name, status, reason }));
+      return send(res, 200, { locations: maintenanceWorkLocations() });
+    }
+    const maintenanceLocationCorrection = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/location$/);
+    if (maintenanceLocationCorrection && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.archive.modify")) return send(res, 403, { error: "当前账号没有历史地点修正权限" });
+      const id = routeParam(maintenanceLocationCorrection[1]);
+      const input = await bodyJson(req);
+      const reason = String(input.reason || "").trim();
+      if (!reason) return send(res, 400, { error: "请填写地点修正原因" });
+      const existing = db.prepare("select * from maintenance_flights where id=?").get(id);
+      if (!existing) return send(res, 404, { error: "未找到维修机会" });
+      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有维修管理权限" });
+      if (!maintenanceVisibleFlights(manager, "dispatch", { flightId: id, limit: 1 }).rows.length) return send(res, 403, { error: "该维修机会不在当前维修管控范围内" });
+      const location = maintenanceLocationForInput({ locationId: input.locationId || input.locationName });
+      maintenanceTransaction(() => {
+        db.prepare("update maintenance_flights set location_id=?,location_name_snapshot=?,updated_by=?,updated_at=? where id=?").run(location.id, location.name, manager.id, now(), id);
+        audit(manager, "maintenance_location_correction", "maintenance_flight", id, JSON.stringify({ oldLocationId: existing.location_id || "", newLocationId: location.id, reason }));
+      });
+      bumpMaintenanceVersion(id, "maintenance.location.corrected");
+      return send(res, 200, { flight: publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id)) });
+    }
     if (method === "GET" && url.pathname === "/api/maintenance/flights") {
       const login = requireLogin(req, res);
       if (!login) return;
       if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
       const scope = url.searchParams.get("scope") || "dispatch";
       const opportunities = url.searchParams.getAll("opportunity").flatMap(value => value.split(",")).map(value => value.trim()).filter(Boolean);
+      const locationIds = url.searchParams.getAll("locationId").flatMap(value => value.split(",")).map(value => value.trim()).filter(Boolean);
       const requestedLimit = Number(url.searchParams.get("limit"));
       const result = maintenanceVisibleFlights(login, scope, {
         dateFrom: url.searchParams.get("dateFrom") || "",
         dateTo: url.searchParams.get("dateTo") || "",
         opportunities,
+        locationIds,
         search: String(url.searchParams.get("search") || "").trim(),
         limit: Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : undefined,
         cursor: Number(url.searchParams.get("cursor") || 0)
@@ -7331,6 +7728,61 @@ async function routeRequest(req, res) {
       bumpMaintenanceVersion(flightId, saveOnly ? "maintenance.report.confirmation.saved" : "maintenance.report.finalized");
       return send(res, 200, { flight });
     }
+    if (method === "POST" && ['/api/maintenance/dispatch-import/preview','/api/maintenance/dispatch-import/commit'].includes(url.pathname)) {
+      const manager = requireLogin(req,res);
+      if (!manager) return;
+      if (!hasRbac(manager,'maintenance.assignment.manage') || !hasRbac(manager,'maintenance.dispatch.view')) return send(res,403,{error:'当前账号没有派工导入权限'});
+      const payload = await bodyJson(req), rows = payload.rows;
+      if (!Array.isArray(rows) || !rows.length || rows.length>1000) return send(res,400,{error:'每批须包含1～1000条派工记录'});
+      const commit = url.pathname.endsWith('/commit');
+      if (commit && !/^[a-zA-Z0-9_-]{8,100}$/.test(payload.requestId || '')) return send(res,400,{error:'缺少有效导入请求编号'});
+      const digest = crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+      const ledgerKey = `dispatch_import:${manager.id}:${payload.requestId}`;
+      const identities = rows.map(raw => { try { return dispatchImportIdentity(raw); } catch { return null; } });
+      const counts = new Map();
+      identities.filter(Boolean).forEach(item=>counts.set(item.key,(counts.get(item.key)||0)+1));
+      const results = [];
+      for (let index=0;index<rows.length;index++) {
+        try {
+          const processRow = ()=> {
+            const saved = commit ? json(db.prepare('select value from settings where key=?').get(ledgerKey)?.value,null) : null;
+            if (saved && saved.digest!==digest) throw new Error('请求编号已用于不同文件，请重新上传');
+            if (saved?.results?.[index]) {
+              const result=saved.results[index], visible=new Set(allPeople('maintenance').map(p=>p.id));
+              if(result.assignments.some(a=>!visible.has(a.personId))) throw new Error('原导入人员已不在当前维修范围内');
+              return result;
+            }
+            const raw = rows[index], identity = dispatchImportIdentity(raw);
+            if (counts.get(identity.key)>1) throw new Error('同一文件重复包含该维修机会，请合并为一行');
+            const candidates = maintenanceVisibleFlights(manager,'dispatch',{dateFrom:identity.date,dateTo:identity.date}).rows.filter(f=>
+              (f.work_kind||f.work_type)===identity.workKind && (!identity.arrival || String(f.flight_no||'').trim().toUpperCase()===identity.arrival) && (!identity.departure || String(f.departure_flight_no||'').trim().toUpperCase()===identity.departure));
+            if (candidates.length!==1) throw new Error(candidates.length ? '匹配到多个维修机会，不能自动选择' : '未找到可派工的维修机会');
+            const flight=candidates[0];
+            if (flight.status!=='未派工') throw new Error('仅允许导入未派工维修机会');
+            assertMaintenanceTreeDirectEditAllowed(flight.id);
+            if (db.prepare('select id from maintenance_assignments where flight_id=?').get(flight.id) || db.prepare('select id from maintenance_report_batches where flight_id=?').get(flight.id)) throw new Error('维修机会已有派工或报工内容，请人工检查');
+            const assignments=dispatchImportAssignments(raw,allPeople('maintenance'));
+            normalizeMaintenanceAssignments('flight',flight,assignments);
+            if (commit && (raw.matchedFlightId!==flight.id || raw.expectedUpdatedAt!==flight.updated_at)) throw new Error('维修机会已更新，请重新校验');
+            const result={rowNumber:raw.rowNumber || index+2,ok:true,flightId:flight.id,expectedUpdatedAt:flight.updated_at,aircraftNo:flight.aircraft_no,date:flight.date,workKind:identity.workKind,assignments};
+            if (commit) {
+              setMaintenanceAssignments('flight',flight.id,assignments,manager,flight.updated_at,true);
+              const status=db.prepare('select status from maintenance_flights where id=?').get(flight.id)?.status;
+              if(status!=='已派工') throw new Error('状态无法变为已派工，本条已回滚，请人工检查');
+              maintenanceLog(manager,'dispatch_import','flight',flight.id,flight.id,JSON.stringify({requestId:payload.requestId,rowNumber:result.rowNumber}));
+              const record=saved||{digest,results:{}};
+              record.results[index]=result;
+              setSetting(ledgerKey,record);
+            }
+            return result;
+          };
+          const result = commit ? maintenanceTransaction(processRow) : processRow();
+          results.push(result);
+        } catch(error) { results.push({rowNumber:rows[index]?.rowNumber || index+2,ok:false,error:error.message}); }
+      }
+      if(commit && results.some(item=>item.ok)) bumpMaintenanceVersion('','maintenance.dispatch.imported');
+      return send(res,200,{results,success:results.filter(item=>item.ok).length,failed:results.filter(item=>!item.ok).length});
+    }
     if (method === "POST" && url.pathname === "/api/maintenance/subtasks/import") {
       const manager = requireLogin(req, res);
       if (!manager) return;
@@ -7338,67 +7790,91 @@ async function routeRequest(req, res) {
       const payload = await bodyJson(req);
       const rows = Array.isArray(payload?.rows) ? payload.rows : [];
       if (!rows.length) return send(res, 400, { error: "未识别到有效附加工作，请检查表格内容" });
-      const fileKeys = new Set();
-      const prepared = rows.map((raw, index) => {
-        const rowNumber = index + 1;
+      const prepare = () => {
+      const prepared=[], errors=[], seen=new Map();
+      for (const [index,raw] of rows.entries()) {
+        const rowNumber = Number.isInteger(raw?.rowNumber) && raw.rowNumber>0 ? raw.rowNumber : index + 2;
+        try {
         const date = normalizeMaintenanceStatsDate(raw?.date ?? raw?.["日期"]);
         const flightNo = String(raw?.flightNo ?? raw?.flight_no ?? raw?.["进港航班号"] ?? raw?.["航班号"] ?? "").trim();
         const departureFlightNo = String(raw?.departureFlightNo ?? raw?.departure_flight_no ?? raw?.["出港航班号"] ?? "").trim();
         const aircraftNo = String(raw?.aircraftNo ?? raw?.aircraft_no ?? raw?.["机号"] ?? "").trim();
         const workKind = String(raw?.workKind ?? raw?.work_kind ?? raw?.["维修机会"] ?? "").trim();
-        const externalWorkNo = String(raw?.externalWorkNo ?? raw?.external_work_no ?? raw?.["工作编号"] ?? raw?.["附加工作编号"] ?? "").trim().toUpperCase();
+        const location = maintenanceLocationForInput(raw);
+        const chapter = String(raw?.chapter ?? raw?.["章节"] ?? "").trim();
         const category = String(raw?.category ?? raw?.["非例行类别"] ?? raw?.["类别"] ?? raw?.["工作类别"] ?? "").trim();
         const title = String(raw?.title ?? raw?.cardName ?? raw?.card_name ?? raw?.["工作标题"] ?? raw?.["工卡名称"] ?? "").trim();
         const standardHours = Number(raw?.standardHours ?? raw?.standard_hours ?? raw?.["标准工时"]);
         const priority = String(raw?.priority ?? raw?.["优先级"] ?? "普通").trim() || "普通";
         const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
         if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw maintenanceReviewError(`第 ${rowNumber} 行日期无效`);
-        if (!flightNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少进港航班号`);
+        const identityError = maintenanceFlightValidationError({ date, flightNo, departureFlightNo, aircraftNo, workKind });
+        if (identityError) throw maintenanceReviewError(`第 ${rowNumber} 行${identityError}`);
         if (!aircraftNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少机号`);
         if (!maintenanceOpportunityCategories.includes(workKind)) throw maintenanceReviewError(`第 ${rowNumber} 行维修机会无效`);
-        if (!externalWorkNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少工作编号`);
+        if (!chapter) throw maintenanceReviewError(`第 ${rowNumber} 行缺少章节`);
         if (!title) throw maintenanceReviewError(`第 ${rowNumber} 行缺少工作标题`);
         if (!maintenanceNonroutineCategories.includes(category)) throw maintenanceReviewError(`第 ${rowNumber} 行非例行类别无效`);
         if (!Number.isFinite(standardHours) || !(standardHours > 0) || Math.abs(standardHours * 10 - Math.round(standardHours * 10)) > 1e-8) {
           throw maintenanceReviewError(`第 ${rowNumber} 行标准工时必须大于0且以0.1小时为单位`);
         }
         if (!["普通", "重要", "紧急"].includes(priority)) throw maintenanceReviewError(`第 ${rowNumber} 行优先级无效`);
+        const useDeparture = ["航前", "三方航前"].includes(workKind) || !flightNo && !!departureFlightNo;
+        const primaryNo = useDeparture ? departureFlightNo : flightNo;
+        const numberColumn = useDeparture ? "departure_flight_no" : "flight_no";
         const matches = db.prepare(`select * from maintenance_flights
-          where date=? and lower(trim(flight_no))=? and lower(trim(aircraft_no))=? and work_kind=?`)
-          .all(date, flightNo.toLowerCase(), aircraftNo.toLowerCase(), workKind);
+          where date=? and lower(trim(aircraft_no))=? and work_kind=? and location_id=?
+            and (?='' or lower(trim(${numberColumn}))=?)`)
+          .all(date, aircraftNo.toLowerCase(), workKind, location.id, primaryNo, primaryNo.toLowerCase());
         if (!matches.length) throw maintenanceReviewError(`第 ${rowNumber} 行未找到对应维修机会`);
         if (matches.length > 1) throw maintenanceReviewError(`第 ${rowNumber} 行匹配到多个维修机会，请先核对航班计划`);
         const flight = matches[0];
+        if (!personnelAccess.hasAll(manager,'maintenance') && flight.created_by!==manager.id && !dataScopeAllowsUser(manager,flight.created_by,'maintenance') && !maintenanceVisibleFlights(manager,'dispatch',{flightId:flight.id,limit:1}).rows.length) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行维修机会不在当前维修管控范围内`,403);
+        }
+        if (flightNo && flight.flight_no && flightNo.toLowerCase() !== String(flight.flight_no).trim().toLowerCase()) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行进港航班号与维修机会不一致`);
+        }
         if (departureFlightNo && flight.departure_flight_no && departureFlightNo.toLowerCase() !== String(flight.departure_flight_no).trim().toLowerCase()) {
           throw maintenanceReviewError(`第 ${rowNumber} 行出港航班号与维修机会不一致`);
         }
         if (!["未派工", "已派工"].includes(flight.status || "未派工") || flight.report_finalized_at || flight.archived_at) {
           throw maintenanceReviewError(`第 ${rowNumber} 行对应维修机会已进入报工或复核，不能导入附加工作`, 409);
         }
-        const uniqueKey = `${flight.id}\u0000${externalWorkNo}`;
-        if (fileKeys.has(uniqueKey)) throw maintenanceReviewError(`第 ${rowNumber} 行工作编号在文件中重复`);
-        fileKeys.add(uniqueKey);
-        const existing = db.prepare("select id from maintenance_subtasks where flight_id=? and external_work_no=?").get(flight.id, externalWorkNo);
-        if (existing) throw maintenanceReviewError(`第 ${rowNumber} 行工作编号已存在于该维修机会`);
-        const subtask = maintenanceSubtaskPayload({ ...raw, externalWorkNo, category, title, standardHours, priority, status: "未派工" });
-        return { rowNumber, flight, externalWorkNo, subtask };
-      });
-      const matchedFlightIds = [...new Set(prepared.map(item => item.flight.id))];
+        const subtask = maintenanceSubtaskPayload({ ...raw, chapter, category, title, standardHours, priority, status: "未派工" });
+        const key=JSON.stringify([flight.id,subtask.cardNo,subtask.title,subtask.category]);
+        const existing=db.prepare('select standard_hours from maintenance_subtasks where flight_id=? and trim(card_no)=? and trim(title)=? and trim(category)=?').all(flight.id,subtask.cardNo,subtask.title,subtask.category);
+        if(existing.some(item=>Math.abs(Number(item.standard_hours)-subtask.standardHours)>1e-8) || seen.has(key) && Math.abs(seen.get(key)-subtask.standardHours)>1e-8) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行重复项目的标准工时不一致，请人工核对，未覆盖已有任务`);
+        }
+        const skip=existing.length>0 || seen.has(key);
+        seen.set(key,subtask.standardHours);
+        prepared.push({ rowNumber, flight, subtask, skip });
+        } catch(error) {errors.push({rowNumber,detail:error.message.replace(/^第 \d+ 行/,''),status:error.status||400});}
+      }
+      const summary={total:rows.length,matched:prepared.length,created:prepared.filter(item=>!item.skip).length,skipped:prepared.filter(item=>item.skip).length,abnormal:errors.length};
+      return {prepared,errors,summary};
+      };
+      if (payload.validateOnly) {const checked=prepare();return send(res,200,{valid:!checked.errors.length,count:checked.prepared.length,summary:checked.summary,errors:checked.errors});}
       const result = maintenanceTransaction(() => {
+        const {prepared,errors,summary}=prepare();
+        if(errors.length)throw Object.assign(maintenanceReviewError('附加工作校验失败，未导入任何数据',errors[0].status),{details:{errors,summary}});
+        const matchedFlightIds = [...new Set(prepared.map(item => item.flight.id))];
         const stamp = now();
         for (const item of prepared) {
+          if(item.skip)continue;
           const id = randomId("mtns");
           const subtask = item.subtask;
           db.prepare(`insert into maintenance_subtasks(id,flight_id,external_work_no,card_no,title,content,category,standard_hours,priority,status,remark,created_by,updated_by,created_at,updated_at)
             values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-            .run(id, item.flight.id, item.externalWorkNo, subtask.cardNo, subtask.title, subtask.content, subtask.category, subtask.standardHours, subtask.priority, "未派工", subtask.remark, manager.id, manager.id, stamp, stamp);
-          maintenanceLog(manager, "import_subtask", "subtask", id, item.flight.id, JSON.stringify({ externalWorkNo: item.externalWorkNo, rowNumber: item.rowNumber }));
+            .run(id, item.flight.id, "", subtask.cardNo, subtask.title, subtask.content, subtask.category, subtask.standardHours, subtask.priority, "未派工", subtask.remark, manager.id, manager.id, stamp, stamp);
+          maintenanceLog(manager, "import_subtask", "subtask", id, item.flight.id, JSON.stringify({ chapter: subtask.cardNo, rowNumber: item.rowNumber }));
         }
-        const auditId = audit(manager, "maintenance_subtask_import", "maintenance", "subtasks", JSON.stringify({ created: prepared.length, matchedFlightIds }));
-        return { auditId };
+        const auditId = audit(manager, "maintenance_subtask_import", "maintenance", "subtasks", JSON.stringify({ ...summary, matchedFlightIds }));
+        return { auditId,summary,created:summary.created,skipped:summary.skipped,matchedFlights:matchedFlightIds.length };
       });
-      bumpMaintenanceVersion("", "maintenance.subtasks.imported");
-      return send(res, 200, { created: prepared.length, matchedFlights: matchedFlightIds.length, auditId: result.auditId });
+      if(result.created)bumpMaintenanceVersion("", "maintenance.subtasks.imported");
+      return send(res, 200, result);
     }
     if (method === "POST" && url.pathname === "/api/maintenance/flights/import") {
       const manager = requireLogin(req, res);
@@ -7406,25 +7882,29 @@ async function routeRequest(req, res) {
       if (!hasRbac(manager, "maintenance.opportunity.import")) return send(res, 403, { error: "当前账号没有导入维修机会权限" });
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rows) ? p.rows : [];
-      // Validate the entire file before any writes: mismatched columns must not become hidden flights.
-      const importRows = rows.map((raw, index) => {
-        const payload = { ...maintenanceFlightPayload(raw), source: "Excel导入", status: "未派工" };
-        payload.date = normalizeMaintenanceStatsDate(payload.date);
-        const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(payload.date) ? new Date(`${payload.date}T00:00:00Z`) : null;
-        if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== payload.date || !payload.flightNo || !payload.aircraftNo) {
-          throw maintenanceReviewError(`第 ${index + 1} 条航班日期、航班号或机号无效，请核对导入列。未导入任何数据。`);
-        }
-        return { raw, payload };
-      });
+      if (p.validateOnly) {
+        const checked=prepareMaintenanceFlightImport(rows);
+        return send(res,200,{valid:rows.length>0 && !checked.errors.length,summary:checked.summary,errors:checked.errors});
+      }
       let created = 0;
       let subCreated = 0;
       let skipped = 0;
       const imported = new Map();
+      let summary;
+      maintenanceTransaction(() => {
+      const checked=prepareMaintenanceFlightImport(rows);
+      if(!rows.length || checked.errors.length)throw Object.assign(maintenanceReviewError('航班计划校验失败，未导入任何数据'),{details:{errors:checked.errors,summary:checked.summary}});
+      summary=checked.summary;
+      const importRows=checked.prepared;
       for (const { raw, payload } of importRows) {
-        const matchKey = [payload.date, payload.aircraftNo, payload.workKind].join("|");
+        const primaryNo = ["航前", "三方航前"].includes(payload.workKind) ? payload.departureFlightNo : payload.flightNo || payload.departureFlightNo || "";
+        const matchKey = [payload.date, payload.aircraftNo.toLowerCase(), payload.workKind, primaryNo.toLowerCase(), payload.location.id].join("|");
         let flight = imported.get(matchKey);
         if (!flight) {
-          const existing = db.prepare("select * from maintenance_flights where date=? and aircraft_no=? and work_kind=?").get(payload.date, payload.aircraftNo, payload.workKind);
+          const numberColumn = ["航前", "三方航前"].includes(payload.workKind) || !payload.flightNo && payload.departureFlightNo ? "departure_flight_no" : "flight_no";
+          const matches = db.prepare(`select * from maintenance_flights where date=? and lower(trim(aircraft_no))=? and work_kind=? and lower(trim(${numberColumn}))=? and location_id=?`).all(payload.date, payload.aircraftNo.toLowerCase(), payload.workKind, primaryNo.toLowerCase(), payload.location.id);
+          if (matches.length > 1) throw maintenanceReviewError("匹配到多个维修机会，请先核对航班计划");
+          const existing = matches[0];
           flight = existing ? publicMaintenanceFlight(existing) : insertMaintenanceFlight(payload, manager);
           if (!existing) created++;
           imported.set(matchKey, flight);
@@ -7442,15 +7922,17 @@ async function routeRequest(req, res) {
         }
       }
       audit(manager, "maintenance_import", "maintenance", "flights", `维修机会 ${created} 条，非例行 ${subCreated} 条`);
+      });
       bumpMaintenanceVersion("", "maintenance.imported");
-      return send(res, 200, { created, subCreated, skipped });
+      return send(res, 200, { created, subCreated, skipped, summary });
     }
     if (method === "POST" && url.pathname === "/api/maintenance/flights") {
       const manager = requireLogin(req, res);
       if (!manager) return;
       if (!hasRbac(manager, "maintenance.opportunity.create")) return send(res, 403, { error: "当前账号没有新建维修机会权限" });
       const payload = maintenanceFlightPayload(await bodyJson(req));
-      if (!payload.date || !payload.flightNo || !payload.aircraftNo) return send(res, 400, { error: "请填写日期、航班号和机号" });
+      const validationError = maintenanceFlightValidationError(payload);
+      if (validationError) return send(res, 400, { error: validationError });
       const flight = insertMaintenanceFlight(payload, manager);
       bumpMaintenanceVersion(flight.id, "maintenance.flight.created");
       return send(res, 201, { flight });
@@ -7529,7 +8011,9 @@ async function routeRequest(req, res) {
       const flightId = routeParam(maintenanceFlight[1]);
       const existing = assertMaintenanceTreeDirectEditAllowed(flightId);
       if (!existing) return send(res, 404, { error: "未找到航班任务" });
-      const payload = maintenanceFlightPayload(await bodyJson(req));
+      const payload = maintenanceFlightPayload(await bodyJson(req), existing);
+      const validationError = maintenanceFlightValidationError({ ...payload, departureFlightNo: payload.departureFlightNo ?? existing.departure_flight_no });
+      if (validationError) return send(res, 400, { error: validationError });
       if ((payload.workKind || payload.workType) !== (existing.work_kind || existing.work_type)) {
         invalidateMaintenanceReportCategory(flightId, "release", manager, "维修机会类别已修改");
         invalidateMaintenanceReportCategory(flightId, "routine", manager, "维修机会类别已修改");
@@ -7630,7 +8114,17 @@ async function routeRequest(req, res) {
       const login = requireLogin(req, res);
       if (!login) return;
       if (!hasAnyRbac(login, ["maintenance.rules.view", "maintenance.rules.manage"])) return send(res, 403, { error: "当前账号没有查看工时规则的权限" });
-      return send(res, 200, { rules: maintenanceRulesResponse() });
+      return send(res, 200, { rules: maintenanceRulesResponse(), aircraftHours: maintenanceAircraftConfig() });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/rules/aircraft-preview") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
+      const p = await bodyJson(req);
+      const config = normalizeAircraftHours(p.aircraftHours, maintenanceOpportunityOrder);
+      const affected = maintenanceAircraftImpact(config);
+      const visible = new Set(maintenanceVisibleFlights(manager).rows.map(flight => flight.id));
+      return send(res, 200, { affected: affected.filter(flight => visible.has(flight.id)), affectedCount: affected.length, confirmation: crypto.createHash("sha256").update(JSON.stringify(affected)).digest("hex") });
     }
     if (method === "PUT" && url.pathname === "/api/maintenance/rules") {
       const manager = requireLogin(req, res);
@@ -7638,16 +8132,31 @@ async function routeRequest(req, res) {
       if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
       const p = await bodyJson(req);
       const rows = Array.isArray(p.rules) ? p.rules : [];
+      if (rows.some(row => String(row.rule_type || row.ruleType || "").trim() === "workType")) {
+        throw maintenanceDispatchError("旧标准工时已停止维护，请使用机型组配置。未保存任何修改。");
+      }
       const upsert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do update set value=excluded.value,updated_at=excluded.updated_at");
       const routineRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "routineRatio");
       const combinationRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "nonroutineCombinationRatio");
       validateMaintenanceRoutineRules(routineRows);
       if (combinationRows.length) validateMaintenanceNonroutineCombinationRules(combinationRows);
       maintenanceTransaction(() => {
+        if (p.aircraftHours) {
+          const previous = maintenanceAircraftConfig();
+          if (Number(p.aircraftHours.version) !== previous.version) throw maintenanceReviewError("工时机型组已被修改，请刷新后重试", 409);
+          const next = normalizeAircraftHours(p.aircraftHours, maintenanceOpportunityOrder);
+          const reason = String(p.reason || "").trim();
+          if (!reason || reason.length > 1000) throw maintenanceDispatchError("修改机型组须填写原因（最多1000字）");
+          const affected = maintenanceAircraftImpact(next);
+          const confirmation = crypto.createHash("sha256").update(JSON.stringify(affected)).digest("hex");
+          if (affected.length && p.confirmation !== confirmation) throw maintenanceReviewError("受影响未报工航班已变化，请重新预览确认", 409);
+          setSetting("maintenance_aircraft_hours_v1", { ...next, version: previous.version + 1 });
+          audit(manager, "maintenance_aircraft_hours_update", "maintenance", "rules", JSON.stringify({ reason, before: previous, after: next, affected }));
+        }
         for (const row of rows) {
           const ruleType = String(row.rule_type || row.ruleType || "").trim();
           let name = String(row.name || "").trim();
-          if (!["workType", "roleRatio", "routineRatio", "nonroutineCategoryHours", "nonroutineCombinationRatio"].includes(ruleType)) continue;
+          if (!["roleRatio", "routineRatio", "nonroutineCategoryHours", "nonroutineCombinationRatio"].includes(ruleType)) continue;
           if (ruleType === "routineRatio") name = maintenanceRoutineRuleName(String(row.opportunity || "").trim(), String(row.role || "").trim());
           if (ruleType === "nonroutineCombinationRatio") name = `${String(row.combination || "").trim()}::${String(row.role || "").trim()}`;
           if (!name || (ruleType === "roleRatio" && name === "放行")) continue;
@@ -7661,7 +8170,7 @@ async function routeRequest(req, res) {
       });
       audit(manager, "maintenance_update_rules", "maintenance", "rules", `${rows.length} 条`);
       bumpMaintenanceVersion("", "maintenance.rules.updated");
-      return send(res, 200, { rules: maintenanceRulesResponse() });
+      return send(res, 200, { rules: maintenanceRulesResponse(), aircraftHours: maintenanceAircraftConfig() });
     }
     if (method === "GET" && url.pathname === "/api/maintenance/stats") {
       const login = requireLogin(req, res);
@@ -7752,6 +8261,7 @@ async function routeRequest(req, res) {
       const hour = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
       maintenanceTransaction(()=>{
       personnelAccess.requirePerson(manager,"maintenance",hour?.person_id);
+      if(hour.status!=='待复核')throw maintenanceReviewError('工时尚未进入待复核或已经确认，不能直接确认',409);
       db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), hourId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), hourId);
       if (hour) syncMaintenanceOwnerConfirmation(hour.owner_type, hour.owner_id, manager.id);
@@ -7768,6 +8278,7 @@ async function routeRequest(req, res) {
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const hours = ids.length ? db.prepare(`select * from maintenance_hour_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
       if(hours.length!==ids.length || hours.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"工时不存在或超出范围"});
+      if(hours.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选工时包含未完成报工确认或已确认记录，请刷新后重试'});
       maintenanceTransaction(()=>{
       ids.forEach(id => db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), id));
       ids.forEach(id => db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), id));
@@ -7788,6 +8299,7 @@ async function routeRequest(req, res) {
       if (!sortie) return send(res, 404, { error: "未找到放行架次记录" });
       maintenanceTransaction(()=>{
       personnelAccess.requirePerson(manager,"maintenance",sortie.person_id);
+      if(sortie.status!=='待复核')throw maintenanceReviewError('架次尚未进入待复核或已经确认，不能直接确认',409);
       db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortieId);
       db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
       syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
@@ -7804,6 +8316,7 @@ async function routeRequest(req, res) {
       const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
       const sorties = ids.length ? db.prepare(`select * from maintenance_sortie_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
       if(sorties.length!==ids.length || sorties.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"架次不存在或超出范围"});
+      if(sorties.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选架次包含未完成报工确认或已确认记录，请刷新后重试'});
       maintenanceTransaction(()=>{
       for (const sortie of sorties) {
         db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortie.id);
@@ -7859,12 +8372,39 @@ async function routeRequest(req, res) {
       audit(admin, "update_settings", "settings", "system", `${syncedCategories.length} 个分类`);
       return send(res, 200, { settings: publicSettings() });
     }
+    if (url.pathname === '/api/info/sync' && method === 'POST') {
+      const login=requireRbacPermission(req,res,'info.read'); if(!login)return;const user=withInfoAccess(login);
+      const input=await bodyJson(req);
+      if(!Array.isArray(input.knownIds) || input.knownIds.length>50000)return send(res,400,{error:'同步记录数量无效'});
+      const delta=infoSync.changes(user,input.cursor,input.knownIds);
+      const details=input.details===true && hasRbac(user,'info.stats.read');
+      const content=publicRecords(details?[...delta.content,...delta.receipt]:delta.content,user,{summary:!details});
+      const receiptData=publicRecords(delta.receipt,user,{summary:true});
+      const updates=receiptData.records.map(record=>{
+        return {id:record.id,feedbackSummary:record.feedbackSummary,
+          ownReceipts:record.receipts.filter(r=>r.userId===user.id)};
+      });
+      return send(res,200,{reset:delta.reset,cursor:delta.cursor,records:content.records,receipts:content.receipts,updates:details?[]:updates,removed:delta.removed});
+    }
+    if (url.pathname === '/api/info/events' && method === 'GET') {
+      const login=requireRbacPermission(req,res,'info.read'); if(!login)return;const user=withInfoAccess(login);
+      const active=[...infoEventClients].filter(c=>c.user.id===user.id);
+      if(active.length>=5)return send(res,429,{error:'实时连接数量已达上限'});
+      res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no','Connection':'keep-alive'});
+      const known=new Set(db.prepare('select * from records').all().filter(r=>canViewRecord(user,r)).map(r=>r.id));
+      const client={req,res,user,known}; infoEventClients.add(client);
+      res.write('retry: 10000\nevent: info\ndata: {"kind":"connected"}\n\n');
+      res.on('close',()=>infoEventClients.delete(client));
+      return;
+    }
     if (method === "GET" && url.pathname === "/api/records") {
       const login = requireLogin(req, res);
       if (!login) return;
-      const rows = db.prepare("select * from records").all().filter(row => canViewRecord(login, row)).sort(compareRecordsDesc);
-      const result = publicRecords(rows, login);
-      return send(res, 200, { ...result, settings: publicSettings() });
+      const version=infoSync.latest();
+      const viewer=withInfoAccess(login);
+      const rows = db.prepare("select * from records").all().filter(row => canViewRecord(viewer, row)).sort(compareRecordsDesc);
+      const result = publicRecords(rows, viewer,{summary:url.searchParams.get('summary')==='1'});
+      return send(res, 200, { ...result, cursor:infoSync.encode(viewer,version), settings: publicSettings() });
     }
     if (method === "POST" && url.pathname === "/api/records") {
       const editor = requireRbacPermission(req, res, "info.create");
@@ -7881,6 +8421,12 @@ async function routeRequest(req, res) {
       return send(res, 201, { record: publicRecord(db.prepare("select * from records where id=?").get(rid), editor) });
     }
     const rec = url.pathname.match(/^\/api\/records\/([^/]+)$/);
+    if(rec && method==='GET'){
+      const user=requireRbacPermission(req,res,'info.read'); if(!user)return;
+      const row=db.prepare('select * from records where id=?').get(routeParam(rec[1]));
+      if(!canViewRecord(user,row))return send(res,404,{error:'未找到信息'});
+      return send(res,200,{record:publicRecord(row,user)});
+    }
     if (rec && method === "PUT") {
       const editor = requireLogin(req, res);
       if (!editor) return;
@@ -7889,9 +8435,12 @@ async function routeRequest(req, res) {
       const existing = db.prepare("select * from records where id=?").get(recordId);
       if (!existing) return send(res, 404, { error: "未找到信息" });
       if (!canEditRecord(editor, existing)) return send(res, 403, { error: "当前账号无权修改该信息" });
+      if(String(p.expectedUpdatedAt||'')!==existing.updated_at)return send(res,409,{error:'信息已被更新，请重新核对后保存',code:'INFO_EDIT_CONFLICT'});
       maintenanceTransaction(() => {
-      db.prepare("update records set date=?,category=?,title=?,original=?,updated_by=?,updated_at=?,deadline=?,priority=?,publish_status=? where id=?")
-        .run(p.date, p.category, p.title, p.original, editor.id, now(), p.deadline || existing.deadline || deadlineFor(p.date), p.priority || existing.priority || "普通", p.publishStatus || existing.publish_status || "已发布", recordId);
+      const stamp=new Date(Math.max(Date.now(),Date.parse(existing.updated_at)+1||0)).toISOString();
+      const changed=db.prepare("update records set date=?,category=?,title=?,original=?,updated_by=?,updated_at=?,deadline=?,priority=?,publish_status=? where id=? and updated_at=?")
+        .run(p.date, p.category, p.title, p.original, editor.id, stamp, p.deadline || existing.deadline || deadlineFor(p.date), p.priority || existing.priority || "普通", p.publishStatus || existing.publish_status || "已发布", recordId,existing.updated_at);
+      if(!changed.changes)throw Object.assign(new Error('信息已被更新，请重新核对后保存'),{status:409,code:'INFO_EDIT_CONFLICT'});
       if (Array.isArray(p.recipients) || p.allInScope === true) saveRecipients(recordId, recipientsFromPayload(p));
       audit(editor, "update_record", "record", recordId, p.title);
       });
@@ -7905,12 +8454,14 @@ async function routeRequest(req, res) {
       if (!row) return send(res, 404, { error: "未找到信息" });
       if (!canDeleteRecord(login, row)) return send(res, 403, { error: "当前账号无权删除该信息" });
       await removeOwnerAttachmentFiles("record", recordId);
+      maintenanceTransaction(()=>{
       db.prepare("delete from records where id=?").run(recordId);
       db.prepare("delete from record_recipients where record_id=?").run(recordId);
       db.prepare("delete from read_receipts where record_id=?").run(recordId);
       db.prepare("delete from attachments where owner_type='record' and owner_id=?").run(recordId);
       db.prepare("delete from favorites where record_id=?").run(recordId);
       audit(login, "delete_record", "record", recordId, row.title);
+      });
       return send(res, 200, { ok: true });
     }
     const voidRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/void$/);
@@ -7935,10 +8486,12 @@ async function routeRequest(req, res) {
       if ((row.publish_status || "已发布") !== "作废") return send(res, 400, { error: "只有作废信息可以恢复" });
       if(!isRecordOwner(admin,row) && !dataScopeAllowsUser(admin,row.publisher_id || row.created_by,"info"))return send(res,404,{error:"未找到信息"});
       const restoredAt = now();
+      maintenanceTransaction(()=>{
       db.prepare("update records set date=?,deadline=?,publish_status='已发布',updated_by=?,updated_at=? where id=?")
         .run(restoredAt, deadlineFor(restoredAt), admin.id, restoredAt, recordId);
       db.prepare("delete from read_receipts where record_id=?").run(recordId);
       audit(admin, "restore_record", "record", recordId, row.title);
+      });
       return send(res, 200, { record: publicRecord(db.prepare("select * from records where id=?").get(recordId), admin) });
     }
     const read = url.pathname.match(/^\/api\/records\/([^/]+)\/read$/);
@@ -8118,9 +8671,10 @@ async function routeRequest(req, res) {
       const row = attachmentRow(attachmentId);
       if (!row || !row.path) return send(res, 404, { error: "未找到附件" });
       if (!canViewAttachment(login, row)) return send(res, 403, { error: "无权访问该附件" });
-      if (row.storage === "cos") return send(res, 200, signedCosAttachment(row, 300));
+      const download = url.searchParams.get("download") === "1";
+      if (row.storage === "cos") return send(res, 200, signedCosAttachment(row, 300, download));
       return send(res, 200, {
-        url: `/api/attachments/${encodeURIComponent(row.id)}`,
+        url: `/api/attachments/${encodeURIComponent(row.id)}${download ? '?download=1' : ''}`,
         expiresAt: "",
         expiresIn: 0,
         fileName: row.name || "附件",
@@ -8137,13 +8691,13 @@ async function routeRequest(req, res) {
       if (!row || !row.path) return sendText(res, 404, "未找到附件");
       if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
       if (row.storage === "cos") {
-        res.writeHead(302, { ...securityHeaders(), "Location": signedCosAttachment(row, 300).url, "Cache-Control": "private, no-store" });
+        res.writeHead(302, { ...securityHeaders(), "Location": signedCosAttachment(row, 300, url.searchParams.get("download") === "1").url, "Cache-Control": "private, no-store" });
         return res.end();
       }
       const filePath = safeUploadPath(row.path);
       if (!filePath) return sendText(res, 403, "附件路径无效");
       try {
-        return await streamAttachment(req, res, row, filePath);
+        return await streamAttachment(req, res, row, filePath, url.searchParams.get("download") === "1");
       } catch {
         return sendText(res, 404, "未找到附件文件");
       }
@@ -8412,7 +8966,7 @@ async function routeRequest(req, res) {
   } catch (error) {
     const status = error.status || (error.message?.includes("人员已删除，不能恢复或新增关联") ? 409 : 500);
     if (status >= 500) console.error(error);
-    send(res, status, { error: error.message || "服务异常", ...(error.details || {}) });
+    send(res, status, { error: error.message || "服务异常", ...(error.code === "MAINTENANCE_REPORT_CONFLICT" ? { code: error.code } : {}), ...(error.details || {}) });
   }
 }
 
@@ -8435,6 +8989,7 @@ async function measuredRoute(req, res) {
   };
   res.once("finish", () => {
     finished = true;
+    if(statusCode>=200 && statusCode<300 && ['POST','PUT','DELETE'].includes(req.method) && /^\/api\/(records|attachments)(\/|$)/.test(new URL(req.url,'http://localhost').pathname))scheduleInfoSync();
     const after = requestStats;
     const durationMs = performance.now() - started;
     if (process.env.REQUEST_LOGS === "1" || durationMs >= 500 || statusCode >= 500) {
@@ -8478,7 +9033,50 @@ await initDb();
 installPersonnelDeletionGuards(db);
 db.exec(IMPORT_WORKSPACE_SCHEMA);
 capabilityService.init();
+installInfoSync(db);
+const attendanceService = createAttendanceService({ db, personnelAccess, hasRbac, audit, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
+infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
+let infoVersion=infoSync.latest(),infoHeartbeat=Date.now();
+function pumpInfoSync(forceHeartbeat=false){
+    try {
+      const version=infoSync.latest(), heartbeat=forceHeartbeat || Date.now()-infoHeartbeat>=25000;
+      if(!infoEventClients.size){infoVersion=version;return;}
+      if(version===infoVersion && !heartbeat)return;
+      const oldest=Number(db.prepare('select min(version) as v from info_sync_changes').get()?.v || version);
+      const historyGap=infoVersion<oldest-1;
+      const events=db.prepare('select * from info_sync_changes where version>? and version<=?').all(infoVersion,version);
+      const ids=[...new Set(events.map(e=>e.record_id))];
+      const rows=ids.length?db.prepare(`select * from records where id in (${ids.map(()=>'?').join(',')})`).all(...ids):[];
+      const byId=new Map(rows.map(row=>[row.id,row]));
+      // Refresh changed recipient membership immediately, not at the 25s
+      // authentication heartbeat. A newly published record was not in the
+      // subscriber's connection-time recipient cache.
+      const recipientRows=ids.length?db.prepare(`select record_id,user_id from record_recipients where record_id in (${ids.map(()=>'?').join(',')})`).all(...ids):[];
+      const recipientsById=new Map();
+      for(const row of recipientRows){if(!recipientsById.has(row.record_id))recipientsById.set(row.record_id,new Set());recipientsById.get(row.record_id).add(row.user_id);}
+      for(const client of infoEventClients){
+        // Business signals contain no data. Revalidate the connection every
+        // heartbeat; every incremental HTTP read always revalidates immediately.
+        const user=heartbeat?withInfoAccess(currentUser(client.req)):client.user;
+        for(const id of ids){user.infoRecipientRecords.delete(id);if(recipientsById.get(id)?.has(user.id))user.infoRecipientRecords.add(id);}
+        if(!user.id || !hasRbac(user,'info.read')){client.res.write('event: access-revoked\ndata: {}\n\n');client.res.end();infoEventClients.delete(client);continue;}
+        client.user=user;
+        const relevant=events.filter(e=>e.kind==='favorite'?e.actor_id===user.id:e.kind==='receipt'?e.actor_id===user.id||hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && user.infoAllowedAccounts.has(e.actor_id):true)
+          .filter(e=>canViewRecord(user,byId.get(e.record_id)) || client.known.has(e.record_id));
+        for(const e of relevant)if(canViewRecord(user,byId.get(e.record_id)))client.known.add(e.record_id);else client.known.delete(e.record_id);
+        // No identifiers, titles or shared revision numbers leave this stream.
+        if(relevant.length || heartbeat || historyGap){
+          if(client.res.writableLength>65536){client.res.end();infoEventClients.delete(client);continue;}
+          client.res.write(`event: info\ndata: ${JSON.stringify({kind:relevant.some(e=>e.kind!=='receipt')?'content':heartbeat?'scope':'receipt'})}\n\n`);
+        }
+      }
+      infoVersion=version;if(heartbeat)infoHeartbeat=Date.now();
+    }catch(error){console.error('信息实时同步检查失败',error.message);}
+}
 if (process.env.MUC_NO_LISTEN !== "1") {
+  attendanceService.start();
+  const infoTimer=setInterval(()=>pumpInfoSync(),2000);infoTimer.unref();
   const capabilityScheduler = setInterval(() => { try { capabilityService.syncMaster(); capabilityService.schedule(); } catch (error) { console.error("能力状态同步失败", error.message); } }, 15000);
   capabilityScheduler.unref();
   http.createServer(measuredRoute).listen(port, host, () => {
@@ -8498,4 +9096,4 @@ if (process.env.MUC_NO_LISTEN !== "1") {
   });
 }
 
-export { route, measuredRoute, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };
+export { attendanceService, route, measuredRoute, pumpInfoSync, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };

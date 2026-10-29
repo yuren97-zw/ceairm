@@ -51,6 +51,9 @@ class MockResponse {
 }
 
 async function request(pathname, { cookie = "", method = "GET", body, expected = 200 } = {}) {
+  // Information edits now require the version read by the editing client.
+  if(method==='PUT' && /^\/records\/[^/]+$/.test(pathname) && body && body.expectedUpdatedAt===undefined)
+    body={...body,expectedUpdatedAt:db.prepare('select updated_at from records where id=?').get(decodeURIComponent(pathname.split('/').pop()))?.updated_at || ''};
   const headers = {
     host: "127.0.0.1:8788",
     origin: "http://127.0.0.1:8788",

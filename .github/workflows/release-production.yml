@@ -1,24 +1,47 @@
 name: Release production
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Approved main commit (full 40-character SHA)'
+        required: true
+        type: string
+      confirmation:
+        description: 'Type DEPLOY_PRODUCTION after backup, migration, rollback and sync-owner checks'
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
 
 jobs:
   build:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: muc_online_app
     steps:
+      - name: Verify explicit approval, current main and successful push CI
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.commit_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = DEPLOY_PRODUCTION
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$TARGET_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=main&per_page=100" | jq -e --arg sha "$TARGET_SHA" 'any(.workflow_runs[]; .head_sha == $sha and .status == "completed" and .conclusion == "success")'
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.commit_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -26,7 +49,10 @@ jobs:
           cache-dependency-path: muc_online_app/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run check && npm test
-      - run: bash deploy/tencent/build-release.sh production-${{ github.event.workflow_run.head_sha }} /tmp/airline-operations-center.tar.gz
+      - name: Build approved release
+        env:
+          RELEASE_SHA: ${{ inputs.commit_sha }}
+        run: bash deploy/tencent/build-release.sh "production-$RELEASE_SHA" /tmp/airline-operations-center.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: production-release
@@ -40,20 +66,17 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     environment: production
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: production-release
           path: release
-      - name: Publish immutable production release
+      - name: Publish explicitly approved immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: >-
-          gh release create "production-${RELEASE_SHA}"
-          release/airline-operations-center.tar.gz
-          release/airline-operations-center.tar.gz.sha256
-          --repo "${GITHUB_REPOSITORY}"
-          --title "Production ${RELEASE_SHA::12}"
-          --notes "Approved production release for commit ${RELEASE_SHA}."
-          --latest
+          RELEASE_SHA: ${{ inputs.commit_sha }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$RELEASE_SHA"
+          gh release create "production-$RELEASE_SHA" release/airline-operations-center.tar.gz release/airline-operations-center.tar.gz.sha256 --repo "$GITHUB_REPOSITORY" --title "Production $RELEASE_SHA" --notes "Explicitly approved production release for commit $RELEASE_SHA." --latest

@@ -9,4 +9,4 @@ set -a
 source "$ENV_FILE"
 set +a
 cd "$RELEASE_DIR"
-npm run migrate
+exec node scripts/run-postgres-migrations.mjs
