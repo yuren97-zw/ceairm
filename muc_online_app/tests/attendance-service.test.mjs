@@ -16,6 +16,12 @@ function fixture(options={}){
  return {db,service:createAttendanceService(deps),deps,setPurpose:v=>purpose=v,get calls(){return calls;}};
 }
 async function drain(service,max=50){for(let i=0;i<max;i++)await service.tick();}
+test('status masks persisted Stream connection without modifying stored history or invoking synchronization',()=>{
+ const f=fixture({config:{eventsEnabled:false}}),saved={enabled:true,connected:true,lastEventAt:'2026-10-28T11:15:51Z'};f.service.hybrid.setState('stream',saved);
+ const before=f.db.prepare('select * from attendance_sync_state').all();
+ for(const user of [admin,reader]){const value=f.service.status(user).hybrid.stream;assert.equal(value.enabled,false);assert.equal(value.connected,false);assert.equal(value.lastEventAt,saved.lastEventAt);}
+ assert.deepEqual(f.db.prepare('select * from attendance_sync_state').all(),before);assert.equal(f.calls,0);f.db.close();
+});
 test('full sync persists unique people-days, repeat is idempotent and source change is audited',async()=>{
  const f=fixture();f.service.enqueue({from:'2026-09-01',to:'2026-09-02',user:admin});await drain(f.service);
  assert.equal(f.db.prepare('select count(*) as n from attendance_days').get().n,4);assert.equal(f.service.status(admin).runs[0].status,'completed');

@@ -10,6 +10,11 @@ export function createAttendanceStream({db,config,coordinator,clock=Date.now,fet
  const owner=crypto.randomUUID();let socket=null,timer=null,connecting=false,stopped=true,nextAt=0,attempts=0,lastTraffic=0,lastPing=0;
  const at=()=>new Date(clock()).toISOString();
  function status(value){coordinator.setState('stream',{...coordinator.state('stream'),...value,updatedAt:at()});}
+ function connectionStatus(){
+  const saved=coordinator.state('stream')||{};
+  const held=db.prepare("select owner,expires_at from attendance_leases where id='stream'").get();
+  return {...saved,enabled:!!config.eventsEnabled,connected:!!(config.eventsEnabled&&!stopped&&socket?.readyState===1&&saved.connected&&held?.owner===owner&&Date.parse(held.expires_at)>clock()&&clock()-lastTraffic<=90000)};
+ }
  function lease(){db.prepare("insert into attendance_leases(id,owner,expires_at) values('stream',?,?) on conflict(id) do update set owner=excluded.owner,expires_at=excluded.expires_at where attendance_leases.expires_at<? or attendance_leases.owner=?").run(owner,new Date(clock()+60000).toISOString(),at(),owner);return db.prepare("select owner from attendance_leases where id='stream'").get()?.owner===owner;}
  function disconnected(code='DISCONNECTED'){
   const previous=coordinator.state('stream')||{};
@@ -71,5 +76,5 @@ export function createAttendanceStream({db,config,coordinator,clock=Date.now,fet
   }catch(e){disconnected(/^STREAM_HTTP_\d+$|^EVENT_SCOPE_CONFIG$|^STREAM_ENDPOINT$/.test(e.message)?e.message:'STREAM_CONNECT');}
   finally{connecting=false;}
  }
- return {tick,handle,start(){if(timer)return;stopped=false;timer=setInterval(()=>tick().catch(()=>{}),10000);timer.unref();tick().catch(()=>{});},stop(){stopped=true;clearInterval(timer);timer=null;if(db.prepare("select owner from attendance_leases where id='stream'").get()?.owner===owner)status({connected:false,disconnectedAt:at()});close();db.prepare("delete from attendance_leases where id='stream' and owner=?").run(owner);}};
+ return {tick,handle,connectionStatus,start(){if(timer)return;stopped=false;timer=setInterval(()=>tick().catch(()=>{}),10000);timer.unref();tick().catch(()=>{});},stop(){stopped=true;clearInterval(timer);timer=null;if(db.prepare("select owner from attendance_leases where id='stream'").get()?.owner===owner)status({connected:false,disconnectedAt:at()});close();db.prepare("delete from attendance_leases where id='stream' and owner=?").run(owner);}};
 }

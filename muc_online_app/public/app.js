@@ -7352,9 +7352,9 @@ document.addEventListener("click", async event => {
     if (menu !== activeStatusMenu) menu.open = false;
   });
   const close = event.target.closest("[data-close]");
-  if (close) {
-    const dialog = $("#" + close.dataset.close);
-    closeDialog(dialog);
+  if (close?.dataset.close) {
+    const dialog = document.getElementById(close.dataset.close);
+    if (dialog?.tagName === "DIALOG") closeDialog(dialog);
   }
   const more = event.target.closest("[data-more]");
   if (more) {

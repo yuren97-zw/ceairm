@@ -23,6 +23,12 @@ test('compact header keeps only month beside the title in live and offline views
   s.view.destroy();
  }
 });
+test('sync view distinguishes disabled reception from disconnected or live Stream even with stale saved state',()=>{
+ for(const [enabled,connected,label] of [[false,true,'未启用'],[false,false,'未启用'],[true,false,'未连接'],[true,true,'已连接']]){
+  const s=setup({initialState:{tab:'sync'},status:{configuration:{eventsEnabled:enabled},hybrid:{stream:{connected}}}});
+  assert.ok(s.content.innerHTML.includes('Stream连接：'+label));s.view.destroy();
+ }
+});
 test('search debounces 300ms, keeps focus/caret, clears immediately and ignores intermediate IME input',t=>{
  t.mock.timers.enable({apis:['setTimeout']});const s=setup();s.input('张');t.mock.timers.tick(299);assert.match(s.content.innerHTML,/李四/);
  s.input('张三');t.mock.timers.tick(299);assert.match(s.content.innerHTML,/李四/);t.mock.timers.tick(1);assert.ok(!s.content.innerHTML.includes('李四'));assert.equal(s.host.ownerDocument.activeElement,s.query);assert.equal(s.query.selectionStart,2);
