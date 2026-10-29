@@ -7,6 +7,7 @@ const dayMs=86400000;
 // Explicitly verified business templates. Similar test forms are not included.
 const templateKind=name=>({'请假':'请假','请休假申请':'请假','外出':'外出','外出申请':'外出','出差':'出差','出差申请':'出差'})[name]||null;
 const nextDate=d=>new Date(Date.parse(d+'T00:00:00Z')+dayMs).toISOString().slice(0,10);
+const previousDate=d=>new Date(Date.parse(d+'T00:00:00Z')-dayMs).toISOString().slice(0,10);
 const initialBaseline=(plan,input)=>plan.history?.length===1&&(plan.initialSnapshot||['initial_known','initial_inventory'].includes(plan.history[0].source))&&(input.approvals||[]).some(a=>a.id===plan.id&&a.kind===plan.kind&&a.approved&&!a.revoked&&(plan.kind!=='请假'||a.subType===plan.category));
 export function approvalBusinessTime(value,end=false){
  if(typeof value==='string'&&/^\d{4}-\d\d-\d\d(?:\s*(上午|下午))?$/.test(value)){
@@ -19,10 +20,22 @@ export function approvalBusinessTime(value,end=false){
 export function normalizeApprovalPlan(detail,config={}){
  const fields=detail?.formComponentValues||[];
  const get=(name,values=fields)=>{const a=values.filter(f=>(f.name??f.label)===name);return a.length===1?a[0].value:null;};
- let kind=null,category=null,segments=[],duration=null,issue=null;
+ let kind=null,category=null,segments=[],duration=null,issue=null,effect=null;
  const holiday=fields.filter(f=>f.componentType==='DDHolidayField'||f.id==='DDHolidayField-J2BWEN12');
  const table=fields.filter(f=>f.id==='TableField_LDYWW1RA5CG0');
- if(holiday.length===1){
+ const correction=fields.filter(f=>f.id==='DDDateField-JYNRW51O');
+ const repair=fields.filter(f=>f.name==='repairCheckTime');
+ if(correction.length||repair.length){
+  kind='补卡';effect='punch_correction';
+  // Verified contract only. Never retain reasons/images or manufacture a punch from approval.
+  const field=correction[0],value=field?.value;
+  const exactDate=typeof value==='string'&&/^\d{4}-\d\d-\d\d[ T]\d\d:\d\d(?::\d\d)?$/.test(value);
+  const at=exactDate?stamp(value):null;
+  const roundTrip=at?new Date(at+8*3600000).toISOString().slice(0,value.length).replace('T',' '):null;
+  const systemTime=repair.length===1&&/^\d{13}$/.test(String(repair[0].value))?stamp(repair[0].value):null;
+  if(correction.length!==1||repair.length!==1||repair[0]?.id||repair[0]?.componentType!=null||field?.name!=='补卡时间'||field?.componentType!=='DDDateField'||!at||roundTrip!==value.replace('T',' ')||at!==systemTime||holiday.length||table.length||fields.some(f=>['DDDateField_9NJFYUSAEXC0','DDDateField_18N97G5ARZ4W0'].includes(f.id)))issue='补卡字段缺失、重复、时间不一致或混入其他审批结构';
+  if(!issue)segments=[{start:at,end:at+1}];
+ }else if(holiday.length===1){
   kind='请假';const v=parse(holiday[0].value,[]);
   if(Array.isArray(v)&&v.length>=5){category=typeof v[4]==='string'?v[4].trim():null;segments=[{start:approvalBusinessTime(v[0]),end:approvalBusinessTime(v[1],true)}];duration={value:v[2],unit:v[3]};}
  }else if(table.length===1){
@@ -34,16 +47,16 @@ export function normalizeApprovalPlan(detail,config={}){
   kind='外出';category='外出';segments=[{start:approvalBusinessTime(get('开始时间')),end:approvalBusinessTime(get('结束时间'),true)}];
   duration={value:get('时长'),unit:'原表时长'};
  }else return {state:'unsupported',error:'未适配的考勤审批表单；不根据标题推断',kind:null,category:null,segments:[]};
- const reason=readApprovalReason(detail,kind,config);
- if(!category||category.length>100)issue='审批类别未唯一识别';
- if(!segments.length||segments.some(s=>!s.start||!s.end||s.end<=s.start||s.end-s.start>366*dayMs))issue='审批业务日期缺失、无效或超出366天';
+ const reason=effect?{reason:null,reasonStatus:'not_applicable'}:readApprovalReason(detail,kind,config);
+ if(!effect&&(!category||category.length>100))issue='审批类别未唯一识别';
+ if(!issue&&(!segments.length||segments.some(s=>!s.start||!s.end||s.end<=s.start||s.end-s.start>366*dayMs)))issue='审批业务日期缺失、无效或超出366天';
  const terminal=['TERMINATED','CANCELED','CANCELLED'].includes(detail.status)||detail.result==='refuse';
  const action=String(detail.bizAction||'NONE').toUpperCase(),mainId=String(detail.mainProcessInstanceId||'');
  const actionApproved=detail.status==='COMPLETED'&&detail.result==='agree';
  if(!['NONE','MODIFY','REVOKE'].includes(action)||action!=='NONE'&&!mainId)issue='关联审批动作或原申请标识不完整';
  const state=issue?'unresolved':terminal?'withdrawn':action==='REVOKE'?(actionApproved?'withdrawn':'pending'):actionApproved?'approved':'pending';
  const dates=issue?[]:[...new Set(segments.flatMap(s=>datesBetween(dayOf(s.start),dayOf(s.end-1))))].sort();
- return {kind,category,segments,dates,duration,reason:reason.reason,reasonStatus:reason.reasonStatus,state,error:issue,status:detail.status||null,result:detail.result||null,createdAt:detail.createTime||null,finishedAt:detail.finishTime||null,action,mainId,actionApproved,baseState:state,relationVersion:1,attachedIds:[...new Set((detail.attachedProcessInstanceIds||[]).filter(v=>typeof v==='string'&&v.length<=200))]};
+ return {kind,category,segments,dates,...(effect?{effect,recheckDates:dates.length?[previousDate(dates[0]),dates[0]]:[]}:{}),duration,reason:reason.reason,reasonStatus:reason.reasonStatus,state,error:issue,status:detail.status||null,result:detail.result||null,createdAt:detail.createTime||null,finishedAt:detail.finishTime||null,action,mainId,actionApproved,baseState:state,relationVersion:1,attachedIds:[...new Set((detail.attachedProcessInstanceIds||[]).filter(v=>typeof v==='string'&&v.length<=200))]};
 }
 // Resolve related business operations as one application; operation forms never count as new leave.
 export function resolveApprovalGroups(rows){
@@ -98,10 +111,15 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
   if(!config.approvalPlanDueEnabled)return;
   const plan=parse(row.plan_json,{}),previous=parse(old?.plan_json,{});
   const affected=new Map();
-  for(const [p,id] of [[plan,row.person_id],[previous,old?.person_id]])if(id)for(const date of p.dates||[])if(date>=config.startDate)affected.set(id+'|'+date,{personId:id,date});
-  for(const {personId,date} of affected.values()){
+  for(const [p,id] of [[plan,row.person_id],[previous,old?.person_id]])if(id){
+   if(p.effect==='punch_correction'&&(p.state!=='approved'||p.error))continue;
+   for(const date of (p.effect==='punch_correction'?p.recheckDates:p.dates)||[])if(date>=config.startDate)affected.set(id+'|'+date,{personId:id,date,correction:p.effect==='punch_correction'});
+  }
+  for(const {personId,date,correction} of affected.values()){
    if(date>dayOf(clock())&&plan.state!=='approved')continue;
-   for(const [phase,due] of [['initial',date+'T00:05:00+08:00'],['final',nextDate(date)+'T12:30:00+08:00']]){
+   const final=nextDate(date)+'T12:30:00+08:00';
+   const phases=correction?[['correction',date>dayOf(clock())?date+'T00:05:00+08:00':now()],...(Date.parse(final)>clock()?[['final',final]]:[])]:[['initial',date+'T00:05:00+08:00'],['final',final]];
+   for(const [phase,due] of phases){
     const id=crypto.createHash('sha256').update([row.id,row.revision,personId,date,phase].join('|')).digest('hex');
     db.prepare('insert or ignore into attendance_approval_plan_due(id,instance_id,revision,person_id,work_date,phase,due_at) values(?,?,?,?,?,?,?)').run(id,row.id,row.revision,personId,date,phase,new Date(due).toISOString());
    }
@@ -219,7 +237,7 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
    const sourceAt=Date.parse(d.sourceQueriedAt||d.updatedAt||'');
    const verified=!!d.input.covered&&!d.syncError&&clock()>=after&&sourceAt>=after&&!['待核对','待核实','未同步','未来日期','尚未到下班时间'].includes(d.category);
    const reconciled=p=>verified&&(initialBaseline(p,d.input)||sourceAt>=Date.parse(p.history?.[0]?.changedAt||0));
-   const pending=records.filter(p=>p.state==='approved'&&!p.stale&&!p.error&&!reconciled(p));
+   const pending=records.filter(p=>p.effect!=='punch_correction'&&p.state==='approved'&&!p.stale&&!p.error&&!reconciled(p));
    for(const c of new Set(pending.map(p=>p.category))){pendingCounts[c]=(pendingCounts[c]||0)+1;if(c!==d.category)displayCounts[c]=(displayCounts[c]||0)+1;}
    return {...d,approvalPlans:records.map(p=>({...p,reconciled:p.state==='approved'&&!p.stale&&reconciled(p)})),pendingCategories:[...new Set(pending.map(p=>p.category))],approvalConflict:new Set(pending.map(p=>p.category)).size>1};
   });
