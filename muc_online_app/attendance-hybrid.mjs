@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {dayOf,datesBetween} from './attendance-rules.mjs';
+import {eventUserIds,eventOutsideDirectory,DIRECTORY_EXCLUDED_NOTE} from './attendance-event-directory.mjs';
 const DAY=86400000;
 export function *attendanceDates(from,to){
  for(let cursor=from;cursor<=to;){const end=shiftDate(cursor,365)<to?shiftDate(cursor,365):to;yield* datesBetween(cursor,end);cursor=shiftDate(end,1);}
@@ -61,6 +62,7 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
  const now=()=>new Date(clock()).toISOString();
  const state=id=>decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
  function setState(id,value){db.prepare('insert into attendance_sync_state(id,value_json,updated_at) values(?,?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at').run(id,encode(value),now());}
+ function requestDirectoryCheck(){if(!state('directoryRefreshRequest'))setState('directoryRefreshRequest',{requestedAt:now()});}
  function ensure(person,date){db.prepare('insert into attendance_refresh(person_id,work_date) values(?,?) on conflict(person_id,work_date) do nothing').run(person,date);return db.prepare('select * from attendance_refresh where person_id=? and work_date=?').get(person,date);}
  function dirty(person,date){
   if(date<config.startDate||date>dayOf(clock()))return;
@@ -105,7 +107,7 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
    const p=decode(e.payload_json,{});
    if(config.validation?.enabled&&!['attendance_check_record','attendance_schedule_change'].includes(e.topic)){db.prepare("update attendance_events set status='validation_held',error=? where id=?").run('当前验收阶段仅验证打卡及排班；审批等事件保留后续验证',e.id);continue;}
    if(e.topic.startsWith('user_')||e.topic.startsWith('org_')){setState('directory',null);setState('directoryRevision',e.id);db.prepare("update attendance_events set status='handled' where id=?").run(e.id);continue;}
-   let ids=p.userIds??p.userId??p.userid??p.staffId??[];ids=Array.isArray(ids)?ids:String(ids).split(',').filter(Boolean);
+   const ids=eventUserIds(p);
    const approval=String(p.processInstanceId||p.process_instance_id||'');
    const old=[];
    if(approval){
@@ -116,7 +118,11 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
    if(approval&&!ids.length&&!old.length)continue; // Resolve the instance owner before matching scope.
    let selected=members.filter(m=>ids.includes(m.user_id)||old.some(d=>d.personId===m.person_id));
    if(config.validation?.enabled){selected=selected.filter(m=>config.validation.personIds.includes(m.person_id));if(!selected.length){db.prepare("update attendance_events set status='validation_held',error=? where id=?").run('隔离验收范围外，未执行同步；保留后续补偿核对',e.id);continue;}}
-   if(!selected.length){setState('directory',null);setState('directoryRevision',e.id);db.prepare("update attendance_events set status='unresolved',error=? where id=?").run('事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',e.id);continue;}
+   if(!selected.length){
+    requestDirectoryCheck();
+    const excluded=eventOutsideDirectory(ids,state('directory'),config,state('directoryRevision'),clock());
+    db.prepare('update attendance_events set status=?,error=? where id=?').run(excluded?'directory_excluded':'unresolved',excluded?DIRECTORY_EXCLUDED_NOTE:'事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',e.id);continue;
+   }
    const asDate=v=>{if(v===undefined||v===null||v==='')return null;const t=typeof v==='number'||/^\d{13}$/.test(String(v))?Number(v):Date.parse(String(v).replace(' ','T')+( /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d)?$/.test(String(v))?'+08:00':''));return Number.isFinite(t)?dayOf(t):null;};
    let from=asDate(p.workDateBegin??p.workDate),to=asDate(p.workDateEnd??p.workDate);
    let note=null;
@@ -218,5 +224,5 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
    setState('recoveryNeeded',{since:null,reason:'旧版打卡通知缺少关键字段，待当月及上月补偿核对'});
   }
  }
- return {state,setState,ensure,dirty,begin,complete,fresh,inFlight,receive,processEvents,promote,schedule,recover,summary,metrics};
+ return {state,setState,requestDirectoryCheck,ensure,dirty,begin,complete,fresh,inFlight,receive,processEvents,promote,schedule,recover,summary,metrics};
 }

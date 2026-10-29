@@ -1,5 +1,14 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {createAttendanceService} from '../attendance-service.mjs';import {DingTalkClient,configuration,DingTalkError} from '../attendance-dingtalk.mjs';import {normalizeLeaveData,leaveCell,leaveValueText} from '../public/attendance-leave-model.mjs';import {leaveXlsx,leaveHtml,leaveExportTables} from '../attendance-leave-export.mjs';
 const stamp=Date.parse('2026-10-26T11:00:00+08:00');
+test('directory-excluded leave events retain audit without repeated lookup, then resume after reconsideration',async()=>{
+ const f=fixture();f.deps.config.eventsEnabled=true;let lookups=0;f.client.approval=async()=>{lookups++;return {originatorUserId:'u1'};};
+ f.db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('directory-excluded-leave','attendance_approve_status_change',JSON.stringify({staffId:'u1'}),new Date(stamp+1).toISOString(),'directory_excluded','未在当前授权通讯录内');
+ await f.service.leave.observe();await f.service.leave.observe();assert.equal(lookups,0);
+ assert.equal(f.db.prepare('select count(*) n from attendance_leave_queue').get().n,0);
+ f.db.prepare("update attendance_events set status='pending',error=null where id=?").run('directory-excluded-leave');
+ await f.service.leave.observe();assert.equal(f.db.prepare('select count(*) n from attendance_leave_queue').get().n,1);
+ assert.equal(f.db.prepare('select count(*) n from attendance_events').get().n,1);f.close();
+});
 const quota=(extra={})=>({userid:'u1',leave_code:'a',quota_id:'q',quota_cycle:'2026',quota_num_per_day:1500,used_num_per_day:350,start_time:Date.parse('2026-01-01T00:00:00+08:00'),end_time:Date.parse('2027-03-31T23:59:59+08:00'),...extra});
 const record=(extra={})=>({userId:'u1',leaveCode:'a',recordId:'r',quotaId:'q',leaveRecordType:'leave',leaveStatus:'success',recordNumPerDay:350,startTime:stamp+86400000,endTime:stamp+86400000,leaveReason:'SECRET_REASON_CANARY',...extra});
 const source=(name='公休假',q=[quota()],rs=[record()])=>({name,...normalizeLeaveData(q,rs,'a','u1')});

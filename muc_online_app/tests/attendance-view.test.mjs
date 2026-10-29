@@ -146,3 +146,9 @@ test('pending approval count preserves layout, colors and actual total; click sp
  assert.match(s.content.innerHTML,/带圆点的数字含已批准待复核记录/);assert.match(s.content.innerHTML,/data-count="a\|外出">1<span class="att-plan-dot"/);
  await s.listeners.get('click')({target:s.button({count:'a|外出'})});assert.match(s.modal.innerHTML,/已核实／当前考勤结果 0天/);assert.match(s.modal.innerHTML,/已批准待复核 1天/);assert.match(s.modal.innerHTML,/2026-10-30/);s.view.destroy();
 });
+import {attendanceDirectoryExcludedHtml} from '../public/attendance-view.mjs';
+test('directory exclusions have a separate escaped informational section, not a success or identity error',()=>{
+ assert.equal(attendanceDirectoryExcludedHtml([]),'');
+ const html=attendanceDirectoryExcludedHtml([{topic:'attendance_check_record',count:12},{topic:'<script>',count:1}]);
+ assert.match(html,/未在当前授权目录内/);assert.match(html,/不计入考勤或同步失败/);assert.match(html,/员工打卡：12条/);assert.doesNotMatch(html,/<script>/);
+});
