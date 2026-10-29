@@ -1,5 +1,6 @@
 import {createApprovalPlanService} from './attendance-approval-plans.mjs';
 import {createLeaveService} from './attendance-leave-service.mjs';
+import {directoryCacheUsable,directoryScopeKey,eventUserIds,eventOutsideDirectory,DIRECTORY_REFRESH_MIN_MS,DIRECTORY_EXCLUDED_NOTE} from './attendance-event-directory.mjs';
 import {APPROVAL_DETAIL_VERSION,minimizeApprovalDetail,enrichApprovalReason,readApprovalReason} from './attendance-approval-reasons.mjs';
 import {createHybridCoordinator,sourcePriority} from './attendance-hybrid.mjs';
 import {createAttendanceStream} from './attendance-stream.mjs';
@@ -84,12 +85,16 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  }
  const approvalPlans=createApprovalPlanService({db,client,config,clock,hybrid,enqueue,people,permission,audit});
  const leave=createLeaveService({db,client,config,clock,people,permission,audit,hybrid});
+ const needsDirectoryFetch=cached=>!directoryCacheUsable(cached,config,hybrid.state('directoryRevision'),clock())||!!hybrid.state('directoryRefreshRequest')&&clock()-Date.parse(cached.at)>=DIRECTORY_REFRESH_MIN_MS;
  async function loadDirectory(run){
   let cached=hybrid.state('directory');
-  if(!cached||clock()-Date.parse(cached.at)>=86400000){
+  if(needsDirectoryFetch(cached)){
    const revision=hybrid.state('directoryRevision');
-   const directory=await client.directory();cached={at:iso(),directory};
-   if(hybrid.state('directoryRevision')===revision)hybrid.setState('directory',cached);
+   hybrid.setState('directoryFetchAttemptAt',iso());
+   const directory=await client.directory();
+   if(!Array.isArray(directory?.users)||!Array.isArray(directory?.departments))throw new DingTalkError('通讯录列表缺失','SCHEMA');
+   cached={at:iso(),directory,scopeKey:directoryScopeKey(config),revision:revision??null};
+   if(hybrid.state('directoryRevision')===revision){hybrid.setState('directory',cached);hybrid.setState('directoryRefreshRequest',null);}
   }
   const directory=cached.directory, dep=new Map(directory.departments.map(d=>[d.id,d]));
   const master=db.prepare("select p.id,p.employee_no,p.name,p.department,p.home_team from personnel p where coalesce(p.data_status,'active')<>'deleted'").all();
@@ -132,9 +137,14 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     }
    }
    hybrid.setState('runStats:'+run.id,{reused});
-   for(const event of db.prepare("select id,payload_json from attendance_events where status='unresolved' and error like '事件人员%'").all()){
-    const p=parse(event.payload_json,{});let ids=p.userIds??p.userId??p.userid??p.staffId??[];ids=Array.isArray(ids)?ids:String(ids).split(',');
-    if(users.some(u=>ids.includes(u.userId)))db.prepare("update attendance_events set status='pending',error=null where id=?").run(event.id);
+   const validMembers=db.prepare("select a.user_id from attendance_people a join personnel p on p.id=a.person_id where coalesce(a.identity_issue,'')='' and coalesce(p.data_status,'active')<>'deleted'").all();
+   for(const event of db.prepare("select id,status,payload_json from attendance_events where (status='unresolved' and error like '事件人员%') or status='directory_excluded'").all()){
+    const p=parse(event.payload_json,{}),ids=eventUserIds(p);
+    if(validMembers.some(u=>ids.includes(u.user_id))){
+     db.prepare("update attendance_events set status='pending',error=null where id=?").run(event.id);
+     const approval=p.processInstanceId||p.process_instance_id;if(approval)approvalPlans.queue(approval,'event');
+    }else if(eventOutsideDirectory(ids,cached,config,hybrid.state('directoryRevision'),clock()))db.prepare("update attendance_events set status='directory_excluded',error=? where id=?").run(DIRECTORY_EXCLUDED_NOTE,event.id);
+    else if(event.status==='directory_excluded')db.prepare("update attendance_events set status='unresolved',error=? where id=?").run('事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',event.id);
    }
    const missingSelected=selected?.some(id=>!users.some(u=>u.personId===id));db.prepare('update attendance_runs set status=?,updated_at=?,error=? where id=?').run('running',iso(),(!selected&&identityIssues)||missingSelected?'存在工号未匹配人员，人员覆盖未完成':null,run.id);
   });
@@ -258,13 +268,23 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    if(!config.manualOnly){try{client.requestContext='leave_event';await leave.observe();hybrid.setState('leaveEventError',null);}catch(e){hybrid.setState('leaveEventError','假期事件解析未完成，等待重试及周期核对');}hybrid.processEvents();hybrid.promote();leave.schedule();}
    if(config.enabled){client.requestContext='directory';await fetchLeaveCatalog();}
    const directory=hybrid.state('directory');
-   if(!config.manualOnly&&!config.validation?.enabled&&(config.enabled||config.eventsEnabled||hybrid.state('directoryRevision'))&&(!directory||clock()-Date.parse(directory.at)>=86400000))enqueue({from:dayOf(clock()),to:dayOf(clock()),id:'hybrid-directory-'+dayOf(clock())+'-'+(hybrid.state('directoryRevision')||'ttl'),targets:[],source:'directory',system:true});
+   const membershipCheck=!!hybrid.state('directoryRefreshRequest')&&(!directory||clock()-Date.parse(directory.at)>=DIRECTORY_REFRESH_MIN_MS);
+   if(!config.manualOnly&&!config.validation?.enabled&&(config.enabled||config.eventsEnabled||hybrid.state('directoryRevision'))&&(!directoryCacheUsable(directory,config,hybrid.state('directoryRevision'),clock())||membershipCheck)){
+    const scopeHash=crypto.createHash('sha256').update(directoryScopeKey(config)).digest('hex').slice(0,12);
+    enqueue({from:dayOf(clock()),to:dayOf(clock()),id:'hybrid-directory-v2-'+dayOf(clock())+'-'+scopeHash+'-'+(hybrid.state('directoryRevision')||'ttl')+'-'+Math.floor(clock()/DIRECTORY_REFRESH_MIN_MS),targets:[],source:'directory',system:true});
+   }
 
 
    if(!config.manualOnly&&!db.prepare("select r.id from attendance_runs r join attendance_run_meta m on m.run_id=r.id where r.status in ('directory','running') and m.source in ('event','validation_recovery','validation_initial') limit 1").get()&&await tickApprovalReasons())return;
    if((leave.hasDueEvent()||!db.prepare("select r.id from attendance_runs r join attendance_run_meta m on m.run_id=r.id where r.status in ('directory','running') and m.source in ('event','validation_recovery','validation_initial') limit 1").get())&&await leave.tick())return;
    const run=db.prepare("select r.* from attendance_runs r left join attendance_run_meta m on m.run_id=r.id where r.status='directory' and (r.next_at is null or r.next_at<=?) order by coalesce(m.priority,2),r.created_at limit 1").get(iso());
    if(run&&!validationRunAllowed(run.id))return;
+   if(run&&needsDirectoryFetch(hybrid.state('directory'))){
+    const last=Date.parse(hybrid.state('directoryFetchAttemptAt'));
+    if(Number.isFinite(last)&&clock()<last+DIRECTORY_REFRESH_MIN_MS){
+     db.prepare('update attendance_runs set next_at=? where id=?').run(new Date(last+DIRECTORY_REFRESH_MIN_MS).toISOString(),run.id);return;
+    }
+   }
    if(run){client.requestContext=runSource(run.id);try{await loadDirectory(run);finishRuns();}catch(e){const attempts=Number(run.attempts||0)+1;db.prepare('update attendance_runs set status=?,error=?,updated_at=?,attempts=?,next_at=? where id=?').run(e.retryable&&attempts<5?'directory':'failed',`通讯录读取或工号匹配失败${e.permissionCodes?.length?'；缺少读取权限：'+e.permissionCodes.join('、'):e.code?'（'+String(e.code).replace(/[^\w.:-]/g,'')+'）':''}；请检查配置、权限和额度`,iso(),attempts,new Date(clock()+60000*attempts).toISOString(),run.id);}return;}
    // Finish a day before loading more history batches; new events preempt on the next tick.
    const task=db.prepare("select t.*,b.payload_json from attendance_tasks t join attendance_batches b on b.id=t.batch_id join attendance_runs r on r.id=t.run_id left join attendance_run_meta m on m.run_id=r.id where t.status='pending' and t.next_at<=? and b.status='done' and r.status='running' order by coalesce(m.priority,2),r.created_at,t.work_date limit 1").get(iso());
@@ -372,7 +392,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const recovered=db.prepare(`select t.id,t.run_id from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.status in ('failed','incomplete')`).all(...s.params).filter(t=>hybrid.state('taskRecovery:'+t.id));
   const runs=db.prepare('select * from attendance_runs order by created_at desc limit 40').all().filter(r=>all(user)||visible.has(r.id)||r.actor_id===user.id).map(r=>{const recoveredCount=recovered.filter(t=>t.run_id===r.id).length;return {id:r.id,from:r.from_date,to:r.to_date,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at,error:r.error?`${r.error}${recoveredCount?`；历史失败中${recoveredCount}条已由后续权威补查恢复`:''}`:null,recoveredCount,source:runSource(r.id),reused:hybrid.state('runStats:'+r.id)?.reused||0,counts:Object.fromEntries(counts.filter(c=>c.run_id===r.id).map(c=>[c.status,Number(c.n)]))};});
   const reasonJobId=hybrid.state('reasonBackfillActive'),reasonJob=reasonJobId&&hybrid.state('reasonBackfill:'+reasonJobId);
-  return {approvalPlanVersion:hybrid.state('approvalPlanVersion')||'',approvalPlans:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():null,approvalReasonBackfill:all(user)&&reasonJob?{id:reasonJob.id,status:reasonJob.status,total:reasonJob.total,processed:reasonJob.index,success:reasonJob.success,failed:reasonJob.failed,error:reasonJob.error||null,updatedAt:reasonJob.updatedAt}:null,clockBoundary,leaveVersion:hybrid.state('leaveVersion')||'',leaveEventError:hybrid.state('leaveEventError'),dataVersion:RULE_VERSION+':'+(hybrid.state('dataVersion')||''),hybrid:{validation:config.validation?.enabled?{enabled:true,people:config.validation.personIds.length,from:config.validation.from,to:config.validation.to}:null,...hybrid.summary(s),stream:stream.connectionStatus(),workerEnabled:!!config.workerEnabled,schedulerEnabled:!!config.enabled,recovery:all(user)?hybrid.state('recovery'):null,recoveryPending:!!hybrid.state('recoveryNeeded'),events:all(user)?db.prepare('select topic,status,count(*) as count from attendance_events group by topic,status').all():[],eventIssues:all(user)?db.prepare("select topic,status,error,received_at as receivedAt from attendance_events where error is not null or status in ('unsupported','unresolved') order by received_at desc limit 20").all():[],eventMetrics:all(user)?hybrid.metrics():[],verifiedEventTypes:[],eventCoverageNote:'连接成功不等于所有事件已覆盖；须完成真实样本及连续7天验证',apiCounts:all(user)?db.prepare('select source,endpoint,request_count as requests,retry_count as retries from attendance_api_counts where month=?').all(dayOf(clock()).slice(0,7)):[],requestWarning:all(user)&&Number(db.prepare('select request_count from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))?.request_count)>=40000},configuration:configurationStatus(config),leaveTypes:leaveCatalog(user),runs,canSync:hasRbac(user,'attendance.record.manage'),canStats:hasRbac(user,'attendance.stats.read'),canExport:hasRbac(user,'attendance.export'),usage:all(user)?db.prepare('select * from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))||null:null,identityIssues:all(user)?db.prepare("select employee_no as employeeNo,name,identity_issue as issue from attendance_people where coalesce(identity_issue,'')<>''").all():[],historyWarning:'历史组织名单完整性待核实；API无法取得的历史记录不填零。'};
+  return {approvalPlanVersion:hybrid.state('approvalPlanVersion')||'',approvalPlans:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():null,approvalReasonBackfill:all(user)&&reasonJob?{id:reasonJob.id,status:reasonJob.status,total:reasonJob.total,processed:reasonJob.index,success:reasonJob.success,failed:reasonJob.failed,error:reasonJob.error||null,updatedAt:reasonJob.updatedAt}:null,clockBoundary,leaveVersion:hybrid.state('leaveVersion')||'',leaveEventError:hybrid.state('leaveEventError'),dataVersion:RULE_VERSION+':'+(hybrid.state('dataVersion')||''),hybrid:{validation:config.validation?.enabled?{enabled:true,people:config.validation.personIds.length,from:config.validation.from,to:config.validation.to}:null,...hybrid.summary(s),stream:stream.connectionStatus(),workerEnabled:!!config.workerEnabled,schedulerEnabled:!!config.enabled,recovery:all(user)?hybrid.state('recovery'):null,recoveryPending:!!hybrid.state('recoveryNeeded'),events:all(user)?db.prepare('select topic,status,count(*) as count from attendance_events group by topic,status').all():[],eventIssues:all(user)?db.prepare("select topic,status,error,received_at as receivedAt from attendance_events where status<>'directory_excluded' and (error is not null or status in ('unsupported','unresolved')) order by received_at desc limit 20").all():[],directoryExcluded:all(user)?db.prepare("select topic,count(*) as count from attendance_events where status='directory_excluded' group by topic").all():[],eventMetrics:all(user)?hybrid.metrics():[],verifiedEventTypes:[],eventCoverageNote:'连接成功不等于所有事件已覆盖；须完成真实样本及连续7天验证',apiCounts:all(user)?db.prepare('select source,endpoint,request_count as requests,retry_count as retries from attendance_api_counts where month=?').all(dayOf(clock()).slice(0,7)):[],requestWarning:all(user)&&Number(db.prepare('select request_count from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))?.request_count)>=40000},configuration:configurationStatus(config),leaveTypes:leaveCatalog(user),runs,canSync:hasRbac(user,'attendance.record.manage'),canStats:hasRbac(user,'attendance.stats.read'),canExport:hasRbac(user,'attendance.export'),usage:all(user)?db.prepare('select * from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))||null:null,identityIssues:all(user)?db.prepare("select employee_no as employeeNo,name,identity_issue as issue from attendance_people where coalesce(identity_issue,'')<>''").all():[],historyWarning:'历史组织名单完整性待核实；API无法取得的历史记录不填零。'};
  }
  function changes(user,filters){permission(user,'attendance.read');const members=people(user,filters),ids=new Set(members.map(p=>p.personId)),s=scope(user);const dates=monthDates(filters.month);return db.prepare(`select c.* from attendance_changes c join personnel p on p.id=c.person_id where (${s.sql}) and c.work_date>=? and c.work_date<=? order by c.changed_at`).all(...s.params,dates[0],dates.at(-1)).filter(r=>ids.has(r.person_id));}
  async function tickLeaves(){if(busy||!config.workerEnabled||!configurationStatus(config).configured)return false;busy=true;let acquired=false;try{acquired=acquire();if(!acquired)return false;return await leave.tick();}finally{if(acquired)db.prepare("delete from attendance_leases where id='worker' and owner=?").run(owner);busy=false;}}
