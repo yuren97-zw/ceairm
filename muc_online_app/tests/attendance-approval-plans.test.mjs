@@ -55,6 +55,17 @@ test('event queue and response generation survive restart; unauthorized people a
  const f=fixture();f.db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('e','attendance_approve_status_change',JSON.stringify({processInstanceId:'a'}),'2026-10-28T00:00:00Z','handled',null);await f.service.approvalPlans.tick();assert.equal(f.reads,1);await createAttendanceService(f.deps).approvalPlans.tick();assert.equal(f.reads,1);
  f.service.approvalPlans.save('b',outing({originatorUserId:'outsider'}),'test');assert.equal(f.service.snapshot(admin,{month:'2026-10'}).people[0].pendingCounts['外出'],2);assert.equal(f.db.prepare("select state from attendance_approval_plans where id='b'").get().state,'unresolved');f.db.close();
 });
+test('repeated approval notifications increment stored generation and preserve verified progress',()=>{
+ const f=fixture();
+ try{
+  f.service.approvalPlans.queue('repeat','event');
+  f.db.prepare("update attendance_approval_plan_queue set generation=7,applied_generation=7,attempts=3,error='simulated retry' where id=?").run('repeat');
+  f.service.approvalPlans.queue('repeat','event');
+  const row=f.db.prepare('select * from attendance_approval_plan_queue where id=?').get('repeat');
+  assert.equal(row.generation,8);assert.equal(row.applied_generation,7);
+  assert.equal(row.attempts,0);assert.equal(row.error,null);assert.equal(row.source,'event');
+ }finally{f.db.close();}
+});
 test('template and instance client APIs enforce arrays and explicit pagination',async()=>{const c=new DingTalkClient(configuration({}));let body;c.call=async(p,b)=>{body=b;return {result:{list:['a'],nextToken:20}};};assert.deepEqual(await c.approvalInstanceIds('code',1,2,0,['u1']),{ids:['a'],next:20});assert.deepEqual(body.userIds,['u1']);c.call=async()=>({result:{}});await assert.rejects(()=>c.approvalTemplates(),{code:'SCHEMA'});});
 
 test('overlapping distinct categories flag conflicts; calendar month lengths and disabled compatibility stay intact',()=>{
