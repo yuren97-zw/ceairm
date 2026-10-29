@@ -2,11 +2,13 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {createAttendanceService} from '../attendance-service.mjs';
 import {configuration,DingTalkClient} from '../attendance-dingtalk.mjs';
 import {normalizeApprovalPlan,approvalBusinessTime} from '../attendance-approval-plans.mjs';
+import {classifyDay} from '../attendance-rules.mjs';
 import {attendanceMatchesCategories} from '../public/attendance-presentation.mjs';
 import {approvalDisplayCount,approvalPlansHtml} from '../public/attendance-approval-plan-view.mjs';
 import {exportTables,exportHtml} from '../attendance-export.mjs';
 const admin={id:'admin',all:true},reader={id:'reader',personId:'p1'};
 const outing=(extra={})=>({status:'COMPLETED',result:'agree',originatorUserId:'u1',createTime:'2026-10-26T10:00:00+08:00',formComponentValues:[{id:'DDDateField_9NJFYUSAEXC0',name:'开始时间',value:'2026-10-30 上午'},{id:'DDDateField_18N97G5ARZ4W0',name:'结束时间',value:'2026-10-31 下午'},{id:'TextareaField-JYNRW51P',name:'外出事由',value:'<script>private</script>'},{name:'时长',value:'2'}],...extra});
+const correction=(date='2026-10-20 08:30:00',extra={})=>outing({formComponentValues:[{id:'DDDateField-JYNRW51O',name:'补卡时间',componentType:'DDDateField',value:date},{name:'repairCheckTime',value:String(Date.parse(date.replace(' ','T')+'+08:00'))},{id:'TextareaField-JYNRW51P',name:'补卡理由',value:'private reason must not be retained'}],...extra});
 function fixture(){const db=new DatabaseSync(':memory:');db.exec("create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text);create table settings(key text primary key,value text,updated_at text);insert into personnel values('p1','54000001','同名','部门','班组',null),('p2','54000002','同名','部门','班组',null)");let time=Date.parse('2026-10-28T01:00:00+08:00'),detail=outing(),reads=0;const config={...configuration({}),startDate:'2026-10-01',approvalPlansEnabled:true,approvalPlanDueEnabled:true,workerEnabled:true,eventsEnabled:true,appKey:'test',appSecret:'test',operatorId:'op',rootDepartmentId:'1',monthlyBudget:500000};
  const client={approval:async()=>{reads++;return detail;},directory:async()=>({departments:[],users:[{userId:'u1',employeeNo:'54000001',departmentIds:[]},{userId:'u2',employeeNo:'54000002',departmentIds:[]}]}),results:async()=>[],schedules:async()=>[],day:async(u,date)=>({userid:u,work_date:Date.parse(date+'T00:00:00+08:00'),attendance_result_list:[],check_record_list:[],approve_list:[]})};const access={predicate:u=>u.all?{sql:'1=1',params:[]}:{sql:'p.id=?',params:[u.personId]},hasAll:u=>!!u.all,requirePerson(){}};
  const deps={db,config,client,clock:()=>time,personnelAccess:access,hasRbac:()=>true,audit:()=>{}};const service=createAttendanceService(deps);service.hybrid.setState('approvalPlanDueEnabled',true);
@@ -21,6 +23,64 @@ test('business dates, native leave category, travel segments and terminal states
  for(const extra of [{status:'TERMINATED'},{result:'refuse'}])assert.equal(normalizeApprovalPlan(outing(extra)).state,'withdrawn');
  assert.equal(normalizeApprovalPlan(outing({status:'RUNNING'})).state,'pending');assert.equal(normalizeApprovalPlan({formComponentValues:[],title:'请假2026-10-30',createTime:'2026-10-30'}).state,'unsupported');
  assert.equal(approvalBusinessTime('2026-10-30 上午',true),Date.parse('2026-10-30T12:00:00+08:00'));
+});
+test('verified punch correction is independent of leave, retains no reason and uses two attribution dates',()=>{
+ const p=normalizeApprovalPlan(correction());assert.equal(p.state,'approved');assert.equal(p.kind,'补卡');assert.equal(p.effect,'punch_correction');assert.equal(p.category,null);assert.equal(p.reason,null);assert.equal(p.duration,null);
+ assert.deepEqual(p.dates,['2026-10-20']);assert.deepEqual(p.recheckDates,['2026-10-19','2026-10-20']);assert.ok(!JSON.stringify(p).includes('private reason'));
+ assert.deepEqual(normalizeApprovalPlan(correction('2026-11-01 00:00:00')).recheckDates,['2026-10-31','2026-11-01']);
+ const fake=correction();fake.formComponentValues[0].id='unverified';assert.equal(normalizeApprovalPlan(fake).state,'unresolved');
+ assert.equal(normalizeApprovalPlan({title:'补卡申请',formComponentValues:[]}).state,'unsupported');
+ for(const mutate of [
+  d=>d.formComponentValues.push({...d.formComponentValues[0]}),
+  d=>d.formComponentValues.pop()&&d.formComponentValues.pop(),
+  d=>d.formComponentValues[0].name='日期',
+  d=>d.formComponentValues[0].componentType='TextField',
+  d=>d.formComponentValues[1].id='user-editable-field',
+  d=>d.formComponentValues[1].value=String(Number(d.formComponentValues[1].value)+60000),
+  d=>d.formComponentValues.push(...outing().formComponentValues),
+  d=>d.formComponentValues[0].value='2026-02-30 08:30:00'
+ ]){const d=correction();mutate(d);assert.equal(normalizeApprovalPlan(d).state,'unresolved');assert.deepEqual(normalizeApprovalPlan(d).dates,[]);}
+});
+test('approved correction cannot excuse a missing punch or create attendance hours',()=>{
+ const date='2026-10-20',now=Date.parse('2026-10-22T00:00:00+08:00'),on=Date.parse(date+'T08:30:00+08:00'),off=Date.parse(date+'T17:30:00+08:00');
+ const input={date,covered:true,rest:false,points:[{type:'OnDuty',planned:on},{type:'OffDuty',planned:off}],punches:[],approvals:[{id:'repair',kind:'补卡',approved:true,start:on,end:off}]};
+ assert.equal(classifyDay(input,now).category,'缺卡');
+ assert.equal(classifyDay({...input,punches:[{type:'OnDuty',planned:on,actual:on,valid:true,recordId:'on'},{type:'OffDuty',planned:off,actual:off,valid:true,recordId:'off'}]},now).category,'白班');
+});
+test('current-day correction keeps a final verification job and never merges into a leave conflict',()=>{
+ const f=fixture();try{
+  f.setTime('2026-10-30T10:00:00+08:00');f.service.approvalPlans.save('repair',correction('2026-10-30 08:30:00'),'test');f.service.approvalPlans.save('out',outing(),'test');
+  const rows=f.db.prepare("select work_date,phase,due_at from attendance_approval_plan_due where instance_id='repair' order by work_date,phase").all();assert.equal(rows.length,4);assert.ok(rows.some(r=>r.work_date==='2026-10-30'&&r.phase==='final'&&r.due_at==='2026-10-31T04:30:00.000Z'));
+  const p=f.service.snapshot(admin,{month:'2026-10'}).people[0];assert.equal(p.pendingCounts['外出'],2);assert.ok(p.days.every(d=>!d.approvalConflict));
+ }finally{f.db.close();}
+});
+test('correction schedules only authoritative reads; duplicates, withdrawal and scope do not alter attendance or balances',()=>{
+ const f=fixture();try{
+  f.service.approvalPlans.save('repair',correction(),'test');f.service.approvalPlans.save('repair',correction(),'test');
+  let p=f.service.snapshot(admin,{month:'2026-10'}).people[0];assert.deepEqual(p.pendingCounts,{});assert.deepEqual(p.displayCounts,p.counts);assert.ok(p.days.every(d=>!d.approvalConflict&&!d.pendingCategories.length));
+  assert.equal(f.service.snapshot({...reader,personId:'p2'},{month:'2026-10'}).people[0].approvalPlans.length,0);
+  const html=approvalPlansHtml(p.approvalPlans,'2026-10');assert.match(html,/补卡核对1单/);assert.match(html,/有效申请0单/);assert.doesNotMatch(html,/private reason/);
+  assert.equal(f.db.prepare('select count(*) n from attendance_approval_plan_history').get().n,1);
+  assert.deepEqual(f.db.prepare('select work_date,phase from attendance_approval_plan_due order by work_date').all().map(r=>({...r})),[{work_date:'2026-10-19',phase:'correction'},{work_date:'2026-10-20',phase:'correction'}]);
+  f.service.approvalPlans.due();f.service.approvalPlans.due();assert.equal(f.db.prepare('select count(*) n from attendance_runs').get().n,2);assert.equal(f.db.prepare('select count(*) n from attendance_days').get().n,0);
+  f.service.approvalPlans.save('repair',correction('2026-10-20 08:30:00',{status:'TERMINATED'}),'withdraw');
+  assert.equal(f.db.prepare("select count(*) n from attendance_approval_plan_due where status='pending'").get().n,2);
+  assert.equal(f.db.prepare('select count(*) n from attendance_days').get().n,0);
+ }finally{f.db.close();}
+});
+test('unapproved corrections do not schedule, changed corrections recheck old and new dates and start boundary is respected',()=>{
+ const f=fixture();try{
+  f.service.approvalPlans.save('pending',correction('2026-10-20 08:30:00',{status:'RUNNING'}),'test');assert.equal(f.db.prepare('select count(*) n from attendance_approval_plan_due').get().n,0);
+  f.service.approvalPlans.save('repair',correction('2026-10-01 08:30:00'),'test');assert.deepEqual(f.db.prepare("select work_date from attendance_approval_plan_due where status='pending'").all().map(r=>r.work_date),['2026-10-01']);
+  f.service.approvalPlans.save('repair',correction('2026-10-05 08:30:00'),'test');assert.deepEqual(f.db.prepare("select work_date from attendance_approval_plan_due where status='pending' order by work_date").all().map(r=>r.work_date),['2026-10-01','2026-10-04','2026-10-05']);
+  f.service.approvalPlans.save('outsider',correction('2026-10-20 08:30:00',{originatorUserId:'outsider'}),'test');assert.equal(f.db.prepare("select state from attendance_approval_plans where id='outsider'").get().state,'unresolved');assert.equal(f.db.prepare("select count(*) n from attendance_approval_plan_due where instance_id='outsider'").get().n,0);
+ }finally{f.db.close();}
+});
+test('correction event targets only the correction day and previous attribution day, not the entire person-month',()=>{
+ const f=fixture();try{
+  f.service.approvalPlans.save('repair',correction(),'test');f.db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('repair-event','attendance_approve_status_change',JSON.stringify({processInstanceId:'repair',staffId:'u1'}),'2026-10-28T00:00:00Z','pending',null);
+  f.service.hybrid.processEvents();assert.equal(f.db.prepare("select status from attendance_events where id='repair-event'").get().status,'handled');assert.deepEqual(f.db.prepare('select person_id,work_date from attendance_event_targets order by work_date').all().map(r=>({...r})),[{person_id:'p1',work_date:'2026-10-19'},{person_id:'p1',work_date:'2026-10-20'}]);assert.equal(f.db.prepare('select count(*) n from attendance_days').get().n,0);
+ }finally{f.db.close();}
 });
 test('future approved application is two pending days and one instance; duplicates preserve actual month and history',()=>{
  const f=fixture();f.service.approvalPlans.save('a',outing(),'test');f.service.approvalPlans.save('a',outing(),'test');const s=f.service.snapshot(admin,{month:'2026-10'}),p=s.people[0];assert.equal(p.pendingCounts['外出'],2);assert.equal(approvalDisplayCount(p,'外出'),2);assert.equal(p.approvalPlans.length,1);assert.equal(p.days.filter(d=>d.pendingCategories.includes('外出')).length,2);assert.equal(Object.values(p.counts).reduce((a,b)=>a+b),31);assert.equal(f.db.prepare('select count(*) n from attendance_days').get().n,0);assert.equal(f.db.prepare('select count(*) n from attendance_approval_plan_history').get().n,1);assert.equal(f.db.prepare('select count(*) n from attendance_approval_plan_due').get().n,4);
