@@ -5,6 +5,7 @@ if(process.env.ATTENDANCE_TEST_DATABASE!=='true')throw Error('Requires an explic
 const {createDatabase}=await import(app+'/db.mjs');
 const {createAttendanceService}=await import(app+'/attendance-service.mjs');
 const {configuration}=await import(app+'/attendance-dingtalk.mjs');
+const {directoryScopeKey}=await import(app+'/attendance-event-directory.mjs');
 const db=await createDatabase({databaseUrl:process.env.DATABASE_URL});
 try{
  db.exec("create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text);create table settings(key text primary key,value text,updated_at text);insert into personnel values('p1','54000001','模拟人员','测试部门','一组','active')");
@@ -30,10 +31,12 @@ try{
  // observe() threw before marks/processEvents(), leaving every later event stuck.
  db.prepare('delete from attendance_approval_plan_queue where id=?').run('repeat-notification');
  let approvalReads=0;
- const worker=createAttendanceService({...deps,config:{...config,appKey:'test',appSecret:'test',operatorId:'test',rootDepartmentId:'1',workerEnabled:true,eventsEnabled:true},client:{approval:async()=>{approvalReads++;return detail;}}});
+ const workerConfig={...config,appKey:'test',appSecret:'test',operatorId:'test',rootDepartmentId:'1',corpId:'test-corp',unifiedAppId:'test-app',workerEnabled:true,eventsEnabled:true};
+ const workerClient={approval:async()=>{approvalReads++;return detail;},directory:async()=>({departments:[],users:[1,2].map(n=>({userId:n===1?'u1':'new-directory-user',employeeNo:'5400000'+n,name:'模拟人员',departmentIds:[]}))})};
+ const worker=createAttendanceService({...deps,config:workerConfig,client:workerClient});
  worker.hybrid.setState('approvalPlanSeed',{at:'2026-10-28T00:00:00Z'});
  db.prepare('insert into attendance_approval_plan_events values(?,?)').run('e',new Date(deps.clock()).toISOString());
- worker.hybrid.setState('directory',{at:new Date(deps.clock()).toISOString(),directory:{departments:[],users:[]}});
+ worker.hybrid.setState('directory',{at:new Date(deps.clock()).toISOString(),scopeKey:directoryScopeKey(workerConfig),revision:null,directory:{departments:[],users:[{userId:'u1'}]}});
  const notify=id=>db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run(id,'attendance_approve_status_change',JSON.stringify({processInstanceId:'a',staffId:'u1'}),new Date(deps.clock()).toISOString(),'pending',null);
  notify('worker-first');await worker.tick();await worker.tick();
  notify('worker-second');await worker.tick();await worker.tick();
@@ -42,5 +45,19 @@ try{
  assert.equal(Number(db.prepare("select count(*) n from attendance_approval_plan_events where event_id in ('worker-first','worker-second')").get().n),2);
  const consumed=db.prepare('select generation,applied_generation from attendance_approval_plan_queue where id=?').get('a');
  assert.equal(Number(consumed.generation),2);assert.equal(Number(consumed.applied_generation),2);
- console.log(JSON.stringify({postgresAttendance:true,repeatedApprovalNotification:true,workerConsumesRepeatedEvents:true,approvalHistoryIdentity:true,jsonEventLookup:true,futurePlans:true,leave:true,repeatedInstall:true,externalRequests:0}));
+ const payload=JSON.stringify({userId:'new-directory-user',checkTime:deps.clock()});
+ db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('directory-outside','attendance_check_record',payload,new Date(deps.clock()).toISOString(),'pending',null);
+ worker.hybrid.processEvents();
+ assert.equal(db.prepare('select status from attendance_events where id=?').get('directory-outside').status,'directory_excluded');
+ assert.equal(Number(worker.status({id:'test'}).hybrid.directoryExcluded[0].count),1);
+ assert.equal(worker.status({id:'test'}).hybrid.eventIssues.some(e=>e.status==='directory_excluded'),false);
+ assert.equal(Number(db.prepare('select count(*) n from personnel').get().n),1);
+ db.prepare("insert into personnel values('p2','54000002','新增模拟人员','测试部门','二组','active')").run();
+ worker.hybrid.setState('directoryRevision','synthetic-change');
+ worker.enqueue({id:'synthetic-directory-refresh',from:'2026-10-28',to:'2026-10-28',source:'directory',system:true,targets:[]});
+ await worker.tick();await worker.tick();
+ assert.equal(db.prepare('select status from attendance_events where id=?').get('directory-outside').status,'handled');
+ assert.equal(db.prepare('select payload_json from attendance_events where id=?').get('directory-outside').payload_json,payload);
+ assert.equal(Number(db.prepare("select count(*) n from attendance_runs where status='failed'").get().n),0);
+ console.log(JSON.stringify({postgresAttendance:true,repeatedApprovalNotification:true,workerConsumesRepeatedEvents:true,directoryExclusionAndReconsideration:true,approvalHistoryIdentity:true,jsonEventLookup:true,futurePlans:true,leave:true,repeatedInstall:true,externalRequests:0}));
 }finally{db.close();}

@@ -5,6 +5,7 @@ import {configuration,DingTalkError} from '../attendance-dingtalk.mjs';
 import {createAttendanceService} from '../attendance-service.mjs';
 import {attendancePeriods,sanitizeAttendanceEvent,attendanceDates} from '../attendance-hybrid.mjs';
 import {createAttendanceStream,streamReply} from '../attendance-stream.mjs';
+import {directoryCacheUsable,directoryScopeKey,eventOutsideDirectory,DIRECTORY_REFRESH_MIN_MS} from '../attendance-event-directory.mjs';
 const admin={id:'admin',all:true},reader={id:'reader',personId:'p1'};
 function fixture(options={}){
  const db=new DatabaseSync(':memory:');db.exec("create table settings(key text primary key,value text,updated_at text);create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text);insert into personnel values('p1','54000001','一','航线','一组','active'),('p2','54000002','二','航线','二组','active');");
@@ -61,6 +62,74 @@ test('October manual-only stage preserves pending events and recovery while runn
  assert.ok(f.calls.some(c=>c[0]==='day'));f.close();
 });
 async function seed(f){f.service.enqueue({from:'2026-10-23',to:'2026-10-23',user:admin});await f.drain();f.calls.length=0;}
+test('directory evidence fails closed when legacy, stale, changed scope or revision',()=>{
+ const config={rootDepartmentId:'1',corpId:'corp',unifiedAppId:'app'},at=Date.now();
+ const cached={at:new Date(at).toISOString(),scopeKey:directoryScopeKey(config),revision:null,directory:{users:[{userId:'u1'}],departments:[]}};
+ assert.equal(directoryCacheUsable(cached,config,null,at),true);
+ assert.equal(eventOutsideDirectory(['outside'],cached,config,null,at),true);
+ assert.equal(eventOutsideDirectory(['u1','outside'],cached,config,null,at),false);
+ assert.equal(eventOutsideDirectory([],cached,config,null,at),false);
+ for(const ids of [[' u1 '],['["u1"]'],[123]])assert.equal(eventOutsideDirectory(ids,cached,config,null,at),false);
+ for(const cache of [{...cached,scopeKey:undefined},{...cached,at:'invalid'},{...cached,at:new Date(at+1).toISOString()}, {...cached,at:new Date(at-86400000).toISOString()}])assert.equal(eventOutsideDirectory(['outside'],cache,config,null,at),false);
+ for(const changed of [{...config,rootDepartmentId:'2'},{...config,corpId:'other'},{...config,unifiedAppId:'other'}])assert.equal(eventOutsideDirectory(['outside'],cached,changed,null,at),false);
+ assert.equal(eventOutsideDirectory(['outside'],cached,config,'new-revision',at),false);
+});
+test('unknown-user flood retains audit, separates directory exclusions and does not refetch per event',async()=>{
+ const f=fixture({config:{eventsEnabled:true}});await seed(f);const cached=f.service.hybrid.state('directory');
+ for(let i=0;i<100;i++)f.service.hybrid.receive(frame('outside-'+i,'attendance_check_record',{userId:'outside',checkTime:f.time}));
+ const original=f.db.prepare("select payload_json,received_at from attendance_events where id='outside-0'").get();
+ await f.drain(20);
+ assert.equal(f.db.prepare("select count(*) n from attendance_events where status='directory_excluded'").get().n,100);
+ assert.deepEqual(f.service.hybrid.state('directory'),cached);assert.equal(f.calls.filter(c=>c[0]==='directory').length,0);
+ const status=f.service.status(admin);assert.equal(status.hybrid.eventIssues.length,0);assert.equal(status.hybrid.directoryExcluded[0].count,100);
+ assert.deepEqual(f.service.status(reader).hybrid.directoryExcluded,[]);
+ f.service.hybrid.receive(frame('outside-0','attendance_check_record',{userId:'outside',checkTime:f.time}));
+ assert.deepEqual(f.db.prepare("select payload_json,received_at from attendance_events where id='outside-0'").get(),original);
+ f.time+=DIRECTORY_REFRESH_MIN_MS;await f.drain(10);
+ assert.equal(f.calls.filter(c=>c[0]==='directory').length,1);
+ f.service.hybrid.receive(frame('outside-new','attendance_check_record',{userId:'outside',checkTime:f.time}));await f.drain(10);
+ assert.equal(f.calls.filter(c=>c[0]==='directory').length,1);f.close();
+});
+test('known directory user without a valid personnel link remains a real identity issue',async()=>{
+ const f=fixture();await seed(f);f.db.prepare("delete from attendance_people where user_id='u2'").run();
+ f.service.hybrid.receive(frame('broken-link','attendance_check_record',{userId:'u2',checkTime:f.time}));f.service.hybrid.processEvents();
+ assert.equal(f.db.prepare("select status from attendance_events where id='broken-link'").get().status,'unresolved');
+ assert.equal(f.service.status(admin).hybrid.eventIssues.length,1);f.close();
+});
+test('directory and personnel additions reconsider saved events without creating personnel or losing audit',async()=>{
+ const f=fixture({config:{eventsEnabled:true}});await seed(f);
+ f.service.hybrid.receive(frame('future-member','attendance_check_record',{userId:'u3',checkTime:f.time}));f.service.hybrid.processEvents();
+ assert.equal(f.db.prepare("select status from attendance_events where id='future-member'").get().status,'directory_excluded');
+ const original=f.db.prepare("select payload_json,received_at from attendance_events where id='future-member'").get();
+ f.deps.client.directory=async()=>({departments:[],users:[1,2,3].map(n=>({userId:'u'+n,employeeNo:'5400000'+n,name:String(n),departmentIds:[]}))});
+ f.time+=DIRECTORY_REFRESH_MIN_MS;await f.drain(5);
+ assert.equal(f.db.prepare("select status from attendance_events where id='future-member'").get().status,'unresolved');
+ assert.equal(f.db.prepare('select count(*) n from personnel').get().n,2);
+ f.db.prepare("insert into personnel values('p3','54000003','三','航线','三组','active')").run();
+ f.service.enqueue({from:'2026-10-23',to:'2026-10-23',user:admin});await f.drain(20);
+ assert.equal(f.db.prepare("select status from attendance_events where id='future-member'").get().status,'handled');
+ assert.deepEqual(f.db.prepare("select payload_json,received_at from attendance_events where id='future-member'").get(),original);f.close();
+});
+test('directory retry cooldown survives worker restart without clearing a verified cache',async()=>{
+ const f=fixture({config:{eventsEnabled:true}});await seed(f);const cached=f.service.hybrid.state('directory');let reads=0;
+ f.service.hybrid.receive(frame('retry-outside','attendance_check_record',{userId:'outside',checkTime:f.time}));f.service.hybrid.processEvents();
+ f.deps.client.directory=async()=>{reads++;throw Object.assign(new Error('temporary'),{retryable:true});};
+ f.time+=DIRECTORY_REFRESH_MIN_MS;await f.drain(10);assert.equal(reads,1);
+ const second=createAttendanceService(f.deps);f.time+=60001;for(let i=0;i<10;i++)await second.tick();
+ assert.equal(reads,1);assert.deepEqual(second.hybrid.state('directory'),cached);
+ f.time+=DIRECTORY_REFRESH_MIN_MS;await second.tick();assert.equal(reads,2);second.stop();f.close();
+});
+test('reconsidered approval is read again after personnel mapping, not left as an unlinked cached plan',async()=>{
+ const f=fixture({config:{eventsEnabled:true,approvalPlansEnabled:true}});await seed(f);
+ f.service.hybrid.receive(frame('new-member-approval','attendance_approve_status_change',{staffId:'u3',processInstanceId:'new-approval'}));f.service.hybrid.processEvents();
+ assert.equal(f.db.prepare("select status from attendance_events where id='new-member-approval'").get().status,'directory_excluded');
+ f.deps.client.directory=async()=>({departments:[],users:[1,2,3].map(n=>({userId:'u'+n,employeeNo:'5400000'+n,name:String(n),departmentIds:[]}))});
+ f.deps.client.approval=async()=>({status:'COMPLETED',result:'agree',originatorUserId:'u3',formComponentValues:[{id:'DDDateField_9NJFYUSAEXC0',name:'开始时间',value:'2026-10-25 上午'},{id:'DDDateField_18N97G5ARZ4W0',name:'结束时间',value:'2026-10-25 下午'}]});
+ f.db.prepare("insert into personnel values('p3','54000003','三','航线','三组','active')").run();
+ f.time+=DIRECTORY_REFRESH_MIN_MS;await f.drain(40);
+ assert.equal(f.db.prepare("select person_id from attendance_approval_plans where id='new-approval'").get().person_id,'p3');
+ assert.equal(f.db.prepare("select status from attendance_events where id='new-member-approval'").get().status,'deferred');f.close();
+});
 test('October real-time scope excludes legacy dirty September and bounds recovery and scheduled periods',()=>{
  const f=fixture({config:{startDate:'2026-10-01',enabled:true}});
  f.db.prepare("insert into attendance_refresh(person_id,work_date,generation,due_at) values('p1','2026-09-30',1,'2026-09-30T00:00:00Z')").run();
