@@ -76,7 +76,7 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
  const setVersion=()=>hybrid.setState('approvalPlanVersion',now());
  function queue(id,source='event'){
   if(!enabled||!id)return;
-  db.prepare("insert into attendance_approval_plan_queue(id,due_at,source) values(?,?,?) on conflict(id) do update set generation=generation+1,due_at=excluded.due_at,source=excluded.source,attempts=0,error=null").run(String(id),now(),source);
+  db.prepare("insert into attendance_approval_plan_queue(id,due_at,source) values(?,?,?) on conflict(id) do update set generation=attendance_approval_plan_queue.generation+1,due_at=excluded.due_at,source=excluded.source,attempts=0,error=null").run(String(id),now(),source);
  }
  function seed(){
   if(!enabled||hybrid.state('approvalPlanSeed'))return;

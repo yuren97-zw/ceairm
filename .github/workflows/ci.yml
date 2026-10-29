@@ -39,6 +39,9 @@ jobs:
       - run: npm run check
       - run: npm run migrate
       - run: npm run migrate
+      - run: node scripts/attendance-postgres-check-isolated.mjs
+        env:
+          ATTENDANCE_TEST_DATABASE: 'true'
       - run: npm test
       - run: npm audit --omit=dev --audit-level=high
       - run: node scripts/build-web-assets.mjs /tmp/ceairm-public
