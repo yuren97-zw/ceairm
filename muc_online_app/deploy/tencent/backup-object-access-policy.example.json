@@ -1,0 +1,9 @@
+{
+  "version": "2.0",
+  "statement": [{
+    "effect": "allow",
+    "principal": {"qcs": ["qcs::cam::uin/100050335365:uin/100052096613"]},
+    "action": ["name/cos:PutObject", "name/cos:HeadObject", "name/cos:GetObject"],
+    "resource": ["qcs::cos:ap-beijing:uid/1449362740:ceairm-backups-1449362740/encrypted/v1/*"]
+  }]
+}
