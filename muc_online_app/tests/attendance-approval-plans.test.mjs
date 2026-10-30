@@ -76,6 +76,24 @@ test('unapproved corrections do not schedule, changed corrections recheck old an
   f.service.approvalPlans.save('outsider',correction('2026-10-20 08:30:00',{originatorUserId:'outsider'}),'test');assert.equal(f.db.prepare("select state from attendance_approval_plans where id='outsider'").get().state,'unresolved');assert.equal(f.db.prepare("select count(*) n from attendance_approval_plan_due where instance_id='outsider'").get().n,0);
  }finally{f.db.close();}
 });
+test('correction completion waits for both attribution dates, not only the displayed punch date',()=>{
+ const f=fixture();try{
+  f.service.approvalPlans.save('repair',correction(),'test');f.setTime('2026-10-30T20:00:00+08:00');
+  const current={date:'2026-10-20',category:'白班',input:{covered:true,points:[]},updatedAt:'2026-10-29T20:00:00+08:00'},previous={...current,date:'2026-10-19',updatedAt:'2026-10-21T20:00:00+08:00'};
+  const person={personId:'p1',counts:{白班:2},days:[previous,current]};
+  assert.equal(f.service.approvalPlans.decorate(person,'2026-10').approvalPlans[0].reconciled,false);
+  assert.equal(f.service.approvalPlans.decorate({...person,days:[{...previous,updatedAt:current.updatedAt},current]},'2026-10').approvalPlans[0].reconciled,true);
+ }finally{f.db.close();}
+});
+test('cross-month correction checks the preceding day privately and never adds it to the visible month',()=>{
+ const f=fixture();try{
+  f.service.approvalPlans.save('repair',correction('2026-11-01 08:30:00'),'test');f.setTime('2026-11-04T20:00:00+08:00');
+  const day={date:'2026-11-01',category:'白班',input:{covered:true,points:[]},updatedAt:'2026-11-03T20:00:00+08:00'},person={personId:'p1',counts:{白班:1},days:[day]};
+  assert.equal(f.service.approvalPlans.decorate(person,'2026-11').approvalPlans[0].reconciled,false);
+  f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1','2026-10-31',JSON.stringify(day.input),JSON.stringify({category:'白班'}),'hash',day.updatedAt,'old');
+  const result=f.service.approvalPlans.decorate(person,'2026-11');assert.equal(result.approvalPlans[0].reconciled,true);assert.equal(result.days.length,1);assert.equal(result.days[0].date,'2026-11-01');assert.deepEqual(result.counts,{白班:1});
+ }finally{f.db.close();}
+});
 test('correction event targets only the correction day and previous attribution day, not the entire person-month',()=>{
  const f=fixture();try{
   f.service.approvalPlans.save('repair',correction(),'test');f.db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('repair-event','attendance_approve_status_change',JSON.stringify({processInstanceId:'repair',staffId:'u1'}),'2026-10-28T00:00:00Z','pending',null);
