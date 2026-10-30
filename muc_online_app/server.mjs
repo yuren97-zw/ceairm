@@ -461,7 +461,9 @@ function send(res, status, data, headers = {}) {
       data.detail = redactMaintenanceResponse(involvedSubtaskDetail, actor, participants);
     }
   }
+  const serializeStarted=performance.now();
   const body = JSON.stringify(data);
+  if(routePath.startsWith('/api/attendance/')&&headers['Server-Timing'])headers['Server-Timing']+=`, attendance_serialize;dur=${(performance.now()-serializeStarted).toFixed(1)}`;
   res.writeHead(status, { ...corsHeaders(), ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store", ...headers });
   res.end(body);
 }
@@ -7022,9 +7024,12 @@ async function routeRequest(req, res) {
       if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
       if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,attendanceService.status(actor));
       if(method==='GET' && ['/api/attendance/days','/api/attendance/summary','/api/attendance/exceptions','/api/attendance/person'].includes(url.pathname)){
-        const snapshot=attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read'),hasRbac(actor,'attendance.stats.read'));
-        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:p.days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
-        return send(res,200,snapshot);
+        const detailLevel=url.searchParams.get('view')||'full',timings=[];
+        if(!['full','summary','compact'].includes(detailLevel))return send(res,400,{error:'考勤明细级别无效'});
+        if(url.pathname.endsWith('/person')&&!filters.personId)return send(res,400,{error:'请选择人员'});
+        const snapshot=attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read',{detailLevel,onTiming:(name,ms)=>timings.push(`${name};dur=${ms.toFixed(1)}`)}),hasRbac(actor,'attendance.stats.read'));
+        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:(p.days||[]).filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
+        return send(res,200,snapshot,{'Server-Timing':timings.join(', ')});
       }
       if(method==='POST' && url.pathname==='/api/attendance/approval-reasons/backfill')return send(res,202,attendanceService.enqueueApprovalReasons(actor,await bodyJson(req)));
       if(method==='POST' && url.pathname==='/api/attendance/leave-types/refresh')return send(res,200,await attendanceService.refreshLeaveTypes(actor));
@@ -8986,7 +8991,7 @@ async function measuredRoute(req, res) {
     const headers = typeof statusMessageOrHeaders === "object" ? { ...statusMessageOrHeaders } : { ...(maybeHeaders || {}) };
     const current = requestStats;
     headers["X-Request-Id"] ||= requestId;
-    headers["Server-Timing"] ||= `db;dur=${current.totalMs.toFixed(1)}, app;dur=${Math.max(0, performance.now() - started).toFixed(1)}`;
+    headers["Server-Timing"] = [headers["Server-Timing"],`db;dur=${current.totalMs.toFixed(1)}, app;dur=${Math.max(0, performance.now() - started).toFixed(1)}`].filter(Boolean).join(', ');
     return typeof statusMessageOrHeaders === "string"
       ? originalWriteHead(status, statusMessageOrHeaders, headers)
       : originalWriteHead(status, headers);
