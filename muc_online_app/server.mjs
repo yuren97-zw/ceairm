@@ -9103,9 +9103,9 @@ if (process.env.MUC_NO_LISTEN !== "1") {
       console.log(`局域网访问：${urls.join("  ") || "未检测到局域网 IPv4 地址"}`);
       if (urls.length) console.log(`手机连通测试：${urls[0]}/api/health`);
     } else {
-      console.log("局域网访问：如需手机访问，请使用 HOST=0.0.0.0 启动服务");
+      console.log(isLocalDevelopment ? "局域网访问：如需手机测试，请使用 MUC_DEV_LAN=true npm run start:dev" : "局域网访问：如需手机访问，请使用 HOST=0.0.0.0 启动服务");
     }
-    console.log(`唯一超级账号：${SUPER_ACCOUNT_ID} / ${process.env.NODE_ENV === "production" ? "由 INITIAL_ADMIN_PASSWORD 设置" : "muc2026"}`);
+    console.log(`唯一超级账号：${SUPER_ACCOUNT_ID}（密码不在启动日志中显示）`);
   });
 }
 

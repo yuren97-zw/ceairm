@@ -42,7 +42,7 @@ test('data guards reject hard links, symbolic links and permissive database file
   fs.writeFileSync(env.DB_PATH,'test',{mode:0o600});validateDevelopmentPaths(root,env);
   fs.linkSync(env.DB_PATH,path.join(root,'linked.sqlite'));assert.throws(()=>validateDevelopmentPaths(root,env),/硬链接/);fs.unlinkSync(path.join(root,'linked.sqlite'));
   fs.chmodSync(env.DB_PATH,0o644);assert.throws(()=>validateDevelopmentPaths(root,env),/权限/);fs.chmodSync(env.DB_PATH,0o600);
-  fs.symlinkSync(env.DB_PATH,env.DB_PATH+'-wal');assert.throws(()=>validateDevelopmentPaths(root,env),/链接/);
+  for(const suffix of ['-wal','-shm','-journal']){fs.symlinkSync(env.DB_PATH,env.DB_PATH+suffix);assert.throws(()=>validateDevelopmentPaths(root,env),/链接/);fs.unlinkSync(env.DB_PATH+suffix);}
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test('three local profiles have different cookies without changing normal production cookies',()=>{

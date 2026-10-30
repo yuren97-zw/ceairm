@@ -17,7 +17,7 @@ export function validateDevelopmentPaths(appDir,env) {
     if(info.isSymbolicLink()||!info.isDirectory()||!real.startsWith(actualApp+path.sep))throw new Error('开发数据目录必须在本工作树内且不能为链接');
     if(info.mode&0o077)throw new Error('开发数据目录权限过宽，请先保护数据权限');
   }
-  for(const file of [env.DB_PATH,env.DB_PATH+'-wal',env.DB_PATH+'-shm']) {
+  for(const file of [env.DB_PATH,env.DB_PATH+'-wal',env.DB_PATH+'-shm',env.DB_PATH+'-journal']) {
     let info;try{info=fs.lstatSync(file);}catch(error){if(error.code==='ENOENT')continue;throw error;}
     if(!info.isFile()||info.nlink!==1)throw new Error('开发数据库及日志必须是独立普通文件，不能为符号链接或硬链接');
     if((info.mode&0o077)!==0)throw new Error('开发数据库及日志权限过宽，请先保护数据权限');
