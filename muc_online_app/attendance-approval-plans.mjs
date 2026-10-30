@@ -230,13 +230,27 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
  function decorate(person,month){
   if(!enabled)return person;
   const plans=plansFor(person.personId,month),pendingCounts={},displayCounts={...person.counts};
+  const correctionStatus=new Map();
+  for(const p of plans.filter(p=>p.effect==='punch_correction')){
+   const dates=(p.recheckDates||[]).filter(date=>date>=config.startDate);
+   const changedAt=Date.parse(p.history?.[0]?.changedAt||p.updatedAt||'');
+   const complete=p.state==='approved'&&!p.stale&&!p.error&&dates.length>0&&dates.every(date=>{
+    let day=person.days.find(d=>d.date===date);
+    // The adjacent attribution day can be in the preceding month. Read only this person's day,
+    // return a completion flag, and never expose another month's private detail in this response.
+    if(!day){const row=db.prepare('select d.*,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d where person_id=? and work_date=?').get(person.personId,date);if(row)day={input:parse(row.input_json,{}),...parse(row.result_json,{}),updatedAt:row.updated_at,sourceQueriedAt:row.source_queried_at};}
+    if(!day?.input?.covered||day.syncError||['待核对','待核实','未同步','未来日期','尚未到下班时间'].includes(day.category))return false;
+    const off=(day.input.points||[]).filter(point=>point.type==='OffDuty'&&point.planned).map(point=>point.planned),after=off.length?Math.max(...off):Date.parse(nextDate(date)+'T12:30:00+08:00'),sourceAt=Date.parse(day.sourceQueriedAt||day.updatedAt||'');
+    return Number.isFinite(changedAt)&&clock()>=after&&sourceAt>=after&&sourceAt>=changedAt;
+   });correctionStatus.set(p.id,complete);
+  }
   const days=person.days.map(d=>{
    const records=plans.filter(p=>p.dates.includes(d.date));
    const off=(d.input.points||[]).filter(p=>p.type==='OffDuty'&&p.planned).map(p=>p.planned);
    const after=off.length?Math.max(...off):Date.parse(nextDate(d.date)+'T12:30:00+08:00');
    const sourceAt=Date.parse(d.sourceQueriedAt||d.updatedAt||'');
    const verified=!!d.input.covered&&!d.syncError&&clock()>=after&&sourceAt>=after&&!['待核对','待核实','未同步','未来日期','尚未到下班时间'].includes(d.category);
-   const reconciled=p=>verified&&(initialBaseline(p,d.input)||sourceAt>=Date.parse(p.history?.[0]?.changedAt||0));
+   const reconciled=p=>p.effect==='punch_correction'?correctionStatus.get(p.id)===true:verified&&(initialBaseline(p,d.input)||sourceAt>=Date.parse(p.history?.[0]?.changedAt||0));
    const pending=records.filter(p=>p.effect!=='punch_correction'&&p.state==='approved'&&!p.stale&&!p.error&&!reconciled(p));
    for(const c of new Set(pending.map(p=>p.category))){pendingCounts[c]=(pendingCounts[c]||0)+1;if(c!==d.category)displayCounts[c]=(displayCounts[c]||0)+1;}
    return {...d,approvalPlans:records.map(p=>({...p,reconciled:p.state==='approved'&&!p.stale&&reconciled(p)})),pendingCategories:[...new Set(pending.map(p=>p.category))],approvalConflict:new Set(pending.map(p=>p.category)).size>1};
