@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const config=readIntegrationConfig(process.env.MUC_INTEGRATION_CONFIG),mode=process.argv[2];
-if(!['attendance','server'].includes(mode))throw Error('Choose attendance or server');
+if(!['attendance','server','upgrade'].includes(mode))throw Error('Choose attendance, server or upgrade');
 const safe={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,PGSSLMODE:'disable',ATTENDANCE_TEST_DATABASE:'true',DATABASE_URL:config.databaseUrl};
 if(mode==='attendance'){
  const child=spawnSync(process.execPath,['scripts/attendance-postgres-check-isolated.mjs'],{env:safe,stdio:'inherit'});process.exitCode=child.status??1;
@@ -25,8 +25,14 @@ if(mode==='attendance'){
   await client.query('revoke connect on database ceairm_integration_http from public');await client.query('grant connect on database ceairm_integration_http to ceairm_http_probe');
   const url=`postgresql://ceairm_http_probe:${password}@127.0.0.1:55432/ceairm_integration_http`;
   const env={...safe,DATABASE_URL:url};
+  if(mode==='upgrade'){
+   const old=new pg.Client({connectionString:url});await old.connect();try{await old.query(await fs.readFile(new URL('../migrations/001_init_postgres.sql',import.meta.url),'utf8'));await old.query("insert into settings(key,value,updated_at) values('integration_old_schema_probe','{\"preserved\":true}','2026-01-01T00:00:00Z')");}finally{await old.end();}
+  }
   const migrate=spawnSync(process.execPath,['scripts/run-postgres-migrations.mjs'],{env,stdio:'inherit'});if(migrate.status!==0)throw Error('HTTP fixture migration failed');
-  const child=spawnSync(process.execPath,['--test','tests/server.test.mjs'],{env,stdio:'inherit'});process.exitCode=child.status??1;
+  if(mode==='upgrade'){
+   const again=spawnSync(process.execPath,['scripts/run-postgres-migrations.mjs'],{env,stdio:'inherit'});if(again.status!==0)throw Error('Repeated upgrade failed');
+   const upgraded=new pg.Client({connectionString:url});await upgraded.connect();try{const row=(await upgraded.query("select value from settings where key='integration_old_schema_probe'")).rows[0];if(JSON.parse(row.value).preserved!==true)throw Error('Old data changed during upgrade');console.log(JSON.stringify({oldSchemaUpgrade:true,repeatedMigration:true,oldDataPreserved:true}));}finally{await upgraded.end();}
+  }else{const child=spawnSync(process.execPath,['--test','tests/server.test.mjs'],{env,stdio:'inherit'});process.exitCode=child.status??1;}
  }finally{
   if(database)await client.query('drop database ceairm_integration_http with (force)');
   if(role)await client.query('drop role ceairm_http_probe');await client.end();

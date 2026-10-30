@@ -15,9 +15,11 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm run start:dev
 ```
 
-启动入口根据分支选择端口；衍生功能分支可使用相同分支名前缀。其他独立功能分支可显式指定，例如`npm run start:dev -- attendance-leave`。不得从main或原主工作目录启动此入口。
+启动入口根据分支选择端口；衍生功能分支可使用相同分支名前缀。未知分支不能通过显式参数绕过检查；参数必须与已识别分支一致。不得从main或原主工作目录启动此入口。旧`npm run start:worktree`委托同一入口，不再选择旧数据库。
 
 默认仅监听127.0.0.1，不对局域网或公网开放。端口占用时拒绝启动，不自动停止已有服务。
+
+手机测试需明确执行`MUC_DEV_LAN=true npm run start:dev`，只使用测试数据。Ctrl-C后不带该变量重新启动即恢复仅本机访问；不会修改防火墙。数据库及附件目录必须是工作树内的独立私有路径，数据库和日志不允许符号链接或硬链接。
 
 每个工作树使用自己的`data/local-development.sqlite`及`uploads-local-development`，不复制正式数据库或认证材料。空库沿用应用现有本机测试管理员初始化规则；与正式网站认证分开。
 

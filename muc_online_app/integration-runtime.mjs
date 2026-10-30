@@ -5,8 +5,8 @@ import crypto from 'node:crypto';
 export function integrationDatabase(url,{ci=false}={}) {
   const parsed=new URL(url);
   if(!['postgres:','postgresql:'].includes(parsed.protocol)||parsed.hostname!=='127.0.0.1'||parsed.search||parsed.hash)throw Error('Only an explicit loopback integration database is allowed');
-  const expected=ci?['5432','/airline_operations']:['55432','/ceairm_integration'];
-  if(parsed.port!==expected[0]||parsed.pathname!==expected[1]||!parsed.username||!parsed.password)throw Error('Integration database identity mismatch');
+  const validDatabase=ci?parsed.pathname==='/airline_operations'||/^\/ceairm_artifact_[a-f0-9]{16}$/.test(parsed.pathname):parsed.pathname==='/ceairm_integration';
+  if(parsed.port!==(ci?'5432':'55432')||!validDatabase||!parsed.username||!parsed.password)throw Error('Integration database identity mismatch');
   return parsed.href;
 }
 
