@@ -147,9 +147,10 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
      const row=db.prepare('select a.plan_json,a.person_id,q.generation,q.applied_generation from attendance_approval_plans a left join attendance_approval_plan_queue q on q.id=a.id where a.id=?').get(approval);
      const plan=decode(row?.plan_json,{});
      if(row&&!(row.generation>row.applied_generation)&&plan.dates?.length&&!plan.error&&selected.some(m=>m.person_id===row.person_id)){
-      from=plan.dates[0];to=plan.dates.at(-1);
+      const dates=plan.effect==='punch_correction'?plan.recheckDates:plan.dates;
+      from=dates?.[0];to=dates?.at(-1);
       if(old.length){from=[from,...old.map(d=>d.date)].sort()[0];to=[to,...old.map(d=>d.date)].sort().at(-1);}
-      note='审批业务日期已从权威详情解析；未来计划独立保存，到期按人员日期复核';
+      note=plan.effect==='punch_correction'?'补卡仅触发补卡日及前一归属日权威考勤核对，不按审批直接生成出勤':'审批业务日期已从权威详情解析；未来计划独立保存，到期按人员日期复核';
      }
     }
     if(!from||!to){from=config.startDate;to=dayOf(clock());note='审批事件未提供可靠业务期间；已扩大至该人员全部已发生期间，避免漏改旧日期';}
