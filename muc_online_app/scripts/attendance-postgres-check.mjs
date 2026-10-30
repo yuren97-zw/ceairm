@@ -9,8 +9,9 @@ const {directoryScopeKey}=await import(app+'/attendance-event-directory.mjs');
 const db=await createDatabase({databaseUrl:process.env.DATABASE_URL});
 try{
  db.exec("create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text);create table settings(key text primary key,value text,updated_at text);insert into personnel values('p1','54000001','模拟人员','测试部门','一组','active')");
- const config={...configuration({}),approvalPlansEnabled:true,startDate:'2026-10-01'};
- const deps={db,config,clock:()=>Date.parse('2026-10-28T12:00:00+08:00'),hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},personnelAccess:{predicate:()=>({sql:'1=1',params:[]}),hasAll:()=>true,requirePerson:()=>{}}};
+ const config={...configuration({}),approvalPlansEnabled:true,startDate:'2026-10-01',appKey:'test',appSecret:'test',operatorId:'test',rootDepartmentId:'1'};
+ let time=Date.parse('2026-10-28T12:00:00+08:00');
+ const deps={db,config,clock:()=>time,hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},personnelAccess:{predicate:()=>({sql:'1=1',params:[]}),hasAll:()=>true,requirePerson:()=>{}}};
  const s=createAttendanceService(deps);db.prepare('insert into attendance_people(user_id,person_id,employee_no,department_ids,seen_at) values(?,?,?,?,?)').run('u1','p1','54000001','[]','2026-10-28T00:00:00Z');
  // A second notification must increment the stored generation, not the
  // excluded row's default. PostgreSQL rejects an unqualified RHS here.
@@ -59,5 +60,25 @@ try{
  assert.equal(db.prepare('select status from attendance_events where id=?').get('directory-outside').status,'handled');
  assert.equal(db.prepare('select payload_json from attendance_events where id=?').get('directory-outside').payload_json,payload);
  assert.equal(Number(db.prepare("select count(*) n from attendance_runs where status='failed'").get().n),0);
- console.log(JSON.stringify({postgresAttendance:true,repeatedApprovalNotification:true,workerConsumesRepeatedEvents:true,directoryExclusionAndReconsideration:true,approvalHistoryIdentity:true,jsonEventLookup:true,futurePlans:true,leave:true,repeatedInstall:true,externalRequests:0}));
+ // Punch correction is independent of leave and may only queue authoritative day reads.
+ config.approvalPlanDueEnabled=true;s.hybrid.setState('approvalPlanDueEnabled',true);
+ const correction={status:'COMPLETED',result:'agree',originatorUserId:'u1',formComponentValues:[{id:'DDDateField-JYNRW51O',name:'补卡时间',componentType:'DDDateField',value:'2026-10-20 08:30:00'},{name:'repairCheckTime',value:String(Date.parse('2026-10-20T08:30:00+08:00'))},{id:'TextareaField-JYNRW51P',name:'补卡理由',value:'private synthetic reason'}]};
+ const daysBefore=Number(db.prepare('select count(*) n from attendance_days').get().n);
+ s.approvalPlans.save('correction-pg',correction,'test');s.approvalPlans.save('correction-pg',correction,'test');
+ const plan=JSON.parse(db.prepare('select plan_json from attendance_approval_plans where id=?').get('correction-pg').plan_json);
+ assert.equal(plan.effect,'punch_correction');assert.equal(plan.reason,null);assert.deepEqual(plan.recheckDates,['2026-10-19','2026-10-20']);
+ assert.equal(Number(db.prepare('select count(*) n from attendance_approval_plan_history where instance_id=?').get('correction-pg').n),1);
+ assert.equal(Number(db.prepare('select count(*) n from attendance_approval_plan_due where instance_id=?').get('correction-pg').n),2);
+ const decorated=s.snapshot({id:'test'},{month:'2026-10'}).people.find(p=>p.personId==='p1');assert.ok(!Object.hasOwn(decorated.pendingCounts,'null'));assert.ok(!Object.hasOwn(decorated.pendingCounts,'补卡'));
+ db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('correction-pg-event','attendance_approve_status_change',JSON.stringify({processInstanceId:'correction-pg',staffId:'u1'}),new Date(deps.clock()).toISOString(),'pending',null);
+ s.hybrid.processEvents();assert.deepEqual(db.prepare('select work_date from attendance_event_targets where event_id=? order by work_date').all('correction-pg-event').map(r=>r.work_date),['2026-10-19','2026-10-20']);
+ s.approvalPlans.due();s.approvalPlans.due();assert.equal(Number(db.prepare("select count(*) n from attendance_approval_plan_due where instance_id=? and status='queued'").get('correction-pg').n),2);
+ assert.equal(Number(db.prepare('select count(*) n from attendance_days').get().n),daysBefore);
+ time=Date.parse('2026-11-04T12:00:00+08:00');
+ const next=structuredClone(correction);next.formComponentValues[0].value='2026-11-01 08:30:00';next.formComponentValues[1].value=String(Date.parse('2026-11-01T08:30:00+08:00'));s.approvalPlans.save('correction-pg-next',next,'test');
+ const day={date:'2026-11-01',category:'白班',input:{covered:true,points:[]},updatedAt:new Date(time).toISOString()},person={personId:'p1',days:[day],counts:{白班:1}};
+ assert.equal(s.approvalPlans.decorate(person,'2026-11').approvalPlans[0].reconciled,false);
+ db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1','2026-10-31',JSON.stringify(day.input),JSON.stringify({category:'白班'}),'synthetic',day.updatedAt,'synthetic');
+ const crossMonth=s.approvalPlans.decorate(person,'2026-11');assert.equal(crossMonth.approvalPlans[0].reconciled,true);assert.equal(crossMonth.days.length,1);
+ console.log(JSON.stringify({postgresAttendance:true,repeatedApprovalNotification:true,workerConsumesRepeatedEvents:true,directoryExclusionAndReconsideration:true,approvalHistoryIdentity:true,jsonEventLookup:true,futurePlans:true,leave:true,repeatedInstall:true,punchCorrectionIndependent:true,boundedCorrectionRechecks:true,crossMonthCorrectionCompletion:true,externalRequests:0}));
 }finally{db.close();}
