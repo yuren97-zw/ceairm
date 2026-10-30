@@ -502,8 +502,9 @@ function corsHeaders() {
 }
 
 function sameOriginWrite(req) {
-  const configured = String(process.env.APP_ORIGIN || "").trim();
   const host = String(req.headers.host || "").trim();
+  const localLoopback=isLocalDevelopment&&process.env.MUC_DEV_LAN==='true'&&[`127.0.0.1:${port}`,`localhost:${port}`].includes(host);
+  const configured = localLoopback?`http://${host}`:String(process.env.APP_ORIGIN || "").trim();
   const expected = configured || (process.env.NODE_ENV !== "production" && host ? `http://${host}` : "");
   if (!expected) return false;
   let canonical;
@@ -9099,7 +9100,7 @@ if (process.env.MUC_NO_LISTEN !== "1") {
     console.log(`附件目录：${path.resolve(uploadDir)}`);
     console.log(`健康检查：http://127.0.0.1:${port}/api/health`);
     if (host === "0.0.0.0" || host === "::") {
-      const urls = lanAddresses().map(address => `http://${address}:${port}`);
+      const urls = isLocalDevelopment&&process.env.MUC_DEV_LAN==='true'?[process.env.APP_ORIGIN]:lanAddresses().map(address => `http://${address}:${port}`);
       console.log(`局域网访问：${urls.join("  ") || "未检测到局域网 IPv4 地址"}`);
       if (urls.length) console.log(`手机连通测试：${urls[0]}/api/health`);
     } else {

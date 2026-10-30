@@ -1,6 +1,17 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
+import {isIPv4} from 'node:net';
+
+function privateAddress(value){return isIPv4(value)&&(/^(10\.|192\.168\.)/.test(value)||/^172\.(1[6-9]|2\d|3[01])\./.test(value));}
+export function selectDevelopmentLanAddress(requested,interfaces=os.networkInterfaces()){
+  const entries=Object.entries(interfaces).flatMap(([name,list])=>(list||[]).filter(x=>!x.internal&&x.family==='IPv4'&&privateAddress(x.address)).map(x=>({name,address:x.address})));
+  if(requested){if(!entries.some(x=>x.address===requested))throw Error('MUC_DEV_LAN_ADDRESS必须是本机网卡上的私有IPv4');return requested;}
+  const preferred=entries.filter(x=>/^en\d+$/.test(x.name)),addresses=[...new Set((preferred.length?preferred:entries).map(x=>x.address))];
+  if(addresses.length!==1)throw Error('无法唯一确定局域网地址，请用MUC_DEV_LAN_ADDRESS显式选择本机私有IPv4');
+  return addresses[0];
+}
 
 export function requireDevelopmentBranch(branch, requested) {
   const inferred=localProfileForBranch(branch);
@@ -28,6 +39,7 @@ export function validateDevelopmentRuntime(appDir,env) {
   if(!approvedLocalDevelopment(appDir,env))throw new Error('本机开发配置不安全：请使用 npm run start:dev');
   const branch=execFileSync('git',['symbolic-ref','--short','HEAD'],{cwd:appDir,encoding:'utf8'}).trim();
   requireDevelopmentBranch(branch,env.MUC_LOCAL_DEVELOPMENT_PROFILE);
+  if(env.MUC_DEV_LAN==='true')selectDevelopmentLanAddress(env.MUC_DEV_LAN_ADDRESS);
   validateDevelopmentPaths(appDir,env);
 }
 
@@ -51,14 +63,16 @@ export function localProfileForBranch(branch) {
   })||null;
 }
 
-export function localDevelopmentEnvironment(appDir, profile, ambient={}) {
+export function localDevelopmentEnvironment(appDir, profile, ambient={},interfaces) {
   const definition=Object.hasOwn(LOCAL_DEVELOPMENT_PROFILES,profile)?LOCAL_DEVELOPMENT_PROFILES[profile]:null;
   if(!definition)throw new Error('未知本机开发配置');
   const inherited=Object.fromEntries(['PATH','HOME','LANG','LC_ALL','TZ','TMPDIR'].filter(key=>typeof ambient[key]==='string').map(key=>[key,ambient[key]]));
   if(ambient.MUC_DEV_LAN&&!['true','false'].includes(ambient.MUC_DEV_LAN))throw new Error('MUC_DEV_LAN只能为true或false');
+  const address=ambient.MUC_DEV_LAN==='true'?selectDevelopmentLanAddress(ambient.MUC_DEV_LAN_ADDRESS,interfaces):'127.0.0.1';
   return {...inherited,NODE_ENV:'development',MUC_DEV_LAN:ambient.MUC_DEV_LAN==='true'?'true':'false',HOST:ambient.MUC_DEV_LAN==='true'?'0.0.0.0':'127.0.0.1',PORT:String(definition.port),
+    ...(ambient.MUC_DEV_LAN==='true'?{MUC_DEV_LAN_ADDRESS:address}:{}),
     MUC_LOCAL_DEVELOPMENT_PROFILE:profile,APP_VERSION:'local-development-'+profile,
-    APP_ORIGIN:'http://127.0.0.1:'+definition.port,COOKIE_SECURE:'false',DATABASE_URL:'',ATTENDANCE_ENV_FILE:'',
+    APP_ORIGIN:`http://${address}:${definition.port}`,COOKIE_SECURE:'false',DATABASE_URL:'',ATTENDANCE_ENV_FILE:'',
     DB_PATH:path.join(appDir,'data','local-development.sqlite'),UPLOAD_DIR:path.join(appDir,'uploads-local-development'),...disabled};
 }
 
@@ -67,6 +81,8 @@ export function approvedLocalDevelopment(appDir, env={}) {
   const key=env.MUC_LOCAL_DEVELOPMENT_PROFILE,profile=Object.hasOwn(LOCAL_DEVELOPMENT_PROFILES,key)?LOCAL_DEVELOPMENT_PROFILES[key]:null;
   if(!profile||!path.isAbsolute(appDir)||!appDir.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`))return false;
   if(env.NODE_ENV!=='development'||env.HOST!==(env.MUC_DEV_LAN==='true'?'0.0.0.0':'127.0.0.1')||env.PORT!==String(profile.port))return false;
+  if(env.MUC_DEV_LAN==='true'&&(!privateAddress(env.MUC_DEV_LAN_ADDRESS||'')||env.APP_ORIGIN!==`http://${env.MUC_DEV_LAN_ADDRESS}:${profile.port}`))return false;
+  if(env.MUC_DEV_LAN!=='true'&&env.APP_ORIGIN!==`http://127.0.0.1:${profile.port}`)return false;
   if(env.DATABASE_URL||env.ATTENDANCE_ENV_FILE||env.INITIAL_ADMIN_PASSWORD)return false;
   if(env.DB_PATH!==path.join(appDir,'data','local-development.sqlite')||env.UPLOAD_DIR!==path.join(appDir,'uploads-local-development'))return false;
   if(Object.entries(disabled).some(([key,value])=>env[key]!==value))return false;
