@@ -37,10 +37,12 @@ import { createDatabase, requestQueryStats } from "./db.mjs";
 import { createLoginProtection, loginAddress } from "./login-protection.mjs";
 import { createAuthorizationProjects } from "./authorization-projects.mjs";
 import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./personnel-deletion.mjs";
-import { approvedLocalDevelopment, localSessionCookieName } from './local-development.mjs';
+import { approvedLocalDevelopment, localSessionCookieName, validateDevelopmentRuntime } from './local-development.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+if (__dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`) && process.env.MUC_NO_LISTEN !== '1') validateDevelopmentRuntime(__dirname,process.env);
 const isLocalDevelopment = approvedLocalDevelopment(__dirname, process.env);
+if(isLocalDevelopment)process.umask(0o077);
 if (process.env.MUC_LOCAL_DEVELOPMENT_PROFILE && !isLocalDevelopment) throw new Error('本机开发配置不安全：仅允许回环地址、独立SQLite和关闭真实同步的开发环境');
 const sessionCookieName = localSessionCookieName(__dirname,process.env);
 if (process.env.ATTENDANCE_ENV_FILE) process.loadEnvFile(process.env.ATTENDANCE_ENV_FILE);
@@ -7067,6 +7069,8 @@ async function routeRequest(req, res) {
         status: database === "unavailable" ? "degraded" : "ok",
         service: "muc-online-app",
         version: appVersion,
+        environment: isLocalDevelopment ? 'development-'+process.env.MUC_LOCAL_DEVELOPMENT_PROFILE : process.env.MUC_INTEGRATION === 'true' ? 'integration' : isProduction ? 'production' : 'test',
+        buildSha: /^[0-9a-f]{40}$/.test(process.env.MUC_BUILD_SHA||'') ? process.env.MUC_BUILD_SHA : null,
         database,
         cos: cosEnabled() ? "configured" : "disabled",
         startedAt: serviceStartedAt,
