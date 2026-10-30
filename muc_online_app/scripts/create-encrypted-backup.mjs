@@ -54,4 +54,5 @@ async function main(){
   console.log(JSON.stringify({snapshotId:proof.snapshotId,offsiteVerified:true,localAuthenticatedDecryption:false}));
  }else throw fail('BACKUP_COMMAND');
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(e=>{console.error(JSON.stringify({ok:false,code:String(e.code||'BACKUP_FAILED').replace(/[^\w.:-]/g,'').slice(0,60)}));process.exitCode=1;});
+// Node resolves the module's real path, while argv may still contain the version symlink.
+if(process.argv[1]&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href)main().catch(e=>{console.error(JSON.stringify({ok:false,code:String(e.code||'BACKUP_FAILED').replace(/[^\w.:-]/g,'').slice(0,60)}));process.exitCode=1;});
