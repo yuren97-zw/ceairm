@@ -57,11 +57,12 @@ execFileSync(process.execPath,['scripts/run-postgres-migrations.mjs'],{cwd:root,
 const child=spawn(process.execPath,['server.mjs'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
 // Do not forward application output: it can contain initialization/account information.
 let diagnostic='';for(const stream of [child.stdout,child.stderr])stream.on('data',chunk=>{diagnostic=(diagnostic+chunk).slice(-1000);});
-const stop=()=>{if(child.exitCode===null)child.kill('SIGTERM');};
+const running=()=>child.exitCode===null&&child.signalCode===null;
+const stop=()=>{if(running())child.kill('SIGTERM');};
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,stop);
 try {
  let ready=false;for(let i=0;i<200;i++){
-  if(child.exitCode!==null)throw Error('Integration package exited before readiness; inspect isolated runtime, not production');
+  if(!running())throw Error('Integration package exited before readiness; inspect isolated runtime, not production');
   try{const response=await fetch(`http://127.0.0.1:${port}/api/health`);const health=await response.json();if(response.ok&&health.status==='ok'){assert.equal(health.database,'postgres');assert.equal(health.buildSha,sha);ready=true;break;}}catch(error){if(error.code==='ERR_ASSERTION')throw error;}
   await new Promise(resolve=>setTimeout(resolve,100));
  }
@@ -77,4 +78,4 @@ try {
  await fs.writeFile(path.join(root,'acceptance.json'),JSON.stringify({sha,artifactSha256:actual,version,port,postgres:true,protectedRequests:true,authenticatedRequests:true},null,2));
  console.log(JSON.stringify({sha,artifactSha256:actual,version,port,root,passed:true}));
  if(mode==='--serve'){console.log('Isolated preview ready; Ctrl-C stops only this child.');await once(child,'exit');}
-}finally{stop();if(child.exitCode===null)await once(child,'exit');await cleanCi();}
+}finally{stop();if(running())await once(child,'exit');await cleanCi();}
