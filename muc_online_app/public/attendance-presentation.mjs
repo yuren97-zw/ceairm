@@ -22,7 +22,7 @@ export const attendanceTones={
 const leavePalette=[['#234f69','#bfd9eb'],['#245e50','#c1e1ce'],['#305c74','#deedf5'],['#355c52','#deead2'],['#165d66','#b7dfe2'],['#3c5277','#d0d9ed'],['#30694f','#d5e9df'],['#385b6a','#d1e5e7']];
 leavePalette.forEach(([foreground,background],i)=>{attendanceTones['leave'+i]={key:'leave'+i,foreground,background};});
 export const attendanceAbnormal=['迟到','严重迟到','早退','旷工迟到','旷工','缺卡','待核对'];
-export function legalLeaveCategories(data){return [...new Set([...(data.leaveTypes?.names||[]),...data.people.flatMap(p=>p.days.flatMap(d=>(d.input?.approvals||[]).filter(a=>a.kind==='请假'&&a.approved&&!a.revoked).map(a=>a.subType||'请假')))])].filter(attendanceCategoryAllowed);}
+export function legalLeaveCategories(data){return [...new Set([...(data.leaveTypes?.names||[]),...data.people.flatMap(p=>(p.days||[]).flatMap(d=>(d.input?.approvals||[]).filter(a=>a.kind==='请假'&&a.approved&&!a.revoked).map(a=>a.subType||'请假')))])].filter(attendanceCategoryAllowed);}
 export function attendanceTone(category,leaves=[]){
  const key=({'白班':'day','夜班':'night','24小时班':'night','休息':'rest','培训':'training','派驻':'deployed','出差':'trip','外出':'outing','跟班':'outing','迟到':'late','严重迟到':'seriousLate','旷工迟到':'absenteeismLate','早退':'early','缺卡':'missing','旷工':'absent','待核对':'review'})[category];
  if(key)return attendanceTones[key];

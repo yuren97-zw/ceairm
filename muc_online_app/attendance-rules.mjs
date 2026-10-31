@@ -1,6 +1,7 @@
 // Canonical attendance model: timestamps are milliseconds, work dates are Asia/Shanghai.
 export const RULE_VERSION = 'attendance-api-1.2';
-export const dayOf = value => new Date(value).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+const workDateFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'});
+export const dayOf=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'Invalid Date':workDateFormatter.format(date);};
 export const stamp = value => {
   if (value === null || value === undefined || value === '') return null;
   const n = /^\d+$/.test(String(value)) ? Number(value) : Date.parse(/^[\d-]+[ T][\d:.]+$/.test(String(value)) ? String(value).replace(' ', 'T') + '+08:00' : value);
@@ -74,7 +75,7 @@ export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}
   const {date, points=[], punches=[], approvals=[]} = input;
   input = {...input,points,punches,approvals};
   const issues=[];
-  const result={date,category:'待核对',shift:null,purposes:[],issues,reason:'',punchDetails:describePunches(input,now),overtime:calculateOvertime(input,now),ruleVersion:RULE_VERSION};
+  const result={date,category:'待核对',shift:null,purposes:[],issues,reason:'',punchDetails:context.includePunchDetails===false?[]:describePunches(input,now),overtime:calculateOvertime(input,now),ruleVersion:RULE_VERSION};
   const finish=(category,reason)=>({...result,category,reason});
   if (date>dayOf(now)) return finish('未来日期','日期尚未发生');
   if (!input.covered) return finish('未同步',input.syncError || '接口尚未成功完整覆盖该日');

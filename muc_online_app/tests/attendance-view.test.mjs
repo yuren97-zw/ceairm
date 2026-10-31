@@ -1,6 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mountAttendanceView} from '../public/attendance-view.mjs';
+import {createAttendanceModule} from '../public/attendance.mjs';
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const summarySeed=()=>({detailLevel:'summary',month:'2026-10',dates:['2026-10-01'],categories:['休息'],people:[{personId:'p',name:'测试',employeeNo:'001',counts:{休息:1},dayCount:1,issueCount:2,overtimeSeconds:null,computedDays:0,uncomputableDays:0}]});
+const compactSeed=()=>({...summarySeed(),detailLevel:'compact',people:summarySeed().people.map(p=>({...p,days:[{date:'2026-10-01',category:'休息',issues:[],purposes:[],punchDetails:[],reason:'排班休息',overtime:{seconds:null,status:'无法计算'}}]}))});
+test('summary renders without days; overview loads only on demand and ignores late results after destruction',async()=>{
+ let calls=0,resolve;const gate=new Promise(r=>resolve=r),s=setup({data:summarySeed(),onLoadOverview:()=>{calls++;return gate;}});
+ assert.match(s.content.innerHTML,/测试/);assert.match(s.host.innerHTML,/异常核对/);assert.match(s.host.innerHTML,/>2<em>人日/);assert.equal(calls,0);
+ await s.listeners.get('click')({target:s.button({tab:'matrix'})});await flush();assert.equal(calls,1);assert.match(s.content.innerHTML,/正在读取考勤明细/);
+ await s.listeners.get('click')({target:s.button({tab:'issues'})});assert.equal(calls,1);s.view.destroy();resolve(compactSeed());await flush();assert.equal(s.host.innerHTML,'');
+});
+test('lazy overview failure retains summary and can retry; person detail restores complete neighboring dates',async()=>{
+ let tries=0,personCalls=0;const s=setup({data:summarySeed(),onLoadOverview:async()=>{if(++tries===1)throw Error('断线');return compactSeed();},onLoadPerson:async()=>{personCalls++;const p=compactSeed().people[0];return {...p,contextDays:[],days:p.days.map(d=>({...d,input:{covered:true},updatedAt:'2026-10-01T00:00:00Z'}))};}});
+ await s.listeners.get('click')({target:s.button({tab:'matrix'})});await flush();assert.match(s.content.innerHTML,/明细读取失败：断线/);
+ await s.listeners.get('click')({target:{dataset:{},hasAttribute:n=>n==='data-retry-details',closest(){return this;}}});assert.equal(tries,2);assert.match(s.content.innerHTML,/测试/);
+ await s.listeners.get('click')({target:s.button({day:'p|2026-10-01'})});assert.equal(personCalls,1);assert.equal(s.modal.open,true);assert.match(s.modal.innerHTML,/前后3天考勤对照/);
+ await s.listeners.get('click')({target:s.button({day:'p|2026-10-01'})});assert.equal(personCalls,1);s.view.destroy();
+});
+test('monthly module renders summary before status completes and does not request DingTalk sync or full days',async()=>{
+ const s=setup();s.view.destroy();let resolveStatus;const status=new Promise(r=>resolveStatus=r),calls=[];
+ const module=createAttendanceModule({host:s.host,hasPermission:()=>true,isActive:()=>true,api:async url=>{calls.push(url);if(url==='/attendance/status')return status;if(url.includes('/attendance/summary?'))return summarySeed();throw Error('Unexpected '+url);}});
+ await module.load();assert.match(s.content.innerHTML,/测试/);assert.equal(calls.length,2);assert.ok(calls.some(v=>v.endsWith('&view=summary')));assert.ok(!calls.some(v=>v.includes('/days')||v.includes('/sync')));
+ resolveStatus({configuration:{configured:true},runs:[]});await flush();module.destroy();
+});
+test('rapid deactivation/reactivation discards old monthly response and allows a new load',async()=>{
+ const s=setup();s.view.destroy();let active=true,resolveOld,n=0;const old=new Promise(r=>resolveOld=r);
+ const module=createAttendanceModule({host:s.host,hasPermission:()=>true,isActive:()=>active,api:async url=>url==='/attendance/status'?{configuration:{configured:true},runs:[]}:++n===1?old:summarySeed()});
+ const first=module.load();active=false;module.setActive(false);active=true;module.setActive(true);await flush();assert.equal(n,2);assert.match(s.content.innerHTML,/测试/);
+ resolveOld({...summarySeed(),people:[]});await first;assert.match(s.content.innerHTML,/测试/);module.destroy();
+});
 function setup(options={}){
  const listeners=new Map(),doc={activeElement:null,body:{style:{position:'',top:'',left:'',width:'',overflow:''}},documentElement:{style:{overflow:''}},defaultView:{scrollX:0,scrollY:240,scrollTo(x,y){this.scrollX=x;this.scrollY=y;}}};let value='',columnsOpen=false;const content={html:'',get innerHTML(){return this.html;},set innerHTML(v){this.html=v;columnsOpen=/<details class="att-columns" open/.test(v);},insertAdjacentHTML(_where,text){this.html+=text;}};
  const query={dataset:{filter:'query'},selectionStart:0,selectionEnd:0,get value(){return value;},set value(v){value=v;},matches:s=>s==='[data-filter="query"]',focus(){doc.activeElement=query;},setSelectionRange(a,b){query.selectionStart=a;query.selectionEnd=b;}};

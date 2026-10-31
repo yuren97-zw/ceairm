@@ -23,6 +23,20 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: airline
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_DB: airline_operations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U airline -d airline_operations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: muc_online_app
@@ -53,6 +67,12 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.commit_sha }}
         run: bash deploy/tencent/build-release.sh "production-$RELEASE_SHA" /tmp/airline-operations-center.tar.gz
+      - name: Verify this exact final artifact before publication
+        run: node scripts/check-integration-package.mjs /tmp/airline-operations-center.tar.gz '${{ inputs.commit_sha }}' --check
+        env:
+          ATTENDANCE_TEST_DATABASE: 'true'
+          DATABASE_URL: postgresql://airline:test-password@127.0.0.1:5432/airline_operations
+          PGSSLMODE: disable
       - uses: actions/upload-artifact@v4
         with:
           name: production-release
