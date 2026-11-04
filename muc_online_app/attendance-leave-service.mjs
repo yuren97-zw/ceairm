@@ -4,6 +4,8 @@ const failure=(m,status=400)=>Object.assign(Error(m),{status});
 export function createLeaveService({db,client,config,clock,people,permission,audit,hybrid}){
  db.exec(fs.readFileSync(new URL('./migrations/028_attendance_leave_balances.sql',import.meta.url),'utf8'));
  const now=()=>new Date(clock()).toISOString();
+ // 版本值须在时钟冻结（测试）或同一毫秒内连续变更时仍保证不同，语义与 dataVersion 的 uid() 一致。
+ let leaveVersionSeq=0;
  if(!hybrid.state('leaveEventsSince'))hybrid.setState('leaveEventsSince',now());
  const supportedTypes=()=>parse(db.prepare("select types_json from attendance_leave_catalog where id='enterprise'").get()?.types_json,[]).filter(t=>leaveGroup(t.name));
  function enqueueMembers(members,source='leave_manual',{delay=0,reuse=false}={}){
@@ -54,7 +56,7 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
    }
   }catch(e){error=e;}
   for(const t of tasks){if(error){const attempts=t.attempts+1,code=String(error.code||'SCHEMA').replace(/[^\w.:-]/g,'').slice(0,80);db.prepare("update attendance_leave_queue set status=?,error=?,attempts=?,due_at=?,updated_at=? where person_id=? and generation=?").run(error.code==='BUDGET'?'blocked':error.retryable&&attempts<5?'retry':'failed','假期同步未完整（'+code+'）；保留上次成功数据',attempts,new Date(clock()+Math.min(3600000,60000*2**attempts)).toISOString(),now(),t.person_id,t.generation);}else db.prepare("update attendance_leave_queue set verified_generation=?,status='ready',error=null,attempts=0,updated_at=? where person_id=? and generation=?").run(t.generation,now(),t.person_id,t.generation);}
-  hybrid.setState('leaveVersion',now());return true;
+  hybrid.setState('leaveVersion',now()+'-'+(++leaveVersionSeq));return true;
  }
  const hasDueEvent=()=>!!db.prepare("select person_id from attendance_leave_queue where source='leave_event' and status in ('pending','retry') and due_at<=? limit 1").get(now());
  return {refresh,snapshot,details,observe,schedule,tick,enqueueMembers,hasDueEvent};

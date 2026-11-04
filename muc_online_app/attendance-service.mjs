@@ -23,6 +23,9 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  installAttendance(db);
  const iso=()=>new Date(clock()).toISOString();
  const owner=uid();let busy=false,timer;
+ // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
+ // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
+ const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=6;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
@@ -364,6 +367,12 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const contextDates=detailLevel==='full'?datesBetween(contextFrom,contextTo).filter(date=>date<dates[0]||date>dates.at(-1)):[];
   const s=scope(user);
   const personSql=filters.personId?' and d.person_id=?':'',personParams=filters.personId?[filters.personId]:[];
+  // 分类结果只由数据版本与请求形态决定；categories 在分类之后过滤，不参与缓存键。
+  const cacheKey=json(['attendanceSnapshotV1',RULE_VERSION,hybrid.state('dataVersion')||'',hybrid.state('approvalPlanVersion')||'',hybrid.state('leaveVersion')||'',detailLevel,permissionCode,dates[0],s.sql,json(s.params),filters.personId||'',filters.department||'',filters.team||'',filters.query||'',dayOf(at),Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS)]);
+  const cached=snapshotCache.get(cacheKey)||null;
+  if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);onTiming('attendance_cache_hit',1);onTiming('attendance_read',0);onTiming('attendance_classify',0);}
+  let peopleRows=cached?.peopleRows||null,updatedAtByPerson=cached?.updatedAtByPerson||null;
+  if(!cached){
   const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonCache=new Map(db.prepare('select * from attendance_approval_cache').all().map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
   const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
@@ -371,7 +380,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const taskErrors=db.prepare(`select t.person_id,t.work_date,t.error,t.updated_at from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.work_date>=? and t.work_date<=? and t.status in ('failed','incomplete') order by t.updated_at`).all(...s.params,contextFrom,contextTo);
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
   const readAt=performance.now();onTiming('attendance_read',readAt-started);
-  const peopleRows=members.map(p=>{
+  peopleRows=members.map(p=>{
    const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:previousWorkDays(p.personId,date,byKey).map(overlay),includePunchDetails:detailLevel!=='summary'});const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
    const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
@@ -379,13 +388,18 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
   });
   if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')for(let i=0;i<peopleRows.length;i++)peopleRows[i]=approvalPlans.decorate(peopleRows[i],dates[0].slice(0,7));
-  const classifiedAt=performance.now();onTiming('attendance_classify',classifiedAt-readAt);
+  updatedAtByPerson=new Map();for(const r of rows){if(r.work_date<dates[0]||r.work_date>dates.at(-1))continue;const previous=updatedAtByPerson.get(r.person_id);if(!previous||r.updated_at>previous)updatedAtByPerson.set(r.person_id,r.updated_at);}
+  onTiming('attendance_classify',performance.now()-readAt);
+  snapshotCache.set(cacheKey,{peopleRows,updatedAtByPerson});
+  while(snapshotCache.size>SNAPSHOT_CACHE_MAX)snapshotCache.delete(snapshotCache.keys().next().value);
+  }
+  const classifiedAt=performance.now();
   const leaveTypes=leaveCatalog(user);
   const settings=displaySettings(user);
   const categories=attendanceOrderedCategories([...new Set([...peopleRows.flatMap(p=>[...Object.keys(p.counts),...Object.keys(p.pendingCounts||{})]),...leaveTypes.names])]);
   const visiblePeople=peopleRows.filter(p=>attendanceMatchesCategories(p,filters.categories));
   const visibleIds=new Set(visiblePeople.map(p=>p.personId));
-  const last=rows.filter(r=>visibleIds.has(r.person_id)&&r.work_date>=dates[0]&&r.work_date<=dates.at(-1)).map(r=>r.updated_at).sort().at(-1)||null;
+  const last=visiblePeople.map(p=>updatedAtByPerson.get(p.personId)).filter(Boolean).sort().at(-1)||null;
   const reasonInstances=new Map(visiblePeople.flatMap(p=>p.days.flatMap(d=>(d.input.approvals||[]).filter(a=>['外出','请假'].includes(a.kind)&&a.approved&&!a.revoked).map(a=>[a.id,a]))));
   const approvalReasonCoverage={total:reasonInstances.size,unresolved:[...reasonInstances.values()].filter(a=>!['ok','empty'].includes(a.reasonStatus)).length};
   const projected=visiblePeople.map(p=>{
