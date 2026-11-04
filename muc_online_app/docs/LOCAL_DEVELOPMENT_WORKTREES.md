@@ -15,13 +15,18 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm run start:dev
 ```
 
-启动入口根据分支选择端口；衍生功能分支可使用相同分支名前缀。其他独立功能分支可显式指定，例如`npm run start:dev -- attendance-leave`。不得从main或原主工作目录启动此入口。
+启动入口根据分支选择端口；衍生功能分支可使用相同分支名前缀。未知分支不能通过显式参数绕过检查；参数必须与已识别分支一致。不得从main或原主工作目录启动此入口。旧`npm run start:worktree`委托同一入口，不再选择旧数据库。
 
-考勤线例外：其工作树即`~/Documents/航线中心考勤统计项目`（原8792统一开发工作区并入，见`ATTENDANCE_SETUP.md`），承载真实执行数据库`work/`，负责8792真实同步；真实执行入口为`npm run dev`（`scripts/start-attendance-8792.mjs`），不走上述隔离开发入口。该线不使用`start:dev`，凭据与正式数据仅存在于该工作树的`work/`。
+考勤线保留历史真实执行入口 `npm run dev` 及其 work/ 数据，不能因同步分支而启动它。日常开发应使用隔离测试入口；真实同步执行端归属须另行确认，不以历史文档作为启用授权。
 
 默认仅监听127.0.0.1，不对局域网或公网开放。端口占用时拒绝启动，不自动停止已有服务。
 
-info-rbac与maintenance-personnel两线保持隔离：每个工作树使用自己的`data/local-development.sqlite`及`uploads-local-development`，不复制正式数据库或认证材料。空库沿用应用现有本机测试管理员初始化规则；与正式网站认证分开。
+手机测试需明确执行`MUC_DEV_LAN=true npm run start:dev`，只使用测试数据。Ctrl-C后不带该变量重新启动即恢复仅本机访问；不会修改防火墙。数据库及附件目录必须是工作树内的独立私有路径，数据库和日志不允许符号链接或硬链接。
+
+局域网模式绑定实际网卡的私有IPv4及同源地址，回环访问仍可使用。有多个候选地址时拒绝猜测，需同时设置`MUC_DEV_LAN_ADDRESS=本机私有IPv4`；不是本机网卡或公网地址会被拒绝。不要用任意域名或删除同源检查来解决手机登录问题。
+
+每个工作树使用自己的`data/local-development.sqlite`及`uploads-local-development`，不复制正式数据库或认证材料。空库沿用应用现有本机测试管理员初始化规则；与正式网站认证分开。
+
 
 三个本机配置使用不同的登录Cookie名称，避免同一浏览器在三个端口切换时互相覆盖会话；正式环境仍使用原Cookie名称。
 
