@@ -85,6 +85,16 @@ const state = {
   allRecipientsInScope: false,
   activePage: "homePage",
   activeSubpage: "infoListSubpage",
+  homeMaintenanceExpanded: false,
+  homeMaintenanceGroups: [],
+  homeMaintenanceFlights: [],
+  homeMaintenanceNextCursor: "",
+  homeMaintenanceState: "",
+  homeMaintenanceError: "",
+  homeAttendance: null,
+  homeAttendanceState: "",
+  homeAttendanceError: "",
+  homeScrollY: 0,
   selectedCategories: new Set(),
   deferFilterRecordIds: new Set(),
   deferFilterTimers: new Map(),
@@ -1824,6 +1834,9 @@ function renderShell() {
     const oldHost = document.getElementById("capabilityHost"); if (oldHost?.shadowRoot) oldHost.replaceWith(Object.assign(document.createElement("div"), { id: "capabilityHost", hidden: true }));
     showLoginPage();
     $("#pager").hidden = true;
+    const bottomNav = $("#bottomNav");
+    if (bottomNav) bottomNav.hidden = true;
+    closeBottomMoreSheet();
     return;
   }
   hideLoginPage();
@@ -1838,6 +1851,20 @@ function renderShell() {
     tab.hidden = !canView(tab.dataset.page);
     tab.classList.toggle("active", tab.dataset.page === state.activePage);
   });
+  const bottomNav = $("#bottomNav");
+  if (bottomNav) {
+    bottomNav.hidden = false;
+    $$("#bottomNav .bottom-nav-item").forEach(item => {
+      const page = item.dataset.page;
+      if (page === "__more__") {
+        item.classList.toggle("active", !BOTTOM_NAV_PAGES.includes(state.activePage));
+        return;
+      }
+      item.hidden = !canView(page);
+      item.classList.toggle("active", state.activePage === page);
+    });
+    renderBottomMoreItems();
+  }
   if (!canViewSubpage(state.activeSubpage)) state.activeSubpage = "infoListSubpage";
   $$(".subtab").forEach(tab => tab.classList.toggle("active", tab.dataset.subpage === state.activeSubpage));
   $$(".page").forEach(section => section.classList.toggle("active", section.id === state.activePage));
@@ -1894,37 +1921,296 @@ function personalReadRecords(records = visibleInfoRecords()) {
   return records.filter(record => canFilterReadState(record));
 }
 
-function renderHome() {
-  const box = $("#homeInfoMetrics");
-  if (!box) return;
-  const identity = $("#homeCurrentPerson");
-  if (identity) {
-    identity.hidden = !isLoggedIn();
-    const person = state.user.personId ? state.user : null;
-    const summary = [person?.name || "姓名未关联", person?.employeeNo || "工号未关联", person?.position || "职位未设置", person?.actualGrade || "岗级未设置"].join(" · ");
-    identity.querySelector("span").textContent = isLoggedIn() ? summary : "";
-    identity.setAttribute("aria-label", isLoggedIn() ? `当前登录人员：${summary}` : "");
-    identity.title = isLoggedIn() ? summary : "";
-    if (identity.dataset.accountId !== state.user.id) {
-      identity.scrollLeft = 0;
-      identity.dataset.accountId = state.user.id;
+function formatHomeOvertime(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds || 0) / 60));
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}`;
+}
+
+function cssEscapeValue(value) {
+  return (window.CSS && CSS.escape) ? CSS.escape(value) : String(value).replace(/"/g, '\\"');
+}
+
+const homeDataService = {
+  attendanceSeq: 0,
+  attendanceUser: "",
+  attendanceAt: 0,
+  maintenanceSeq: 0,
+  maintenanceUser: "",
+  maintenanceAt: 0,
+  async loadAttendance(force = false) {
+    if (!isLoggedIn() || !canView("attendancePage")) {
+      state.homeAttendance = null;
+      state.homeAttendanceState = "";
+      return true;
+    }
+    const fresh = this.attendanceUser === state.user.id && Date.now() - this.attendanceAt < 60000;
+    if (state.homeAttendanceState === "loading" || (fresh && !force)) return true;
+    const seq = ++this.attendanceSeq;
+    state.homeAttendanceState = "loading";
+    renderHome();
+    try {
+      const month = maintenanceLocalDateValue().slice(0, 7);
+      const [daysData, leaveData] = await Promise.all([
+        apiRequest(`/attendance/days?month=${encodeURIComponent(month)}&view=compact`),
+        apiRequest(`/attendance/leave-balances?year=${encodeURIComponent(month.slice(0, 4))}&month=${encodeURIComponent(month)}`)
+      ]);
+      if (seq !== this.attendanceSeq) return true;
+      const people = daysData.people || [];
+      const me = people.find(person => person.personId && person.personId === state.user.personId)
+        || people.find(person => person.employeeNo && person.employeeNo === state.user.employeeNo)
+        || (people.length === 1 ? people[0] : null);
+      if (!me) {
+        state.homeAttendance = null;
+        state.homeAttendanceState = "empty";
+      } else {
+        const today = maintenanceLocalDateValue();
+        const todayRow = (me.days || []).find(day => day.date === today);
+        const issueCount = (me.days || []).filter(day => !["未同步", "未来日期", "尚未到下班时间"].includes(day.category)
+          && (day.category === "待核对" || day.category === "缺卡" || (day.issues || []).length > 0 || day.syncError)).length;
+        const leaveCells = ((leaveData.people || []).find(person => person.personId === me.personId)?.cells) || [];
+        const leaveRemaining = group => leaveCells.filter(cell => cell.group === group)
+          .reduce((sum, cell) => sum + Number(cell.values?.remaining ?? 0), 0);
+        state.homeAttendance = {
+          schedule: todayRow?.category || "",
+          issueCount,
+          publicLeave: leaveRemaining("公休假"),
+          childcareLeave: leaveRemaining("山东省育儿假"),
+          overtimeSeconds: me.overtimeSeconds
+        };
+        state.homeAttendanceState = "ready";
+      }
+      this.attendanceUser = state.user.id;
+      this.attendanceAt = Date.now();
+      renderHome();
+      return true;
+    } catch (error) {
+      if (seq !== this.attendanceSeq) return true;
+      if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
+      state.homeAttendanceState = "error";
+      state.homeAttendanceError = error.message || "考勤数据读取失败";
+      renderHome();
+      return false;
+    }
+  },
+  async loadMaintenance(force = false) {
+    if (!isLoggedIn() || !canView("maintenancePage") || !hasRbac("maintenance.execute.view")) {
+      state.homeMaintenanceGroups = [];
+      state.homeMaintenanceFlights = [];
+      state.homeMaintenanceNextCursor = "";
+      state.homeMaintenanceState = "";
+      return true;
+    }
+    const fresh = this.maintenanceUser === state.user.id && Date.now() - this.maintenanceAt < 60000;
+    if (state.homeMaintenanceState === "loading" || (fresh && !force)) return true;
+    const seq = ++this.maintenanceSeq;
+    state.homeMaintenanceState = "loading";
+    renderHome();
+    try {
+      const query = new URLSearchParams({ scope: "execute", view: "summary", limit: "100" });
+      if (state.maintenanceExecuteLocation) query.append("locationId", state.maintenanceExecuteLocation);
+      const data = await apiRequest(`/maintenance/flights?${query.toString()}`);
+      if (seq !== this.maintenanceSeq) return true;
+      state.homeMaintenanceFlights = data.flights || [];
+      state.homeMaintenanceNextCursor = data.nextCursor || "";
+      state.homeMaintenanceGroups = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights);
+      state.homeMaintenanceState = "ready";
+      this.maintenanceUser = state.user.id;
+      this.maintenanceAt = Date.now();
+      renderHome();
+      return true;
+    } catch (error) {
+      if (seq !== this.maintenanceSeq) return false;
+      if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
+      state.homeMaintenanceState = "error";
+      state.homeMaintenanceError = error.message || "维修机会读取失败";
+      renderHome();
+      return false;
     }
   }
+};
+
+function renderHome() {
+  const userBar = $("#homeUserBar");
+  if (!userBar) return;
+  if (!isLoggedIn()) {
+    userBar.hidden = true;
+    return;
+  }
+  userBar.hidden = false;
+  const user = state.user;
+  $("#homeUserName").textContent = user.name || "姓名未关联";
+  const employeeNo = $("#homeUserEmployeeNo");
+  employeeNo.textContent = user.employeeNo || "";
+  employeeNo.hidden = !user.employeeNo;
+  const grade = $("#homeUserGrade");
+  grade.textContent = user.actualGrade || "";
+  grade.hidden = !user.actualGrade;
+  $("#homeUserSep").hidden = !user.employeeNo;
+  const unread = personalReadRecords(visibleInfoRecords()).filter(record => ["未读", "即将超期", "已超期"].includes(readState(record)));
+  $("#homeNotifyDot").hidden = !unread.length;
+  renderHomeInfoMetrics(unread);
+  renderHomeAttendanceMetrics();
+  renderHomeMaintenanceModule();
+}
+
+function renderHomeInfoMetrics(unread) {
+  const box = $("#homeInfoMetrics");
+  const module = $("#homeInfoModule");
+  if (!box || !module) return;
+  if (!canView("infoPage")) {
+    module.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  module.hidden = false;
   const visible = visibleInfoRecords();
   const personal = personalReadRecords(visible);
   const currentMonth = monthLabel(new Date());
   const currentMonthPersonal = personal.filter(record => monthLabel(record.date) === currentMonth);
-  const unread = personal.filter(record => ["未读", "即将超期", "已超期"].includes(readState(record)));
   const overdue = currentMonthPersonal.filter(record => ["已超期", "超期已读"].includes(readState(record)));
   const favorites = visible.filter(record => favoriteService.isFavorite(record.id));
   const overdueRate = currentMonthPersonal.length ? Math.round(overdue.length / currentMonthPersonal.length * 100) : 0;
-  const cards = [
-    { label: "未读条数", value: unread.length, hint: "查看待阅读信息", filter: "未读", warn: unread.length > 0 },
-    { label: `超期率 · ${currentMonth}`, value: `${overdueRate}%`, hint: `${overdue.length}/${currentMonthPersonal.length || 0} 条`, filter: "超期", warn: overdue.length > 0 },
-    { label: "信息总条数", value: visible.length, hint: "查看全部可见信息", filter: "全部" },
-    { label: "收藏条数", value: favorites.length, hint: "查看我的收藏", filter: "收藏" }
+  const metrics = [
+    { label: "未读", value: String(unread.length), warn: unread.length > 0, filter: "未读", hint: "查看未读信息" },
+    { label: `${currentMonth}超期`, value: `${overdueRate}%`, warn: overdue.length > 0, filter: "超期", hint: "查看当月超期信息" },
+    { label: "收藏", value: String(favorites.length), filter: "收藏", hint: "查看我的收藏" },
+    { label: "待办", value: "—", hint: "待办统计尚未接入", disabled: true }
   ];
-  box.innerHTML = cards.map(card => `<button class="metric home-metric-btn ${card.warn ? "warn" : ""}" type="button" data-home-info-filter="${card.filter}"><span>${escapeHtml(card.label)}</span><strong>${escapeHtml(card.value)}</strong><small>${escapeHtml(card.hint)}</small></button>`).join("");
+  box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.filter ? ` data-home-info-filter="${escapeHtml(metric.filter)}"` : ""}${metric.disabled ? " disabled" : ""} title="${escapeHtml(metric.hint)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
+}
+
+function renderHomeAttendanceMetrics() {
+  const box = $("#homeAttendanceMetrics");
+  const module = $("#homeAttendanceModule");
+  if (!box || !module) return;
+  if (!canView("attendancePage")) {
+    module.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  module.hidden = false;
+  if (!state.homeAttendance) {
+    const text = state.homeAttendanceState === "loading" ? "加载中…"
+      : state.homeAttendanceState === "error" ? "读取失败"
+      : state.homeAttendanceState === "empty" ? "暂无考勤数据" : "—";
+    box.innerHTML = `<span class="home-metric-status${state.homeAttendanceState === "error" ? " error" : ""}">${escapeHtml(text)}</span>`;
+    return;
+  }
+  const data = state.homeAttendance;
+  const overtime = data.overtimeSeconds == null ? "—" : formatHomeOvertime(data.overtimeSeconds);
+  const metrics = [
+    { label: "排班", value: data.schedule || "—", hint: "当前用户当日班次" },
+    { label: "异常", value: String(data.issueCount), warn: data.issueCount > 0, action: "issues", hint: "查看考勤管理异常" },
+    { label: "假期", value: `公${data.publicLeave}·育${data.childcareLeave}`, hint: "公休假·育儿假剩余" },
+    { label: "累计/可用", value: `${overtime}/—`, hint: "累计为当月加班时长；可用次数统计尚未接入" }
+  ];
+  box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.action ? ` data-home-attendance-action="${metric.action}"` : ""} title="${escapeHtml(metric.hint || metric.label)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
+}
+
+function renderHomeMaintenanceModule() {
+  const module = $("#homeMaintenanceModule");
+  const list = $("#homeMaintenanceList");
+  if (!module || !list) return;
+  if (!canView("maintenancePage")) {
+    module.hidden = true;
+    list.hidden = true;
+    return;
+  }
+  module.hidden = false;
+  const executeAllowed = hasRbac("maintenance.execute.view");
+  const toggle = $("#homeMaintenanceToggle");
+  toggle.disabled = !executeAllowed;
+  toggle.title = executeAllowed ? "展开或收起已接收派工的维修机会" : "当前账号无维修执行权限";
+  const expanded = executeAllowed && state.homeMaintenanceExpanded && state.homeMaintenanceState !== "";
+  const count = $("#homeMaintenanceCount");
+  if (!executeAllowed) count.textContent = "—";
+  else if (state.homeMaintenanceState === "loading" && !state.homeMaintenanceGroups.length) count.textContent = "…";
+  else if (state.homeMaintenanceState === "error") count.textContent = "!";
+  else if (state.homeMaintenanceState === "ready") count.textContent = String(state.homeMaintenanceGroups.length);
+  else count.textContent = "—";
+  count.classList.toggle("error", state.homeMaintenanceState === "error");
+  count.title = state.homeMaintenanceState === "error" ? state.homeMaintenanceError || "读取失败" : "";
+  $("#homeMaintenanceArrow").textContent = expanded ? "⌃" : "⌄";
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  renderHomeMaintenanceList(expanded);
+}
+
+function renderHomeMaintenanceList(expanded) {
+  const list = $("#homeMaintenanceList");
+  if (!list) return;
+  if (!expanded) {
+    list.hidden = true;
+    list.innerHTML = "";
+    return;
+  }
+  list.hidden = false;
+  if (state.homeMaintenanceState === "loading") {
+    list.innerHTML = `<div class="status-line">正在读取维修机会…</div>`;
+    return;
+  }
+  if (state.homeMaintenanceState === "error") {
+    list.innerHTML = `<div class="status-line home-metric-error">维修机会读取失败：${escapeHtml(state.homeMaintenanceError || "未知错误")}<button class="link-btn" type="button" data-home-maint-retry>重试</button></div>`;
+    return;
+  }
+  const groups = state.homeMaintenanceGroups;
+  if (!groups.length) {
+    list.innerHTML = `<div class="status-line">暂无派给你的维修任务。</div>`;
+    return;
+  }
+  const items = groups.map(group => {
+    const flight = group.flight;
+    return `<button class="home-maint-item" type="button" data-home-maint-goto="${escapeHtml(flight.id)}" aria-label="打开维修机会：${escapeHtml(maintenanceTitle(flight))}">
+      <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(flight)}</span>
+      <span class="home-maint-item-meta">${maintenanceStatusBadge(flight.status || "已派工")}${maintenanceFlightSecondaryHtml(flight)}</span>
+    </button>`;
+  }).join("");
+  const moreNote = state.homeMaintenanceNextCursor
+    ? `<div class="home-maint-more">已显示前 ${groups.length} 项，更多请进入维修管控执行页查看。</div>`
+    : "";
+  list.innerHTML = items + moreNote;
+}
+
+async function gotoMaintenanceFromHome(flightId) {
+  if (!canView("maintenancePage")) return;
+  const group = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights || []).find(item => item.flight.id === flightId);
+  if (!group) {
+    alert("该维修机会已不在你的派工范围内，可能已撤销、失效或被调整。");
+    homeDataService.loadMaintenance(true).catch(() => {});
+    return;
+  }
+  state.homeScrollY = window.scrollY;
+  state.homeMaintenanceExpanded = true;
+  const flight = group.flight;
+  state.maintenanceTab = "execute";
+  const loadedData = state.loadedData instanceof Set ? state.loadedData : (state.loadedData = new Set());
+  try {
+    if (!loadedData.has("maintenance:execute")) {
+      await maintenanceService.load();
+      loadedData.add("maintenance:execute");
+    }
+  } catch (error) {
+    alert(`进入维修执行页面失败：${error.message}`);
+    return;
+  }
+  if (!maintenanceAssignmentsForMe().some(item => item.flight.id === flightId)) {
+    try { await hydrateMaintenanceFlight(flightId); } catch {}
+  }
+  state.maintenanceExecuteOpenDate = flight.date || "__undated__";
+  state.maintenanceExecuteOpenFlightId = flightId;
+  await showPage("maintenancePage");
+  try {
+    await hydrateMaintenanceFlight(flightId);
+    renderMaintenance();
+  } catch {}
+  await new Promise(requestAnimationFrame);
+  const target = document.querySelector(`[data-maint-execute-toggle="${cssEscapeValue(flightId)}"]`);
+  if (!target) {
+    alert("未能在执行页面定位到该维修机会，可能已撤销、失效或不在当前显示范围。你可正常浏览执行页面。");
+    return;
+  }
+  target.scrollIntoView({ block: "center" });
 }
 
 function statusPass(record) {
@@ -3393,8 +3679,8 @@ function maintenanceFlightCard(flight) {
   </article>`;
 }
 
-function maintenanceAssignmentsForMe() {
-  const groups = (state.maintenanceFlights || []).map((flight, index) => {
+function maintenanceAssignmentsForMeFrom(flights) {
+  const groups = (flights || []).map((flight, index) => {
     const mainAssignments = (flight.assignments || []);
     const mine = mainAssignments.filter(assignment => assignment.personId === state.user.personId && ["已派工", "已提报"].includes(assignment.status));
     const subtasks = [];
@@ -3429,6 +3715,10 @@ function maintenanceAssignmentsForMe() {
       .localeCompare(String(left.flight.updatedAt || left.flight.createdAt || ""), "zh-CN", { numeric: true });
     return updated || left.index - right.index;
   });
+}
+
+function maintenanceAssignmentsForMe() {
+  return maintenanceAssignmentsForMeFrom(state.maintenanceFlights);
 }
 
 function sortMaintenanceFlights(items, sortValue) {
@@ -4387,6 +4677,13 @@ async function loadActivePageData({ force = true } = {}) {
     state.fixedProjects = await fixedProjectService.list();
     loaded.add("fixedProjects");
   }
+  if (page === "homePage" && (force || !loaded.has("homeMetrics"))) {
+    const results = await Promise.all([
+      homeDataService.loadAttendance(force),
+      homeDataService.loadMaintenance(force)
+    ]);
+    if (results.every(Boolean)) loaded.add("homeMetrics");
+  }
   if (page === "settingsPage" && (force || !loaded.has("users"))) {
     await loadPersonnelDirectories(["info", "accounts", "organizations"]);
     state.users = await userService.list();
@@ -4580,6 +4877,33 @@ document.addEventListener("touchcancel", () => {
   if (pullRefreshGesture.tracking && !pullRefreshGesture.refreshing) settlePullRefresh();
 }, { passive: true });
 
+const BOTTOM_NAV_PAGES = ["homePage", "maintenancePage", "personnelPage", "attendancePage"];
+
+function bottomMorePages() {
+  return $$(".top-tab").map(tab => tab.dataset.page)
+    .filter(page => !BOTTOM_NAV_PAGES.includes(page) && canView(page));
+}
+
+function renderBottomMoreItems() {
+  const box = $("#bottomMoreItems");
+  if (!box) return;
+  const pages = bottomMorePages();
+  box.innerHTML = pages.map(page => {
+    const label = $(`.top-tab[data-page="${page}"]`)?.textContent?.trim() || page;
+    return `<button class="bottom-more-item" type="button" data-bottom-more-page="${escapeHtml(page)}">${escapeHtml(label)}</button>`;
+  }).join("");
+}
+
+function openBottomMoreSheet() {
+  const sheet = $("#bottomMoreSheet");
+  if (sheet) sheet.hidden = false;
+}
+
+function closeBottomMoreSheet() {
+  const sheet = $("#bottomMoreSheet");
+  if (sheet) sheet.hidden = true;
+}
+
 async function showPage(page) {
   state.activePage = canView(page) ? page : "homePage";
   if (state.activePage === "personnelPage") {
@@ -4590,6 +4914,12 @@ async function showPage(page) {
     }
   }
   await renderAll({ force: false });
+  if (state.activePage === "homePage" && state.homeScrollY) {
+    const restoreY = state.homeScrollY;
+    state.homeScrollY = 0;
+    await new Promise(requestAnimationFrame);
+    window.scrollTo({ top: restoreY, behavior: "instant" });
+  }
 }
 
 async function showSubpage(subpage) {
@@ -5618,10 +5948,14 @@ async function refreshMaintenanceFromSync(version = 0) {
     if (state.loadedData instanceof Set) {
       for (const key of state.loadedData) if (key.startsWith("maintenance:")) state.loadedData.delete(key);
     }
+    if (["ready", "error"].includes(state.homeMaintenanceState)) {
+      homeDataService.loadMaintenance(true).catch(() => {});
+    }
     return;
   }
   state.maintenanceRefreshPending = false;
   await refreshMaintenance();
+  homeDataService.loadMaintenance(true).catch(() => {});
 }
 
 function flushMaintenancePendingRefresh() {
@@ -8038,14 +8372,81 @@ document.addEventListener("dblclick", async event => {
 
 document.addEventListener("click", event => {
   if (event.target instanceof HTMLDialogElement) closeDialog(event.target);
+  if (!event.target.closest?.(".home-profile-wrap")) {
+    const menu = $("#homeProfileMenu");
+    if (menu) menu.hidden = true;
+  }
 });
+
+async function performLogout() {
+  stopMaintenanceSync();
+  stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
+  await authService.logout();
+  state.user = emptyUser();
+  state.loadedData = new Set();
+  await navigate(ROUTES.login, { replace: true });
+}
 
 $$(".top-tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
 $$(".subtab").forEach(tab => tab.addEventListener("click", () => showSubpage(tab.dataset.subpage)));
-$("#homeInfoMetrics")?.addEventListener("click", event => {
-  const button = event.target.closest("[data-home-info-filter]");
+$$("#bottomNav .bottom-nav-item").forEach(item => item.addEventListener("click", () => {
+  if (item.dataset.page === "__more__") {
+    openBottomMoreSheet();
+    return;
+  }
+  closeBottomMoreSheet();
+  showPage(item.dataset.page);
+}));
+$$("[data-bottom-more-close]").forEach(el => el.addEventListener("click", closeBottomMoreSheet));
+$("#bottomMoreItems").addEventListener("click", event => {
+  const button = event.target.closest("[data-bottom-more-page]");
   if (!button) return;
+  closeBottomMoreSheet();
+  showPage(button.dataset.bottomMorePage);
+});
+$$("[data-home-nav]").forEach(button => button.addEventListener("click", () => showPage(button.dataset.homeNav)));
+$("#homeInfoMetrics").addEventListener("click", event => {
+  const button = event.target.closest("[data-home-info-filter]");
+  if (!button || button.disabled) return;
   openInfoFromHome(button.dataset.homeInfoFilter);
+});
+$("#homeAttendanceMetrics").addEventListener("click", event => {
+  const button = event.target.closest("[data-home-attendance-action]");
+  if (!button) return;
+  showPage("attendancePage");
+});
+$("#homeMaintenanceToggle").addEventListener("click", () => {
+  if (!hasRbac("maintenance.execute.view")) return;
+  state.homeMaintenanceExpanded = !state.homeMaintenanceExpanded;
+  if (state.homeMaintenanceExpanded && state.homeMaintenanceState !== "ready") {
+    homeDataService.loadMaintenance(true).catch(() => {});
+  }
+  renderHome();
+});
+$("#homeMaintenanceList").addEventListener("click", event => {
+  const retry = event.target.closest("[data-home-maint-retry]");
+  if (retry) {
+    homeDataService.loadMaintenance(true).catch(() => {});
+    return;
+  }
+  const item = event.target.closest("[data-home-maint-goto]");
+  if (item) gotoMaintenanceFromHome(item.dataset.homeMaintGoto).catch(error => alert(error.message || "打开维修机会失败"));
+});
+$("#homeNotifyBtn").addEventListener("click", () => openInfoFromHome("未读"));
+$("#homeProfileBtn").addEventListener("click", event => {
+  event.stopPropagation();
+  const menu = $("#homeProfileMenu");
+  if (!menu) return;
+  menu.hidden = !menu.hidden;
+  $("#homeProfileBtn").setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+});
+$("#homeChangePasswordBtn").addEventListener("click", () => {
+  $("#homeProfileMenu").hidden = true;
+  openChangePasswordDialog();
+});
+$("#homeLogoutBtn").addEventListener("click", async () => {
+  $("#homeProfileMenu").hidden = true;
+  await performLogout();
 });
 $("#subpageMenuBtn").addEventListener("click", event => {
   event.stopPropagation();
@@ -8053,13 +8454,8 @@ $("#subpageMenuBtn").addEventListener("click", event => {
 });
 $("#loginBtn").addEventListener("click", () => showLoginPage());
 $("#accountPasswordBtn").addEventListener("click", openChangePasswordDialog);
-$("#logoutBtn").addEventListener("click", async () => {
-  stopMaintenanceSync();
-  stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
-  await authService.logout();
-  state.user = emptyUser();
-  state.loadedData = new Set();
-  await navigate(ROUTES.login, { replace: true });
+$("#logoutBtn").addEventListener("click", () => {
+  performLogout().catch(() => {});
 });
 $("#openEntryBtn").addEventListener("click", () => openRecordForm());
 $("#openFixedBtn").addEventListener("click", () => openFixedForm());
