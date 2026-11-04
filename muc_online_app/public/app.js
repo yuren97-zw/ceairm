@@ -412,6 +412,7 @@ async function performLogin() {
       return;
     }
     setLoginBusy(true, "登录成功，正在进入系统...");
+    prefetchAttendanceModules();
     await navigate(ROUTES.dashboard);
   } catch (error) {
     state.user = emptyUser();
@@ -9396,7 +9397,7 @@ async function init() {
       openChangePasswordDialog();
       return;
     }
-    if (isLoggedIn()) await navigate(ROUTES.dashboard, { replace: true });
+    if (isLoggedIn()) { prefetchAttendanceModules(); await navigate(ROUTES.dashboard, { replace: true }); }
     else await navigate(ROUTES.login, { replace: true });
   } catch (error) {
     document.body.innerHTML = `<main class="wrap" style="padding:24px"><div class="data-panel"><h1>无法连接后端服务</h1><p>正式版前端只调用后端 API。请先启动后端服务，或配置 <code>window.MUC_API_BASE_URL</code> 指向可用接口。</p><p class="status-line">${escapeHtml(error.message)}</p></div></main>`;
@@ -9404,6 +9405,12 @@ async function init() {
 }
 
 init();
+
+// 登录后即静默预取考勤模块（约25KB gzip），首次点击"考勤管理"时不再出现三级模块加载瀑布。
+function prefetchAttendanceModules() {
+  if (!isLoggedIn() || !hasRbac("attendance.read")) return;
+  try { import("/attendance.mjs?v=2").catch(() => {}); } catch {}
+}
 
 async function renderAttendancePage() {
   const active=()=>isLoggedIn() && state.activePage==='attendancePage' && hasRbac('attendance.read');

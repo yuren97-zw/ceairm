@@ -144,3 +144,27 @@ test('status limits task aggregates to displayed runs without broadening personn
  const f=fixture();for(let i=0;i<45;i++){const id='run'+i,at=String(i).padStart(3,'0');f.db.prepare('insert into attendance_runs(id,from_date,to_date,status,created_at,updated_at) values(?,?,?,?,?,?)').run(id,'2026-09-01','2026-09-01','completed',at,at);f.db.prepare('insert into attendance_tasks(id,run_id,batch_id,person_id,user_id,work_date,status,next_at) values(?,?,?,?,?,?,?,?)').run(id,id,'batch',i%2?'p1':'p2','u','2026-09-01','done',at);}
  const all=f.service.status(admin).runs,scoped=f.service.status(reader).runs;assert.equal(all.length,40);assert.ok(all.every(r=>r.counts.done===1));assert.ok(scoped.every(r=>Number(r.id.slice(3))%2===1&&r.counts.done===1));assert.ok(scoped.every(r=>Number(r.id.slice(3))>=5));assert.equal(f.calls,0);f.db.close();
 });
+test('snapshot reuses classified results across requests until data versions or request shape change',()=>{
+ const f=fixture({config:{eventsEnabled:false}});
+ for(const date of ['2026-09-01','2026-09-02'])f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',date,JSON.stringify({date,covered:true,points:[{type:'OnDuty',time:Date.parse(date+'T08:00:00+08:00')}],punches:[],approvals:[]}),'{}','hash','old','test');
+ const strip=s=>{const {generatedAt,...rest}=s;return rest;};
+ const run=(month,filters={})=>{const timings=[];const snapshot=f.service.snapshot(admin,{month,...filters},'attendance.read',{detailLevel:'summary',onTiming:name=>timings.push(name)});return {snapshot,timings};};
+ const first=run('2026-09');
+ assert.equal(first.timings.includes('attendance_cache_hit'),false);
+ const second=run('2026-09');
+ assert.equal(second.timings.includes('attendance_cache_hit'),true);
+ assert.deepEqual(strip(second.snapshot),strip(first.snapshot));
+ f.service.hybrid.setState('dataVersion','test-version-2');
+ const third=run('2026-09');
+ assert.equal(third.timings.includes('attendance_cache_hit'),false);
+ assert.deepEqual(strip(third.snapshot),strip(first.snapshot));
+ assert.equal(run('2026-10').timings.includes('attendance_cache_hit'),false);
+ assert.equal(f.service.snapshot(admin,{month:'2026-09'},'attendance.read',{detailLevel:'compact'}).people[0].days.length,30);
+ const filtered=run('2026-09',{categories:['培训']});
+ assert.equal(filtered.timings.includes('attendance_cache_hit'),true);
+ assert.equal(filtered.snapshot.people.length,0);
+ const visible=run('2026-09',{categories:['未同步']});
+ assert.equal(visible.timings.includes('attendance_cache_hit'),true);
+ assert.equal(visible.snapshot.people.length,2);
+ assert.equal(f.calls,0);f.db.close();
+});
