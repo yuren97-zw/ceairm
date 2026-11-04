@@ -120,3 +120,27 @@ test('excluded leave is not stored by catalog refresh and old persisted catalog 
  }
  assert.equal(Number(f.service.snapshot(admin,{month:'2026-10'}).approvalPlanStatus.queue.pending),1);f.db.close();
  });
+
+test('lightweight summary preserves totals and scope without day payloads or DingTalk calls',()=>{
+ const f=fixture(),insert=f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)');
+ for(const person of ['p1','p2'])for(const date of ['2026-09-01','2026-09-02','2026-10-01'])insert.run(person,date,JSON.stringify({date,covered:true,rest:true,points:[],punches:[],approvals:[],vendorNote:'private detail '.repeat(1000)}),'{}','hash','2026-10-01T00:00:00Z','test');
+ const full=f.service.snapshot(admin,{month:'2026-09'}),timings=[];
+ const summary=f.service.snapshot(admin,{month:'2026-09'},'attendance.stats.read',{detailLevel:'summary',onTiming:(name,ms)=>timings.push([name,ms])});
+ assert.equal(summary.detailLevel,'summary');assert.deepEqual(summary.categories,full.categories);assert.equal(summary.lastSyncedAt,full.lastSyncedAt);
+ for(let i=0;i<full.people.length;i++){const p=summary.people[i],original=full.people[i];for(const key of ['counts','overtimeSeconds','computedDays','uncomputableDays'])assert.deepEqual(p[key],original[key]);assert.equal(p.dayCount,30);assert.equal(p.issueCount,0);assert.equal(p.days,undefined);assert.equal(p.contextDays,undefined);}
+ assert.ok(JSON.stringify(summary).length<JSON.stringify(full).length/10);assert.deepEqual(timings.map(t=>t[0]),['attendance_read','attendance_classify','attendance_metadata']);assert.ok(timings.every(t=>t[1]>=0));
+ assert.throws(()=>f.service.snapshot(reader,{month:'2026-09'},'attendance.read',{detailLevel:'summary'}),{status:403});
+ const compact=f.service.snapshot(reader,{month:'2026-09'},'attendance.read',{detailLevel:'compact'});assert.equal(compact.people.length,1);assert.equal(compact.people[0].days.length,30);assert.equal(compact.people[0].contextDays.length,0);assert.ok(compact.people[0].days.every(d=>!('input'in d)));
+ const detail=f.service.snapshot(reader,{month:'2026-09',personId:'p1'});assert.equal(detail.people.length,1);assert.equal(detail.people[0].contextDays.find(d=>d.date==='2026-10-01').category,'休息');assert.ok(detail.people[0].days[0].input.vendorNote);
+ assert.equal(f.service.snapshot(reader,{month:'2026-09',personId:'p2'},'attendance.read',{detailLevel:'compact'}).people.length,0);assert.equal(f.calls,0);f.db.close();
+});
+test('summary issue counts match full view including dynamic date boundaries',()=>{
+ const f=fixture();for(const date of ['2026-10-21','2026-10-22','2026-10-23'])f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',date,JSON.stringify({date,covered:true,points:[{type:'OnDuty',time:Date.parse(date+'T08:00:00+08:00')}],punches:[],approvals:[]}),'{}','hash','old','test');
+ const full=f.service.snapshot(admin,{month:'2026-10'}),summary=f.service.snapshot(admin,{month:'2026-10'},'attendance.stats.read',{detailLevel:'summary'});
+ for(const p of full.people){const expected=p.days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError)).length;assert.equal(summary.people.find(v=>v.personId===p.personId).issueCount,expected);}
+ assert.ok(summary.people[0].issueCount>0);assert.deepEqual(summary.people[0].counts,full.people[0].counts);f.db.close();
+});
+test('status limits task aggregates to displayed runs without broadening personnel scope',()=>{
+ const f=fixture();for(let i=0;i<45;i++){const id='run'+i,at=String(i).padStart(3,'0');f.db.prepare('insert into attendance_runs(id,from_date,to_date,status,created_at,updated_at) values(?,?,?,?,?,?)').run(id,'2026-09-01','2026-09-01','completed',at,at);f.db.prepare('insert into attendance_tasks(id,run_id,batch_id,person_id,user_id,work_date,status,next_at) values(?,?,?,?,?,?,?,?)').run(id,id,'batch',i%2?'p1':'p2','u','2026-09-01','done',at);}
+ const all=f.service.status(admin).runs,scoped=f.service.status(reader).runs;assert.equal(all.length,40);assert.ok(all.every(r=>r.counts.done===1));assert.ok(scoped.every(r=>Number(r.id.slice(3))%2===1&&r.counts.done===1));assert.ok(scoped.every(r=>Number(r.id.slice(3))>=5));assert.equal(f.calls,0);f.db.close();
+});

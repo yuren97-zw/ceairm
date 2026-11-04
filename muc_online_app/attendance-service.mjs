@@ -352,27 +352,34 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   try{acquired=acquire();if(!acquired)throw fail('其他实例正在同步，请稍后刷新假期目录',409);await fetchLeaveCatalog({force:true});return leaveCatalog(user);}
   finally{if(acquired)db.prepare("delete from attendance_leases where id='worker' and owner=?").run(owner);busy=false;}
  }
- function snapshot(user,filters={},permissionCode='attendance.read'){
+ function snapshot(user,filters={},permissionCode='attendance.read',{detailLevel='full',onTiming=()=>{}}={}){
   permission(user,permissionCode);permission(user,'attendance.read');
-  const dates=monthDates(filters.month||dayOf(clock()).slice(0,7)), members=people(user,filters),ids=new Set(members.map(p=>p.personId));
+  if(!['full','summary','compact'].includes(detailLevel))throw fail('考勤明细级别无效');
+  if(detailLevel==='summary')permission(user,'attendance.stats.read');
+  const started=performance.now(),at=clock();
+  const dates=monthDates(filters.month||dayOf(at).slice(0,7)), members=people(user,filters),ids=new Set(members.map(p=>p.personId));
   const contextFrom=new Date(Date.parse(dates[0]+'T00:00:00Z')-3*86400000).toISOString().slice(0,10);
   const contextTo=new Date(Date.parse(dates.at(-1)+'T00:00:00Z')+3*86400000).toISOString().slice(0,10);
-  const contextDates=datesBetween(contextFrom,contextTo).filter(date=>date<dates[0]||date>dates.at(-1));
+  // Previous-workday context remains required by cross-midnight attribution, even for summaries.
+  const contextDates=detailLevel==='full'?datesBetween(contextFrom,contextTo).filter(date=>date<dates[0]||date>dates.at(-1)):[];
   const s=scope(user);
-  const rows=db.prepare(`select d.*,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?`).all(...s.params,contextFrom,contextTo);
+  const personSql=filters.personId?' and d.person_id=?':'',personParams=filters.personId?[filters.personId]:[];
+  const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonCache=new Map(db.prepare('select * from attendance_approval_cache').all().map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
   const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
   const taskErrors=db.prepare(`select t.person_id,t.work_date,t.error,t.updated_at from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.work_date>=? and t.work_date<=? and t.status in ('failed','incomplete') order by t.updated_at`).all(...s.params,contextFrom,contextTo);
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
+  const readAt=performance.now();onTiming('attendance_read',readAt-started);
   const peopleRows=members.map(p=>{
-   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,clock(),row?.source_queried_at||row?.updated_at,{previousWorkDays:previousWorkDays(p.personId,date,byKey).map(overlay)});const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
+   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:previousWorkDays(p.personId,date,byKey).map(overlay),includePunchDetails:detailLevel!=='summary'});const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
    const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
    return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
   });
   if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')for(let i=0;i<peopleRows.length;i++)peopleRows[i]=approvalPlans.decorate(peopleRows[i],dates[0].slice(0,7));
+  const classifiedAt=performance.now();onTiming('attendance_classify',classifiedAt-readAt);
   const leaveTypes=leaveCatalog(user);
   const settings=displaySettings(user);
   const categories=attendanceOrderedCategories([...new Set([...peopleRows.flatMap(p=>[...Object.keys(p.counts),...Object.keys(p.pendingCounts||{})]),...leaveTypes.names])]);
@@ -381,15 +388,22 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const last=rows.filter(r=>visibleIds.has(r.person_id)&&r.work_date>=dates[0]&&r.work_date<=dates.at(-1)).map(r=>r.updated_at).sort().at(-1)||null;
   const reasonInstances=new Map(visiblePeople.flatMap(p=>p.days.flatMap(d=>(d.input.approvals||[]).filter(a=>['外出','请假'].includes(a.kind)&&a.approved&&!a.revoked).map(a=>[a.id,a]))));
   const approvalReasonCoverage={total:reasonInstances.size,unresolved:[...reasonInstances.values()].filter(a=>!['ok','empty'].includes(a.reasonStatus)).length};
-  return {approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:visiblePeople,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
+  const projected=visiblePeople.map(p=>{
+   if(detailLevel==='full')return p;
+   const {days,contextDays,approvalPlans,...totals}=p;
+   if(detailLevel==='summary')return {...totals,dayCount:days.length,issueCount:days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError)).length};
+   return {...totals,contextDays:[],days:days.map(({input,approvalPlans,...d})=>({...d,purposes:d.purposes.map(({category,status})=>({category,status})),punchDetails:d.punchDetails.map(({type,planned,actual,status,reason})=>({type,planned,actual,status,reason}))}))};
+  });
+  onTiming('attendance_metadata',performance.now()-classifiedAt);
+  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
  }
  function status(user){
   permission(user,'attendance.read');const s=scope(user);
   const today=dayOf(clock()),yesterday=dayOf(clock()-86400000);
   const clockBoundary=db.prepare(`select d.input_json from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?`).all(...s.params,yesterday,today).reduce((n,r)=>Math.max(n,...(parse(r.input_json,{}).points||[]).map(p=>p.planned).filter(t=>t&&t<=clock())),0);
-  const counts=db.prepare(`select t.run_id,t.status,count(*) as n from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) group by t.run_id,t.status`).all(...s.params);
+  const counts=db.prepare(`select t.run_id,t.status,count(*) as n from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.run_id in (select id from attendance_runs order by created_at desc limit 40) group by t.run_id,t.status`).all(...s.params);
   const visible=new Set(counts.map(r=>r.run_id));
-  const recovered=db.prepare(`select t.id,t.run_id from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.status in ('failed','incomplete')`).all(...s.params).filter(t=>hybrid.state('taskRecovery:'+t.id));
+  const recovered=db.prepare(`select t.id,t.run_id from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.run_id in (select id from attendance_runs order by created_at desc limit 40) and t.status in ('failed','incomplete')`).all(...s.params).filter(t=>hybrid.state('taskRecovery:'+t.id));
   const runs=db.prepare('select * from attendance_runs order by created_at desc limit 40').all().filter(r=>all(user)||visible.has(r.id)||r.actor_id===user.id).map(r=>{const recoveredCount=recovered.filter(t=>t.run_id===r.id).length;return {id:r.id,from:r.from_date,to:r.to_date,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at,error:r.error?`${r.error}${recoveredCount?`；历史失败中${recoveredCount}条已由后续权威补查恢复`:''}`:null,recoveredCount,source:runSource(r.id),reused:hybrid.state('runStats:'+r.id)?.reused||0,counts:Object.fromEntries(counts.filter(c=>c.run_id===r.id).map(c=>[c.status,Number(c.n)]))};});
   const reasonJobId=hybrid.state('reasonBackfillActive'),reasonJob=reasonJobId&&hybrid.state('reasonBackfill:'+reasonJobId);
   return {approvalPlanVersion:hybrid.state('approvalPlanVersion')||'',approvalPlans:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():null,approvalReasonBackfill:all(user)&&reasonJob?{id:reasonJob.id,status:reasonJob.status,total:reasonJob.total,processed:reasonJob.index,success:reasonJob.success,failed:reasonJob.failed,error:reasonJob.error||null,updatedAt:reasonJob.updatedAt}:null,clockBoundary,leaveVersion:hybrid.state('leaveVersion')||'',leaveEventError:hybrid.state('leaveEventError'),dataVersion:RULE_VERSION+':'+(hybrid.state('dataVersion')||''),hybrid:{validation:config.validation?.enabled?{enabled:true,people:config.validation.personIds.length,from:config.validation.from,to:config.validation.to}:null,...hybrid.summary(s),stream:stream.connectionStatus(),workerEnabled:!!config.workerEnabled,schedulerEnabled:!!config.enabled,recovery:all(user)?hybrid.state('recovery'):null,recoveryPending:!!hybrid.state('recoveryNeeded'),events:all(user)?db.prepare('select topic,status,count(*) as count from attendance_events group by topic,status').all():[],eventIssues:all(user)?db.prepare("select topic,status,error,received_at as receivedAt from attendance_events where status<>'directory_excluded' and (error is not null or status in ('unsupported','unresolved')) order by received_at desc limit 20").all():[],directoryExcluded:all(user)?db.prepare("select topic,count(*) as count from attendance_events where status='directory_excluded' group by topic").all():[],eventMetrics:all(user)?hybrid.metrics():[],verifiedEventTypes:[],eventCoverageNote:'连接成功不等于所有事件已覆盖；须完成真实样本及连续7天验证',apiCounts:all(user)?db.prepare('select source,endpoint,request_count as requests,retry_count as retries from attendance_api_counts where month=?').all(dayOf(clock()).slice(0,7)):[],requestWarning:all(user)&&Number(db.prepare('select request_count from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))?.request_count)>=40000},configuration:configurationStatus(config),leaveTypes:leaveCatalog(user),runs,canSync:hasRbac(user,'attendance.record.manage'),canStats:hasRbac(user,'attendance.stats.read'),canExport:hasRbac(user,'attendance.export'),usage:all(user)?db.prepare('select * from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))||null:null,identityIssues:all(user)?db.prepare("select employee_no as employeeNo,name,identity_issue as issue from attendance_people where coalesce(identity_issue,'')<>''").all():[],historyWarning:'历史组织名单完整性待核实；API无法取得的历史记录不填零。'};
