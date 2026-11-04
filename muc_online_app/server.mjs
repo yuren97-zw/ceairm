@@ -40,7 +40,7 @@ import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./perso
 import { approvedLocalDevelopment, localSessionCookieName, validateDevelopmentRuntime } from './local-development.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-if (__dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`) && process.env.MUC_NO_LISTEN !== '1') validateDevelopmentRuntime(__dirname,process.env);
+if ((process.env.MUC_LOCAL_DEVELOPMENT_PROFILE || __dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`)) && process.env.MUC_NO_LISTEN !== '1') validateDevelopmentRuntime(__dirname,process.env);
 const isLocalDevelopment = approvedLocalDevelopment(__dirname, process.env);
 if(isLocalDevelopment)process.umask(0o077);
 if (process.env.MUC_LOCAL_DEVELOPMENT_PROFILE && !isLocalDevelopment) throw new Error('本机开发配置不安全：仅允许回环地址、独立SQLite和关闭真实同步的开发环境');

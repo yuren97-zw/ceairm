@@ -37,10 +37,21 @@ export function validateDevelopmentPaths(appDir,env) {
 
 export function validateDevelopmentRuntime(appDir,env) {
   if(!approvedLocalDevelopment(appDir,env))throw new Error('本机开发配置不安全：请使用 npm run start:dev');
+  validateRegisteredDevelopmentWorktree(appDir,env.MUC_LOCAL_DEVELOPMENT_PROFILE);
   const branch=execFileSync('git',['symbolic-ref','--short','HEAD'],{cwd:appDir,encoding:'utf8'}).trim();
   requireDevelopmentBranch(branch,env.MUC_LOCAL_DEVELOPMENT_PROFILE);
   if(env.MUC_DEV_LAN==='true')selectDevelopmentLanAddress(env.MUC_DEV_LAN_ADDRESS);
   validateDevelopmentPaths(appDir,env);
+}
+
+export function validateRegisteredDevelopmentWorktree(appDir,profile) {
+  const root=fs.realpathSync(path.dirname(appDir));
+  if(!fs.lstatSync(path.join(root,'.git')).isFile())throw new Error('必须使用登记的独立Git工作树');
+  const git=(args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  if(fs.realpathSync(git(['rev-parse','--show-toplevel']))!==root)throw new Error('工作树根目录不匹配');
+  const registered=git(['worktree','list','--porcelain','-z']).split('\0').filter(x=>x.startsWith('worktree ')).some(x=>{try{return fs.realpathSync(x.slice(9))===root;}catch{return false;}});
+  if(!registered)throw new Error('未登记的Git工作树');
+  requireDevelopmentBranch(git(['symbolic-ref','--short','HEAD']),profile);
 }
 
 export const LOCAL_DEVELOPMENT_PROFILES = Object.freeze({
@@ -79,7 +90,7 @@ export function localDevelopmentEnvironment(appDir, profile, ambient={},interfac
 // An explicit development-only exception, not a blanket bypass of the 8787 guard.
 export function approvedLocalDevelopment(appDir, env={}) {
   const key=env.MUC_LOCAL_DEVELOPMENT_PROFILE,profile=Object.hasOwn(LOCAL_DEVELOPMENT_PROFILES,key)?LOCAL_DEVELOPMENT_PROFILES[key]:null;
-  if(!profile||!path.isAbsolute(appDir)||!appDir.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`))return false;
+  if(!profile||!path.isAbsolute(appDir))return false;
   if(env.NODE_ENV!=='development'||env.HOST!==(env.MUC_DEV_LAN==='true'?'0.0.0.0':'127.0.0.1')||env.PORT!==String(profile.port))return false;
   if(env.MUC_DEV_LAN==='true'&&(!privateAddress(env.MUC_DEV_LAN_ADDRESS||'')||env.APP_ORIGIN!==`http://${env.MUC_DEV_LAN_ADDRESS}:${profile.port}`))return false;
   if(env.MUC_DEV_LAN!=='true'&&env.APP_ORIGIN!==`http://127.0.0.1:${profile.port}`)return false;

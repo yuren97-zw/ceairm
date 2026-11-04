@@ -1,9 +1,24 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import {spawnSync,execFileSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import {requireDevelopmentBranch,validateDevelopmentPaths,selectDevelopmentLanAddress} from '../local-development.mjs';
+import {requireDevelopmentBranch,validateDevelopmentPaths,selectDevelopmentLanAddress,validateRegisteredDevelopmentWorktree} from '../local-development.mjs';
 import {LOCAL_DEVELOPMENT_PROFILES,localProfileForBranch,localDevelopmentEnvironment,approvedLocalDevelopment,localSessionCookieName} from '../local-development.mjs';
 const app='/Users/developer/.codex/worktrees/development/project/muc_online_app';
+test('registered Documents worktrees pass while primary, copied, main and mismatched branches fail',()=>{
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'registered-development-'));
+ const repo=path.join(temp,'repo'),wt=path.join(temp,'Documents/考勤工作树');
+ const git=(args,cwd=repo)=>execFileSync('git',args,{cwd,stdio:'pipe',encoding:'utf8'});
+ try{
+  fs.mkdirSync(repo);git(['init','-b','main']);git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-m','initial']);
+  git(['worktree','add','-b','codex/attendance-leave',wt]);const appDir=path.join(wt,'muc_online_app');fs.mkdirSync(appDir);
+  const env=localDevelopmentEnvironment(appDir,'attendance-leave');assert.equal(approvedLocalDevelopment(appDir,env),true);
+  validateRegisteredDevelopmentWorktree(appDir,'attendance-leave');
+  assert.throws(()=>validateRegisteredDevelopmentWorktree(appDir,'info-rbac'),/不一致/);
+  assert.throws(()=>validateRegisteredDevelopmentWorktree(path.join(repo,'muc_online_app'),'attendance-leave'),/独立Git/);
+  git(['switch','-c','unregistered'],wt);assert.throws(()=>validateRegisteredDevelopmentWorktree(appDir,'attendance-leave'),/未知/);
+  git(['switch','--detach'],wt);assert.throws(()=>validateRegisteredDevelopmentWorktree(appDir,'attendance-leave'));
+ }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});
 test('each development branch has its own fixed port and no inherited credentials',()=>{
  for(const [key,profile] of Object.entries(LOCAL_DEVELOPMENT_PROFILES)){
   const env=localDevelopmentEnvironment(app,key,{PATH:'/usr/bin',HOME:'/Users/developer',DATABASE_URL:'forbidden',ATTENDANCE_ENV_FILE:'/private/config',DINGTALK_APP_SECRET:'forbidden',COS_SECRET_KEY:'forbidden',WECHAT_APP_SECRET:'forbidden',NODE_OPTIONS:'--require forbidden',INITIAL_ADMIN_PASSWORD:'forbidden'});
