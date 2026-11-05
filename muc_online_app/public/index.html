@@ -1897,6 +1897,28 @@
   #roleDialog .entry-grid textarea{border-radius:6px}
   #userDialog .status-badge,#userBatchDialog .status-badge,#roleDialog .status-badge,
   #userDialog .status-pill,#roleDialog .status-pill{border-radius:4px}
+  /* ===== 信息/反馈/修改密码/固化/查看器弹窗 V16（颜色原样；viewer 仅容器） ===== */
+  #entryDialog,#feedbackDialog,#changePasswordDialog,#fixedDialog,#viewerDialog{border-radius:6px}
+  #entryDialog .btn,#feedbackDialog .btn,#changePasswordDialog .btn,#fixedDialog .btn,#viewerDialog .btn{border-radius:6px}
+  #entryDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="file"]):not([type="radio"]),
+  #entryDialog .entry-grid select,
+  #entryDialog .entry-grid textarea,
+  #entryDialog .search,
+  #entryDialog .recipient-picker,
+  #entryDialog .upload-zone,
+  #entryDialog .recipient-options{border-radius:6px}
+  #feedbackDialog .search,
+  #feedbackDialog select,
+  #feedbackDialog textarea,
+  #feedbackDialog input:not([type="checkbox"]),
+  #changePasswordDialog input,
+  #fixedDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="file"]):not([type="radio"]),
+  #fixedDialog .entry-grid select,
+  #fixedDialog .entry-grid textarea,
+  #fixedDialog .search{border-radius:6px}
+  #entryDialog .status-badge,
+  #feedbackDialog .status-badge,
+  #fixedDialog .status-badge{border-radius:4px}
   dialog[id^="maintenance"] .maintenance-person-role,
   dialog[id^="maintenance"] .status-badge{border-radius:4px}
 </style>
