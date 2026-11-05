@@ -194,15 +194,19 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const result=classifyDay(input,clock(),sourceReadAt,{previousWorkDays:previousWorkDays(task.person_id,task.work_date)});const hash=sourceHash(input),at=iso();
   tx(()=>{
    const old=db.prepare('select * from attendance_days where person_id=? and work_date=?').get(task.person_id,task.work_date);
+   const dataChanged=!old||old.source_hash!==hash;
    if(old&&old.source_hash!==hash&&sourceHash(parse(old.input_json,{}))!==hash)db.prepare('insert into attendance_changes(id,person_id,work_date,before_json,after_json,changed_at,run_id) values(?,?,?,?,?,?,?)').run(uid(),task.person_id,task.work_date,old.input_json,json(input),at,task.run_id);
    db.prepare('insert into attendance_days(person_id,work_date,input_json,result_json,source_hash,updated_at,run_id) values(?,?,?,?,?,?,?) on conflict(person_id,work_date) do update set input_json=excluded.input_json,result_json=excluded.result_json,source_hash=excluded.source_hash,updated_at=excluded.updated_at,run_id=excluded.run_id').run(task.person_id,task.work_date,json(input),json(result),hash,at,task.run_id);
    const complete=!result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict');
    if(complete&&input.raw?.scheduleReadEvidence?.status==='empty_confirmed')db.prepare('insert into attendance_schedule_cache(person_id,work_date,schedules_json,verified_at) values(?,?,?,?) on conflict(person_id,work_date) do update set schedules_json=excluded.schedules_json,verified_at=excluded.verified_at,invalidated_at=null').run(task.person_id,task.work_date,'[]',sourceReadAt||at);
    if(complete)for(const failed of db.prepare("select id,run_id from attendance_tasks where person_id=? and work_date=? and status in ('failed','incomplete') and updated_at<=? and id<>?").all(task.person_id,task.work_date,sourceReadAt||at,task.id))hybrid.setState('taskRecovery:'+failed.id,{failedTaskId:failed.id,failedRunId:failed.run_id,recoveredByTaskId:task.id,recoveredByRunId:task.run_id,recoveredAt:at});
    hybrid.complete(task,complete,full);
-   hybrid.setState('dataVersion',uid());
+   const newStatus=complete?'done':'incomplete';
+   const prevStatus=db.prepare('select status from attendance_tasks where id=?').get(task.id)?.status;
+   // 仅在当日输入真正变化或任务错误状态翻转时递增数据版本；重复读取相同数据不再触发前端自动刷新与快照缓存失效。
+   if(dataChanged||prevStatus&&prevStatus!==newStatus&&(prevStatus==='failed'||prevStatus==='incomplete'||newStatus==='failed'||newStatus==='incomplete'))hybrid.setState('dataVersion',uid());
    db.prepare('update attendance_runs set updated_at=? where id=?').run(at,task.run_id);
-   db.prepare('update attendance_tasks set status=?,error=?,attempts=0,updated_at=? where id=?').run(result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict')?'incomplete':'done',result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict')?'审批事由资料未完整覆盖':null,at,task.id);
+   db.prepare('update attendance_tasks set status=?,error=?,attempts=0,updated_at=? where id=?').run(newStatus,complete?null:'审批事由资料未完整覆盖',at,task.id);
   });
  }
  function retry(table,item,e){
@@ -409,7 +413,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    return {...totals,contextDays:[],days:days.map(({input,approvalPlans,...d})=>({...d,purposes:d.purposes.map(({category,status})=>({category,status})),punchDetails:d.punchDetails.map(({type,planned,actual,status,reason})=>({type,planned,actual,status,reason}))}))};
   });
   onTiming('attendance_metadata',performance.now()-classifiedAt);
-  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
+  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,dataVersion:hybrid.state('dataVersion')||'',historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
  }
  function status(user){
   permission(user,'attendance.read');const s=scope(user);

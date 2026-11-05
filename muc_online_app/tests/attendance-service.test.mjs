@@ -26,8 +26,12 @@ test('full sync persists unique people-days, repeat is idempotent and source cha
  const f=fixture();f.service.enqueue({from:'2026-09-01',to:'2026-09-02',user:admin});await drain(f.service);
  assert.equal(f.db.prepare('select count(*) as n from attendance_days').get().n,4);assert.equal(f.service.status(admin).runs[0].status,'completed');
  let s=f.service.snapshot(reader,{month:'2026-09'});assert.equal(s.people.length,1);assert.equal(s.people[0].counts['培训'],2);assert.equal(s.people[0].counts['未同步'],28);assert.equal(s.people[0].overtimeSeconds,null);
+ const dv1=f.service.status(admin).dataVersion;
  f.service.enqueue({from:'2026-09-01',to:'2026-09-02',user:admin});await drain(f.service);assert.equal(f.db.prepare('select count(*) as n from attendance_changes').get().n,0);
+ assert.equal(f.service.status(admin).dataVersion,dv1);
  f.setPurpose('派驻');f.service.enqueue({from:'2026-09-01',to:'2026-09-02',user:admin});await drain(f.service);
+ assert.notEqual(f.service.status(admin).dataVersion,dv1);
+ assert.equal(f.service.snapshot(reader,{month:'2026-09'}).dataVersion,f.service.hybrid.state('dataVersion'));
  assert.equal(f.db.prepare('select count(*) as n from attendance_days').get().n,4);assert.equal(f.db.prepare('select count(*) as n from attendance_changes').get().n,4);assert.equal(f.service.snapshot(reader,{month:'2026-09'}).people[0].counts['派驻'],2);
  assert.equal(f.service.changes(reader,{month:'2026-09'}).length,2);f.db.close();
 });
@@ -147,7 +151,7 @@ test('status limits task aggregates to displayed runs without broadening personn
 test('snapshot reuses classified results across requests until data versions or request shape change',()=>{
  const f=fixture({config:{eventsEnabled:false}});
  for(const date of ['2026-09-01','2026-09-02'])f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',date,JSON.stringify({date,covered:true,points:[{type:'OnDuty',time:Date.parse(date+'T08:00:00+08:00')}],punches:[],approvals:[]}),'{}','hash','old','test');
- const strip=s=>{const {generatedAt,...rest}=s;return rest;};
+ const strip=s=>{const {generatedAt,dataVersion,...rest}=s;return rest;};
  const run=(month,filters={})=>{const timings=[];const snapshot=f.service.snapshot(admin,{month,...filters},'attendance.read',{detailLevel:'summary',onTiming:name=>timings.push(name)});return {snapshot,timings};};
  const first=run('2026-09');
  assert.equal(first.timings.includes('attendance_cache_hit'),false);
