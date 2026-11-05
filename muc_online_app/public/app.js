@@ -3126,6 +3126,30 @@ async function loadAuthorizationOverviewDetail() {
   } catch (error) { if (token === view.requestSequence) view.detailError = error.message || "读取授权明细失败"; }
   finally { if (token === view.requestSequence) { view.detailLoading = false; renderAuthorizationOverviewResults(); } }
 }
+const CAPABILITY_SHAPE_LAYER_CSS = `
+/* V16 形状层：仅统一圆角；颜色、投影、布局均保持模块原样 */
+.panel{border-radius:6px}
+.modal,.priority-project-settings,.person-hover-card{border-radius:6px}
+button,input,select,textarea{border-radius:6px}
+.modal-close{border-radius:6px}
+.combo-options,.status-phase-options,.combo-readonly,.candidate,.error,.notice{border-radius:6px}
+.status-person-card,.status-people-card,.handover-days>div>label{border-radius:6px}
+`;
+
+function applyCapabilityShapeLayer(shadow) {
+  if (!shadow) return;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(CAPABILITY_SHAPE_LAYER_CSS);
+    shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
+  } catch {
+    const style = document.createElement("style");
+    style.dataset.capabilityShapeLayer = "v16";
+    style.textContent = CAPABILITY_SHAPE_LAYER_CSS;
+    shadow.append(style);
+  }
+}
+
 function renderPersonnelArea() {
   const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
   const authorizationAllowed = hasRbac("personnel.list.view") && hasRbac("personnel.qualification.view");
@@ -3144,6 +3168,7 @@ function renderPersonnelArea() {
       if (generation !== capabilityGeneration) return;
       host.textContent = "";
       capabilityModule = module.mountCapability(host, { exportWorkbook: buildXlsxWorkbook });
+      applyCapabilityShapeLayer(host.shadowRoot);
       capabilityModule.setActive(personnelArea === "capability" && state.activePage === "personnelPage");
     }).catch(error => { if (generation === capabilityGeneration) host.textContent = `能力配置加载失败：${error.message}。请检查模块构建。`; }).finally(() => { capabilityLoading = false; });
   }
