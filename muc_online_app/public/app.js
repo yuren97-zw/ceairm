@@ -852,7 +852,7 @@ function infoSyncStatus(text='') {
   const normal=['','实时同步','自动同步','连接中'].includes(text);
   let bar=$('#infoSyncBar');
   if(!bar&&normal&&!infoRealtime.newIds.size)return;
-  if(!bar){bar=document.createElement('div');bar.id='infoSyncBar';bar.style.cssText='font-size:12px;color:#64748b;display:flex;gap:8px;align-items:center;padding:4px 0';$('#resultStatus')?.after(bar);}
+  if(!bar){bar=document.createElement('div');bar.id='infoSyncBar';bar.style.cssText='font-size:12px;color:#64748b;display:flex;gap:8px;align-items:center;padding:4px 0';$('#infoFilters')?.after(bar);}
   bar.replaceChildren();
   if(!normal)bar.append(document.createTextNode(text));
   bar.hidden=state.activePage!=='infoPage' || state.activeSubpage!=='infoListSubpage' || (normal&&!infoRealtime.newIds.size);
@@ -1871,7 +1871,6 @@ function renderShell() {
   $$(".subpage").forEach(section => section.classList.toggle("active", section.id === state.activeSubpage));
   $("#pager").hidden = state.activePage !== "infoPage" || state.activeSubpage !== "infoListSubpage";
   $("#infoFilters").hidden = state.activeSubpage !== "infoListSubpage";
-  $("#resultStatus").hidden = state.activeSubpage !== "infoListSubpage";
   closeSubpageMenu();
 }
 
@@ -2241,6 +2240,7 @@ function renderPager(total) {
   const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
   if (state.page > totalPages) state.page = totalPages;
   $("#pagerText").textContent = `第 ${state.page} / ${totalPages} 页`;
+  $("#pagerCount").textContent = `共 ${total} 条`;
   $("#pageSizeSelect").innerHTML = pageSizes.map(size => `<option value="${size}" ${size === state.pageSize ? "selected" : ""}>${size} 条</option>`).join("");
   const isCompactPager = window.matchMedia("(max-width: 520px)").matches;
   const pages = isCompactPager ? [state.page] : Array.from(new Set([1, state.page - 1, state.page, state.page + 1, totalPages].filter(page => page >= 1 && page <= totalPages)));
@@ -2282,7 +2282,6 @@ function renderRecords() {
     </article>`;
   }).join("");
   $("#empty").hidden = !!filtered.length;
-  $("#resultStatus").textContent = `共 ${state.records.length} 条 · 当前显示 ${filtered.length} 条`;
   renderPager(filtered.length);
 }
 

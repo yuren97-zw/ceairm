@@ -1762,7 +1762,7 @@
   .bottom-nav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(255,255,255,.96);border-top:1px solid #E5E5EA;backdrop-filter:saturate(180%) blur(16px);padding-bottom:env(safe-area-inset-bottom)}
   .bottom-nav-item{flex:1 1 20%;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 2px 7px;border:0;background:none;color:#77777D;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
   .bottom-nav-item svg{width:22px;height:22px}
-  .bottom-nav-item.active{color:#007AFF}
+  .bottom-nav-item.active{color:var(--brand)}
   .bottom-nav-item[hidden]{display:none}
   .bottom-more-sheet{position:fixed;inset:0;z-index:80}
   .bottom-more-sheet[hidden]{display:none}
@@ -1781,6 +1781,18 @@
     .home-user-name{max-width:96px}
   }
   .app-booting .bottom-nav,.app-locked .bottom-nav,.app-booting .bottom-more-sheet,.app-locked .bottom-more-sheet{display:none!important}
+  /* ===== 信息传达页 V16（黑白＋品牌青，仅视觉层，交互与权限不变） ===== */
+  #infoPage .search{border-radius:6px;border-color:var(--line)}
+  #infoPage .btn{border-radius:6px}
+  #infoPage .menu-btn{border-radius:6px}
+  #infoPage .subpage-menu{border-radius:6px}
+  #infoPage .subtab{border-radius:4px}
+  #infoPage .chip,#infoPage .select-pill{border-radius:6px;border-color:var(--line)}
+  #infoPage .chip.active{box-shadow:none}
+  #infoPage #categoryChips .chip.active{background:var(--brand-soft);border-color:#bfdde8;color:var(--brand)}
+  #infoPage .card{border-radius:6px;box-shadow:none;border-color:var(--line)}
+  #infoPage .card .title{font-size:14px;font-weight:600}
+  #infoPage .status-tag{border-radius:4px}
 </style>
 </head>
 <body class="app-booting">
@@ -1867,7 +1879,6 @@
       <div class="titlebar info-titlebar"><div class="subpage-menu-wrap"><button id="subpageMenuBtn" class="menu-btn" type="button" aria-label="页面菜单" aria-expanded="false">☰</button><div id="subpageMenu" class="subpage-menu" hidden><button class="subtab active" type="button" data-subpage="infoListSubpage">信息传达</button><button class="subtab" type="button" data-subpage="statsSubpage">统计分析</button></div></div><input id="searchInput" class="search" type="search" placeholder="搜索：标题、发布人、机号、关键词"><div class="actions"><button id="openEntryBtn" class="btn" type="button" hidden>发布</button></div></div>
       <div id="infoFilters"><div class="filter-strip"><div id="statusChips" class="chips"></div><label class="select-pill info-month-filter">月份<select id="monthSelect" aria-label="月份"></select></label></div>
       <div id="categoryChips" class="chips"></div></div>
-      <div id="resultStatus" class="status-line">加载中...</div>
     </div></header>
     <main><div class="wrap">
       <section id="infoListSubpage" class="subpage active"><section id="cards" class="grid"></section><div id="empty" class="status-line">没有匹配结果。</div></section>
@@ -1896,7 +1907,7 @@
 
   <section id="settingsPage" class="page"><main><div class="wrap"><div id="settingsPanel" class="module-grid"></div></div></main></section>
 
-  <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
+  <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><span id="pagerCount" class="pager-text">共 0 条</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
 
   <nav id="bottomNav" class="bottom-nav" aria-label="主导航" hidden>
     <button class="bottom-nav-item active" type="button" data-page="homePage"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 11 12 4l8 7"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 10v10h12V10"/></svg><span>首页</span></button>
