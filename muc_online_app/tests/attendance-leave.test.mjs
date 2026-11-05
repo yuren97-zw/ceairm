@@ -30,3 +30,16 @@ test('live offset pagination advances by 200 and aborts repeat/overlap instead o
 test('approval owner lookup failure backs off persistently instead of repeating each worker tick',async()=>{const f=fixture();f.deps.config.eventsEnabled=true;let reads=0;f.client.approval=async()=>{reads++;throw new DingTalkError('denied','403');};f.db.prepare('insert into attendance_events values(?,?,?,?,?,?)').run('unresolved-owner','attendance_approve_status_change',JSON.stringify({processInstanceId:'x'}),new Date(stamp+1).toISOString(),'pending',null);await assert.rejects(f.service.leave.observe());await f.service.leave.observe();assert.equal(reads,1);const next=createAttendanceService(f.deps);await next.leave.observe();assert.equal(reads,1);assert.ok(next.hybrid.state('leaveEventRetry:unresolved-owner').nextAt);next.stop();f.close();});
 
 test('all four groups use the same quota-cycle rule and marriage/paternity do not become lifetime totals',()=>{for(const name of ['公休假','山东省育儿假','婚假','陪产假']){const src=source(name,[quota({quota_cycle:'2025'})]);assert.equal(leaveCell([src],2025,name,stamp).units[0].used,3.5);assert.equal(leaveCell([src],2026,name,stamp).units.length,0);}});
+test('leave snapshot reuses cached result until leave version or member scope changes',()=>{
+ const f=fixture();
+ const a=f.service.leave.snapshot(f.admin,{year:2026});
+ const b=f.service.leave.snapshot(f.admin,{year:2026});
+ assert.strictEqual(b,a);
+ f.service.hybrid.setState('leaveVersion','v2');
+ const c=f.service.leave.snapshot(f.admin,{year:2026});
+ assert.notStrictEqual(c,a);
+ assert.notStrictEqual(f.service.leave.snapshot(f.admin,{year:2026,department:'二组'}),c);
+ assert.notStrictEqual(f.service.leave.snapshot(f.admin,{year:2026},'attendance.read'),c);
+ assert.equal(f.service.leave.snapshot(f.admin,{year:2026}).dataVersion,'v2');
+ f.close();
+});
