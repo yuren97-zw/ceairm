@@ -1825,6 +1825,21 @@
   #maintenancePanel .personal-metric-card{border-radius:6px;box-shadow:none}
   #maintenancePanel .maintenance-report-metrics article{border-radius:6px}
   #maintenancePanel .maintenance-rule-group{border-radius:6px}
+  /* ===== 维修管控弹窗 V16（颜色保持原样，仅圆角归一） ===== */
+  dialog[id^="maintenance"]{border-radius:6px}
+  dialog[id^="maintenance"] .btn{border-radius:6px}
+  dialog[id^="maintenance"] .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  dialog[id^="maintenance"] .entry-grid select,
+  dialog[id^="maintenance"] .entry-grid textarea,
+  dialog[id^="maintenance"] textarea,
+  dialog[id^="maintenance"] .search,
+  dialog[id^="maintenance"] select{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-role-group,
+  dialog[id^="maintenance"] .maintenance-work-role{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-person-row{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-report-contexts button{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-person-role,
+  dialog[id^="maintenance"] .status-badge{border-radius:4px}
 </style>
 </head>
 <body class="app-booting">
