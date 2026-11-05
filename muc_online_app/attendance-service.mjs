@@ -380,15 +380,38 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);onTiming('attendance_cache_hit',1);onTiming('attendance_read',0);onTiming('attendance_classify',0);}
   let peopleRows=cached?.peopleRows||null,updatedAtByPerson=cached?.updatedAtByPerson||null;
   if(!cached){
-  const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
-  const reasonCache=new Map(db.prepare('select * from attendance_approval_cache').all().map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
+  const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
+  const reasonRows=db.prepare('select * from attendance_approval_cache').all();
+  const reasonSig=crypto.createHash('sha256').update(reasonRows.map(r=>r.id+'|'+r.status+'|'+(r.invalidated_at||'')+'|'+r.detail_json).join('\n')).digest('hex').slice(0,16);
+  const reasonCache=new Map(reasonRows.map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
   const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
   const taskErrors=db.prepare(`select t.person_id,t.work_date,t.error,t.updated_at from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.work_date>=? and t.work_date<=? and t.status in ('failed','incomplete') order by t.updated_at`).all(...s.params,contextFrom,contextTo);
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
   const readAt=performance.now();onTiming('attendance_read',readAt-started);
   peopleRows=members.map(p=>{
-   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const prevRows=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean);const prevs=prevRows.map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);const todayKey=dayOf(at),timeBucket=Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS),timeClass=date>todayKey?'f'+timeBucket:date===todayKey?'t'+timeBucket:'past';const enrichSig=(input.approvals||[]).map(a=>`${a.id}:${a.reasonStatus||''}:${a.reason===null||a.reason===undefined?'':a.reason}:${a.approved?1:0}:${a.recognizedCategory||''}`).join(',');const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevRows.map(r=>r.source_hash).join(',')+'|'+(detailLevel!=='summary'?'d':'s')+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+enrichSig;let result=classifyCache.get(memoKey);if(!result){result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:prevs,includePunchDetails:detailLevel!=='summary'});classifyCache.set(memoKey,result);while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);}const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
+   // 整日对象缓存：命中即跳过 input 解析、前 3 日解析与 overlay（每格固定开销与 classifyDay 同价）。
+   // 过去日期跨桶复用；今天按桶对齐；未来未覆盖日期仅依赖日期本身，键不含桶。
+   const makeDay=date=>{
+    const row=byKey.get(p.personId+'|'+date),todayKey=dayOf(at),timeBucket=Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS);
+    const timeClass=date>todayKey?'f'+timeBucket:date===todayKey?'t'+timeBucket:'past';
+    const detailFlag=detailLevel!=='summary'?'d':'s';
+    const taskError=errors.get(p.personId+'|'+date);
+    const prevHashStr=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).map(r=>r?r.source_hash:'-').join(',');
+    if(date>todayKey&&!row){const memoKey=p.personId+'|'+date+'|F|'+todayKey+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=classifyCache.get(memoKey);if(!day){const input={date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,null,{includePunchDetails:detailLevel!=='summary'});day={...result,input,sourceQueriedAt:null,updatedAt:null,runId:null,syncError:null,stale:false};classifyCache.set(memoKey,day);while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);}return day;}
+    const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevHashStr+'|'+detailFlag+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+reasonSig+'|'+(taskError?taskError.error:'');
+    const hit=classifyCache.get(memoKey);
+    if(hit){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}
+    if(process.env.DEBUG_CLASSIFY)console.error('[miss]',memoKey);
+    const input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};
+    const prevs=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean).map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);
+    const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:prevs,includePunchDetails:detailLevel!=='summary'});
+    const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;
+    const day={...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};
+    classifyCache.set(memoKey,day);
+    while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);
+    return day;
+   };
    const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
