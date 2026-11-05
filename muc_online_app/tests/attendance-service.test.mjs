@@ -172,3 +172,18 @@ test('snapshot reuses classified results across requests until data versions or 
  assert.equal(visible.snapshot.people.length,2);
  assert.equal(f.calls,0);f.db.close();
 });
+test('per-day classification cache invalidates when the day input hash changes and survives bucket rollover',async()=>{
+ const f=fixture();
+ f.service.enqueue({from:'2026-09-01',to:'2026-09-02',user:admin});await drain(f.service);
+ const first=f.service.snapshot(admin,{month:'2026-09'});
+ assert.equal(first.people[0].counts['培训'],2);
+ // 同一输入二次请求（跨 5 分钟桶模拟：结果必须一致）
+ const second=f.service.snapshot(admin,{month:'2026-09'});
+ assert.deepEqual(JSON.stringify(second.people[0].days.map(d=>[d.date,d.category])),JSON.stringify(first.people[0].days.map(d=>[d.date,d.category])));
+ // 直接改库中某天输入与哈希：缓存键含 source_hash，必须立即反映新数据
+ f.db.prepare("update attendance_days set input_json=?,source_hash='changed-hash' where person_id='p1' and work_date='2026-09-01'").run(JSON.stringify({date:'2026-09-01',covered:true,points:[{type:'OnDuty',time:Date.parse('2026-09-01T08:00:00+08:00')}],punches:[],approvals:[]}));
+ f.service.hybrid.setState('dataVersion','direct-db-change');
+ const third=f.service.snapshot(admin,{month:'2026-09'});
+ assert.equal(third.people[0].days.find(d=>d.date==='2026-09-01').input.points.length,1);
+ f.db.close();
+});
