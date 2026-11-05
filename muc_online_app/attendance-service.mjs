@@ -26,6 +26,9 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
  // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
  const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=6;
+ // 逐格分类结果缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来），
+ // 键=人员+日期+当日输入哈希+前3个工作日输入哈希+明细级别；今天与未来按 5 分钟时间桶对齐快照缓存语义。
+ const classifyCache=new Map(),CLASSIFY_CACHE_MAX=20000;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
@@ -385,7 +388,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
   const readAt=performance.now();onTiming('attendance_read',readAt-started);
   peopleRows=members.map(p=>{
-   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:previousWorkDays(p.personId,date,byKey).map(overlay),includePunchDetails:detailLevel!=='summary'});const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
+   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const prevRows=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean);const prevs=prevRows.map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);const todayKey=dayOf(at),timeBucket=Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS),timeClass=date>todayKey?'f'+timeBucket:date===todayKey?'t'+timeBucket:'past';const enrichSig=(input.approvals||[]).map(a=>`${a.id}:${a.reasonStatus||''}:${a.reason===null||a.reason===undefined?'':a.reason}:${a.approved?1:0}:${a.recognizedCategory||''}`).join(',');const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevRows.map(r=>r.source_hash).join(',')+'|'+(detailLevel!=='summary'?'d':'s')+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+enrichSig;let result=classifyCache.get(memoKey);if(!result){result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:prevs,includePunchDetails:detailLevel!=='summary'});classifyCache.set(memoKey,result);while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);}const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
    const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
