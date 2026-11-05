@@ -1838,6 +1838,42 @@
   dialog[id^="maintenance"] .maintenance-work-role{border-radius:6px}
   dialog[id^="maintenance"] .maintenance-person-row{border-radius:6px}
   dialog[id^="maintenance"] .maintenance-report-contexts button{border-radius:6px}
+  /* ===== 人员与能力 V16（颜色原样；能力看板 Shadow DOM 不在覆盖范围） ===== */
+  #personnelAreaNav .settings-tabs .chip,
+  #personnelPanel .settings-tabs .chip{border-radius:6px;border-color:var(--line)}
+  #personnelAreaNav .settings-tabs .chip.active,
+  #personnelPanel .settings-tabs .chip.active{box-shadow:none}
+  #personnelPanel .metric,
+  #personnelPanel .data-panel,
+  #personnelAuthorizationWrap .data-panel{border-radius:6px;box-shadow:none}
+  #personnelPanel .search,
+  #personnelPanel .select-pill,
+  #personnelPanel .btn,
+  #personnelPanel .personnel-pagination button,
+  #personnelAuthorizationWrap .search,
+  #personnelAuthorizationWrap .select-pill,
+  #personnelAuthorizationWrap .btn{border-radius:6px}
+  #personnelPanel .status-pill,
+  #personnelPanel .status-badge,
+  #personnelAuthorizationWrap .status-badge{border-radius:4px}
+  #personnelDialog,
+  #personnelDeleteDialog,
+  #authorizationProjectDialog{border-radius:6px}
+  #personnelDialog .btn,
+  #personnelDeleteDialog .btn,
+  #authorizationProjectDialog .btn{border-radius:6px}
+  #personnelDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #personnelDialog .entry-grid select,
+  #personnelDialog .entry-grid textarea,
+  #personnelDialog .search,
+  #personnelDeleteDialog .search,
+  #authorizationProjectDialog .search,
+  #authorizationProjectDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #authorizationProjectDialog .entry-grid select,
+  #authorizationProjectDialog .entry-grid textarea{border-radius:6px}
+  #personnelDialog .status-badge,
+  #authorizationProjectDialog .status-badge,
+  #personnelDeleteDialog .status-badge{border-radius:4px}
   dialog[id^="maintenance"] .maintenance-person-role,
   dialog[id^="maintenance"] .status-badge{border-radius:4px}
 </style>
