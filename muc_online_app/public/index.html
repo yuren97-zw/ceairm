@@ -1793,6 +1793,11 @@
   #infoPage .card{border-radius:6px;box-shadow:none;border-color:var(--line)}
   #infoPage .card .title{font-size:14px;font-weight:600}
   #infoPage .status-tag{border-radius:4px}
+  /* 分页栏：每页条数选择与 V16 行高对齐 */
+  .pager #pageSizeSelect{height:24px;min-width:0;max-width:64px;padding:0 4px;border-radius:4px;border-color:var(--line);background:var(--panel);font-size:12px}
+  @media (max-width:520px){
+    .pager #pageSizeSelect{height:22px;font-size:11px}
+  }
 </style>
 </head>
 <body class="app-booting">
