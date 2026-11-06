@@ -382,7 +382,9 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   if(!cached){
   const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonRows=db.prepare('select * from attendance_approval_cache').all();
-  const reasonSig=crypto.createHash('sha256').update(reasonRows.map(r=>r.id+'|'+r.status+'|'+(r.invalidated_at||'')+'|'+r.detail_json).join('\n')).digest('hex').slice(0,16);
+  // 指纹将 invalidated_at 折叠为布尔：重复失效事件写新时间戳不应扰动全部逐格缓存；
+  // detail_json/status/是否失效的真实变化仍会使指纹变化并使缓存失效。
+  const reasonSig=crypto.createHash('sha256').update(reasonRows.map(r=>r.id+'|'+r.status+'|'+(r.invalidated_at?'1':'0')+'|'+r.detail_json).join('\n')).digest('hex').slice(0,16);
   const reasonCache=new Map(reasonRows.map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
   const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
