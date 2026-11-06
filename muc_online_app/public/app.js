@@ -650,7 +650,7 @@ document.addEventListener("click",async event=>{
   const remove=event.target.closest("[data-org-delete]");if(remove){
     const org=state.organizations.find(o=>o.id===remove.dataset.orgDelete);
     if(!confirm(`确认删除 ${organizationLabel(org)}？已引用的组织不能删除。`))return;
-    const reason=prompt("请填写删除原因");if(!reason?.trim())return;
+    const reason=await inputDialogPrompt("请填写删除原因");if(!reason?.trim())return;
     try{await apiRequest(`/personnel/organizations/${encodeURIComponent(org.id)}`,{method:"DELETE",body:{reason}});await renderAll();}catch(e){alert(e.message);}
   }
 });
@@ -1929,6 +1929,62 @@ function formatHomeOvertime(seconds) {
 
 function cssEscapeValue(value) {
   return (window.CSS && CSS.escape) ? CSS.escape(value) : String(value).replace(/"/g, '\\"');
+}
+
+let appInputDialogResolve = null;
+function inputDialogPrompt(message, defaultValue = "") {
+  return new Promise(resolve => {
+    let dlg = $("#appInputDialog");
+    if (!dlg) {
+      document.body.insertAdjacentHTML("beforeend", `<dialog id="appInputDialog"><div class="dialog-body"><div class="dialog-head"><h2>请输入</h2><button class="icon-btn" type="button" data-app-input-cancel aria-label="取消">×</button></div><form id="appInputDialogForm" class="entry-grid"><p id="appInputDialogMessage" class="status-line"></p><input id="appInputDialogValue" autocomplete="off"><div class="form-actions"><button class="btn secondary" type="button" data-app-input-cancel>取消</button><button class="btn" type="submit">确定</button></div></form></div></dialog>`);
+      dlg = $("#appInputDialog");
+      const finish = value => {
+        if (!appInputDialogResolve) return;
+        const done = appInputDialogResolve;
+        appInputDialogResolve = null;
+        if (dlg.open) dlg.close();
+        done(value);
+      };
+      dlg.querySelector("#appInputDialogForm").addEventListener("submit", event => {
+        event.preventDefault();
+        finish($("#appInputDialogValue").value);
+      });
+      dlg.querySelectorAll("[data-app-input-cancel]").forEach(btn => btn.addEventListener("click", () => finish(null)));
+      dlg.addEventListener("cancel", () => finish(null));
+      dlg.addEventListener("close", () => { if (appInputDialogResolve) { const done = appInputDialogResolve; appInputDialogResolve = null; done(null); } });
+    }
+    appInputDialogResolve = resolve;
+    $("#appInputDialogMessage").textContent = message || "";
+    $("#appInputDialogValue").value = defaultValue ?? "";
+    if (!dlg.open) dlg.showModal();
+    $("#appInputDialogValue").focus();
+    $("#appInputDialogValue").select();
+  });
+}
+
+let appConfirmResolve = null;
+function confirmDialog(message) {
+  return new Promise(resolve => {
+    let dlg = $("#appConfirmDialog");
+    if (!dlg) {
+      document.body.insertAdjacentHTML("beforeend", `<dialog id="appConfirmDialog"><div class="dialog-body"><p id="appConfirmMessage" style="white-space:pre-wrap;line-height:1.6;margin:0 0 12px;font-size:13px;color:var(--ink)"></p><div class="form-actions"><button class="btn secondary" type="button" data-app-confirm-cancel>取消</button><button class="btn" type="button" data-app-confirm-ok>确定</button></div></div></dialog>`);
+      dlg = $("#appConfirmDialog");
+      const finish = value => {
+        if (!appConfirmResolve) return;
+        const done = appConfirmResolve;
+        appConfirmResolve = null;
+        if (dlg.open) dlg.close();
+        done(value);
+      };
+      dlg.querySelector("[data-app-confirm-ok]").addEventListener("click", () => finish(true));
+      dlg.querySelector("[data-app-confirm-cancel]").addEventListener("click", () => finish(false));
+      dlg.addEventListener("cancel", () => finish(false));
+      dlg.addEventListener("close", () => { if (appConfirmResolve) { const done = appConfirmResolve; appConfirmResolve = null; done(false); } });
+    }
+    appConfirmResolve = resolve;
+    $("#appConfirmMessage").textContent = message || "";
+    if (!dlg.open) dlg.showModal();
+  });
 }
 
 const homeDataService = {
@@ -8243,7 +8299,7 @@ document.addEventListener("click", async event => {
     const draft = readMaintenanceAircraftHours();
     const remove = event.target.closest('[data-aircraft-remove]');
     if (remove) {
-      if (!confirm('删除此机型组？保存时会核对受影响的未报工航班，历史工时不变。')) return;
+      if (!(await confirmDialog('删除此机型组？保存时会核对受影响的未报工航班，历史工时不变。'))) return;
       draft.groups = draft.groups.filter(group => group.id !== remove.dataset.aircraftRemove);
     } else {
       draft.groups.push({ id: `aircraft-${Date.now()}-${Math.random().toString(36).slice(2)}`, name: '', codes: '', enabled: true, hours: {} });
@@ -8311,8 +8367,8 @@ document.addEventListener("click", async event => {
       }));
       const aircraftHours = readMaintenanceAircraftHours();
       const preview = await apiRequest('/maintenance/rules/aircraft-preview', { method: 'POST', body: { aircraftHours } });
-      if (preview.affectedCount && !confirm(`将影响 ${preview.affectedCount} 个未报工航班，已报工工时不变。以下仅列出您有权查看的航班：\n${preview.affected.slice(0, 15).map(flight => `${flight.date} ${flight.flightNo || '-'} ${flight.aircraftType || '未填机型'} ${flight.opportunity}`).join('\n')}\n是否继续？`)) return;
-      const reason = prompt('请填写本次工时规则修改原因（首次配置也须说明）：');
+      if (preview.affectedCount && !(await confirmDialog(`将影响 ${preview.affectedCount} 个未报工航班，已报工工时不变。以下仅列出您有权查看的航班：\n${preview.affected.slice(0, 15).map(flight => `${flight.date} ${flight.flightNo || '-'} ${flight.aircraftType || '未填机型'} ${flight.opportunity}`).join('\n')}\n是否继续？`))) return;
+      const reason = await inputDialogPrompt('请填写本次工时规则修改原因（首次配置也须说明）：');
       if (!reason?.trim()) return;
       await maintenanceService.saveRules(rules, { aircraftHours, reason, confirmation: preview.confirmation });
       await refreshMaintenance();
@@ -8339,7 +8395,7 @@ document.addEventListener("click", async event => {
   const adjustHour = event.target.closest("[data-maint-adjust-hour]");
   if (adjustHour) {
     (async () => {
-      const value = prompt("请输入调整后工时", "");
+      const value = await inputDialogPrompt("请输入调整后工时", "");
       if (value === null) return;
       await maintenanceService.adjustHour(adjustHour.dataset.maintAdjustHour, Number(value || 0));
       await refreshMaintenance();
@@ -8837,7 +8893,7 @@ document.addEventListener("click", async event => {
   const voidQualification = event.target.closest("[data-void-qualification]");
   if (voidQualification) {
     const [kind, recordId] = voidQualification.dataset.voidQualification.split(":");
-    const reason = prompt("请填写作废原因。作废后记录不再参与人员能力统计，但会保留审计历史。", "");
+    const reason = await inputDialogPrompt("请填写作废原因。作废后记录不再参与人员能力统计，但会保留审计历史。", "");
     if (!reason) return;
     try {
       await personnelService.voidQualification(state.activePersonnelDetail.person.id, kind, recordId, reason);
@@ -8986,7 +9042,7 @@ document.addEventListener("click", async event => {
   if (resetUser) {
     const user = state.users.find(item => item.id === resetUser.dataset.resetUser);
     if (!user) return;
-    const password = prompt(`请输入 ${user.name || user.username} 的新密码`, "123456");
+    const password = await inputDialogPrompt(`请输入 ${user.name || user.username} 的新密码`, "123456");
     if (!password) return;
     await userService.resetPassword(user.id, password);
     alert("密码已重置。");
