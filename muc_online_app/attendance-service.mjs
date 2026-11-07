@@ -28,7 +28,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=6;
  // 逐格分类结果缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来），
  // 键=人员+日期+当日输入哈希+前3个工作日输入哈希+明细级别；今天与未来按 5 分钟时间桶对齐快照缓存语义。
- const classifyCache=new Map(),CLASSIFY_CACHE_MAX=20000;
+ const classifyCache=new Map(),CLASSIFY_CACHE_MAX=30000;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
@@ -382,11 +382,12 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   if(!cached){
   const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonRows=db.prepare('select * from attendance_approval_cache').all();
-  // 指纹将 invalidated_at 折叠为布尔：重复失效事件写新时间戳不应扰动全部逐格缓存；
-  // detail_json/status/是否失效的真实变化仍会使指纹变化并使缓存失效。
-  const reasonSig=crypto.createHash('sha256').update(reasonRows.map(r=>r.id+'|'+r.status+'|'+(r.invalidated_at?'1':'0')+'|'+r.detail_json).join('\n')).digest('hex').slice(0,16);
   const reasonCache=new Map(reasonRows.map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
-  const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
+  // 按审批粒度的行签名：值含 detail_json/status/是否失效（invalidated_at 时间戳折叠为布尔，
+  // 重复失效事件写新时间戳不应扰动缓存）；overlay 与逐格缓存验证共用。
+  const rowSigMap=new Map(reasonRows.map(r=>[r.id,r.status+'|'+(r.invalidated_at?'1':'0')+'|'+r.detail_json]));
+  const enrichCache=new Map(),ENRICH_CACHE_MAX=30000;
+  const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>{const sig=rowSigMap.get(a.id)||'raw';const ek=a.id+'|'+sig+'|'+JSON.stringify(a);let ea=enrichCache.get(ek);if(!ea){ea=enrichApprovalReason(a,reasonCache.get(a.id),config);enrichCache.set(ek,ea);while(enrichCache.size>ENRICH_CACHE_MAX)enrichCache.delete(enrichCache.keys().next().value);}return ea;})});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
   const taskErrors=db.prepare(`select t.person_id,t.work_date,t.error,t.updated_at from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.work_date>=? and t.work_date<=? and t.status in ('failed','incomplete') order by t.updated_at`).all(...s.params,contextFrom,contextTo);
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
@@ -401,9 +402,10 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     const taskError=errors.get(p.personId+'|'+date);
     const prevHashStr=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).map(r=>r?r.source_hash:'-').join(',');
     if(date>todayKey&&!row){const memoKey=p.personId+'|'+date+'|F|'+todayKey+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=classifyCache.get(memoKey);if(!day){const input={date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,null,{includePunchDetails:detailLevel!=='summary'});day={...result,input,sourceQueriedAt:null,updatedAt:null,runId:null,syncError:null,stale:false};classifyCache.set(memoKey,day);while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);}return day;}
-    const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevHashStr+'|'+detailFlag+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+reasonSig+'|'+(taskError?taskError.error:'');
+    const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevHashStr+'|'+detailFlag+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+(taskError?taskError.error:'');
     const hit=classifyCache.get(memoKey);
-    if(hit){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}
+    // 命中后校验该日各审批引用的事由行签名：事由缓存变化仅使引用它的格子重算，不影响全月。
+    if(hit){const sigs=classifyCache.get(memoKey+'#sig');const hitApprovals=hit.input.approvals||[];if(sigs&&hitApprovals.length===sigs.length&&hitApprovals.every((a,i)=>(rowSigMap.get(a.id)||'raw')===sigs[i])){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}}
     if(process.env.DEBUG_CLASSIFY)console.error('[miss]',memoKey);
     const input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};
     const prevs=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean).map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);
@@ -411,6 +413,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;
     const day={...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};
     classifyCache.set(memoKey,day);
+    classifyCache.set(memoKey+'#sig',(input.approvals||[]).map(a=>rowSigMap.get(a.id)||'raw'));
     while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);
     return day;
    };
