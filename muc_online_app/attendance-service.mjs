@@ -387,10 +387,16 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   if(!cached){
   const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonRows=db.prepare('select * from attendance_approval_cache').all();
-  const reasonCache=new Map(reasonRows.map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
-  // 按审批粒度的行签名：值含 detail_json/status/是否失效（invalidated_at 时间戳折叠为布尔，
-  // 重复失效事件写新时间戳不应扰动缓存）；overlay 与逐格缓存验证共用。
-  const rowSigMap=new Map(reasonRows.map(r=>[r.id,r.status+'|'+(r.invalidated_at?'1':'0')+'|'+r.detail_json]));
+  // 行签名取语义字段（kind/status/result/提取的事由值/reasonStatus），而非原始 detail_json：
+  // 失效后重拉会重写 detail_json（序列化串必变），但只要富化输出依赖的字段不变，
+  // 签名即稳定，逐格缓存不被扰动。overlay 与逐格缓存验证共用此签名。
+  const reasonCache=new Map(reasonRows.map(r=>{
+   const detail=parse(r.detail_json);
+   const read=detail?readApprovalReason(detail,detail.kind,config):{reason:null,reasonStatus:'detail_missing'};
+   const sig=[r.status,(r.invalidated_at?'1':'0'),(detail?detail.kind:''),(detail?detail.status||'':''),(detail?detail.result||'':''),(read.reason===null||read.reason===undefined?'':read.reason),read.reasonStatus].join('|');
+   return [r.id,{detail,status:r.status,invalidated:!!r.invalidated_at,sig}];
+  }));
+  const rowSigMap=new Map(reasonRows.map(r=>[r.id,reasonCache.get(r.id).sig]));
   const enrichCache=new Map(),ENRICH_CACHE_MAX=30000;
   const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>{const sig=rowSigMap.get(a.id)||'raw';const ek=a.id+'|'+sig+'|'+JSON.stringify(a);let ea=enrichCache.get(ek);if(!ea){ea=enrichApprovalReason(a,reasonCache.get(a.id),config);enrichCache.set(ek,ea);while(enrichCache.size>ENRICH_CACHE_MAX)enrichCache.delete(enrichCache.keys().next().value);}return ea;})});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
