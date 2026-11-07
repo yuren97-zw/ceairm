@@ -25,10 +25,15 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  const owner=uid();let busy=false,timer;
  // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
  // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
- const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=6;
- // 逐格分类结果缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来），
- // 键=人员+日期+当日输入哈希+前3个工作日输入哈希+明细级别；今天与未来按 5 分钟时间桶对齐快照缓存语义。
- const classifyCache=new Map(),CLASSIFY_CACHE_MAX=30000;
+ const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=12;
+ // 整日对象缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来）。
+ // 键=人员+日期+当日输入哈希+前3个工作日哈希+明细级别+身份问题+时间类+任务错误；
+ // 命中后按该日审批引用的事由行签名校验（WeakMap 挂载），事由变化仅使引用它的格子重算。
+ const classifyCache=new Map(),CLASSIFY_CACHE_MAX=60000;
+ // 签名数组用 WeakMap 挂在 day 对象上：不占用 LRU 条目（多用户多月份下 3 万条很快被驱逐，
+ // 是生产上跨桶全量重算的直接原因）；day 对象被驱逐时签名随之回收。
+ const daySigs=new WeakMap();
+ const futureCache=new Map(),FUTURE_CACHE_MAX=6000;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
@@ -401,11 +406,11 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     const detailFlag=detailLevel!=='summary'?'d':'s';
     const taskError=errors.get(p.personId+'|'+date);
     const prevHashStr=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).map(r=>r?r.source_hash:'-').join(',');
-    if(date>todayKey&&!row){const memoKey=p.personId+'|'+date+'|F|'+todayKey+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=classifyCache.get(memoKey);if(!day){const input={date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,null,{includePunchDetails:detailLevel!=='summary'});day={...result,input,sourceQueriedAt:null,updatedAt:null,runId:null,syncError:null,stale:false};classifyCache.set(memoKey,day);while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);}return day;}
+    if(date>todayKey&&!row){const memoKey=p.personId+'|'+date+'|F|'+todayKey+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=futureCache.get(memoKey);if(!day){const input={date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,null,{includePunchDetails:detailLevel!=='summary'});day={...result,input,sourceQueriedAt:null,updatedAt:null,runId:null,syncError:null,stale:false};futureCache.set(memoKey,day);while(futureCache.size>FUTURE_CACHE_MAX)futureCache.delete(futureCache.keys().next().value);}return day;}
     const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevHashStr+'|'+detailFlag+'|'+(p.identityIssue||'')+'|'+timeClass+'|'+(taskError?taskError.error:'');
     const hit=classifyCache.get(memoKey);
     // 命中后校验该日各审批引用的事由行签名：事由缓存变化仅使引用它的格子重算，不影响全月。
-    if(hit){const sigs=classifyCache.get(memoKey+'#sig');const hitApprovals=hit.input.approvals||[];if(sigs&&hitApprovals.length===sigs.length&&hitApprovals.every((a,i)=>(rowSigMap.get(a.id)||'raw')===sigs[i])){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}}
+    if(hit){const sigs=daySigs.get(hit);const hitApprovals=hit.input.approvals||[];if(sigs&&hitApprovals.length===sigs.length&&hitApprovals.every((a,i)=>(rowSigMap.get(a.id)||'raw')===sigs[i])){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}}
     if(process.env.DEBUG_CLASSIFY)console.error('[miss]',memoKey);
     const input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};
     const prevs=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean).map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);
@@ -413,7 +418,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;
     const day={...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};
     classifyCache.set(memoKey,day);
-    classifyCache.set(memoKey+'#sig',(input.approvals||[]).map(a=>rowSigMap.get(a.id)||'raw'));
+    daySigs.set(day,(input.approvals||[]).map(a=>rowSigMap.get(a.id)||'raw'));
     while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);
     return day;
    };
