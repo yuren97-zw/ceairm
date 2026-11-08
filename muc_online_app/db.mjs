@@ -271,6 +271,9 @@ if (!isMainThread) {
   async function handle(message) {
     const { mode, sql, params, sab, port } = message;
     const signal = new Int32Array(sab);
+    const trace = process.env.DEBUG_PG_TRACE === '1';
+    const label = String(sql).replace(/\s+/g, ' ').slice(0, 140);
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'start', mode, sql: label}) + '\n'); } catch {} }
     try {
       let result;
       const pragma = String(sql).trim().match(/^pragma\s+table_info\(([^)]+)\)/i);
@@ -286,7 +289,9 @@ if (!isMainThread) {
         else if (mode === "all") result = response.rows;
         else result = { changes: response.rowCount || 0 };
       }
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'query_done', mode, sql: label}) + '\n'); } catch {} }
       port.postMessage({ ok: true, result });
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'posted', mode, sql: label}) + '\n'); } catch {} }
     } catch (error) {
       const code = error && error.code;
       if (code === 'QUERY_TIMEOUT' || code === 'WORKER_RESTART') {
@@ -295,6 +300,7 @@ if (!isMainThread) {
       }
       try { port.postMessage({ ok: false, error: error && error.message || String(error), code }); } catch {}
     } finally {
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'notify', mode, sql: label}) + '\n'); } catch {} }
       Atomics.store(signal, 0, 1);
       Atomics.notify(signal, 0);
       try { port.close(); } catch {}
