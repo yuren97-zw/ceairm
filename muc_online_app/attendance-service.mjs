@@ -18,7 +18,7 @@ const sourceHash=value=>crypto.createHash('sha256').update(JSON.stringify(canoni
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const iso=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
-export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));if(db.kind==='postgres')db.exec(fs.readFileSync(new URL('./migrations/030_attendance_event_instance_index.sql',import.meta.url),'utf8'));}
+export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));if(db.kind==='postgres')db.exec(fs.readFileSync(new URL('./migrations/031_attendance_event_instance_index.sql',import.meta.url),'utf8'));}
 export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now()}){
  installAttendance(db);
  const iso=()=>new Date(clock()).toISOString();

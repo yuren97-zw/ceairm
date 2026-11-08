@@ -83,7 +83,7 @@ export function resolveApprovalGroups(rows){
 }
 export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue,people,permission,audit}){
  const enabled=!!config.approvalPlansEnabled;
- if(enabled){let schema=fs.readFileSync(new URL('./migrations/029_attendance_approval_plans.sql',import.meta.url),'utf8');if(db.kind!=='postgres')schema=schema.replace('id BIGSERIAL PRIMARY KEY','id INTEGER PRIMARY KEY AUTOINCREMENT');db.exec(schema);}
+ if(enabled){let schema=fs.readFileSync(new URL('./migrations/029_attendance_approval_plans.sql',import.meta.url),'utf8');if(db.kind!=='postgres')schema=schema.replace('id BIGSERIAL PRIMARY KEY','id INTEGER PRIMARY KEY AUTOINCREMENT');db.exec(schema);db.exec(fs.readFileSync(new URL('./migrations/030_attendance_approval_indexes.sql',import.meta.url),'utf8'));}
  const now=()=>new Date(clock()).toISOString();
  const dueEnabled=()=>!!config.approvalPlanDueEnabled&&hybrid.state('approvalPlanDueEnabled')===true;
  // 版本值须在时钟冻结（测试）或同一毫秒内连续变更时仍保证不同，语义与 dataVersion 的 uid() 一致。
