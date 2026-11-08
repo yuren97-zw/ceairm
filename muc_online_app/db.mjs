@@ -1,9 +1,5 @@
-import fs from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
-import fsp from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+import { Worker, isMainThread, parentPort, workerData, MessageChannel, receiveMessageOnPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { postgresConnectionOptions } from "./postgres-connection.mjs";
@@ -95,11 +91,27 @@ function instrumentDatabase(database) {
 class PostgresSyncDatabase {
   constructor(databaseUrl) {
     this.kind = "postgres";
+    this.databaseUrl = databaseUrl;
     this.failure = null;
     this.requestCounter = 0;
-    this.worker = new Worker(__filename, { workerData: { databaseUrl } });
-    this.worker.on("error", error => { this.failure = error; });
-    this.worker.unref();
+    this.workerGeneration = 0;
+    this.worker = this._createWorker();
+  }
+
+  _createWorker() {
+    const generation = ++this.workerGeneration;
+    const worker = new Worker(__filename, { workerData: { databaseUrl: this.databaseUrl } });
+    // 旧 worker 被 terminate 后仍可能触发 error/exit；代际检查避免它把新 worker 标记为失败。
+    worker.on("error", error => {
+      if (generation !== this.workerGeneration) return;
+      this.failure = error;
+      try { process.stderr.write(JSON.stringify({type: 'db_worker_error', message: String(error?.message || error).slice(0, 200)}) + '\n'); } catch {}
+    });
+    worker.on("exit", code => {
+      if (generation === this.workerGeneration && !this.failure && code !== 0) this.failure = new Error('数据库工作线程退出');
+    });
+    worker.unref();
+    return worker;
   }
 
   prepare(sql) {
@@ -110,9 +122,7 @@ class PostgresSyncDatabase {
     try { this.worker.terminate(); } catch {}
     this.failure = null;
     this.requestCounter = 0;
-    this.worker = new Worker(__filename, { workerData: { databaseUrl } });
-    this.worker.on("error", error => { this.failure = error; });
-    this.worker.unref();
+    this.worker = this._createWorker();
   }
 
   exec(sql) {
@@ -137,15 +147,35 @@ class PostgresSyncDatabase {
     }
     const sab = new SharedArrayBuffer(4);
     const signal = new Int32Array(sab);
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}-${++this.requestCounter}`;
-    const file = path.join(os.tmpdir(), `muc-pg-${id}.json`);
-    this.worker.postMessage({ mode, sql, params, file, sab });
+    // 结果通过 MessageChannel 直接回传，不再为每条查询写/读一个临时 JSON 文件。
+    // 旧实现每条查询都做一次文件写入 + 读取 + 删除（生产一次页面数百次），既拖慢
+    // 每条查询，也会在磁盘/线程池抖动时把 worker 卡在 writeFile 上。
+    const { port1, port2 } = new MessageChannel();
+    const rid = ++this.requestCounter;
+    const trace = process.env.DEBUG_PG_TRACE === '1';
+    const label = String(sql).replace(/\s+/g, ' ').slice(0, 140);
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'db_main_trace', phase: 'post', rid, mode, sql: label}) + '\n'); } catch {} }
+    try {
+      this.worker.postMessage({ mode, sql, params, sab, port: port1, rid }, [port1]);
+    } catch (error) {
+      try { port2.close(); } catch {}
+      this.failure = error;
+      if (!retried) {
+        this._respawn();
+        return this._request(mode, sql, params, true);
+      }
+      const failure = new Error('数据库工作线程不可用');
+      failure.status = 503;
+      throw failure;
+    }
     if (Atomics.wait(signal, 0, 0, REQUEST_TIMEOUT_MS) === 'timed-out') {
       // Never reuse a connection with an unknown transaction outcome.
+      try { port2.close(); } catch {}
+      try { process.stderr.write(JSON.stringify({type: 'db_request_timeout', mode, durationMs: Date.now() - __qStart, sql: String(sql).replace(/\s+/g, ' ').slice(0, 200)}) + '\n'); } catch {}
       this.failure = new Error('数据库查询超时');
       try { this.worker.terminate(); } catch {}
-      fs.rmSync(file, { force: true });
-      if (!retried) {
+      const retryable = mode === 'get' || mode === 'all' || /^\s*pragma\s/i.test(String(sql));
+      if (!retried && retryable) {
         this._respawn();
         return this._request(mode, sql, params, true);
       }
@@ -153,15 +183,27 @@ class PostgresSyncDatabase {
       error.status = 503;
       throw error;
     }
-    let raw;
-    try { raw = fs.readFileSync(file, 'utf8'); }
-    finally { fs.rmSync(file, { force: true }); }
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'db_main_trace', phase: 'woke', rid, durationMs: Date.now() - __qStart}) + '\n'); } catch {} }
+    const received = receiveMessageOnPort(port2);
+    try { port2.close(); } catch {}
+    if (!received?.message) {
+      this.failure = new Error('数据库结果未返回');
+      try { this.worker.terminate(); } catch {}
+      const error = new Error('数据库结果未返回，请稍后重试');
+      error.status = 503;
+      throw error;
+    }
+    const payload = received.message;
     const __qMs = Date.now() - __qStart;
     if (process.env.DEBUG_SLOW_QUERY && __qMs > 500) process.stderr.write(JSON.stringify({ type: "slow_pg_query", mode, durationMs: __qMs, sql: String(sql).replace(/\s+/g, " ").slice(0, 200) }) + "\n");
-    const payload = JSON.parse(raw);
     if (!payload.ok) {
       const error = new Error(payload.error || "PostgreSQL query failed");
       error.code = payload.code;
+      if (payload.code === 'QUERY_TIMEOUT' || payload.code === 'WORKER_RESTART') {
+        // 查询可能在服务端已执行但结果丢失；不自动重试写操作，交由上层 503 处理。
+        this.failure = new Error('数据库查询超时');
+        try { this.worker.terminate(); } catch {}
+      }
       throw error;
     }
     return payload.result;
@@ -194,11 +236,37 @@ export async function createDatabase({ dbPath, databaseUrl = process.env.DATABAS
 
 if (!isMainThread) {
   const { Client } = await import("pg");
-  const client = new Client(postgresConnectionOptions(workerData.databaseUrl));
+  // worker 内查询超时：8 秒内必须回传结果或错误，确保主线程最多冻结 8 秒而不是 15 秒；
+  // 主线程 15 秒兜底只用于 worker 自身失去响应。超时后关闭连接（回滚未提交事务），
+  // 主线程收到 QUERY_TIMEOUT 后重建 worker，避免在未知事务状态上继续复用连接。
+  const QUERY_TIMEOUT_MS = 8000;
+  let dead = false;
+  const client = new Client({...postgresConnectionOptions(workerData.databaseUrl), query_timeout: 9000, connectionTimeoutMillis: 5000});
+  client.on('error', error => {
+   try { process.stderr.write(JSON.stringify({type: 'db_client_error', code: String(error?.code || ''), message: String(error?.message || error).slice(0, 200)}) + '\n'); } catch {}
+  });
   await client.connect();
 
+  async function runQuery(text, params) {
+    if (dead) throw Object.assign(new Error('数据库连接已失效'), { code: 'WORKER_RESTART' });
+    let timer;
+    try {
+      return await Promise.race([
+        client.query(text, params),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            reject(Object.assign(new Error('数据库查询超时'), { code: 'QUERY_TIMEOUT' }));
+          }, QUERY_TIMEOUT_MS);
+          timer.unref?.();
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function tableInfo(table) {
-    const result = await client.query(
+    const result = await runQuery(
       `select column_name as name from information_schema.columns where table_schema='public' and table_name=$1 order by ordinal_position`,
       [table]
     );
@@ -206,29 +274,41 @@ if (!isMainThread) {
   }
 
   async function handle(message) {
-    const { mode, sql, params, file, sab } = message;
+    const { mode, sql, params, sab, port, rid } = message;
     const signal = new Int32Array(sab);
+    const trace = process.env.DEBUG_PG_TRACE === '1';
+    const label = String(sql).replace(/\s+/g, ' ').slice(0, 140);
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'start', rid, mode, sql: label}) + '\n'); } catch {} }
     try {
       let result;
       const pragma = String(sql).trim().match(/^pragma\s+table_info\(([^)]+)\)/i);
       if (pragma) {
         result = await tableInfo(pragma[1].replace(/["'`]/g, ""));
       } else if (mode === "exec") {
-        await client.query(translateSql(sql));
+        await runQuery(translateSql(sql));
         result = undefined;
       } else {
         const query = translateSql(sql);
-        const response = await client.query(query, params);
+        const response = await runQuery(query, params);
         if (mode === "get") result = response.rows[0];
         else if (mode === "all") result = response.rows;
         else result = { changes: response.rowCount || 0 };
       }
-      await fsp.writeFile(file, JSON.stringify({ ok: true, result }), { flag: 'w', mode: 0o600 });
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'query_done', rid, mode, sql: label}) + '\n'); } catch {} }
+      port.postMessage({ ok: true, result });
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'posted', rid, mode, sql: label}) + '\n'); } catch {} }
     } catch (error) {
-      await fsp.writeFile(file, JSON.stringify({ ok: false, error: error.message, code: error.code }), { flag: 'w', mode: 0o600 });
+      const code = error && error.code;
+      if (code === 'QUERY_TIMEOUT' || code === 'WORKER_RESTART') {
+        dead = true;
+        try { client.end().catch(() => {}); } catch {}
+      }
+      try { port.postMessage({ ok: false, error: error && error.message || String(error), code }); } catch {}
     } finally {
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'notify', rid, mode, sql: label}) + '\n'); } catch {} }
       Atomics.store(signal, 0, 1);
       Atomics.notify(signal, 0);
+      try { port.close(); } catch {}
     }
   }
 
@@ -241,10 +321,10 @@ if (!isMainThread) {
       const message = queue.shift();
       try { await handle(message); }
       catch (error) {
-        // handle 内部已写错误结果文件；此处兜底：写失败也要唤醒主线程，绝不让 drain 停摆
+        // handle 内部已回传错误；此处兜底：任何异常也必须唤醒主线程，绝不让 drain 停摆。
         try {
           const signal = new Int32Array(message.sab);
-          await fsp.writeFile(message.file, JSON.stringify({ ok: false, error: String(error && error.message || error), code: 'WORKER_DRAIN' }), { flag: 'w', mode: 0o600 });
+          try { message.port?.postMessage({ ok: false, error: String(error && error.message || error), code: 'WORKER_DRAIN' }); } catch {}
           Atomics.store(signal, 0, 1);
           Atomics.notify(signal, 0);
         } catch {}
@@ -253,6 +333,7 @@ if (!isMainThread) {
     running = false;
   }
   parentPort.on("message", message => {
+    if (process.env.DEBUG_PG_TRACE === '1') { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'received', rid: message.rid, queue: queue.length}) + '\n'); } catch {} }
     queue.push(message);
     void drain();
   });

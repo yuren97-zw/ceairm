@@ -26,7 +26,14 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
   const cached=snapshotCache.get(cacheKey)||null;
   if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);return cached.value;}
   const years=new Set([current]),types=supportedTypes(),availableNames=new Set(types.map(t=>t.name));
-  const rows=members.map(p=>{const saved=db.prepare('select * from attendance_leave_snapshots where person_id=?').all(p.personId);const sources=saved.filter(s=>types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=db.prepare('select * from attendance_leave_queue where person_id=?').get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
+  // 一次取回范围内全部人员快照与队列：此前每人 2 条查询，生产 133 人约 266 次同步往返。
+  const ids=members.map(p=>p.personId),marks=ids.map(()=>'?').join(',');
+  const savedRows=ids.length?db.prepare(`select * from attendance_leave_snapshots where person_id in (${marks})`).all(...ids):[];
+  const queueRows=ids.length?db.prepare(`select * from attendance_leave_queue where person_id in (${marks})`).all(...ids):[];
+  const savedBy=new Map(),queueBy=new Map();
+  for(const s of savedRows){const list=savedBy.get(s.person_id)||[];list.push(s);savedBy.set(s.person_id,list);}
+  for(const q of queueRows)queueBy.set(q.person_id,q);
+  const rows=members.map(p=>{const saved=savedBy.get(p.personId)||[];const sources=saved.filter(s=>types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=queueBy.get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
    return {...p,userId:undefined,identityIssue:p.identityIssue||(!p.userId?'人员尚未匹配钉钉用户':null),cells,syncedAt:sources.map(s=>s.syncedAt).sort()[0]||null,syncStatus:queue?.status||'not_synced',error:queue?.error||null};});
   const value={year,years:[...years].sort((a,b)=>b-a),groups:leaveGroups,note:leaveNote,people:rows,generatedAt:now(),dataVersion:hybrid.state('leaveVersion')||'',eventError:hybrid.state('leaveEventError')||null,catalogMissing:leaveGroups.filter(g=>!types.some(t=>leaveGroup(t.name)===g)),catalogNames:[...availableNames],pageSize:20,historyWarning:'仅展示钉钉接口实际返回的额度年度；查询不到不代表历史余额为0。缺少额度关联的消费记录不强行归属年度。'};
   snapshotCache.set(cacheKey,{value});
