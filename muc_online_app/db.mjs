@@ -151,8 +151,12 @@ class PostgresSyncDatabase {
     // 旧实现每条查询都做一次文件写入 + 读取 + 删除（生产一次页面数百次），既拖慢
     // 每条查询，也会在磁盘/线程池抖动时把 worker 卡在 writeFile 上。
     const { port1, port2 } = new MessageChannel();
+    const rid = ++this.requestCounter;
+    const trace = process.env.DEBUG_PG_TRACE === '1';
+    const label = String(sql).replace(/\s+/g, ' ').slice(0, 140);
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'db_main_trace', phase: 'post', rid, mode, sql: label}) + '\n'); } catch {} }
     try {
-      this.worker.postMessage({ mode, sql, params, sab, port: port1 }, [port1]);
+      this.worker.postMessage({ mode, sql, params, sab, port: port1, rid }, [port1]);
     } catch (error) {
       try { port2.close(); } catch {}
       this.failure = error;
@@ -179,6 +183,7 @@ class PostgresSyncDatabase {
       error.status = 503;
       throw error;
     }
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'db_main_trace', phase: 'woke', rid, durationMs: Date.now() - __qStart}) + '\n'); } catch {} }
     const received = receiveMessageOnPort(port2);
     try { port2.close(); } catch {}
     if (!received?.message) {
@@ -269,11 +274,11 @@ if (!isMainThread) {
   }
 
   async function handle(message) {
-    const { mode, sql, params, sab, port } = message;
+    const { mode, sql, params, sab, port, rid } = message;
     const signal = new Int32Array(sab);
     const trace = process.env.DEBUG_PG_TRACE === '1';
     const label = String(sql).replace(/\s+/g, ' ').slice(0, 140);
-    if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'start', mode, sql: label}) + '\n'); } catch {} }
+    if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'start', rid, mode, sql: label}) + '\n'); } catch {} }
     try {
       let result;
       const pragma = String(sql).trim().match(/^pragma\s+table_info\(([^)]+)\)/i);
@@ -289,9 +294,9 @@ if (!isMainThread) {
         else if (mode === "all") result = response.rows;
         else result = { changes: response.rowCount || 0 };
       }
-      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'query_done', mode, sql: label}) + '\n'); } catch {} }
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'query_done', rid, mode, sql: label}) + '\n'); } catch {} }
       port.postMessage({ ok: true, result });
-      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'posted', mode, sql: label}) + '\n'); } catch {} }
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'posted', rid, mode, sql: label}) + '\n'); } catch {} }
     } catch (error) {
       const code = error && error.code;
       if (code === 'QUERY_TIMEOUT' || code === 'WORKER_RESTART') {
@@ -300,7 +305,7 @@ if (!isMainThread) {
       }
       try { port.postMessage({ ok: false, error: error && error.message || String(error), code }); } catch {}
     } finally {
-      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'notify', mode, sql: label}) + '\n'); } catch {} }
+      if (trace) { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'notify', rid, mode, sql: label}) + '\n'); } catch {} }
       Atomics.store(signal, 0, 1);
       Atomics.notify(signal, 0);
       try { port.close(); } catch {}
@@ -328,6 +333,7 @@ if (!isMainThread) {
     running = false;
   }
   parentPort.on("message", message => {
+    if (process.env.DEBUG_PG_TRACE === '1') { try { process.stderr.write(JSON.stringify({type: 'pg_trace', phase: 'received', rid: message.rid, queue: queue.length}) + '\n'); } catch {} }
     queue.push(message);
     void drain();
   });
