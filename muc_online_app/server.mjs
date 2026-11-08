@@ -9091,7 +9091,17 @@ function pumpInfoSync(forceHeartbeat=false){
 if (process.env.MUC_NO_LISTEN !== "1") {
   attendanceService.start();
   const infoTimer=setInterval(()=>pumpInfoSync(),2000);infoTimer.unref();
-  const capabilityScheduler = setInterval(() => { try { capabilityService.syncMaster(); capabilityService.schedule(); } catch (error) { console.error("能力状态同步失败", error.message); } }, 15000);
+  const capabilityScheduler = setInterval(() => {
+    const started = performance.now();
+    let syncMs = 0;
+    try {
+      capabilityService.syncMaster();
+      syncMs = performance.now() - started;
+      capabilityService.schedule();
+      const totalMs = performance.now() - started;
+      if (totalMs >= 200) process.stderr.write(JSON.stringify({ type: "capability_scheduler_slow", syncMs: Number(syncMs.toFixed(1)), scheduleMs: Number((totalMs - syncMs).toFixed(1)), totalMs: Number(totalMs.toFixed(1)) }) + "\n");
+    } catch (error) { console.error("能力状态同步失败", error.message); }
+  }, 15000);
   capabilityScheduler.unref();
   http.createServer(measuredRoute).listen(port, host, () => {
     console.log(`MUC online app: http://127.0.0.1:${port}`);
