@@ -181,6 +181,9 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
   }
  }
  function promote(){
+  // 只要还有一个未完成的事件运行，就不要再创建新运行。此前每个 tick 都会为同一批
+  // 待核对人日新建一个 event run（无固定 id），一小时积压 700+ 个目录运行并拖死 tick。
+  if(db.prepare("select 1 from attendance_runs r join attendance_run_meta m on m.run_id=r.id where r.status in ('directory','running') and m.source='event' limit 1").get())return;
   const due=db.prepare("select f.* from attendance_refresh f where f.due_at<=? and f.work_date>=? and f.work_date<=? and f.generation>f.verified_generation and f.error is null and not exists (select 1 from attendance_tasks t join attendance_runs r on r.id=t.run_id where t.person_id=f.person_id and t.work_date=f.work_date and t.status='pending' and r.status in ('running','directory')) order by f.due_at limit 100").all(now(),config.startDate,dayOf(clock()));
   const targets=due.filter(r=>!r.error&&!inFlight(r.person_id,r.work_date)).map(r=>({personId:r.person_id,date:r.work_date}));
   const months=new Map();for(const t of targets){const month=t.date.slice(0,7);if(!months.has(month))months.set(month,[]);months.get(month).push(t);}

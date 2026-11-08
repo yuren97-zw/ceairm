@@ -22,7 +22,7 @@ export function installAttendance(db){for(const file of ['022_attendance.sql','0
 export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now()}){
  installAttendance(db);
  const iso=()=>new Date(clock()).toISOString();
- const owner=uid();let busy=false,timer;
+ const owner=uid();let busy=false,timer,lastReapAt=0;
  // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
  // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
  const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=4;
@@ -256,6 +256,11 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   // 每个 tick 放大成近万条同步查询并阻塞事件循环数分钟。改为两条批量 SQL：
   // 先关闭失败批次中的 pending 任务，再一次性结束所有已无 pending 批/任务/链接的运行。
   const at=iso();
+  // 事件运行积压时自动关闭超时任务，其待核对人日仍保留在 attendance_refresh，会再次排队。
+  if(clock()-lastReapAt>60000){
+   lastReapAt=clock();
+   db.prepare("update attendance_runs set status='failed',error='事件同步任务积压，已自动关闭并重新排队',updated_at=? where status='directory' and created_at<? and id in (select run_id from attendance_run_meta where source='event')").run(at,new Date(clock()-15*60000).toISOString());
+  }
   db.prepare("update attendance_tasks set status='failed',error='批量排班或考勤结果未完整读取',updated_at=? where status='pending' and batch_id in (select id from attendance_batches where status='failed')").run(at);
   db.prepare(`update attendance_runs set
     status=case when
@@ -330,7 +335,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
      db.prepare('update attendance_runs set next_at=? where id=?').run(new Date(last+DIRECTORY_REFRESH_MIN_MS).toISOString(),run.id);return;
     }
    }
-   if(run){client.requestContext=runSource(run.id);try{await loadDirectory(run);finishRuns();}catch(e){const attempts=Number(run.attempts||0)+1;db.prepare('update attendance_runs set status=?,error=?,updated_at=?,attempts=?,next_at=? where id=?').run(e.retryable&&attempts<5?'directory':'failed',`通讯录读取或工号匹配失败${e.permissionCodes?.length?'；缺少读取权限：'+e.permissionCodes.join('、'):e.code?'（'+String(e.code).replace(/[^\w.:-]/g,'')+'）':''}；请检查配置、权限和额度`,iso(),attempts,new Date(clock()+60000*attempts).toISOString(),run.id);}return;}
+   if(run){client.requestContext=runSource(run.id);try{await loadDirectory(run);}catch(e){const attempts=Number(run.attempts||0)+1;db.prepare('update attendance_runs set status=?,error=?,updated_at=?,attempts=?,next_at=? where id=?').run(e.retryable&&attempts<5?'directory':'failed',`通讯录读取或工号匹配失败${e.permissionCodes?.length?'；缺少读取权限：'+e.permissionCodes.join('、'):e.code?'（'+String(e.code).replace(/[^\w.:-]/g,'')+'）':''}；请检查配置、权限和额度`,iso(),attempts,new Date(clock()+60000*attempts).toISOString(),run.id);}finally{finishRuns();}return;}
    // Finish a day before loading more history batches; new events preempt on the next tick.
    const task=db.prepare("select t.*,b.payload_json from attendance_tasks t join attendance_batches b on b.id=t.batch_id join attendance_runs r on r.id=t.run_id left join attendance_run_meta m on m.run_id=r.id where t.status='pending' and t.next_at<=? and b.status='done' and r.status='running' order by coalesce(m.priority,2),r.created_at,t.work_date limit 1").get(iso());
    const batch=db.prepare("select b.* from attendance_batches b join attendance_runs r on r.id=b.run_id left join attendance_run_meta m on m.run_id=r.id where b.status='pending' and b.next_at<=? and r.status='running' order by coalesce(m.priority,2),r.created_at,b.from_date limit 1").get(iso());
