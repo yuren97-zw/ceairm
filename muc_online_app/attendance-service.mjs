@@ -267,8 +267,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     error=case when (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0 then '存在未完整覆盖人员日，请查看同步明细' else error end
     where status='running'
       and not exists(select 1 from attendance_batches b where b.run_id=attendance_runs.id and b.status='pending')
-      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')
-      and not exists(select 1 from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=attendance_runs.id and t.status='pending')`).run(at);
+      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')`).run(at);
  }
  function validationRunAllowed(id){
   if(!config.validation?.enabled)return true;
