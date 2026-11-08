@@ -25,15 +25,15 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  const owner=uid();let busy=false,timer;
  // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
  // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
- const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=12;
+ const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=4;
  // 整日对象缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来）。
  // 键=人员+日期+当日输入哈希+前3个工作日哈希+明细级别+身份问题+时间类+任务错误；
  // 命中后按该日审批引用的事由行签名校验（WeakMap 挂载），事由变化仅使引用它的格子重算。
- const classifyCache=new Map(),CLASSIFY_CACHE_MAX=60000;
+ const classifyCache=new Map(),CLASSIFY_CACHE_MAX=8000;
  // 签名数组用 WeakMap 挂在 day 对象上：不占用 LRU 条目（多用户多月份下 3 万条很快被驱逐，
  // 是生产上跨桶全量重算的直接原因）；day 对象被驱逐时签名随之回收。
  const daySigs=new WeakMap();
- const futureCache=new Map(),FUTURE_CACHE_MAX=6000;
+ const futureCache=new Map(),FUTURE_CACHE_MAX=2000;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
