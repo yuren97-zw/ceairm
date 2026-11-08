@@ -104,6 +104,15 @@ class PostgresSyncDatabase {
     return new PostgresStatement(this, sql);
   }
 
+  _respawn() {
+    try { this.worker.terminate(); } catch {}
+    this.failure = null;
+    this.requestCounter = 0;
+    this.worker = new Worker(__filename, { workerData: { databaseUrl } });
+    this.worker.on("error", error => { this.failure = error; });
+    this.worker.unref();
+  }
+
   exec(sql) {
     return this._request("exec", sql, []);
   }
@@ -112,8 +121,13 @@ class PostgresSyncDatabase {
     return this.worker.terminate();
   }
 
-  _request(mode, sql, params) {
+  _request(mode, sql, params, retried = false) {
     if (this.failure) {
+      // 自愈：重建 worker 后重试一次，而不是永久 503
+      if (!retried) {
+        this._respawn();
+        return this._request(mode, sql, params, true);
+      }
       const error = new Error('数据库连接异常');
       error.status = 503;
       throw error;
@@ -126,8 +140,12 @@ class PostgresSyncDatabase {
     if (Atomics.wait(signal, 0, 0, REQUEST_TIMEOUT_MS) === 'timed-out') {
       // Never reuse a connection with an unknown transaction outcome.
       this.failure = new Error('数据库查询超时');
-      this.worker.terminate();
+      try { this.worker.terminate(); } catch {}
       fs.rmSync(file, { force: true });
+      if (!retried) {
+        this._respawn();
+        return this._request(mode, sql, params, true);
+      }
       const error = new Error('数据库查询超时，请稍后重试');
       error.status = 503;
       throw error;
@@ -200,9 +218,9 @@ if (!isMainThread) {
         else if (mode === "all") result = response.rows;
         else result = { changes: response.rowCount || 0 };
       }
-      await fsp.writeFile(file, JSON.stringify({ ok: true, result }), { flag: 'wx', mode: 0o600 });
+      await fsp.writeFile(file, JSON.stringify({ ok: true, result }), { flag: 'w', mode: 0o600 });
     } catch (error) {
-      await fsp.writeFile(file, JSON.stringify({ ok: false, error: error.message, code: error.code }), { flag: 'wx', mode: 0o600 });
+      await fsp.writeFile(file, JSON.stringify({ ok: false, error: error.message, code: error.code }), { flag: 'w', mode: 0o600 });
     } finally {
       Atomics.store(signal, 0, 1);
       Atomics.notify(signal, 0);
@@ -214,7 +232,19 @@ if (!isMainThread) {
   async function drain() {
     if (running) return;
     running = true;
-    while (queue.length) await handle(queue.shift());
+    while (queue.length) {
+      const message = queue.shift();
+      try { await handle(message); }
+      catch (error) {
+        // handle 内部已写错误结果文件；此处兜底：写失败也要唤醒主线程，绝不让 drain 停摆
+        try {
+          const signal = new Int32Array(message.sab);
+          await fsp.writeFile(message.file, JSON.stringify({ ok: false, error: String(error && error.message || error), code: 'WORKER_DRAIN' }), { flag: 'w', mode: 0o600 });
+          Atomics.store(signal, 0, 1);
+          Atomics.notify(signal, 0);
+        } catch {}
+      }
+    }
     running = false;
   }
   parentPort.on("message", message => {
