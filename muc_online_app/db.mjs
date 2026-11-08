@@ -9,7 +9,9 @@ import { DatabaseSync } from "node:sqlite";
 import { postgresConnectionOptions } from "./postgres-connection.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
-const REQUEST_TIMEOUT_MS = 120000;
+// 查询级超时：单条卡死的查询最多冻结事件循环 15 秒（配合 worker 自愈重建自动恢复），
+// 避免 120 秒超时 × 积压请求数 = 数小时的整体冻结（生产假死事故的放大器）。
+const REQUEST_TIMEOUT_MS = 15000;
 export const requestQueryStats = new AsyncLocalStorage();
 
 function sqliteDatabase(dbPath) {
