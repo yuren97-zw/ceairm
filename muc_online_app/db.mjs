@@ -124,6 +124,7 @@ class PostgresSyncDatabase {
   }
 
   _request(mode, sql, params, retried = false) {
+    const __qStart = Date.now();
     if (this.failure) {
       // 自愈：重建 worker 后重试一次，而不是永久 503
       if (!retried) {
@@ -155,6 +156,8 @@ class PostgresSyncDatabase {
     let raw;
     try { raw = fs.readFileSync(file, 'utf8'); }
     finally { fs.rmSync(file, { force: true }); }
+    const __qMs = Date.now() - __qStart;
+    if (process.env.DEBUG_SLOW_QUERY && __qMs > 500) process.stderr.write(JSON.stringify({ type: "slow_pg_query", mode, durationMs: __qMs, sql: String(sql).replace(/\s+/g, " ").slice(0, 200) }) + "\n");
     const payload = JSON.parse(raw);
     if (!payload.ok) {
       const error = new Error(payload.error || "PostgreSQL query failed");
