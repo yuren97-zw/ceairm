@@ -385,6 +385,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);onTiming('attendance_cache_hit',1);onTiming('attendance_read',0);onTiming('attendance_classify',0);}
   let peopleRows=cached?.peopleRows||null,updatedAtByPerson=cached?.updatedAtByPerson||null;
   if(!cached){
+  const rebuildStarted=performance.now();
   const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
   const reasonRows=db.prepare('select * from attendance_approval_cache').all();
   // 行签名取语义字段（kind/status/result/提取的事由值/reasonStatus），而非原始 detail_json：
@@ -434,6 +435,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
   });
   if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')for(let i=0;i<peopleRows.length;i++)peopleRows[i]=approvalPlans.decorate(peopleRows[i],dates[0].slice(0,7));
+  if(process.env.DEBUG_CLASSIFY||performance.now()-rebuildStarted>500)process.stderr.write(JSON.stringify({type:'slow_attendance_rebuild',detailLevel,durationMs:Number((performance.now()-rebuildStarted).toFixed(1)),cells:peopleRows.length})+"\n");
   updatedAtByPerson=new Map();for(const r of rows){if(r.work_date<dates[0]||r.work_date>dates.at(-1))continue;const previous=updatedAtByPerson.get(r.person_id);if(!previous||r.updated_at>previous)updatedAtByPerson.set(r.person_id,r.updated_at);}
   onTiming('attendance_classify',performance.now()-readAt);
   snapshotCache.set(cacheKey,{peopleRows,updatedAtByPerson});
