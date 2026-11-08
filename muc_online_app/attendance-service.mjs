@@ -155,15 +155,33 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     }
    }
    hybrid.setState('runStats:'+run.id,{reused});
+   // 只处理待解决事件；已排除事件仅在通讯录版本变化时抽样复核，且状态变化才写库。
+   // 旧实现对全部 1.7 万条 directory_excluded 每次通讯录同步逐条 update，单次事务
+   // 发出上万次同步查询并阻塞事件循环数分钟——这才是生产假死/502 的直接触发点。
    const validMembers=db.prepare("select a.user_id from attendance_people a join personnel p on p.id=a.person_id where coalesce(a.identity_issue,'')='' and coalesce(p.data_status,'active')<>'deleted'").all();
-   for(const event of db.prepare("select id,status,payload_json from attendance_events where (status='unresolved' and error like '事件人员%') or status='directory_excluded'").all()){
+   const validUserIds=new Set(validMembers.map(u=>u.user_id));
+   const directoryRevision=hybrid.state('directoryRevision')||'';
+   const lastExcludedRevision=hybrid.state('directoryExcludedRevision')||'';
+   const validHash=crypto.createHash('sha256').update([...validUserIds].sort().join(',')).digest('hex').slice(0,24);
+   const directoryHash=crypto.createHash('sha256').update((cached.directory.users||[]).map(u=>String(u.userId)).sort().join(',')).digest('hex').slice(0,24);
+   const unresolvedEvents=db.prepare("select id,status,payload_json from attendance_events where status='unresolved' and error like '事件人员%' order by received_at limit 2000").all();
+   // 通讯录版本或有效成员变化时，才回看最近被排除的事件，避免每次同步都扫描/更新全部历史排除记录。
+   const recheckExcluded=directoryRevision!==lastExcludedRevision||validHash!==(hybrid.state('directoryExcludedValidHash')||'')||directoryHash!==(hybrid.state('directoryExcludedDirectoryHash')||'');
+   const excludedEvents=recheckExcluded?db.prepare("select id,status,payload_json from attendance_events where status='directory_excluded' order by received_at desc limit 1000").all():[];
+   const updateEvents=(status,error,ids)=>{for(let i=0;i<ids.length;i+=300){const chunk=ids.slice(i,i+300);db.prepare(`update attendance_events set status=?,error=? where id in (${chunk.map(()=>'?').join(',')})`).run(status,error,...chunk);}};
+   const toPending=[],toExcluded=[],toUnresolved=[];
+   for(const event of [...unresolvedEvents,...excludedEvents]){
     const p=parse(event.payload_json,{}),ids=eventUserIds(p);
-    if(validMembers.some(u=>ids.includes(u.user_id))){
-     db.prepare("update attendance_events set status='pending',error=null where id=?").run(event.id);
+    if(ids.some(id=>validUserIds.has(id))){
+     toPending.push(event.id);
      const approval=p.processInstanceId||p.process_instance_id;if(approval)approvalPlans.queue(approval,'event');
-    }else if(eventOutsideDirectory(ids,cached,config,hybrid.state('directoryRevision'),clock()))db.prepare("update attendance_events set status='directory_excluded',error=? where id=?").run(DIRECTORY_EXCLUDED_NOTE,event.id);
-    else if(event.status==='directory_excluded')db.prepare("update attendance_events set status='unresolved',error=? where id=?").run('事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',event.id);
+    }else if(eventOutsideDirectory(ids,cached,config,directoryRevision,clock())){if(event.status!=='directory_excluded')toExcluded.push(event.id);}
+    else if(event.status==='directory_excluded')toUnresolved.push(event.id);
    }
+   if(toPending.length)updateEvents('pending',null,toPending);
+   if(toExcluded.length)updateEvents('directory_excluded',DIRECTORY_EXCLUDED_NOTE,toExcluded);
+   if(toUnresolved.length)updateEvents('unresolved','事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',toUnresolved);
+   if(recheckExcluded){hybrid.setState('directoryExcludedRevision',directoryRevision);hybrid.setState('directoryExcludedValidHash',validHash);hybrid.setState('directoryExcludedDirectoryHash',directoryHash);}
    const missingSelected=selected?.some(id=>!users.some(u=>u.personId===id));db.prepare('update attendance_runs set status=?,updated_at=?,error=? where id=?').run('running',iso(),(!selected&&identityIssues)||missingSelected?'存在工号未匹配人员，人员覆盖未完成':null,run.id);
   });
  }
