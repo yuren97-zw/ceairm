@@ -252,17 +252,23 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   db.prepare(`update ${table} set status=?,attempts=?,next_at=?,error=?${table==='attendance_tasks'?',updated_at=?':''} where id=?`).run(terminal?'failed':'pending',attempts,new Date(clock()+Math.min(3600000,60000*2**attempts)).toISOString(),message,...(table==='attendance_tasks'?[iso()]:[]),item.id);
  }
  function finishRuns(){
-  for(const run of db.prepare("select * from attendance_runs where status='running'").all()){
-   const batches=db.prepare('select status,count(*) as n from attendance_batches where run_id=? group by status').all(run.id);
-   const tasks=db.prepare('select status,count(*) as n from attendance_tasks where run_id=? group by status').all(run.id);
-   const pending=db.prepare("select count(*) as n from attendance_tasks t join attendance_batches b on b.id=t.batch_id where t.run_id=? and t.status='pending' and b.status<>'failed'").get(run.id).n;
-   const linked=db.prepare('select t.status from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=?').all(run.id);
-   if(batches.some(r=>r.status==='pending')||Number(pending)>0||linked.some(t=>t.status==='pending'))continue;
-   // A failed batch leaves its day tasks explicitly failed.
-   db.prepare("update attendance_tasks set status='failed',error='批量排班或考勤结果未完整读取',updated_at=? where run_id=? and status='pending' and batch_id in (select id from attendance_batches where status='failed')").run(iso(),run.id);
-   const incomplete=db.prepare("select count(*) as n from attendance_tasks where run_id=? and status<>'done'").get(run.id).n;
-   db.prepare('update attendance_runs set status=?,updated_at=?,error=? where id=?').run(Number(incomplete)>0||run.error||linked.some(t=>t.status!=='done')?'partial':'completed',iso(),Number(incomplete)>0?'存在未完整覆盖人员日，请查看同步明细':run.error||null,run.id);
-  }
+  // 旧实现对每条 running 运行各发 3～5 条查询；生产积压了 1,942 条 running，
+  // 每个 tick 放大成近万条同步查询并阻塞事件循环数分钟。改为两条批量 SQL：
+  // 先关闭失败批次中的 pending 任务，再一次性结束所有已无 pending 批/任务/链接的运行。
+  const at=iso();
+  db.prepare("update attendance_tasks set status='failed',error='批量排班或考勤结果未完整读取',updated_at=? where status='pending' and batch_id in (select id from attendance_batches where status='failed')").run(at);
+  db.prepare(`update attendance_runs set
+    status=case when
+      (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0
+      or coalesce(error,'')<>''
+      or exists(select 1 from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=attendance_runs.id and t.status<>'done')
+      then 'partial' else 'completed' end,
+    updated_at=?,
+    error=case when (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0 then '存在未完整覆盖人员日，请查看同步明细' else error end
+    where status='running'
+      and not exists(select 1 from attendance_batches b where b.run_id=attendance_runs.id and b.status='pending')
+      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')
+      and not exists(select 1 from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=attendance_runs.id and t.status='pending')`).run(at);
  }
  function validationRunAllowed(id){
   if(!config.validation?.enabled)return true;
