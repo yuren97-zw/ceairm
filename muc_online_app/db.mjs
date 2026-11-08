@@ -142,6 +142,7 @@ class PostgresSyncDatabase {
     this.worker.postMessage({ mode, sql, params, file, sab });
     if (Atomics.wait(signal, 0, 0, REQUEST_TIMEOUT_MS) === 'timed-out') {
       // Never reuse a connection with an unknown transaction outcome.
+      try { process.stderr.write(JSON.stringify({type: 'db_request_timeout', mode, durationMs: Date.now() - __qStart, sql: String(sql).replace(/\s+/g, ' ').slice(0, 200)}) + '\n'); } catch {}
       this.failure = new Error('数据库查询超时');
       try { this.worker.terminate(); } catch {}
       fs.rmSync(file, { force: true });
@@ -194,7 +195,12 @@ export async function createDatabase({ dbPath, databaseUrl = process.env.DATABAS
 
 if (!isMainThread) {
   const { Client } = await import("pg");
-  const client = new Client(postgresConnectionOptions(workerData.databaseUrl));
+  // 查询级客户端超时：即使服务端连接失联或协议异常，worker 也会在 12 秒内返回错误并唤醒
+  // 主线程；主线程 15 秒兜底只用于 worker 自身失去响应的情况。
+  const client = new Client({...postgresConnectionOptions(workerData.databaseUrl), query_timeout: 12000, connectionTimeoutMillis: 5000});
+  client.on('error', error => {
+   try { process.stderr.write(JSON.stringify({type: 'db_client_error', code: String(error?.code || ''), message: String(error?.message || error).slice(0, 200)}) + '\n'); } catch {}
+  });
   await client.connect();
 
   async function tableInfo(table) {

@@ -15,3 +15,6 @@ CREATE TABLE IF NOT EXISTS attendance_approval_plan_due (
  id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, revision INTEGER NOT NULL, person_id TEXT NOT NULL,
  work_date TEXT NOT NULL, phase TEXT NOT NULL, due_at TEXT NOT NULL, run_id TEXT, status TEXT NOT NULL DEFAULT 'pending'
 );
+CREATE INDEX IF NOT EXISTS attendance_approval_plan_history_instance ON attendance_approval_plan_history(instance_id, id DESC);
+CREATE INDEX IF NOT EXISTS attendance_approval_plan_person ON attendance_approval_plans(person_id);
+CREATE INDEX IF NOT EXISTS attendance_approval_plan_queue_generation ON attendance_approval_plan_queue(generation);

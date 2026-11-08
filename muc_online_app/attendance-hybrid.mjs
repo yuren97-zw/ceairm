@@ -60,8 +60,18 @@ export function sanitizeAttendanceEvent(frame,config={},batchDepth=0){
 }
 export function createHybridCoordinator({db,config,clock,enqueue}){
  const now=()=>new Date(clock()).toISOString();
- const state=id=>decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
- function setState(id,value){db.prepare('insert into attendance_sync_state(id,value_json,updated_at) values(?,?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at').run(id,encode(value),now());}
+ // 进程内状态缓存：status/snapshot 每次请求会读取十余个 sync_state 键，而每个键都是一次
+ // 同步 Postgres 往返（阻塞事件循环）。这些状态只在同一进程内写入，短 TTL 缓存可把
+ // 一次请求的十余次查询降为 0～1 次，且 setState 立即更新缓存，不改变可见性语义。
+ const stateCache=new Map(),STATE_CACHE_TTL_MS=500;
+ const state=id=>{
+  const hit=stateCache.get(id);
+  if(hit&&hit.expiresAt>Date.now())return hit.value;
+  const value=decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
+  stateCache.set(id,{value,expiresAt:Date.now()+STATE_CACHE_TTL_MS});
+  return value;
+ };
+ function setState(id,value){db.prepare('insert into attendance_sync_state(id,value_json,updated_at) values(?,?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at').run(id,encode(value),now());stateCache.set(id,{value,expiresAt:Date.now()+STATE_CACHE_TTL_MS});}
  function requestDirectoryCheck(){if(!state('directoryRefreshRequest'))setState('directoryRefreshRequest',{requestedAt:now()});}
  function ensure(person,date){db.prepare('insert into attendance_refresh(person_id,work_date) values(?,?) on conflict(person_id,work_date) do nothing').run(person,date);return db.prepare('select * from attendance_refresh where person_id=? and work_date=?').get(person,date);}
  function dirty(person,date){

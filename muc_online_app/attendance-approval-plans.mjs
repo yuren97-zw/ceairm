@@ -216,21 +216,48 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
   }
   for(const job of db.prepare("select d.id,r.status from attendance_approval_plan_due d join attendance_runs r on r.id=d.run_id where d.status='queued'").all())if(['completed','partial','failed','blocked'].includes(job.status))db.prepare('update attendance_approval_plan_due set status=? where id=?').run(job.status==='completed'?'done':'attention',job.id);
  }
- function plansFor(personId,month){
-  if(!enabled)return [];
+ // 批量读取审批计划与历史：此前按人员查询计划、再按计划查询历史（生产 133 人约 524 单），
+ // 一次逐日总览/汇总会放大成 600+ 次同步 Postgres 往返（约 3 秒并冻结事件循环）。
+ // 现在固定为 3 条查询（计划、历史、事件时间），人员/计划均用 IN 列表一次取回。
+ function plansForMany(personIds,month){
+  if(!enabled)return new Map();
   monthDates(month);
-  return db.prepare('select a.*,q.generation,q.applied_generation,q.error as queue_error from attendance_approval_plans a left join attendance_approval_plan_queue q on q.id=a.id where person_id=?').all(personId).map(r=>{
+  const ids=[...new Set(personIds)];
+  if(!ids.length)return new Map();
+  const marks=ids.map(()=>'?').join(',');
+  const rows=db.prepare(`select a.*,q.generation,q.applied_generation,q.error as queue_error from attendance_approval_plans a left join attendance_approval_plan_queue q on q.id=a.id where a.person_id in (${marks})`).all(...ids);
+  const planIds=rows.map(r=>r.id),planMarks=planIds.map(()=>'?').join(',');
+  const historyRows=planIds.length?db.prepare(`select instance_id,after_json,source,changed_at from attendance_approval_plan_history where instance_id in (${planMarks}) order by id desc`).all(...planIds):[];
+  const histories=new Map();
+  for(const h of historyRows){const list=histories.get(h.instance_id)||[];if(list.length>=20)continue;const a=parse(h.after_json,{});list.push({state:a.state,category:a.category,dates:a.dates||[],changedAt:h.changed_at,source:h.source});histories.set(h.instance_id,list);}
+  // 仅“只有一条事件历史”的审批需要事件接收时间判断是否属于初始清单。
+  const eventIds=planIds.filter(id=>{const h=histories.get(id)||[];return h.length===1&&h[0].source==='event';});
+  const lastEventAt=new Map();
+  if(eventIds.length){
+   const eventMarks=eventIds.map(()=>'?').join(',');
+   const sql=db.kind==='postgres'
+    ?`select coalesce(payload_json::jsonb->>'processInstanceId',payload_json::jsonb->>'process_instance_id') as instance_id,max(received_at) as at from attendance_events where coalesce(payload_json::jsonb->>'processInstanceId',payload_json::jsonb->>'process_instance_id') in (${eventMarks}) group by 1`
+    :`select coalesce(json_extract(payload_json,'$.processInstanceId'),json_extract(payload_json,'$.process_instance_id')) as instance_id,max(received_at) as at from attendance_events where coalesce(json_extract(payload_json,'$.processInstanceId'),json_extract(payload_json,'$.process_instance_id')) in (${eventMarks}) group by 1`;
+   for(const r of db.prepare(sql).all(...eventIds))lastEventAt.set(r.instance_id,r.at);
+  }
+  const seedAt=hybrid.state('approvalPlanSeed')?.at||'',result=new Map();
+  for(const r of rows){
    const p=parse(r.plan_json,{}),dates=(p.dates||[]).filter(d=>d.startsWith(month));
-   const history=db.prepare('select after_json,source,changed_at from attendance_approval_plan_history where instance_id=? order by id desc limit 20').all(r.id).map(h=>{const a=parse(h.after_json,{});return {state:a.state,category:a.category,dates:a.dates||[],changedAt:h.changed_at,source:h.source};});
-   const eventQuery=db.kind==='postgres'?"select max(received_at) as at from attendance_events where payload_json::jsonb->>'processInstanceId'=? or payload_json::jsonb->>'process_instance_id'=?":"select max(received_at) as at from attendance_events where json_extract(payload_json,'$.processInstanceId')=? or json_extract(payload_json,'$.process_instance_id')=?";
-   const lastEvent=history.length===1&&history[0].source==='event'?db.prepare(eventQuery).get(r.id,r.id)?.at:null;
-   const initialSnapshot=!!lastEvent&&lastEvent<=(hybrid.state('approvalPlanSeed')?.at||'');
-   return {...p,id:r.id,revision:r.revision,updatedAt:r.updated_at,error:r.queue_error||r.error,stale:r.generation>r.applied_generation,dates,history,initialSnapshot};
-  }).filter(p=>p.dates.length);
+   const history=histories.get(r.id)||[];
+   const lastEvent=history.length===1&&history[0].source==='event'?lastEventAt.get(r.id)||null:null;
+   const initialSnapshot=!!lastEvent&&lastEvent<=seedAt;
+   const plan={...p,id:r.id,revision:r.revision,updatedAt:r.updated_at,error:r.queue_error||r.error,stale:r.generation>r.applied_generation,dates,history,initialSnapshot};
+   if(!plan.dates.length)continue;
+   const list=result.get(r.person_id)||[];list.push(plan);result.set(r.person_id,list);
+  }
+  return result;
  }
- function decorate(person,month){
+ function plansFor(personId,month){
+  return plansForMany([personId],month).get(personId)||[];
+ }
+ function decorate(person,month,preloaded=null){
   if(!enabled)return person;
-  const plans=plansFor(person.personId,month),pendingCounts={},displayCounts={...person.counts};
+  const plans=preloaded||plansFor(person.personId,month),pendingCounts={},displayCounts={...person.counts};
   const correctionStatus=new Map();
   for(const p of plans.filter(p=>p.effect==='punch_correction')){
    const dates=(p.recheckDates||[]).filter(date=>date>=config.startDate);
@@ -258,6 +285,12 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
   });
   return {...person,days,approvalPlans:plans.map(p=>({...p,reconciled:p.dates.every(date=>days.find(d=>d.date===date)?.approvalPlans.find(a=>a.id===p.id)?.reconciled)})),pendingCounts,displayCounts};
  }
+ // 一次取回所有人员的审批计划，再逐个做内存装饰；避免逐人 plansFor 造成 N+1 查询。
+ function decorateAll(people,month){
+  if(!enabled)return people;
+  const byPerson=plansForMany(people.map(p=>p.personId),month);
+  return people.map(p=>decorate(p,month,byPerson.get(p.personId)||[]));
+ }
  function request(user,{id,retryInventory=false,dueEnabled:enableDue}={}){permission(user,'attendance.read');permission(user,'attendance.record.manage');if(!enabled)throw Object.assign(Error('审批计划未启用'),{status:409});
   if(enableDue!==undefined){if(!user.attendancePlanAll||typeof enableDue!=='boolean')throw Object.assign(Error('无权修改到期复核开关'),{status:403});hybrid.setState('approvalPlanDueEnabled',enableDue);audit(user,'attendance_approval_due_setting','attendance','approval_due',JSON.stringify({enabled:enableDue}));setVersion();return {enabled:dueEnabled()};}
   if(retryInventory){if(!user.attendancePlanAll)throw Object.assign(Error('无权重试初始清单'),{status:403});hybrid.setState('approvalPlanInventory',null);return {status:'queued'};}if(typeof id!=='string'||!id.trim()||id.length>200)throw Object.assign(Error('审批标识无效'),{status:400});
@@ -266,5 +299,5 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
   if(row?.person_id&&!allowed.has(row.person_id)||!row?.person_id&&!user.attendancePlanAll)throw Object.assign(Error('无权刷新该审批'),{status:403});queue(id,'manual_instance');audit(user,'attendance_approval_plan_refresh','attendance',id,'{}');return {status:'queued'};
  }
  function status(){return !enabled?null:{enabled:true,dueEnabled:dueEnabled(),version:hybrid.state('approvalPlanVersion'),coverage:hybrid.state('approvalPlanCoverage')||hybrid.state('approvalPlanSeed'),queue:db.prepare('select count(*) pending,sum(case when error is not null then 1 else 0 end) errors from attendance_approval_plan_queue where generation>applied_generation').get(),due:db.prepare('select status,count(*) count from attendance_approval_plan_due group by status').all()};}
- return {tick,due,decorate,plansFor,request,status,queue,save};
+ return {tick,due,decorate,decorateAll,plansFor,request,status,queue,save};
 }
