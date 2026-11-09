@@ -6,7 +6,7 @@ const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8
 function harness(apiRequest,overrides={}){
   const nodes=new Map(),events=new Map();let renders=0;
   const node=()=>({style:{},children:[],append(...children){this.children.push(...children);},replaceChildren(...children){this.children=children;},after(bar){nodes.set('#infoSyncBar',bar);}});
-  nodes.set('#resultStatus',node());
+  nodes.set('#infoFilters',node());
   const context=vm.createContext({state:{user:{id:'reader'},activePage:'infoPage',activeSubpage:'infoListSubpage',records:[],receipts:[]},
     $:id=>nodes.get(id),apiRequest,isLoggedIn:()=>true,hasRbac:()=>true,enrichRecord:r=>r,
     document:{hidden:false,createElement:node,createTextNode:t=>t,querySelectorAll:()=>[],querySelector:()=>null,addEventListener:(name,handler)=>events.set(name,handler)},

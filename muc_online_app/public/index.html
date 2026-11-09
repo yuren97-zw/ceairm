@@ -1713,6 +1713,220 @@
 <!-- Local viewer resources; no third-party preview service. -->
 <link rel="stylesheet" href="/attachment-viewer.css?v=20261012-1">
 <link rel="stylesheet" href="/attendance.css?v=1">
+<style id="v16-home-nav">
+  /* ===== V16 首页（A+B融合版：独立模块边界 + 扁平 + 小圆角） ===== */
+  .home-wrap{display:flex;flex-direction:column;max-width:720px;margin:0 auto;padding:8px 8px 16px;min-width:0}
+  .home-user-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 2px 8px;min-width:0}
+  .home-user-identity{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+  .home-user-name{font-size:14px;font-weight:600;color:#1D1D1F;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+  .home-user-sep{flex:none;width:1px;height:12px;background:#E5E5EA}
+  .home-user-sub{font-size:12px;color:#77777D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .home-user-actions{display:flex;align-items:center;gap:4px;flex:none}
+  .home-icon-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:0;background:none;color:#1D1D1F;border-radius:8px;cursor:pointer}
+  .home-icon-btn:active{background:#F0F0F2}
+  .home-icon-btn svg{width:20px;height:20px}
+  .home-notify-dot{position:absolute;top:5px;right:6px;width:8px;height:8px;border-radius:50%;background:#D92D20;border:1.5px solid #fff}
+  .home-profile-wrap{position:relative}
+  .home-profile-menu{position:absolute;right:0;top:38px;display:grid;min-width:128px;background:#fff;border:1px solid #E5E5EA;border-radius:10px;padding:4px;box-shadow:0 10px 28px rgba(20,30,40,.14);z-index:45}
+  .home-profile-menu[hidden]{display:none}
+  .home-profile-item{border:0;background:#fff;text-align:left;font-size:13px;color:#1D1D1F;padding:9px 10px;border-radius:7px;cursor:pointer;font-family:inherit}
+  .home-profile-item:hover{background:#F5F5F7}
+  .home-module{display:flex;align-items:stretch;background:#FFFFFF;border:1px solid #E5E5EA;border-radius:6px;margin:0 0 7px;min-width:0;overflow:hidden}
+  .home-module-title{flex:0 0 64px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#1D1D1F;background:none;border:0;cursor:pointer;white-space:nowrap;padding:0 2px;font-family:inherit}
+  .home-module-divider{flex:none;width:1px;background:#E5E5EA;margin:8px 0}
+  .home-module-metrics{flex:1 1 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));min-width:0}
+  .home-metric-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;padding:9px 2px;border:0;background:none;cursor:pointer;font-family:inherit}
+  .home-metric-item[disabled]{cursor:default}
+  .home-metric-name{font-size:11px;color:#77777D;line-height:1.25;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .home-metric-value{font-size:13px;font-weight:600;color:#1D1D1F;line-height:1.25;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .home-metric-item.warn .home-metric-value{color:#D92D20}
+  .home-metric-status{display:flex;align-items:center;justify-content:center;width:100%;padding:15px 8px;font-size:12px;color:#77777D}
+  .home-metric-status.error{color:#D92D20}
+  .home-module-arrow{flex:none;width:26px;display:flex;align-items:center;justify-content:center;border:0;background:none;color:#C7C7CC;font-size:18px;cursor:pointer;font-family:inherit}
+  .home-maint-toggle{flex:1 1 auto;display:flex;align-items:center;gap:6px;min-width:0;padding:9px 8px;border:0;background:none;cursor:pointer;font-family:inherit}
+  .home-maint-toggle[disabled]{cursor:default}
+  .home-maint-toggle-label{font-size:12px;color:#77777D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .home-maint-count{font-size:14px;font-weight:600;color:#1D1D1F;margin-left:auto;white-space:nowrap}
+  .home-maint-count.error{color:#D92D20}
+  .home-maint-arrow{flex:none;color:#C7C7CC;font-size:14px;line-height:1}
+  .home-maintenance-list{background:#FFFFFF;border:1px solid #E5E5EA;border-radius:6px;margin:0 0 7px;min-width:0}
+  .home-maintenance-list .status-line{padding:12px}
+  .home-maint-item{display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:9px 10px;border:0;border-bottom:1px solid #F0F0F2;background:none;text-align:left;cursor:pointer;font-family:inherit}
+  .home-maint-item:last-child{border-bottom:0}
+  .home-maint-item:active{background:#F5F5F7}
+  .home-maint-item-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+  .home-maint-more{padding:9px 10px;font-size:12px;color:#77777D;border-top:1px solid #F0F0F2;text-align:center}
+  .home-metric-error{color:#D92D20}
+  .home-metric-error .link-btn{margin-left:6px}
+  /* ===== 移动端五入口底部导航 ===== */
+  .bottom-nav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(255,255,255,.96);border-top:1px solid #E5E5EA;backdrop-filter:saturate(180%) blur(16px);padding-bottom:env(safe-area-inset-bottom)}
+  .bottom-nav-item{flex:1 1 20%;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 2px 7px;border:0;background:none;color:#77777D;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+  .bottom-nav-item svg{width:22px;height:22px}
+  .bottom-nav-item.active{color:var(--brand)}
+  .bottom-nav-item[hidden]{display:none}
+  .bottom-more-sheet{position:fixed;inset:0;z-index:80}
+  .bottom-more-sheet[hidden]{display:none}
+  .bottom-more-mask{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+  .bottom-more-panel{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:14px 14px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:70vh;overflow:auto}
+  .bottom-more-head{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;font-size:14px;color:#1D1D1F}
+  .bottom-more-items{display:grid}
+  .bottom-more-item{border:0;border-bottom:1px solid #F0F0F2;background:none;text-align:left;padding:13px 6px;font-size:14px;color:#1D1D1F;cursor:pointer;font-family:inherit}
+  .bottom-more-item:last-child{border-bottom:0}
+  @media (max-width:720px){
+    .bottom-nav{display:flex}
+    .top-tabs{display:none}
+    header.sticky-head{top:0}
+    body{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
+    .pager{bottom:calc(62px + env(safe-area-inset-bottom))}
+    .home-user-name{max-width:96px}
+  }
+  .app-booting .bottom-nav,.app-locked .bottom-nav,.app-booting .bottom-more-sheet,.app-locked .bottom-more-sheet{display:none!important}
+  /* ===== 信息传达页 V16（黑白＋品牌青，仅视觉层，交互与权限不变） ===== */
+  #infoPage .search{border-radius:6px;border-color:var(--line)}
+  #infoPage .btn{border-radius:6px}
+  #infoPage .menu-btn{border-radius:6px}
+  #infoPage .subpage-menu{border-radius:6px}
+  #infoPage .subtab{border-radius:4px}
+  #infoPage .chip,#infoPage .select-pill{border-radius:6px;border-color:var(--line)}
+  #infoPage .chip.active{box-shadow:none}
+  #infoPage #categoryChips .chip.active{background:var(--brand-soft);border-color:#bfdde8;color:var(--brand)}
+  #infoPage .card{border-radius:6px;box-shadow:none;border-color:var(--line)}
+  #infoPage .card .title{font-size:14px;font-weight:600}
+  #infoPage .status-tag{border-radius:4px}
+  /* 分页栏：每页条数选择与 V16 行高对齐 */
+  .pager #pageSizeSelect{height:24px;min-width:0;max-width:64px;padding:0 4px;border-radius:4px;border-color:var(--line);background:var(--panel);font-size:12px}
+  @media (max-width:520px){
+    .pager #pageSizeSelect{height:22px;font-size:11px}
+  }
+  /* ===== 统计分析子页与固化项目页 V16 ===== */
+  #statsSubpage .metric,#statsSubpage .data-panel{border-radius:6px;box-shadow:none}
+  #fixedPage .search{border-radius:6px;border-color:var(--line)}
+  #fixedPage .select-pill{border-radius:6px;border-color:var(--line)}
+  #fixedPage .btn{border-radius:6px}
+  #fixedPage .card{border-radius:6px;box-shadow:none}
+  #fixedPage .card .title{font-size:14px;font-weight:600}
+  #fixedPage .tag{border-radius:4px}
+  /* ===== 维修管控模块 V16（仅排版与形状；所有颜色、弹窗、报工状态色保持原样） ===== */
+  #maintenancePanel .maintenance-card{border-radius:6px;box-shadow:none}
+  #maintenancePanel .btn{border-radius:6px}
+  #maintenancePanel .maintenance-tabs .chip{border-radius:6px;border-color:var(--line)}
+  #maintenancePanel .maintenance-tabs .chip.active{box-shadow:none}
+  #maintenancePanel .maintenance-status-filter,
+  #maintenancePanel .maintenance-sort-filter{border-radius:6px}
+  #maintenancePanel .maintenance-dispatch-column{border-radius:6px}
+  #maintenancePanel .maintenance-flight-primary .maintenance-opportunity-tag,
+  #maintenancePanel .maintenance-flight-secondary .maintenance-stand-tag,
+  #maintenancePanel .maintenance-stand-tag,
+  #maintenancePanel .maintenance-location-tag{border-radius:4px}
+  #maintenancePanel .status-badge{border-radius:4px}
+  #maintenancePanel .execute-subtask-count{border-radius:4px}
+  #maintenancePanel .execute-nonroutine-draft-badge{border-radius:4px}
+  #maintenancePanel .data-panel{border-radius:6px;box-shadow:none}
+  #maintenancePanel .personal-metric-card{border-radius:6px;box-shadow:none}
+  #maintenancePanel .maintenance-report-metrics article{border-radius:6px}
+  #maintenancePanel .maintenance-rule-group{border-radius:6px}
+  /* ===== 维修管控弹窗 V16（颜色保持原样，仅圆角归一） ===== */
+  dialog[id^="maintenance"]{border-radius:6px}
+  dialog[id^="maintenance"] .btn{border-radius:6px}
+  dialog[id^="maintenance"] .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  dialog[id^="maintenance"] .entry-grid select,
+  dialog[id^="maintenance"] .entry-grid textarea,
+  dialog[id^="maintenance"] textarea,
+  dialog[id^="maintenance"] .search,
+  dialog[id^="maintenance"] select{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-role-group,
+  dialog[id^="maintenance"] .maintenance-work-role{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-person-row{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-report-contexts button{border-radius:6px}
+  /* ===== 人员与能力 V16（颜色原样；能力看板 Shadow DOM 不在覆盖范围） ===== */
+  #personnelAreaNav .settings-tabs .chip,
+  #personnelPanel .settings-tabs .chip{border-radius:6px;border-color:var(--line)}
+  #personnelAreaNav .settings-tabs .chip.active,
+  #personnelPanel .settings-tabs .chip.active{box-shadow:none}
+  #personnelPanel .metric,
+  #personnelPanel .data-panel,
+  #personnelAuthorizationWrap .data-panel{border-radius:6px;box-shadow:none}
+  #personnelPanel .search,
+  #personnelPanel .select-pill,
+  #personnelPanel .btn,
+  #personnelPanel .personnel-pagination button,
+  #personnelAuthorizationWrap .search,
+  #personnelAuthorizationWrap .select-pill,
+  #personnelAuthorizationWrap .btn{border-radius:6px}
+  #personnelPanel .status-pill,
+  #personnelPanel .status-badge,
+  #personnelAuthorizationWrap .status-badge{border-radius:4px}
+  #personnelDialog,
+  #personnelDeleteDialog,
+  #authorizationProjectDialog{border-radius:6px}
+  #personnelDialog .btn,
+  #personnelDeleteDialog .btn,
+  #authorizationProjectDialog .btn{border-radius:6px}
+  #personnelDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #personnelDialog .entry-grid select,
+  #personnelDialog .entry-grid textarea,
+  #personnelDialog .search,
+  #personnelDeleteDialog .search,
+  #authorizationProjectDialog .search,
+  #authorizationProjectDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #authorizationProjectDialog .entry-grid select,
+  #authorizationProjectDialog .entry-grid textarea{border-radius:6px}
+  #personnelDialog .status-badge,
+  #authorizationProjectDialog .status-badge,
+  #personnelDeleteDialog .status-badge{border-radius:4px}
+  /* ===== 系统设置页 V16（颜色原样） ===== */
+  #settingsPanel .settings-tabs .chip{border-radius:6px;border-color:var(--line)}
+  #settingsPanel .settings-tabs .chip.active{box-shadow:none}
+  #settingsPanel .data-panel{border-radius:6px;box-shadow:none}
+  #settingsPanel .setting-item{border-radius:6px}
+  #settingsPanel .btn,
+  #settingsPanel .search,
+  #settingsPanel .select-pill{border-radius:6px}
+  #settingsPanel .status-pill,
+  #settingsPanel .rbac-permission-tags span{border-radius:4px}
+  #userDialog,#userBatchDialog,#roleDialog{border-radius:6px}
+  #userDialog .btn,#userBatchDialog .btn,#roleDialog .btn{border-radius:6px}
+  #userDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #userDialog .entry-grid select,#userDialog .entry-grid textarea,#userDialog .search,
+  #userBatchDialog .search,
+  #userBatchDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #userBatchDialog .entry-grid select,
+  #roleDialog .search,
+  #roleDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  #roleDialog .entry-grid select,
+  #roleDialog .entry-grid textarea{border-radius:6px}
+  #userDialog .status-badge,#userBatchDialog .status-badge,#roleDialog .status-badge,
+  #userDialog .status-pill,#roleDialog .status-pill{border-radius:4px}
+  /* ===== 信息/反馈/修改密码/固化/查看器弹窗 V16（颜色原样；viewer 仅容器） ===== */
+  #entryDialog,#feedbackDialog,#changePasswordDialog,#fixedDialog,#viewerDialog{border-radius:6px}
+  #entryDialog .btn,#feedbackDialog .btn,#changePasswordDialog .btn,#fixedDialog .btn,#viewerDialog .btn{border-radius:6px}
+  #entryDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="file"]):not([type="radio"]),
+  #entryDialog .entry-grid select,
+  #entryDialog .entry-grid textarea,
+  #entryDialog .search,
+  #entryDialog .recipient-picker,
+  #entryDialog .upload-zone,
+  #entryDialog .recipient-options{border-radius:6px}
+  #feedbackDialog .search,
+  #feedbackDialog select,
+  #feedbackDialog textarea,
+  #feedbackDialog input:not([type="checkbox"]),
+  #changePasswordDialog input,
+  #fixedDialog .entry-grid input:not([type="hidden"]):not([type="checkbox"]):not([type="file"]):not([type="radio"]),
+  #fixedDialog .entry-grid select,
+  #fixedDialog .entry-grid textarea,
+  #fixedDialog .search{border-radius:6px}
+  #entryDialog .status-badge,
+  #feedbackDialog .status-badge,
+  #fixedDialog .status-badge{border-radius:4px}
+  #appInputDialog{border-radius:6px}
+  #appInputDialog .btn,
+  #appInputDialog input{border-radius:6px}
+  #appConfirmDialog{border-radius:6px}
+  #appConfirmDialog .btn{border-radius:6px}
+  dialog[id^="maintenance"] .maintenance-person-role,
+  dialog[id^="maintenance"] .status-badge{border-radius:4px}
+</style>
 </head>
 <body class="app-booting">
   <section id="loginPage" class="login-page">
@@ -1745,9 +1959,52 @@
 
   <div id="pullRefreshIndicator" class="pull-refresh-indicator" aria-live="polite" aria-hidden="true"><span id="pullRefreshIcon" class="pull-refresh-indicator-icon" aria-hidden="true">↓</span><span id="pullRefreshText">下拉刷新</span></div>
 
-  <section id="homePage" class="page active"><main><div class="wrap module-grid">
-    <div class="module-head"><div><h1>航线运行中心</h1></div><div id="homeCurrentPerson" class="home-current-person" tabindex="0" hidden><span></span></div></div>
-    <section class="data-panel home-info-panel"><div class="panel-title"><div><strong>信息传达</strong></div></div><div id="homeInfoMetrics" class="metric-grid home-info-metrics"></div></section>
+  <section id="homePage" class="page active"><main><div class="wrap module-grid home-wrap">
+    <header id="homeUserBar" class="home-user-bar" hidden>
+      <div class="home-user-identity">
+        <span id="homeUserName" class="home-user-name"></span>
+        <span id="homeUserSep" class="home-user-sep" aria-hidden="true"></span>
+        <span id="homeUserEmployeeNo" class="home-user-sub"></span>
+        <span id="homeUserGrade" class="home-user-sub"></span>
+      </div>
+      <div class="home-user-actions">
+        <button id="homeNotifyBtn" class="home-icon-btn" type="button" aria-label="查看未读信息">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M13.7 20a2 2 0 0 1-3.4 0"/></svg>
+          <span id="homeNotifyDot" class="home-notify-dot" hidden></span>
+        </button>
+        <div class="home-profile-wrap">
+          <button id="homeProfileBtn" class="home-icon-btn" type="button" aria-label="个人中心" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 20c1.8-3.2 4.6-5 8-5s6.2 1.8 8 5"/></svg>
+          </button>
+          <div id="homeProfileMenu" class="home-profile-menu" hidden>
+            <button id="homeChangePasswordBtn" class="home-profile-item" type="button">修改密码</button>
+            <button id="homeLogoutBtn" class="home-profile-item" type="button">退出登录</button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <section id="homeInfoModule" class="home-module">
+      <button class="home-module-title" type="button" data-home-nav="infoPage">信息</button>
+      <span class="home-module-divider" aria-hidden="true"></span>
+      <div id="homeInfoMetrics" class="home-module-metrics"></div>
+      <button class="home-module-arrow" type="button" data-home-nav="infoPage" aria-label="进入信息传达">›</button>
+    </section>
+    <section id="homeAttendanceModule" class="home-module">
+      <button class="home-module-title" type="button" data-home-nav="attendancePage">考勤</button>
+      <span class="home-module-divider" aria-hidden="true"></span>
+      <div id="homeAttendanceMetrics" class="home-module-metrics"></div>
+      <button class="home-module-arrow" type="button" data-home-nav="attendancePage" aria-label="进入考勤管理">›</button>
+    </section>
+    <section id="homeMaintenanceModule" class="home-module">
+      <button class="home-module-title" type="button" data-home-nav="maintenancePage">维修管控</button>
+      <span class="home-module-divider" aria-hidden="true"></span>
+      <button id="homeMaintenanceToggle" class="home-maint-toggle" type="button" aria-expanded="false" aria-controls="homeMaintenanceList">
+        <span class="home-maint-toggle-label">已接收派工</span>
+        <strong id="homeMaintenanceCount" class="home-maint-count">—</strong>
+        <span id="homeMaintenanceArrow" class="home-maint-arrow" aria-hidden="true">⌄</span>
+      </button>
+    </section>
+    <div id="homeMaintenanceList" class="home-maintenance-list" hidden></div>
   </div></main></section>
 
   <section id="infoPage" class="page">
@@ -1755,7 +2012,6 @@
       <div class="titlebar info-titlebar"><div class="subpage-menu-wrap"><button id="subpageMenuBtn" class="menu-btn" type="button" aria-label="页面菜单" aria-expanded="false">☰</button><div id="subpageMenu" class="subpage-menu" hidden><button class="subtab active" type="button" data-subpage="infoListSubpage">信息传达</button><button class="subtab" type="button" data-subpage="statsSubpage">统计分析</button></div></div><input id="searchInput" class="search" type="search" placeholder="搜索：标题、发布人、机号、关键词"><div class="actions"><button id="openEntryBtn" class="btn" type="button" hidden>发布</button></div></div>
       <div id="infoFilters"><div class="filter-strip"><div id="statusChips" class="chips"></div><label class="select-pill info-month-filter">月份<select id="monthSelect" aria-label="月份"></select></label></div>
       <div id="categoryChips" class="chips"></div></div>
-      <div id="resultStatus" class="status-line">加载中...</div>
     </div></header>
     <main><div class="wrap">
       <section id="infoListSubpage" class="subpage active"><section id="cards" class="grid"></section><div id="empty" class="status-line">没有匹配结果。</div></section>
@@ -1784,7 +2040,22 @@
 
   <section id="settingsPage" class="page"><main><div class="wrap"><div id="settingsPanel" class="module-grid"></div></div></main></section>
 
-  <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
+  <div id="pager" class="pager" hidden><div class="pager-inner"><div class="pager-left"><span id="pagerText" class="pager-text">第 1 / 1 页</span><span id="pagerCount" class="pager-text">共 0 条</span><label class="pager-text">每页 <select id="pageSizeSelect"></select></label></div><div id="pageButtons" class="pager-right"></div></div></div>
+
+  <nav id="bottomNav" class="bottom-nav" aria-label="主导航" hidden>
+    <button class="bottom-nav-item active" type="button" data-page="homePage"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 11 12 4l8 7"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 10v10h12V10"/></svg><span>首页</span></button>
+    <button class="bottom-nav-item" type="button" data-page="maintenancePage"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M14.5 6.5a4 4 0 0 1 5-5l-2.9 2.9 1.5 1.5L21 3a4 4 0 0 1-5 5L8 16l-2 4-2-2 4-2 6.5-8z" transform="scale(0.92) translate(1,1)"/></svg><span>维修</span></button>
+    <button class="bottom-nav-item" type="button" data-page="personnelPage"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M3 19c1.3-2.8 3.4-4.3 6-4.3s4.7 1.5 6 4.3"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16.5 14.7c2.2 0 3.9 1.3 5 3.5"/></svg><span>人员</span></button>
+    <button class="bottom-nav-item" type="button" data-page="attendancePage"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 10.5h16M8.5 3.5v4M15.5 3.5v4"/></svg><span>考勤</span></button>
+    <button class="bottom-nav-item" type="button" data-page="__more__"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span>全部</span></button>
+  </nav>
+  <div id="bottomMoreSheet" class="bottom-more-sheet" hidden>
+    <div class="bottom-more-mask" data-bottom-more-close></div>
+    <div class="bottom-more-panel" role="dialog" aria-modal="true" aria-label="全部菜单">
+      <div class="bottom-more-head"><strong>全部菜单</strong><button class="icon-btn" type="button" data-bottom-more-close aria-label="关闭">×</button></div>
+      <div id="bottomMoreItems" class="bottom-more-items"></div>
+    </div>
+  </div>
 
   <dialog id="entryDialog"><div class="dialog-body"><div class="dialog-head"><h2 id="entryTitleText">新增信息</h2><button class="icon-btn" data-close="entryDialog" type="button">×</button></div><form id="entryForm" class="entry-grid">
     <input id="entryId" type="hidden">
