@@ -60,8 +60,18 @@ export function sanitizeAttendanceEvent(frame,config={},batchDepth=0){
 }
 export function createHybridCoordinator({db,config,clock,enqueue}){
  const now=()=>new Date(clock()).toISOString();
- const state=id=>decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
- function setState(id,value){db.prepare('insert into attendance_sync_state(id,value_json,updated_at) values(?,?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at').run(id,encode(value),now());}
+ // 进程内状态缓存：status/snapshot 每次请求会读取十余个 sync_state 键，而每个键都是一次
+ // 同步 Postgres 往返（阻塞事件循环）。这些状态只在同一进程内写入，短 TTL 缓存可把
+ // 一次请求的十余次查询降为 0～1 次，且 setState 立即更新缓存，不改变可见性语义。
+ const stateCache=new Map(),STATE_CACHE_TTL_MS=500;
+ const state=id=>{
+  const hit=stateCache.get(id);
+  if(hit&&hit.expiresAt>Date.now())return hit.value;
+  const value=decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
+  stateCache.set(id,{value,expiresAt:Date.now()+STATE_CACHE_TTL_MS});
+  return value;
+ };
+ function setState(id,value){db.prepare('insert into attendance_sync_state(id,value_json,updated_at) values(?,?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at').run(id,encode(value),now());stateCache.set(id,{value,expiresAt:Date.now()+STATE_CACHE_TTL_MS});}
  function requestDirectoryCheck(){if(!state('directoryRefreshRequest'))setState('directoryRefreshRequest',{requestedAt:now()});}
  function ensure(person,date){db.prepare('insert into attendance_refresh(person_id,work_date) values(?,?) on conflict(person_id,work_date) do nothing').run(person,date);return db.prepare('select * from attendance_refresh where person_id=? and work_date=?').get(person,date);}
  function dirty(person,date){
@@ -171,6 +181,9 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
   }
  }
  function promote(){
+  // 只要还有一个未完成的事件运行，就不要再创建新运行。此前每个 tick 都会为同一批
+  // 待核对人日新建一个 event run（无固定 id），一小时积压 700+ 个目录运行并拖死 tick。
+  if(db.prepare("select 1 from attendance_runs r join attendance_run_meta m on m.run_id=r.id where r.status in ('directory','running') and m.source='event' limit 1").get())return;
   const due=db.prepare("select f.* from attendance_refresh f where f.due_at<=? and f.work_date>=? and f.work_date<=? and f.generation>f.verified_generation and f.error is null and not exists (select 1 from attendance_tasks t join attendance_runs r on r.id=t.run_id where t.person_id=f.person_id and t.work_date=f.work_date and t.status='pending' and r.status in ('running','directory')) order by f.due_at limit 100").all(now(),config.startDate,dayOf(clock()));
   const targets=due.filter(r=>!r.error&&!inFlight(r.person_id,r.work_date)).map(r=>({personId:r.person_id,date:r.work_date}));
   const months=new Map();for(const t of targets){const month=t.date.slice(0,7);if(!months.has(month))months.set(month,[]);months.get(month).push(t);}

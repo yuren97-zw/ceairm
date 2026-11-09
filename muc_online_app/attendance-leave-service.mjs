@@ -4,6 +4,10 @@ const failure=(m,status=400)=>Object.assign(Error(m),{status});
 export function createLeaveService({db,client,config,clock,people,permission,audit,hybrid}){
  db.exec(fs.readFileSync(new URL('./migrations/028_attendance_leave_balances.sql',import.meta.url),'utf8'));
  const now=()=>new Date(clock()).toISOString();
+ // 版本值须在时钟冻结（测试）或同一毫秒内连续变更时仍保证不同，语义与 dataVersion 的 uid() 一致。
+ let leaveVersionSeq=0;
+ // 快照缓存：容量上限防止全员年度明细占用过多内存。
+ const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=4;
  if(!hybrid.state('leaveEventsSince'))hybrid.setState('leaveEventsSince',now());
  const supportedTypes=()=>parse(db.prepare("select types_json from attendance_leave_catalog where id='enterprise'").get()?.types_json,[]).filter(t=>leaveGroup(t.name));
  function enqueueMembers(members,source='leave_manual',{delay=0,reuse=false}={}){
@@ -16,10 +20,25 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
  function refresh(user,filters={}){if(filters.scope!==undefined&&!['all','filtered'].includes(filters.scope))throw failure('刷新范围无效');permission(user,'attendance.read');permission(user,'attendance.record.manage');if(!client.config?.appKey&&!config.appKey)throw failure('钉钉应用未配置',409);const selected=people(user,filters.scope==='all'?{}:filters);enqueueMembers(selected);audit(user,'attendance_leave_refresh','attendance','leave',JSON.stringify({people:selected.length}));return {status:'queued',people:selected.filter(p=>p.userId&&!p.identityIssue).length};}
  function snapshot(user,filters={},perm='attendance.stats.read'){
   permission(user,'attendance.read');permission(user,perm);const current=Number(new Date(clock()+8*3600000).getUTCFullYear()),year=Number(filters.year||current);if(!Number.isInteger(year)||year<1900||year>current+10)throw failure('年度无效');
-  const members=people(user,filters),years=new Set([current]),types=supportedTypes(),availableNames=new Set(types.map(t=>t.name));
-  const rows=members.map(p=>{const saved=db.prepare('select * from attendance_leave_snapshots where person_id=?').all(p.personId);const sources=saved.filter(s=>types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=db.prepare('select * from attendance_leave_queue where person_id=?').get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
+  const members=people(user,filters);
+  // 快照缓存：leaveVersion/年度/权限/过滤与可见人员名单决定复用；逐人查询与大 JSON 解析只在失效后执行一次。
+  const cacheKey=JSON.stringify(['leaveSnapshotV1',hybrid.state('leaveVersion')||'',year,perm,filters.department||'',filters.team||'',filters.query||'',filters.personId||'',members.map(p=>p.personId).join(','),Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS)]);
+  const cached=snapshotCache.get(cacheKey)||null;
+  if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);return cached.value;}
+  const years=new Set([current]),types=supportedTypes(),availableNames=new Set(types.map(t=>t.name));
+  // 一次取回范围内全部人员快照与队列：此前每人 2 条查询，生产 133 人约 266 次同步往返。
+  const ids=members.map(p=>p.personId),marks=ids.map(()=>'?').join(',');
+  const savedRows=ids.length?db.prepare(`select * from attendance_leave_snapshots where person_id in (${marks})`).all(...ids):[];
+  const queueRows=ids.length?db.prepare(`select * from attendance_leave_queue where person_id in (${marks})`).all(...ids):[];
+  const savedBy=new Map(),queueBy=new Map();
+  for(const s of savedRows){const list=savedBy.get(s.person_id)||[];list.push(s);savedBy.set(s.person_id,list);}
+  for(const q of queueRows)queueBy.set(q.person_id,q);
+  const rows=members.map(p=>{const saved=savedBy.get(p.personId)||[];const sources=saved.filter(s=>types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=queueBy.get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
    return {...p,userId:undefined,identityIssue:p.identityIssue||(!p.userId?'人员尚未匹配钉钉用户':null),cells,syncedAt:sources.map(s=>s.syncedAt).sort()[0]||null,syncStatus:queue?.status||'not_synced',error:queue?.error||null};});
-  return {year,years:[...years].sort((a,b)=>b-a),groups:leaveGroups,note:leaveNote,people:rows,generatedAt:now(),dataVersion:hybrid.state('leaveVersion')||'',eventError:hybrid.state('leaveEventError')||null,catalogMissing:leaveGroups.filter(g=>!types.some(t=>leaveGroup(t.name)===g)),catalogNames:[...availableNames],pageSize:20,historyWarning:'仅展示钉钉接口实际返回的额度年度；查询不到不代表历史余额为0。缺少额度关联的消费记录不强行归属年度。'};
+  const value={year,years:[...years].sort((a,b)=>b-a),groups:leaveGroups,note:leaveNote,people:rows,generatedAt:now(),dataVersion:hybrid.state('leaveVersion')||'',eventError:hybrid.state('leaveEventError')||null,catalogMissing:leaveGroups.filter(g=>!types.some(t=>leaveGroup(t.name)===g)),catalogNames:[...availableNames],pageSize:20,historyWarning:'仅展示钉钉接口实际返回的额度年度；查询不到不代表历史余额为0。缺少额度关联的消费记录不强行归属年度。'};
+  snapshotCache.set(cacheKey,{value});
+  while(snapshotCache.size>SNAPSHOT_CACHE_MAX)snapshotCache.delete(snapshotCache.keys().next().value);
+  return value;
  }
  function details(user,filters){permission(user,'attendance.read');if(!filters.personId||!leaveGroups.includes(filters.group))throw failure('人员或假期类别无效');const data=snapshot(user,filters,'attendance.read');const p=data.people.find(p=>p.personId===filters.personId);if(!p)throw failure('当前账号无权查看该人员',403);return {year:data.year,person:p,cell:p.cells.find(c=>c.group===filters.group),note:leaveNote};}
  async function observe(){
@@ -54,7 +73,7 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
    }
   }catch(e){error=e;}
   for(const t of tasks){if(error){const attempts=t.attempts+1,code=String(error.code||'SCHEMA').replace(/[^\w.:-]/g,'').slice(0,80);db.prepare("update attendance_leave_queue set status=?,error=?,attempts=?,due_at=?,updated_at=? where person_id=? and generation=?").run(error.code==='BUDGET'?'blocked':error.retryable&&attempts<5?'retry':'failed','假期同步未完整（'+code+'）；保留上次成功数据',attempts,new Date(clock()+Math.min(3600000,60000*2**attempts)).toISOString(),now(),t.person_id,t.generation);}else db.prepare("update attendance_leave_queue set verified_generation=?,status='ready',error=null,attempts=0,updated_at=? where person_id=? and generation=?").run(t.generation,now(),t.person_id,t.generation);}
-  hybrid.setState('leaveVersion',now());return true;
+  hybrid.setState('leaveVersion',now()+'-'+(++leaveVersionSeq));return true;
  }
  const hasDueEvent=()=>!!db.prepare("select person_id from attendance_leave_queue where source='leave_event' and status in ('pending','retry') and due_at<=? limit 1").get(now());
  return {refresh,snapshot,details,observe,schedule,tick,enqueueMembers,hasDueEvent};

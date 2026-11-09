@@ -40,7 +40,7 @@ import { createPersonnelDeletion, installPersonnelDeletionGuards } from "./perso
 import { approvedLocalDevelopment, localSessionCookieName, validateDevelopmentRuntime } from './local-development.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-if (__dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`) && process.env.MUC_NO_LISTEN !== '1') validateDevelopmentRuntime(__dirname,process.env);
+if ((process.env.MUC_LOCAL_DEVELOPMENT_PROFILE || __dirname.includes(`${path.sep}.codex${path.sep}worktrees${path.sep}`)) && process.env.MUC_NO_LISTEN !== '1') validateDevelopmentRuntime(__dirname,process.env);
 const isLocalDevelopment = approvedLocalDevelopment(__dirname, process.env);
 if(isLocalDevelopment)process.umask(0o077);
 if (process.env.MUC_LOCAL_DEVELOPMENT_PROFILE && !isLocalDevelopment) throw new Error('本机开发配置不安全：仅允许回环地址、独立SQLite和关闭真实同步的开发环境');
@@ -9091,7 +9091,17 @@ function pumpInfoSync(forceHeartbeat=false){
 if (process.env.MUC_NO_LISTEN !== "1") {
   attendanceService.start();
   const infoTimer=setInterval(()=>pumpInfoSync(),2000);infoTimer.unref();
-  const capabilityScheduler = setInterval(() => { try { capabilityService.syncMaster(); capabilityService.schedule(); } catch (error) { console.error("能力状态同步失败", error.message); } }, 15000);
+  const capabilityScheduler = setInterval(() => {
+    const started = performance.now();
+    let syncMs = 0;
+    try {
+      capabilityService.syncMaster();
+      syncMs = performance.now() - started;
+      capabilityService.schedule();
+      const totalMs = performance.now() - started;
+      if (totalMs >= 200) process.stderr.write(JSON.stringify({ type: "capability_scheduler_slow", syncMs: Number(syncMs.toFixed(1)), scheduleMs: Number((totalMs - syncMs).toFixed(1)), totalMs: Number(totalMs.toFixed(1)) }) + "\n");
+    } catch (error) { console.error("能力状态同步失败", error.message); }
+  }, 15000);
   capabilityScheduler.unref();
   http.createServer(measuredRoute).listen(port, host, () => {
     console.log(`MUC online app: http://127.0.0.1:${port}`);

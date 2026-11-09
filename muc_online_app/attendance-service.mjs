@@ -18,11 +18,29 @@ const sourceHash=value=>crypto.createHash('sha256').update(JSON.stringify(canoni
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const iso=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
-export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));}
+export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));if(db.kind==='postgres')db.exec(fs.readFileSync(new URL('./migrations/031_attendance_event_instance_index.sql',import.meta.url),'utf8'));}
 export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now()}){
  installAttendance(db);
  const iso=()=>new Date(clock()).toISOString();
- const owner=uid();let busy=false,timer;
+ const owner=uid();let busy=false,timer,lastReapAt=0;
+ // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
+ // 随时钟漂移的结论由时间桶限制陈旧窗口。容量上限防止全量明细占用过多内存。
+ const snapshotCache=new Map(),SNAPSHOT_CACHE_BUCKET_MS=300000,SNAPSHOT_CACHE_MAX=4;
+ // 假期目录 + 历史审批类别名的计算需要对范围内全部 attendance_days 做一次扫描并解析 JSON；
+ // 生产 9172 行约 30～250ms。它只随 dataVersion/leaveVersion/权限范围变化，按版本缓存。
+ const leaveNamesCache=new Map(),LEAVE_NAMES_CACHE_MAX=16;
+ // 整日对象缓存：过去日期的分类与当前时间无关（未来分支/尚未到时/未到下班点判定仅影响今天与未来）。
+ // 键=人员+日期+当日输入哈希+前3个工作日哈希+明细级别+身份问题+时间类+任务错误；
+ // 命中后按该日审批引用的事由行签名校验（WeakMap 挂载），事由变化仅使引用它的格子重算。
+ const classifyCache=new Map(),CLASSIFY_CACHE_MAX=8000;
+ // 签名数组用 WeakMap 挂在 day 对象上：不占用 LRU 条目（多用户多月份下 3 万条很快被驱逐，
+ // 是生产上跨桶全量重算的直接原因）；day 对象被驱逐时签名随之回收。
+ const daySigs=new WeakMap();
+ const futureCache=new Map(),FUTURE_CACHE_MAX=2000;
+ // 今天格子的分类依赖当前时刻（未到下班/尚未到时），按 5 分钟桶缓存；
+ // 桶滚动后旧条目即无用——独立小缓存在每次重建时清空，避免旧桶键堆积
+ // 挤占过去日期的 LRU（生产假死的直接原因）。
+ const todayCache=new Map(),TODAY_CACHE_MAX=2000;
  function countRequest({source='manual',endpoint='unknown',retry=false}={}){
   const month=dayOf(clock()).slice(0,7);
   db.prepare('insert into attendance_api_usage(month,request_count) values(?,0) on conflict(month) do nothing').run(month);
@@ -137,15 +155,33 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     }
    }
    hybrid.setState('runStats:'+run.id,{reused});
+   // 只处理待解决事件；已排除事件仅在通讯录版本变化时抽样复核，且状态变化才写库。
+   // 旧实现对全部 1.7 万条 directory_excluded 每次通讯录同步逐条 update，单次事务
+   // 发出上万次同步查询并阻塞事件循环数分钟——这才是生产假死/502 的直接触发点。
    const validMembers=db.prepare("select a.user_id from attendance_people a join personnel p on p.id=a.person_id where coalesce(a.identity_issue,'')='' and coalesce(p.data_status,'active')<>'deleted'").all();
-   for(const event of db.prepare("select id,status,payload_json from attendance_events where (status='unresolved' and error like '事件人员%') or status='directory_excluded'").all()){
+   const validUserIds=new Set(validMembers.map(u=>u.user_id));
+   const directoryRevision=hybrid.state('directoryRevision')||'';
+   const lastExcludedRevision=hybrid.state('directoryExcludedRevision')||'';
+   const validHash=crypto.createHash('sha256').update([...validUserIds].sort().join(',')).digest('hex').slice(0,24);
+   const directoryHash=crypto.createHash('sha256').update((cached.directory.users||[]).map(u=>String(u.userId)).sort().join(',')).digest('hex').slice(0,24);
+   const unresolvedEvents=db.prepare("select id,status,payload_json from attendance_events where status='unresolved' and error like '事件人员%' order by received_at limit 2000").all();
+   // 通讯录版本或有效成员变化时，才回看最近被排除的事件，避免每次同步都扫描/更新全部历史排除记录。
+   const recheckExcluded=directoryRevision!==lastExcludedRevision||validHash!==(hybrid.state('directoryExcludedValidHash')||'')||directoryHash!==(hybrid.state('directoryExcludedDirectoryHash')||'');
+   const excludedEvents=recheckExcluded?db.prepare("select id,status,payload_json from attendance_events where status='directory_excluded' order by received_at desc limit 1000").all():[];
+   const updateEvents=(status,error,ids)=>{for(let i=0;i<ids.length;i+=300){const chunk=ids.slice(i,i+300);db.prepare(`update attendance_events set status=?,error=? where id in (${chunk.map(()=>'?').join(',')})`).run(status,error,...chunk);}};
+   const toPending=[],toExcluded=[],toUnresolved=[];
+   for(const event of [...unresolvedEvents,...excludedEvents]){
     const p=parse(event.payload_json,{}),ids=eventUserIds(p);
-    if(validMembers.some(u=>ids.includes(u.user_id))){
-     db.prepare("update attendance_events set status='pending',error=null where id=?").run(event.id);
+    if(ids.some(id=>validUserIds.has(id))){
+     toPending.push(event.id);
      const approval=p.processInstanceId||p.process_instance_id;if(approval)approvalPlans.queue(approval,'event');
-    }else if(eventOutsideDirectory(ids,cached,config,hybrid.state('directoryRevision'),clock()))db.prepare("update attendance_events set status='directory_excluded',error=? where id=?").run(DIRECTORY_EXCLUDED_NOTE,event.id);
-    else if(event.status==='directory_excluded')db.prepare("update attendance_events set status='unresolved',error=? where id=?").run('事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',event.id);
+    }else if(eventOutsideDirectory(ids,cached,config,directoryRevision,clock())){if(event.status!=='directory_excluded')toExcluded.push(event.id);}
+    else if(event.status==='directory_excluded')toUnresolved.push(event.id);
    }
+   if(toPending.length)updateEvents('pending',null,toPending);
+   if(toExcluded.length)updateEvents('directory_excluded',DIRECTORY_EXCLUDED_NOTE,toExcluded);
+   if(toUnresolved.length)updateEvents('unresolved','事件人员尚未唯一匹配授权人员；需核对通讯录或事件范围',toUnresolved);
+   if(recheckExcluded){hybrid.setState('directoryExcludedRevision',directoryRevision);hybrid.setState('directoryExcludedValidHash',validHash);hybrid.setState('directoryExcludedDirectoryHash',directoryHash);}
    const missingSelected=selected?.some(id=>!users.some(u=>u.personId===id));db.prepare('update attendance_runs set status=?,updated_at=?,error=? where id=?').run('running',iso(),(!selected&&identityIssues)||missingSelected?'存在工号未匹配人员，人员覆盖未完成':null,run.id);
   });
  }
@@ -191,15 +227,19 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const result=classifyDay(input,clock(),sourceReadAt,{previousWorkDays:previousWorkDays(task.person_id,task.work_date)});const hash=sourceHash(input),at=iso();
   tx(()=>{
    const old=db.prepare('select * from attendance_days where person_id=? and work_date=?').get(task.person_id,task.work_date);
+   const dataChanged=!old||old.source_hash!==hash;
    if(old&&old.source_hash!==hash&&sourceHash(parse(old.input_json,{}))!==hash)db.prepare('insert into attendance_changes(id,person_id,work_date,before_json,after_json,changed_at,run_id) values(?,?,?,?,?,?,?)').run(uid(),task.person_id,task.work_date,old.input_json,json(input),at,task.run_id);
    db.prepare('insert into attendance_days(person_id,work_date,input_json,result_json,source_hash,updated_at,run_id) values(?,?,?,?,?,?,?) on conflict(person_id,work_date) do update set input_json=excluded.input_json,result_json=excluded.result_json,source_hash=excluded.source_hash,updated_at=excluded.updated_at,run_id=excluded.run_id').run(task.person_id,task.work_date,json(input),json(result),hash,at,task.run_id);
    const complete=!result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict');
    if(complete&&input.raw?.scheduleReadEvidence?.status==='empty_confirmed')db.prepare('insert into attendance_schedule_cache(person_id,work_date,schedules_json,verified_at) values(?,?,?,?) on conflict(person_id,work_date) do update set schedules_json=excluded.schedules_json,verified_at=excluded.verified_at,invalidated_at=null').run(task.person_id,task.work_date,'[]',sourceReadAt||at);
    if(complete)for(const failed of db.prepare("select id,run_id from attendance_tasks where person_id=? and work_date=? and status in ('failed','incomplete') and updated_at<=? and id<>?").all(task.person_id,task.work_date,sourceReadAt||at,task.id))hybrid.setState('taskRecovery:'+failed.id,{failedTaskId:failed.id,failedRunId:failed.run_id,recoveredByTaskId:task.id,recoveredByRunId:task.run_id,recoveredAt:at});
    hybrid.complete(task,complete,full);
-   hybrid.setState('dataVersion',uid());
+   const newStatus=complete?'done':'incomplete';
+   const prevStatus=db.prepare('select status from attendance_tasks where id=?').get(task.id)?.status;
+   // 仅在当日输入真正变化或任务错误状态翻转时递增数据版本；重复读取相同数据不再触发前端自动刷新与快照缓存失效。
+   if(dataChanged||prevStatus&&prevStatus!==newStatus&&(prevStatus==='failed'||prevStatus==='incomplete'||newStatus==='failed'||newStatus==='incomplete'))hybrid.setState('dataVersion',uid());
    db.prepare('update attendance_runs set updated_at=? where id=?').run(at,task.run_id);
-   db.prepare('update attendance_tasks set status=?,error=?,attempts=0,updated_at=? where id=?').run(result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict')?'incomplete':'done',result.purposes.some(p=>p.status!=='ok'&&p.status!=='conflict')?'审批事由资料未完整覆盖':null,at,task.id);
+   db.prepare('update attendance_tasks set status=?,error=?,attempts=0,updated_at=? where id=?').run(newStatus,complete?null:'审批事由资料未完整覆盖',at,task.id);
   });
  }
  function retry(table,item,e){
@@ -212,17 +252,27 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   db.prepare(`update ${table} set status=?,attempts=?,next_at=?,error=?${table==='attendance_tasks'?',updated_at=?':''} where id=?`).run(terminal?'failed':'pending',attempts,new Date(clock()+Math.min(3600000,60000*2**attempts)).toISOString(),message,...(table==='attendance_tasks'?[iso()]:[]),item.id);
  }
  function finishRuns(){
-  for(const run of db.prepare("select * from attendance_runs where status='running'").all()){
-   const batches=db.prepare('select status,count(*) as n from attendance_batches where run_id=? group by status').all(run.id);
-   const tasks=db.prepare('select status,count(*) as n from attendance_tasks where run_id=? group by status').all(run.id);
-   const pending=db.prepare("select count(*) as n from attendance_tasks t join attendance_batches b on b.id=t.batch_id where t.run_id=? and t.status='pending' and b.status<>'failed'").get(run.id).n;
-   const linked=db.prepare('select t.status from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=?').all(run.id);
-   if(batches.some(r=>r.status==='pending')||Number(pending)>0||linked.some(t=>t.status==='pending'))continue;
-   // A failed batch leaves its day tasks explicitly failed.
-   db.prepare("update attendance_tasks set status='failed',error='批量排班或考勤结果未完整读取',updated_at=? where run_id=? and status='pending' and batch_id in (select id from attendance_batches where status='failed')").run(iso(),run.id);
-   const incomplete=db.prepare("select count(*) as n from attendance_tasks where run_id=? and status<>'done'").get(run.id).n;
-   db.prepare('update attendance_runs set status=?,updated_at=?,error=? where id=?').run(Number(incomplete)>0||run.error||linked.some(t=>t.status!=='done')?'partial':'completed',iso(),Number(incomplete)>0?'存在未完整覆盖人员日，请查看同步明细':run.error||null,run.id);
+  // 旧实现对每条 running 运行各发 3～5 条查询；生产积压了 1,942 条 running，
+  // 每个 tick 放大成近万条同步查询并阻塞事件循环数分钟。改为两条批量 SQL：
+  // 先关闭失败批次中的 pending 任务，再一次性结束所有已无 pending 批/任务/链接的运行。
+  const at=iso();
+  // 事件运行积压时自动关闭超时任务，其待核对人日仍保留在 attendance_refresh，会再次排队。
+  if(clock()-lastReapAt>60000){
+   lastReapAt=clock();
+   db.prepare("update attendance_runs set status='failed',error='事件同步任务积压，已自动关闭并重新排队',updated_at=? where status='directory' and created_at<? and id in (select run_id from attendance_run_meta where source='event')").run(at,new Date(clock()-15*60000).toISOString());
   }
+  db.prepare("update attendance_tasks set status='failed',error='批量排班或考勤结果未完整读取',updated_at=? where status='pending' and batch_id in (select id from attendance_batches where status='failed')").run(at);
+  db.prepare(`update attendance_runs set
+    status=case when
+      (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0
+      or coalesce(error,'')<>''
+      or exists(select 1 from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=attendance_runs.id and t.status<>'done')
+      then 'partial' else 'completed' end,
+    updated_at=?,
+    error=case when (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0 then '存在未完整覆盖人员日，请查看同步明细' else error end
+    where status='running'
+      and not exists(select 1 from attendance_batches b where b.run_id=attendance_runs.id and b.status='pending')
+      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')`).run(at);
  }
  function validationRunAllowed(id){
   if(!config.validation?.enabled)return true;
@@ -285,7 +335,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
      db.prepare('update attendance_runs set next_at=? where id=?').run(new Date(last+DIRECTORY_REFRESH_MIN_MS).toISOString(),run.id);return;
     }
    }
-   if(run){client.requestContext=runSource(run.id);try{await loadDirectory(run);finishRuns();}catch(e){const attempts=Number(run.attempts||0)+1;db.prepare('update attendance_runs set status=?,error=?,updated_at=?,attempts=?,next_at=? where id=?').run(e.retryable&&attempts<5?'directory':'failed',`通讯录读取或工号匹配失败${e.permissionCodes?.length?'；缺少读取权限：'+e.permissionCodes.join('、'):e.code?'（'+String(e.code).replace(/[^\w.:-]/g,'')+'）':''}；请检查配置、权限和额度`,iso(),attempts,new Date(clock()+60000*attempts).toISOString(),run.id);}return;}
+   if(run){client.requestContext=runSource(run.id);try{await loadDirectory(run);}catch(e){const attempts=Number(run.attempts||0)+1;db.prepare('update attendance_runs set status=?,error=?,updated_at=?,attempts=?,next_at=? where id=?').run(e.retryable&&attempts<5?'directory':'failed',`通讯录读取或工号匹配失败${e.permissionCodes?.length?'；缺少读取权限：'+e.permissionCodes.join('、'):e.code?'（'+String(e.code).replace(/[^\w.:-]/g,'')+'）':''}；请检查配置、权限和额度`,iso(),attempts,new Date(clock()+60000*attempts).toISOString(),run.id);}finally{finishRuns();}return;}
    // Finish a day before loading more history batches; new events preempt on the next tick.
    const task=db.prepare("select t.*,b.payload_json from attendance_tasks t join attendance_batches b on b.id=t.batch_id join attendance_runs r on r.id=t.run_id left join attendance_run_meta m on m.run_id=r.id where t.status='pending' and t.next_at<=? and b.status='done' and r.status='running' order by coalesce(m.priority,2),r.created_at,t.work_date limit 1").get(iso());
    const batch=db.prepare("select b.* from attendance_batches b join attendance_runs r on r.id=b.run_id left join attendance_run_meta m on m.run_id=r.id where b.status='pending' and b.next_at<=? and r.status='running' order by coalesce(m.priority,2),r.created_at,b.from_date limit 1").get(iso());
@@ -323,12 +373,20 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
  }
  function leaveCatalog(user){
   const row=db.prepare("select * from attendance_leave_catalog where id='enterprise'").get();
-  const types=parse(row?.types_json,[])||[],known=new Set(types.map(v=>v.name).filter(attendanceCategoryAllowed)),s=scope(user);
+  const s=scope(user);
+  // 目录或历史审批变化才需要重扫全部 attendance_days；目录行本身很轻，先查它再决定是否用缓存。
+  const cacheKey=json(['attendanceLeaveCatalogV1',hybrid.state('dataVersion')||'',hybrid.state('leaveVersion')||'',row?.last_synced_at||'',row?.last_attempt_at||'',row?.error||'',s.sql,json(s.params)]);
+  const cached=leaveNamesCache.get(cacheKey);
+  if(cached){leaveNamesCache.delete(cacheKey);leaveNamesCache.set(cacheKey,cached);return cached;}
+  const types=parse(row?.types_json,[])||[],known=new Set(types.map(v=>v.name).filter(attendanceCategoryAllowed));
   // Include historical approval names even when unused in the selected month.
   for(const r of db.prepare(`select d.input_json from attendance_days d join personnel p on p.id=d.person_id where (${s.sql})`).all(...s.params)){
    for(const a of parse(r.input_json,{}).approvals||[])if(a.kind==='请假'&&a.subType&&attendanceCategoryAllowed(a.subType))known.add(String(a.subType));
   }
-  return {names:[...known],status:row?.last_synced_at?(row.error?'stale':'ready'):row?.error?'unavailable':'not_loaded',lastSyncedAt:row?.last_synced_at||null,lastAttemptAt:row?.last_attempt_at||null,error:row?.error||null};
+  const value={names:[...known],status:row?.last_synced_at?(row.error?'stale':'ready'):row?.error?'unavailable':'not_loaded',lastSyncedAt:row?.last_synced_at||null,lastAttemptAt:row?.last_attempt_at||null,error:row?.error||null};
+  leaveNamesCache.set(cacheKey,value);
+  while(leaveNamesCache.size>LEAVE_NAMES_CACHE_MAX)leaveNamesCache.delete(leaveNamesCache.keys().next().value);
+  return value;
  }
  async function fetchLeaveCatalog({force=false}={}){
   const old=db.prepare("select * from attendance_leave_catalog where id='enterprise'").get(),at=new Date(clock()).toISOString();
@@ -352,7 +410,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   try{acquired=acquire();if(!acquired)throw fail('其他实例正在同步，请稍后刷新假期目录',409);await fetchLeaveCatalog({force:true});return leaveCatalog(user);}
   finally{if(acquired)db.prepare("delete from attendance_leases where id='worker' and owner=?").run(owner);busy=false;}
  }
- function snapshot(user,filters={},permissionCode='attendance.read',{detailLevel='full',onTiming=()=>{}}={}){
+ function snapshot(user,filters={},permissionCode='attendance.read',{detailLevel='full',includeApprovalPlans=false,onTiming=()=>{}}={}){
   permission(user,permissionCode);permission(user,'attendance.read');
   if(!['full','summary','compact'].includes(detailLevel))throw fail('考勤明细级别无效');
   if(detailLevel==='summary')permission(user,'attendance.stats.read');
@@ -364,51 +422,113 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const contextDates=detailLevel==='full'?datesBetween(contextFrom,contextTo).filter(date=>date<dates[0]||date>dates.at(-1)):[];
   const s=scope(user);
   const personSql=filters.personId?' and d.person_id=?':'',personParams=filters.personId?[filters.personId]:[];
-  const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
-  const reasonCache=new Map(db.prepare('select * from attendance_approval_cache').all().map(r=>[r.id,{detail:parse(r.detail_json),status:r.status,invalidated:!!r.invalidated_at}]));
-  const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>enrichApprovalReason(a,reasonCache.get(a.id),config))});
+  // 分类结果只由数据版本与请求形态决定；categories 在分类之后过滤，不参与缓存键。
+  const cacheKey=json(['attendanceSnapshotV1',RULE_VERSION,hybrid.state('dataVersion')||'',hybrid.state('approvalPlanVersion')||'',hybrid.state('leaveVersion')||'',detailLevel,permissionCode,dates[0],s.sql,json(s.params),filters.personId||'',filters.department||'',filters.team||'',filters.query||'',dayOf(at),Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS)]);
+  const cached=snapshotCache.get(cacheKey)||null;
+  if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);onTiming('attendance_cache_hit',1);onTiming('attendance_read',0);onTiming('attendance_classify',0);}
+  let peopleRows=cached?.peopleRows||null,updatedAtByPerson=cached?.updatedAtByPerson||null;
+  if(!cached){
+  const rebuildStarted=performance.now();
+  const rows=db.prepare(`select d.person_id,d.work_date,d.input_json,d.source_hash,d.updated_at,d.run_id,(select min(m.started_at) from attendance_tasks t join attendance_task_marks m on m.task_id=t.id where t.person_id=d.person_id and t.work_date=d.work_date and t.run_id=d.run_id) as source_queried_at from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?${personSql}`).all(...s.params,contextFrom,contextTo,...personParams);
+  const reasonRows=db.prepare('select * from attendance_approval_cache').all();
+  // 行签名取语义字段（kind/status/result/提取的事由值/reasonStatus），而非原始 detail_json：
+  // 失效后重拉会重写 detail_json（序列化串必变），但只要富化输出依赖的字段不变，
+  // 签名即稳定，逐格缓存不被扰动。overlay 与逐格缓存验证共用此签名。
+  const reasonCache=new Map(reasonRows.map(r=>{
+   const detail=parse(r.detail_json);
+   const read=detail?readApprovalReason(detail,detail.kind,config):{reason:null,reasonStatus:'detail_missing'};
+   const sig=[r.status,(r.invalidated_at?'1':'0'),(detail?detail.kind:''),(detail?detail.status||'':''),(detail?detail.result||'':''),(read.reason===null||read.reason===undefined?'':read.reason),read.reasonStatus].join('|');
+   return [r.id,{detail,status:r.status,invalidated:!!r.invalidated_at,sig}];
+  }));
+  const rowSigMap=new Map(reasonRows.map(r=>[r.id,reasonCache.get(r.id).sig]));
+  const enrichCache=new Map(),ENRICH_CACHE_MAX=30000;
+  const overlay=input=>({...input,approvals:(input.approvals||[]).map(a=>{const sig=rowSigMap.get(a.id)||'raw';const ek=a.id+'|'+sig+'|'+JSON.stringify(a);let ea=enrichCache.get(ek);if(!ea){ea=enrichApprovalReason(a,reasonCache.get(a.id),config);enrichCache.set(ek,ea);while(enrichCache.size>ENRICH_CACHE_MAX)enrichCache.delete(enrichCache.keys().next().value);}return ea;})});
   const byKey=new Map(rows.filter(r=>ids.has(r.person_id)).map(r=>[r.person_id+'|'+r.work_date,r]));
   const taskErrors=db.prepare(`select t.person_id,t.work_date,t.error,t.updated_at from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.work_date>=? and t.work_date<=? and t.status in ('failed','incomplete') order by t.updated_at`).all(...s.params,contextFrom,contextTo);
   const errors=new Map(taskErrors.map(r=>[r.person_id+'|'+r.work_date,r]));
   const readAt=performance.now();onTiming('attendance_read',readAt-started);
-  const peopleRows=members.map(p=>{
-   const makeDay=date=>{const row=byKey.get(p.personId+'|'+date),input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:previousWorkDays(p.personId,date,byKey).map(overlay),includePunchDetails:detailLevel!=='summary'});const taskError=errors.get(p.personId+'|'+date);const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;return {...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};};
+  todayCache.clear();
+  peopleRows=members.map(p=>{
+   // 整日对象缓存：命中即跳过 input 解析、前 3 日解析与 overlay（每格固定开销与 classifyDay 同价）。
+   // 过去日期跨桶复用；今天按桶对齐；未来未覆盖日期仅依赖日期本身，键不含桶。
+   const makeDay=date=>{
+    const row=byKey.get(p.personId+'|'+date),todayKey=dayOf(at),timeBucket=Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS);
+    const timeClass=date>todayKey?'f'+timeBucket:date===todayKey?'t'+timeBucket:'past';
+    const detailFlag=detailLevel!=='summary'?'d':'s';
+    const taskError=errors.get(p.personId+'|'+date);
+    const prevHashStr=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).map(r=>r?r.source_hash:'-').join(',');
+    if(date>todayKey&&!row){const memoKey=p.personId+'|'+date+'|F|'+todayKey+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=futureCache.get(memoKey);if(!day){const input={date,covered:false,identityIssue:p.identityIssue};const result=classifyDay(input,at,null,{includePunchDetails:detailLevel!=='summary'});day={...result,input,sourceQueriedAt:null,updatedAt:null,runId:null,syncError:null,stale:false};futureCache.set(memoKey,day);while(futureCache.size>FUTURE_CACHE_MAX)futureCache.delete(futureCache.keys().next().value);}return day;}
+    if(date===todayKey){const memoKey=p.personId+'|'+(p.identityIssue||'')+'|'+detailFlag;let day=todayCache.get(memoKey);if(!day){const input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};const prevs=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean).map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:prevs,includePunchDetails:detailLevel!=='summary'});const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;day={...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};todayCache.set(memoKey,day);while(todayCache.size>TODAY_CACHE_MAX)todayCache.delete(todayCache.keys().next().value);}return day;}
+    const memoKey=p.personId+'|'+date+'|'+(row?row.source_hash:'nocover')+'|'+prevHashStr+'|'+detailFlag+'|'+(p.identityIssue||'')+'|'+(taskError?taskError.error:'');
+    const hit=classifyCache.get(memoKey);
+    // 命中后校验该日各审批引用的事由行签名：事由缓存变化仅使引用它的格子重算，不影响全月。
+    if(hit){const sigs=daySigs.get(hit);const hitApprovals=hit.input.approvals||[];if(sigs&&hitApprovals.length===sigs.length&&hitApprovals.every((a,i)=>(rowSigMap.get(a.id)||'raw')===sigs[i])){if(process.env.DEBUG_CLASSIFY)console.error('[hit]',memoKey);return hit;}}
+    if(process.env.DEBUG_CLASSIFY)console.error('[miss]',memoKey);
+    const input=row?overlay(parse(row.input_json)):{date,covered:false,identityIssue:p.identityIssue};
+    const prevs=[1,2,3].map(n=>byKey.get(p.personId+'|'+new Date(Date.parse(date+'T00:00:00Z')-n*86400000).toISOString().slice(0,10))).filter(Boolean).map(r=>({...parse(r.input_json,{}),date:r.work_date})).map(overlay);
+    const result=classifyDay(input,at,row?.source_queried_at||row?.updated_at,{previousWorkDays:prevs,includePunchDetails:detailLevel!=='summary'});
+    const syncError=taskError && (!row || taskError.updated_at>=row.updated_at)?taskError.error:null;
+    const day={...result,input,sourceQueriedAt:row?.source_queried_at||null,updatedAt:row?.updated_at||null,runId:row?.run_id||null,syncError,stale:result.category==='待核实'||!!syncError&&!!row};
+    classifyCache.set(memoKey,day);
+    daySigs.set(day,(input.approvals||[]).map(a=>rowSigMap.get(a.id)||'raw'));
+    while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);
+    return day;
+   };
    const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
    return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
   });
-  if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')for(let i=0;i<peopleRows.length;i++)peopleRows[i]=approvalPlans.decorate(peopleRows[i],dates[0].slice(0,7));
-  const classifiedAt=performance.now();onTiming('attendance_classify',classifiedAt-readAt);
+  if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')peopleRows=approvalPlans.decorateAll(peopleRows,dates[0].slice(0,7));
+  if(process.env.DEBUG_CLASSIFY||performance.now()-rebuildStarted>500)process.stderr.write(JSON.stringify({type:'slow_attendance_rebuild',detailLevel,durationMs:Number((performance.now()-rebuildStarted).toFixed(1)),cells:peopleRows.length})+"\n");
+  updatedAtByPerson=new Map();for(const r of rows){if(r.work_date<dates[0]||r.work_date>dates.at(-1))continue;const previous=updatedAtByPerson.get(r.person_id);if(!previous||r.updated_at>previous)updatedAtByPerson.set(r.person_id,r.updated_at);}
+  onTiming('attendance_classify',performance.now()-readAt);
+  snapshotCache.set(cacheKey,{peopleRows,updatedAtByPerson});
+  while(snapshotCache.size>SNAPSHOT_CACHE_MAX)snapshotCache.delete(snapshotCache.keys().next().value);
+  }
+  const classifiedAt=performance.now();
   const leaveTypes=leaveCatalog(user);
   const settings=displaySettings(user);
   const categories=attendanceOrderedCategories([...new Set([...peopleRows.flatMap(p=>[...Object.keys(p.counts),...Object.keys(p.pendingCounts||{})]),...leaveTypes.names])]);
   const visiblePeople=peopleRows.filter(p=>attendanceMatchesCategories(p,filters.categories));
   const visibleIds=new Set(visiblePeople.map(p=>p.personId));
-  const last=rows.filter(r=>visibleIds.has(r.person_id)&&r.work_date>=dates[0]&&r.work_date<=dates.at(-1)).map(r=>r.updated_at).sort().at(-1)||null;
+  const last=visiblePeople.map(p=>updatedAtByPerson.get(p.personId)).filter(Boolean).sort().at(-1)||null;
   const reasonInstances=new Map(visiblePeople.flatMap(p=>p.days.flatMap(d=>(d.input.approvals||[]).filter(a=>['外出','请假'].includes(a.kind)&&a.approved&&!a.revoked).map(a=>[a.id,a]))));
   const approvalReasonCoverage={total:reasonInstances.size,unresolved:[...reasonInstances.values()].filter(a=>!['ok','empty'].includes(a.reasonStatus)).length};
   const projected=visiblePeople.map(p=>{
    if(detailLevel==='full')return p;
-   const {days,contextDays,approvalPlans,...totals}=p;
-   if(detailLevel==='summary')return {...totals,dayCount:days.length,issueCount:days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError)).length};
-   return {...totals,contextDays:[],days:days.map(({input,approvalPlans,...d})=>({...d,purposes:d.purposes.map(({category,status})=>({category,status})),punchDetails:d.punchDetails.map(({type,planned,actual,status,reason})=>({type,planned,actual,status,reason}))}))};
+   const {days,contextDays,approvalPlans:personPlans,...totals}=p;
+   // 内部调用（假期页签审批计划）可复用已缓存的 summary，避免再建一份完整快照。
+   const plans=includeApprovalPlans?{approvalPlans:personPlans}:{};
+   if(detailLevel==='summary')return {...totals,...plans,dayCount:days.length,issueCount:days.filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError)).length};
+   return {...totals,...plans,contextDays:[],days:days.map(({input,approvalPlans,...d})=>({...d,purposes:d.purposes.map(({category,status})=>({category,status})),punchDetails:d.punchDetails.map(({type,planned,actual,status,reason})=>({type,planned,actual,status,reason}))}))};
   });
   onTiming('attendance_metadata',performance.now()-classifiedAt);
-  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
+  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,dataVersion:hybrid.state('dataVersion')||'',historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
  }
+ const statusCache=new Map(),STATUS_CACHE_MAX=8,STATUS_CACHE_BUCKET_MS=10000;
  function status(user){
-  permission(user,'attendance.read');const s=scope(user);
+  permission(user,'attendance.read');const s=scope(user),isAll=all(user);
+  // 缓存键只依赖进程内版本与权限范围，必须在任何数据库查询之前判断：
+  // 生产 30 秒轮询命中时不再执行 130 次同步 Postgres 往返。
+  const statusKey=json(['attendanceStatusV2',RULE_VERSION,hybrid.state('dataVersion')||'',hybrid.state('approvalPlanVersion')||'',hybrid.state('leaveVersion')||'',s.sql,json(s.params),isAll?'all':'scoped',dayOf(clock()),Math.floor(clock()/STATUS_CACHE_BUCKET_MS)]);
+  const statusCached=statusCache.get(statusKey)||null;
+  if(statusCached){statusCache.delete(statusKey);statusCache.set(statusKey,statusCached);return statusCached.value;}
   const today=dayOf(clock()),yesterday=dayOf(clock()-86400000);
   const clockBoundary=db.prepare(`select d.input_json from attendance_days d join personnel p on p.id=d.person_id where (${s.sql}) and d.work_date>=? and d.work_date<=?`).all(...s.params,yesterday,today).reduce((n,r)=>Math.max(n,...(parse(r.input_json,{}).points||[]).map(p=>p.planned).filter(t=>t&&t<=clock())),0);
   const counts=db.prepare(`select t.run_id,t.status,count(*) as n from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.run_id in (select id from attendance_runs order by created_at desc limit 40) group by t.run_id,t.status`).all(...s.params);
   const visible=new Set(counts.map(r=>r.run_id));
   const recovered=db.prepare(`select t.id,t.run_id from attendance_tasks t join personnel p on p.id=t.person_id where (${s.sql}) and t.run_id in (select id from attendance_runs order by created_at desc limit 40) and t.status in ('failed','incomplete')`).all(...s.params).filter(t=>hybrid.state('taskRecovery:'+t.id));
-  const runs=db.prepare('select * from attendance_runs order by created_at desc limit 40').all().filter(r=>all(user)||visible.has(r.id)||r.actor_id===user.id).map(r=>{const recoveredCount=recovered.filter(t=>t.run_id===r.id).length;return {id:r.id,from:r.from_date,to:r.to_date,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at,error:r.error?`${r.error}${recoveredCount?`；历史失败中${recoveredCount}条已由后续权威补查恢复`:''}`:null,recoveredCount,source:runSource(r.id),reused:hybrid.state('runStats:'+r.id)?.reused||0,counts:Object.fromEntries(counts.filter(c=>c.run_id===r.id).map(c=>[c.status,Number(c.n)]))};});
+  // 运行来源和复用数一次取回：此前 40 条运行各查两次（共 80 次往返）。
+  const runStats=new Map(db.prepare("select id,value_json from attendance_sync_state where id like 'runStats:%'").all().map(r=>[r.id,parse(r.value_json,{})||{}]));
+  const runs=db.prepare('select r.*,m.source from attendance_runs r left join attendance_run_meta m on m.run_id=r.id order by r.created_at desc limit 40').all().filter(r=>isAll||visible.has(r.id)||r.actor_id===user.id).map(r=>{const recoveredCount=recovered.filter(t=>t.run_id===r.id).length;return {id:r.id,from:r.from_date,to:r.to_date,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at,error:r.error?`${r.error}${recoveredCount?`；历史失败中${recoveredCount}条已由后续权威补查恢复`:''}`:null,recoveredCount,source:r.source||'manual',reused:runStats.get('runStats:'+r.id)?.reused||0,counts:Object.fromEntries(counts.filter(c=>c.run_id===r.id).map(c=>[c.status,Number(c.n)]))};});
   const reasonJobId=hybrid.state('reasonBackfillActive'),reasonJob=reasonJobId&&hybrid.state('reasonBackfill:'+reasonJobId);
-  return {approvalPlanVersion:hybrid.state('approvalPlanVersion')||'',approvalPlans:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():null,approvalReasonBackfill:all(user)&&reasonJob?{id:reasonJob.id,status:reasonJob.status,total:reasonJob.total,processed:reasonJob.index,success:reasonJob.success,failed:reasonJob.failed,error:reasonJob.error||null,updatedAt:reasonJob.updatedAt}:null,clockBoundary,leaveVersion:hybrid.state('leaveVersion')||'',leaveEventError:hybrid.state('leaveEventError'),dataVersion:RULE_VERSION+':'+(hybrid.state('dataVersion')||''),hybrid:{validation:config.validation?.enabled?{enabled:true,people:config.validation.personIds.length,from:config.validation.from,to:config.validation.to}:null,...hybrid.summary(s),stream:stream.connectionStatus(),workerEnabled:!!config.workerEnabled,schedulerEnabled:!!config.enabled,recovery:all(user)?hybrid.state('recovery'):null,recoveryPending:!!hybrid.state('recoveryNeeded'),events:all(user)?db.prepare('select topic,status,count(*) as count from attendance_events group by topic,status').all():[],eventIssues:all(user)?db.prepare("select topic,status,error,received_at as receivedAt from attendance_events where status<>'directory_excluded' and (error is not null or status in ('unsupported','unresolved')) order by received_at desc limit 20").all():[],directoryExcluded:all(user)?db.prepare("select topic,count(*) as count from attendance_events where status='directory_excluded' group by topic").all():[],eventMetrics:all(user)?hybrid.metrics():[],verifiedEventTypes:[],eventCoverageNote:'连接成功不等于所有事件已覆盖；须完成真实样本及连续7天验证',apiCounts:all(user)?db.prepare('select source,endpoint,request_count as requests,retry_count as retries from attendance_api_counts where month=?').all(dayOf(clock()).slice(0,7)):[],requestWarning:all(user)&&Number(db.prepare('select request_count from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))?.request_count)>=40000},configuration:configurationStatus(config),leaveTypes:leaveCatalog(user),runs,canSync:hasRbac(user,'attendance.record.manage'),canStats:hasRbac(user,'attendance.stats.read'),canExport:hasRbac(user,'attendance.export'),usage:all(user)?db.prepare('select * from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))||null:null,identityIssues:all(user)?db.prepare("select employee_no as employeeNo,name,identity_issue as issue from attendance_people where coalesce(identity_issue,'')<>''").all():[],historyWarning:'历史组织名单完整性待核实；API无法取得的历史记录不填零。'};
+  const statusValue={approvalPlanVersion:hybrid.state('approvalPlanVersion')||'',approvalPlans:isAll&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():null,approvalReasonBackfill:isAll&&reasonJob?{id:reasonJob.id,status:reasonJob.status,total:reasonJob.total,processed:reasonJob.index,success:reasonJob.success,failed:reasonJob.failed,error:reasonJob.error||null,updatedAt:reasonJob.updatedAt}:null,clockBoundary,leaveVersion:hybrid.state('leaveVersion')||'',leaveEventError:hybrid.state('leaveEventError'),dataVersion:RULE_VERSION+':'+(hybrid.state('dataVersion')||''),hybrid:{validation:config.validation?.enabled?{enabled:true,people:config.validation.personIds.length,from:config.validation.from,to:config.validation.to}:null,...hybrid.summary(s),stream:stream.connectionStatus(),workerEnabled:!!config.workerEnabled,schedulerEnabled:!!config.enabled,recovery:isAll?hybrid.state('recovery'):null,recoveryPending:!!hybrid.state('recoveryNeeded'),events:isAll?db.prepare('select topic,status,count(*) as count from attendance_events group by topic,status').all():[],eventIssues:isAll?db.prepare("select topic,status,error,received_at as receivedAt from attendance_events where status<>'directory_excluded' and (error is not null or status in ('unsupported','unresolved')) order by received_at desc limit 20").all():[],directoryExcluded:isAll?db.prepare("select topic,count(*) as count from attendance_events where status='directory_excluded' group by topic").all():[],eventMetrics:isAll?hybrid.metrics():[],verifiedEventTypes:[],eventCoverageNote:'连接成功不等于所有事件已覆盖；须完成真实样本及连续7天验证',apiCounts:isAll?db.prepare('select source,endpoint,request_count as requests,retry_count as retries from attendance_api_counts where month=?').all(dayOf(clock()).slice(0,7)):[],requestWarning:isAll&&Number(db.prepare('select request_count from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))?.request_count)>=40000},configuration:configurationStatus(config),leaveTypes:leaveCatalog(user),runs,canSync:hasRbac(user,'attendance.record.manage'),canStats:hasRbac(user,'attendance.stats.read'),canExport:hasRbac(user,'attendance.export'),usage:isAll?db.prepare('select * from attendance_api_usage where month=?').get(dayOf(clock()).slice(0,7))||null:null,identityIssues:isAll?db.prepare("select employee_no as employeeNo,name,identity_issue as issue from attendance_people where coalesce(identity_issue,'')<>''").all():[],historyWarning:'历史组织名单完整性待核实；API无法取得的历史记录不填零。'};
+  statusCache.set(statusKey,{value:statusValue});
+  while(statusCache.size>STATUS_CACHE_MAX)statusCache.delete(statusCache.keys().next().value);
+  return statusValue;
  }
  function changes(user,filters){permission(user,'attendance.read');const members=people(user,filters),ids=new Set(members.map(p=>p.personId)),s=scope(user);const dates=monthDates(filters.month);return db.prepare(`select c.* from attendance_changes c join personnel p on p.id=c.person_id where (${s.sql}) and c.work_date>=? and c.work_date<=? order by c.changed_at`).all(...s.params,dates[0],dates.at(-1)).filter(r=>ids.has(r.person_id));}
  async function tickLeaves(){if(busy||!config.workerEnabled||!configurationStatus(config).configured)return false;busy=true;let acquired=false;try{acquired=acquire();if(!acquired)return false;return await leave.tick();}finally{if(acquired)db.prepare("delete from attendance_leases where id='worker' and owner=?").run(owner);busy=false;}}
- return {approvalPlans,approvalPlanRefresh(user,body){return approvalPlans.request({...user,attendancePlanAll:all(user)},body);},approvalPlanDetails(user,filters={}){permission(user,'attendance.read');const data=snapshot(user,filters);return {month:data.month,people:data.people.map(p=>({personId:p.personId,name:p.name,employeeNo:p.employeeNo,approvalPlans:p.approvalPlans||[]}))};},tickLeaves,leave,config,enqueue,enqueueApprovalReasons,tick,hybrid,snapshot,status,changes,refreshLeaveTypes,displaySettings,saveDisplaySettings,start(){if(config.eventsEnabled&&configurationStatus(config).configured)stream.start();if(!timer){timer=setInterval(()=>tick().catch(()=>{}),1000);timer.unref();tick().catch(()=>{});}},stop(){stream.stop();clearInterval(timer);timer=null;},capabilityStatuses(user,personId){permission(user,'attendance.read');personnelAccess.requirePerson(user,'attendance',personId);return {enabled:false,personId,records:[],supportedKinds:['DEPLOYED','TRAINING','OTHER'],fields:['personId','kind','startDate','endDate','recordId','version']};}};
+ return {approvalPlans,approvalPlanRefresh(user,body){return approvalPlans.request({...user,attendancePlanAll:all(user)},body);},approvalPlanDetails(user,filters={}){permission(user,'attendance.read');const canStats=hasRbac(user,'attendance.stats.read');const data=snapshot(user,filters,canStats?'attendance.stats.read':'attendance.read',{detailLevel:canStats?'summary':'compact',includeApprovalPlans:true});return {month:data.month,people:data.people.map(p=>({personId:p.personId,name:p.name,employeeNo:p.employeeNo,approvalPlans:p.approvalPlans||[]}))};},tickLeaves,leave,config,enqueue,enqueueApprovalReasons,tick,hybrid,snapshot,status,changes,refreshLeaveTypes,displaySettings,saveDisplaySettings,start(){if(config.eventsEnabled&&configurationStatus(config).configured)stream.start();if(!timer){timer=setInterval(()=>tick().catch(()=>{}),1000);timer.unref();tick().catch(()=>{});}},stop(){stream.stop();clearInterval(timer);timer=null;},capabilityStatuses(user,personId){permission(user,'attendance.read');personnelAccess.requirePerson(user,'attendance',personId);return {enabled:false,personId,records:[],supportedKinds:['DEPLOYED','TRAINING','OTHER'],fields:['personId','kind','startDate','endDate','recordId','version']};}};
 }

@@ -3,13 +3,14 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import {fileURLToPath} from 'node:url';
 import {execFileSync,spawn} from 'node:child_process';
-import {LOCAL_DEVELOPMENT_PROFILES,requireDevelopmentBranch,localDevelopmentEnvironment,approvedLocalDevelopment,validateDevelopmentPaths} from '../local-development.mjs';
+import {LOCAL_DEVELOPMENT_PROFILES,requireDevelopmentBranch,localDevelopmentEnvironment,approvedLocalDevelopment,validateDevelopmentPaths,validateRegisteredDevelopmentWorktree} from '../local-development.mjs';
 
 const appDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),root=path.dirname(appDir);
 if(!(await fs.stat(path.join(root,'.git'))).isFile())throw new Error('仅允许从独立Git工作树启动本机开发服务');
 const branch=execFileSync('git',['symbolic-ref','--short','HEAD'],{cwd:root,encoding:'utf8'}).trim();
 if(branch==='main')throw new Error('不要从main启动开发服务，请切换到开发分支');
 const profile=requireDevelopmentBranch(branch,process.argv[2]);
+validateRegisteredDevelopmentWorktree(appDir,profile);
 if(process.argv.length>3||!Object.hasOwn(LOCAL_DEVELOPMENT_PROFILES,profile))throw new Error('请选择 info-rbac、maintenance-personnel 或 attendance-leave');
 const env=localDevelopmentEnvironment(appDir,profile,process.env);
 process.umask(0o077);

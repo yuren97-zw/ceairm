@@ -270,7 +270,7 @@ test('real ping/pong keeps quiet connection alive, second instance cannot replac
 });
 test('local scheduled endpoint changes status clockBoundary without calling DingTalk',async()=>{
  const f=fixture();await seed(f);const row=f.db.prepare("select * from attendance_days where person_id='p1' and work_date='2026-10-23'").get();const input=JSON.parse(row.input_json);input.points=[{planned:f.time+1000,type:'OffDuty'}];f.db.prepare('update attendance_days set input_json=? where person_id=? and work_date=?').run(JSON.stringify(input),'p1','2026-10-23');
- assert.equal(f.service.status(reader).clockBoundary,0);f.time+=1001;assert.equal(f.service.status(reader).clockBoundary,input.points[0].planned);assert.equal(f.calls.length,0);f.close();
+ assert.equal(f.service.status(reader).clockBoundary,0);f.time+=10001;assert.equal(f.service.status(reader).clockBoundary,input.points[0].planned);assert.equal(f.calls.length,0);f.close();
 });
 
 test('identical source rows reordered or duplicated by full/result endpoints do not create false change history',async()=>{
