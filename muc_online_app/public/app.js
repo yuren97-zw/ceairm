@@ -905,7 +905,7 @@ async function syncInformation(checkPermissions=false) {
       const x=window.scrollX,y=window.scrollY;
       state.records.sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.createdAt).localeCompare(String(a.createdAt)));
       renderRecords();renderHome();if(state.activeSubpage==='statsSubpage')renderStats();
-      for(const [id,note] of opened){const article=document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`);if(!article)continue;article.querySelector('.original-panel').hidden=false;article.querySelector('[data-toggle-panel]').textContent='收起原文';const n=article.querySelector('.read-note');if(n&&note){n.textContent=note;n.hidden=false;}}
+      for(const [id,note] of opened){const article=document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`);if(!article)continue;article.querySelector('.original-panel').hidden=false;article.querySelector('[data-toggle-panel]').textContent='收起原文';const m=article.querySelector('.metrics-row');if(m)m.hidden=false;const n=article.querySelector('.read-note');if(n&&note){n.textContent=note;n.hidden=false;}}
       window.scrollTo(x,y);
     }
     infoSyncStatus(infoRealtime.source?'实时同步':'自动同步');
@@ -2323,7 +2323,7 @@ function renderRecords() {
   $("#cards").innerHTML = pageItems.map(record => {
     const metrics = recordMetrics(record);
     const canManageFeedback = record.publishStatus !== "作废" && canManageFeedbackRecord(record);
-    const publisherLine = hasRbac("info.stats.read") && canManageFeedback ? `<span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span>` : "";
+    const metricsLine = hasRbac("info.stats.read") && canManageFeedback ? `<div class="metrics-row" hidden><span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span></div>` : "";
     const menu = state.user.id ? `<div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">
       <button class="item-btn" type="button" data-favorite="${escapeHtml(record.id)}">${favoriteService.isFavorite(record.id) ? "取消收藏" : "收藏"}</button>
       ${canEditRecord(record) ? `<button class="item-btn" type="button" data-edit-record="${escapeHtml(record.id)}">修改</button>` : ""}
@@ -2334,7 +2334,8 @@ function renderRecords() {
     </div></div>` : "";
     return `<article class="card" data-record-id="${escapeHtml(record.id)}" style="--category-color:${categoryColor(record)}">
       <div class="card-row"><h2 class="title"><span class="title-text">${highlight(record.title, term)}</span>${priorityTag(record)}${titleMeta(record)}</h2>${menu}</div>
-      <div class="card-row secondary"><span class="inline-status-tags">${statusTags(record)}</span>${recordMetaLine(record, publisherLine)}<span>·</span><button class="link-btn" type="button" data-toggle-panel>展开原文</button></div>
+      <div class="card-row secondary split"><div class="secondary-main"><span class="inline-status-tags">${statusTags(record)}</span>${recordMetaLine(record)}</div><button class="link-btn" type="button" data-toggle-panel>展开原文</button></div>
+      ${metricsLine}
       <div class="original-panel" hidden><div class="original">${highlight(record.original, term)}</div><div class="read-note" hidden></div><div class="attachment-slot">${renderAttachments(record, "record")}</div></div>
     </article>`;
   }).join("");
@@ -8719,6 +8720,8 @@ $("#cards").addEventListener("click", async event => {
       const willCollapse = !box.hidden;
       box.hidden = willCollapse;
       panelButton.textContent = box.hidden ? "展开原文" : "收起原文";
+      const metricsRow = article.querySelector(".metrics-row");
+      if (metricsRow) metricsRow.hidden = willCollapse;
       if (willCollapse && state.deferFilterRecordIds.has(record.id)) {
         clearDeferredReclassify(record.id);
         if (state.statusFilter === "未读") {
