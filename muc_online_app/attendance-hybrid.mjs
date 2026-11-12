@@ -64,9 +64,9 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
  // 同步 Postgres 往返（阻塞事件循环）。这些状态只在同一进程内写入，短 TTL 缓存可把
  // 一次请求的十余次查询降为 0～1 次，且 setState 立即更新缓存，不改变可见性语义。
  const stateCache=new Map(),STATE_CACHE_TTL_MS=500;
- const state=id=>{
+ const state=(id,options={})=>{
   const hit=stateCache.get(id);
-  if(hit&&hit.expiresAt>Date.now())return hit.value;
+  if(!options?.fresh&&hit&&hit.expiresAt>Date.now())return hit.value;
   const value=decode(db.prepare('select value_json from attendance_sync_state where id=?').get(id)?.value_json);
   stateCache.set(id,{value,expiresAt:Date.now()+STATE_CACHE_TTL_MS});
   return value;

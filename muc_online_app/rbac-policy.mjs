@@ -55,6 +55,10 @@ const maintenanceV2 = [
 ];
 
 const existing = [
+  ["attendance.offset.rules.manage", "管理考勤兑换规则与结算", "attendance"],
+  ["attendance.offset.submit", "本人申请及撤回考勤抵消", "attendance"],
+  ["attendance.offset.approve", "审批受派考勤抵消", "attendance"],
+  ["attendance.offset.responsibility.manage", "核实考勤班次责任与转办", "attendance"],
   ["personnel.organization.manage", "维护人员正式组织", "personnel"],
   ["personnel.qualification.manage", "维护执照授权培训", "personnel"],
   ["accounts.read", "查看登录账户", "accounts"], ["accounts.create", "开通登录账户", "accounts"],

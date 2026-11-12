@@ -2371,3 +2371,37 @@ test('leave directory metadata is visible to attendance readers and refresh cann
  assert.equal((await request('/api/attendance/leave-types/refresh',{method:'POST',cookie,body:{}})).res.statusCode,409);
  const user=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'leave-refresh-no-access',name:'假期目录无权用户'});const other=await request('/api/login',{method:'POST',body:{username:user.username,password:'muc2026'}}),otherCookie=String(other.res.headers['Set-Cookie']).split(';')[0];assert.equal((await request('/api/attendance/leave-types/refresh',{method:'POST',cookie:otherCookie,body:{}})).res.statusCode,403);
 });
+
+test('V1.4 public tasks require authentication and offset write paths fail closed without expanding attendance scope',async()=>{
+ assert.equal((await request('/api/action-tasks/count')).res.statusCode,401);
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const count=await request('/api/action-tasks/count',{cookie});assert.equal(count.res.statusCode,200);assert.equal(count.payload.count,0);
+ const summary=await request('/api/attendance/self/summary?personId=another',{cookie});assert.equal(summary.res.statusCode,200);assert.equal('people' in summary.payload,false);
+ const balance=await request('/api/attendance/offsets/balance',{cookie});assert.equal(balance.res.statusCode,200);assert.equal(balance.payload.available,null);
+ const write=await request('/api/attendance/offsets/rules',{cookie,method:'POST',body:{}});assert.ok([403,409].includes(write.res.statusCode));
+});
+
+test('R18 export refuses mixed versions even when another instance bypasses the local state cache',async()=>{
+ const {attendanceService}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const previous=db.prepare("select * from attendance_sync_state where id='dataVersion'").get();const original=attendanceService.changes;let attempts=0;
+ attendanceService.hybrid.state('dataVersion');
+ attendanceService.changes=(...args)=>{const result=original(...args);attempts++;db.prepare("insert into attendance_sync_state values('dataVersion',?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at").run(JSON.stringify('external-export-race-'+attempts),new Date().toISOString());return result;};
+ try{const req=Readable.from([]);req.method='GET';req.url='/api/attendance/export/html?month=2026-09';req.headers={host:'127.0.0.1:8788',origin:'http://127.0.0.1:8788',cookie};const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,409);assert.equal(attempts,3);assert.match(res.body.toString(),/重新导出/);}finally{attendanceService.changes=original;if(previous)db.prepare("update attendance_sync_state set value_json=?,updated_at=? where id='dataVersion'").run(previous.value_json,previous.updated_at);else db.prepare("delete from attendance_sync_state where id='dataVersion'").run();attendanceService.hybrid.state('dataVersion',{fresh:true});}
+});
+
+test('R18 export retries once then materializes matching uncached source metadata when updates settle',async()=>{
+ const {attendanceService}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const previous=db.prepare("select * from attendance_sync_state where id='dataVersion'").get();const original=attendanceService.changes;let attempts=0;
+ attendanceService.hybrid.state('dataVersion');attendanceService.changes=(...args)=>{const result=original(...args);if(++attempts===1)db.prepare("insert into attendance_sync_state values('dataVersion',?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at").run(JSON.stringify('external-export-settled'),new Date().toISOString());return result;};
+ try{const req=Readable.from([]);req.method='GET';req.url='/api/attendance/export/html?month=2026-09';req.headers={host:'127.0.0.1:8788',origin:'http://127.0.0.1:8788',cookie};const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,200);assert.equal(attempts,2);const data=JSON.parse(res.body.toString().match(/<script id="attendanceSeed" type="application\/json">([\s\S]*?)<\/script>/)[1]);assert.equal(data.sourceVersion.dataVersion,'external-export-settled');assert.equal(data.dataVersion,'external-export-settled');assert.equal(typeof data.offsetVersion,'number');assert.equal(typeof data.ledgerVersion,'number');}finally{attendanceService.changes=original;if(previous)db.prepare("update attendance_sync_state set value_json=?,updated_at=? where id='dataVersion'").run(previous.value_json,previous.updated_at);else db.prepare("delete from attendance_sync_state where id='dataVersion'").run();attendanceService.hybrid.state('dataVersion',{fresh:true});}
+});
+
+test('initialization HTTP preview is read-only and confirm respects default-off writes',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];const person=db.prepare('select id from personnel limit 1').get();assert.ok(person);
+ const body={personIds:[person.id]},before=db.prepare('select count(*) n from attendance_offset_rules').get().n;
+ assert.equal((await request('/api/attendance/offsets/initialization/preview',{method:'POST',body})).res.statusCode,401);
+ const preview=await request('/api/attendance/offsets/initialization/preview',{method:'POST',cookie,body});assert.equal(preview.res.statusCode,200);assert.equal(typeof preview.payload.previewHash,'string');assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
+ const confirm=await request('/api/attendance/offsets/initialization/confirm',{method:'POST',cookie,body:{...body,previewHash:preview.payload.previewHash}});assert.equal(confirm.res.statusCode,409);assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
+});

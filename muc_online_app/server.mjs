@@ -1,5 +1,6 @@
+import { createOffsetService } from './attendance-offset-service.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
-import {attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
 import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
@@ -7005,9 +7006,52 @@ async function routeRequest(req, res) {
     }
     if (!url.pathname.startsWith("/api/")) return serveStatic(req, res);
 
+    if(url.pathname.startsWith('/api/action-tasks')){
+      const actor=requireLogin(req,res);if(!actor)return;
+      if(method==='GET'&&url.pathname==='/api/action-tasks/count')return send(res,200,offsetService.tasks.count(actor));
+      if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
+      return send(res,404,{error:'接口不存在'});
+    }
+    if(url.pathname.startsWith('/api/attendance/offsets')){
+      let actor=requireLogin(req,res);if(!actor)return;
+      const path=url.pathname.slice('/api/attendance/offsets'.length),month=url.searchParams.get('month')||new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,7);
+      if(method==='GET'&&path==='/balance')return send(res,200,offsetService.balance(actor,month));
+      if(method==='GET'&&path==='/ledger')return send(res,200,offsetService.ledger(actor,month));
+      if(method==='GET'&&path==='/routing-issues')return send(res,200,offsetService.routingIssues(actor));
+      if(method==='GET'&&path==='/responsibility-candidates')return send(res,200,offsetService.responsibilityCandidates(actor));
+      if(method==='GET'&&path==='/state')return send(res,200,offsetService.state(actor));
+      if(method==='GET'&&path==='/rules')return send(res,200,offsetService.rules(actor));
+      if(method==='GET'&&path==='/requests')return send(res,200,offsetService.ownRequests(actor,{month,limit:Number(url.searchParams.get('limit')||20),cursor:url.searchParams.get('cursor')}));
+      if(method==='GET'&&/^\/requests\/[^/]+$/.test(path))return send(res,200,offsetService.detail(actor,path.split('/')[2]));
+      if(method==='POST'){
+       const body=await bodyJson(req),key=req.headers['idempotency-key'];
+       if(!body||typeof body!=='object'||Array.isArray(body))return send(res,400,{error:'请提交有效对象'});
+       const current=requireLogin(req,res);if(!current)return;
+       if(current.id!==actor.id||current.personId!==actor.personId)return send(res,409,{error:'登录身份已变化，请刷新'});actor=current;
+       if(path==='/initialization/preview')return send(res,200,offsetService.initializationPreview(actor,body));
+       if(path==='/initialization/confirm')return send(res,200,offsetService.initializationConfirm(actor,body,key));
+       if(path==='/rules')return send(res,200,offsetService.saveRule(actor,body,key));
+       if(path==='/trial')return send(res,200,offsetService.trial(actor,body));
+       if(path==='/issue')return send(res,200,offsetService.issue(actor,body,key));
+       if(path==='/responsibility')return send(res,200,offsetService.confirmResponsibility(actor,body,key));
+       if(path==='/reconcile')return send(res,200,offsetService.reconcile(actor,body.personId,body.date,key));
+       if(path==='/requests')return send(res,201,offsetService.submit(actor,body,key));
+       const match=/^\/requests\/([^/]+)\/(decide|withdraw|transfer)$/.exec(path);
+       if(match)return send(res,200,offsetService[match[2]](actor,match[1],body,key));
+      }
+      return send(res,404,{error:'接口不存在'});
+    }
     if (url.pathname.startsWith('/api/attendance/')) {
       const actor = requireRbacPermission(req,res,'attendance.read'); if(!actor)return;
       const filters=Object.fromEntries(['month','query','department','team','personId'].map(k=>[k,url.searchParams.get(k)||'']));
+      if(method==='GET'&&['schedule','issues','accumulation'].some(kind=>url.pathname==='/api/attendance/self/'+kind)){
+        const kind=url.pathname.split('/').at(-1),data=attendanceService.selfDetails(actor,kind);return send(res,200,offsetService.decorate({...data,people:actor.personId?[{personId:actor.personId,days:data.days}]:[]}));
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/self/leaves'){
+        if(!actor.personId)return send(res,200,{status:'identity_unbound',people:[]});
+        return send(res,200,attendanceService.leave.snapshot(actor,{personId:actor.personId},'attendance.read'));
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/self/summary'){const summary=attendanceService.selfSummary(actor),effective=summary.month?offsetService.effectiveMissingDates(actor,summary.month):[],effectiveExceptions=summary.month?offsetService.effectiveExceptionDates(actor,summary.month):[];return send(res,200,{...summary,exceptionOffsetCount:effectiveExceptions.filter(date=>(summary.exceptionDates||[]).includes(date)).length,missingOffsetCount:effective.filter(date=>(summary.missingDates||[]).includes(date)).length,credits:offsetService.balance(actor),...offsetService.versions()});}
       if(url.pathname.startsWith('/api/attendance/leave-balances')){
         const f={month:url.searchParams.get('month')||'',year:url.searchParams.get('year'),query:url.searchParams.get('query')||'',department:url.searchParams.get('department')||'',team:url.searchParams.get('team')||'',personId:url.searchParams.get('personId')||'',group:url.searchParams.get('group')||''};
         if(method==='GET'&&url.pathname==='/api/attendance/leave-balances'){const data=attendanceService.leave.snapshot(actor,f);if(attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...f,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}return send(res,200,data);}
@@ -7025,13 +7069,13 @@ async function routeRequest(req, res) {
       if(method==='POST'&&url.pathname==='/api/attendance/approval-plans/refresh')return send(res,202,attendanceService.approvalPlanRefresh(actor,await bodyJson(req)));
       if(method==='GET' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.displaySettings(actor));
       if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
-      if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,attendanceService.status(actor));
+      if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,{...attendanceService.status(actor),...offsetService.versions()});
       if(method==='GET' && ['/api/attendance/days','/api/attendance/summary','/api/attendance/exceptions','/api/attendance/person'].includes(url.pathname)){
         const detailLevel=url.searchParams.get('view')||'full',timings=[];
         if(!['full','summary','compact'].includes(detailLevel))return send(res,400,{error:'考勤明细级别无效'});
         if(url.pathname.endsWith('/person')&&!filters.personId)return send(res,400,{error:'请选择人员'});
-        const snapshot=attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read',{detailLevel,onTiming:(name,ms)=>timings.push(`${name};dur=${ms.toFixed(1)}`)}),hasRbac(actor,'attendance.stats.read'));
-        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:(p.days||[]).filter(d=>!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))}));
+        const snapshot=offsetService.decorate(attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read',{detailLevel,onTiming:(name,ms)=>timings.push(`${name};dur=${ms.toFixed(1)}`)}),hasRbac(actor,'attendance.stats.read')));
+        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:(p.days||[]).filter(attendanceIssueDay)}));
         return send(res,200,snapshot,{'Server-Timing':timings.join(', ')});
       }
       if(method==='POST' && url.pathname==='/api/attendance/approval-reasons/backfill')return send(res,202,attendanceService.enqueueApprovalReasons(actor,await bodyJson(req)));
@@ -7049,11 +7093,21 @@ async function routeRequest(req, res) {
           if(!Array.isArray(categories)||categories.length>100||categories.some(c=>typeof c!=='string'||!c.trim()||c.length>100))return send(res,400,{error:'类别筛选格式无效'});
           selected.categories=[...new Set(categories)];
         }
-        const snapshot=attendanceService.snapshot(actor,selected,'attendance.export');
+        const watermark=()=>({source:db.prepare("select id,value_json from attendance_sync_state where id in ('dataVersion','approvalPlanVersion','leaveVersion') order by id").all(),offsets:offsetService.versions(),principal:db.prepare('select id,person_id,status,credential_version from users where id=?').get(actor.id)});
+        let snapshot,exportExtras,stable=false;
+        for(let attempt=0;attempt<3;attempt++){
+         const before=watermark(),exportActor=currentUser(req);
+         if(!exportActor.id)return send(res,401,{error:'登录已失效，请重新登录'});
+         if(!hasRbac(exportActor,'attendance.read')||!hasRbac(exportActor,'attendance.export'))return send(res,403,{error:'当前账号没有导出权限'});
+         snapshot=offsetService.decorate(attendanceService.snapshot(exportActor,selected,'attendance.export',{fresh:true}));
         if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){snapshot.people=snapshot.people.map(p=>attendanceService.approvalPlans.decorate(p,snapshot.month));snapshot.categories=attendanceOrderedCategories([...new Set([...snapshot.categories,...snapshot.people.flatMap(p=>Object.keys(p.pendingCounts||{}))])]);}
+         exportExtras={changes:attendanceService.changes(exportActor,{...selected,month:snapshot.month}),runs:attendanceService.status(exportActor).runs};
+         if(JSON.stringify(before)===JSON.stringify(watermark())){snapshot=JSON.parse(JSON.stringify(snapshot));snapshot.sourceVersion=Object.fromEntries(before.source.map(row=>[row.id,JSON.parse(row.value_json)]));snapshot.dataVersion=snapshot.sourceVersion.dataVersion||'';snapshot.offsetVersion=before.offsets.offsetVersion||0;snapshot.ledgerVersion=before.offsets.ledgerVersion||0;exportExtras=JSON.parse(JSON.stringify(exportExtras));stable=true;break;}
+        }
+        if(!stable)return send(res,409,{error:'数据正在变化，请稍后重新导出'});
         snapshot.exportScope=exportScope==='all'?'全部有权查看人员':'当前筛选人员';snapshot.filters=selected;
         const format=url.pathname.endsWith('/xlsx')?'xlsx':'html';
-        const body=format==='xlsx'?attendanceXlsx(snapshot,{changes:attendanceService.changes(actor,{...selected,month:snapshot.month}),runs:attendanceService.status(actor).runs}):Buffer.from(attendanceHtml(snapshot));
+        const body=format==='xlsx'?attendanceXlsx(snapshot,exportExtras):Buffer.from(attendanceHtml(snapshot));
         audit(actor,'attendance_export','attendance',snapshot.month,JSON.stringify({format,people:snapshot.people.length,scope:exportScope}));
         return sendBinary(res,200,body,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="attendance-${snapshot.month}.${format}"`});
       }
@@ -9048,7 +9102,18 @@ installPersonnelDeletionGuards(db);
 db.exec(IMPORT_WORKSPACE_SCHEMA);
 capabilityService.init();
 installInfoSync(db);
-const attendanceService = createAttendanceService({ db, personnelAccess, hasRbac, audit, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+let lastOffsetMaintenance=0;
+const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<60000)return;lastOffsetMaintenance=Date.now();try{offsetService.drain(offsetSystemActor);offsetService.repairTasks(offsetSystemActor);offsetService.settleDue(offsetSystemActor);}catch{ /* Keep durable ranges for retry; writes remain disabled unless explicitly configured. */ }}, db, personnelAccess, hasRbac, audit, onSourceUpdated:(personId,date)=>{try{offsetService.markDirty(personId,date);offsetService.drain(offsetSystemActor);}catch{ /* Durable dirty range remains for the next successful source update. */ }}, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+const offsetSystemActor={id:'system-attendance-offset'};
+function currentOffsetActor(user){
+ if(user===offsetSystemActor)return user;
+ const row=db.prepare('select * from users where id=?'+(db.kind==='postgres'?' for share':'')).get(user?.id||'');
+ if(!row||row.status!=='active'||isDeletedAccountPerson(row)||row.person_id!==user.personId||Number(row.credential_version||1)!==Number(user.credentialVersion||1))return null;
+ return toUser(row);
+}
+
+const offsetService=createOffsetService({db,hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
+
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
 let infoVersion=infoSync.latest(),infoHeartbeat=Date.now();

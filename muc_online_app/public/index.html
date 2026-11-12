@@ -26,7 +26,8 @@
     @media print{body>*:not(.print-area){display:none!important}.print-area{display:block!important;padding:24px}.print-area h1{font-size:22px}.print-area .rich-view{border:0;background:#fff;padding:0}.print-area .references{border:0;padding:0}}
     @media(max-width:720px){.metric-grid{grid-template-columns:repeat(2,1fr)}.settings-grid,.stats-layout{grid-template-columns:1fr}.stats-toolbar{grid-template-columns:1fr 1fr}.stats-toolbar .search{grid-column:1/-1}.stats-toolbar .btn{grid-column:auto}.table-row{grid-template-columns:1fr .75fr .75fr}.table-row span:nth-child(4),.table-row span:nth-child(5){display:none}.import-box input[type=file],.import-box .btn{width:100%;max-width:100%}.form-actions{justify-content:stretch}.form-actions .btn{flex:1;min-width:0}}
     @media(max-width:520px){body{padding-bottom:56px}.tab-wrap{padding:6px 8px;gap:4px;grid-template-columns:repeat(4,minmax(0,1fr)) auto}.top-tab{font-size:12px;padding:7px 2px}.top-auth{gap:3px}.top-auth .btn{padding:5px 7px;font-size:11px}.wrap{padding:10px 12px}.titlebar{gap:6px}.info-titlebar{grid-template-columns:auto minmax(0,1fr) auto}.menu-btn{width:34px;height:34px;border-radius:9px;font-size:15px}.subpage-menu{top:39px;min-width:124px}.actions{gap:4px}.btn{padding:6px 7px;font-size:12px}.search{font-size:13px;padding:9px 10px}.chips,.filter-strip{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.chip{font-size:12px;padding:5px 8px;flex:0 0 auto}.select-pill{font-size:12px;flex:0 0 auto}.grid{gap:7px}.card{min-height:82px;padding:10px 10px 10px 14px}.publisher{max-width:72px}.record-metrics{max-width:150px}.recipient-tools{grid-template-columns:minmax(82px,1fr) minmax(64px,.78fr) minmax(64px,.78fr);gap:5px}.recipient-tools input{grid-column:1/-1}.recipient-tools select,.recipient-tools .btn{width:100%;padding-left:6px;padding-right:6px;text-align:center}.recipient-options{height:190px;max-height:190px}.original,.rich-view{font-size:15px;line-height:1.68;padding:11px}.viewer{width:96vw;height:88vh}.viewer-content iframe,.viewer-content video{min-height:64vh}.pager-inner{padding:7px 10px;justify-content:flex-start;overflow-x:auto}.pager-left,.pager-right{flex:0 0 auto}.pager-text,.page-btn{font-size:11px}.page-btn{min-width:28px;height:28px;padding:0 8px}.module-head{align-items:flex-start;flex-wrap:wrap}.module-head h1{font-size:21px}.stats-actions{justify-content:flex-start}.stats-table-row{min-width:680px}.stats-toolbar{grid-template-columns:1fr}.stats-toolbar .btn{grid-column:auto}.stats-date{width:100%}.metric strong{font-size:20px}}
-  </style>
+  .offset-credit-values{display:flex;justify-content:center;align-items:center;gap:2px}.offset-credit-values button{border:0;background:none;color:inherit;min-height:44px;padding:2px;font:inherit}
+</style>
 	  <style>
 	    body.app-booting,body.app-locked{padding-bottom:0!important}
 	    body.app-booting .top-tabs,body.app-booting .page,body.app-booting #pager,body.app-booting #loginPage{display:none!important}
@@ -1736,6 +1737,13 @@
   .home-module-divider{flex:none;width:1px;background:#E5E5EA;margin:8px 0}
   .home-module-metrics{flex:1 1 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));min-width:0}
   .home-metric-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;padding:9px 2px;border:0;background:none;cursor:pointer;font-family:inherit}
+  #homeAttendanceModule .offset-credit-values{display:flex;justify-content:center;align-items:center;gap:2px;overflow:visible}
+  #homeAttendanceModule .offset-credit-values button{position:relative;border:0;background:none;color:inherit;min-height:0;height:20px;padding:0 2px;font:inherit;line-height:1.25}
+  #homeAttendanceModule .offset-credit-values button::after{content:"";position:absolute;left:0;right:0;top:50%;height:44px;transform:translateY(-50%)}
+  #homeAttendanceModule .home-metric-item{display:grid;grid-template-rows:14px 20px;align-content:center;justify-items:center;row-gap:2px;padding-top:5px;padding-bottom:5px;min-height:60px}
+  #homeAttendanceModule .home-metric-value{display:flex;align-items:center;justify-content:center;height:20px;line-height:1.25}
+  #homeAttendanceModule .home-metric-value .home-exception-number{color:#D92D20}
+  #homeAttendanceModule .home-metric-value .home-offset-number{color:#16803c}
   .home-metric-item[disabled]{cursor:default}
   .home-metric-name{font-size:11px;color:#77777D;line-height:1.25;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .home-metric-value{font-size:13px;font-weight:600;color:#1D1D1F;line-height:1.25;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -2100,7 +2108,7 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("/sw.js").then(registration => {
-          registration.update();
+          return registration.update();
         }).catch(() => {});
       });
       let pwaReloading = false;

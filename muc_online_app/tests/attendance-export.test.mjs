@@ -50,3 +50,12 @@ test('xlsx colors every positive category count and leaves zeros unfilled',()=>{
 test('24-hour and night shifts each earn one 25 yuan allowance; new private approval text never enters XLSX',()=>{
  const s=sample();s.people[0].days[0].category='24小时班';s.people[0].counts={'24小时班':1,'夜班':1,'未同步':28};s.categories=['24小时班','夜班','未同步'];const a={kind:'请假',reason:'PRIVATE-HEALTH-CANARY'};s.people[0].days[0].input.approvals=[a];s.people[0].days[0].input.raw={approvals:[a]};const changes=[{person_id:'p1',before_json:JSON.stringify({approvals:[a]}),after_json:JSON.stringify({raw:{approvals:[a]}})}];assert.equal(exportTables(s).find(t=>t[0]==='夜班值班统计表')[1][1].at(-2),50);const xml=Object.values(unzip(exportXlsx(s,{changes}))).join('');assert.ok(!xml.includes('PRIVATE-HEALTH-CANARY'));assert.ok(exportHtml(s).includes('PRIVATE-HEALTH-CANARY'));
 });
+
+test('V1.4 exports retain original numeric category counts, adjacent item columns and same-cell read-only labels',()=>{
+ const s=sample();s.offsetVersion=1;s.ledgerVersion=2;s.categories.push('缺卡');
+ const p=s.people[0];p.days[0].category='缺卡';p.days[0].offset={label:'已抵消',approved:1,pending:0,items:[{eventId:'stable',type:'day_off_missing',effective:1}]};p.counts={'夜班':1,'缺卡':1,'未同步':28};p.offsetCounts={'缺卡':1};p.offsetTotal=1;
+ const before=JSON.stringify(p.days[0].input),tables=exportTables(s),summary=tables.find(t=>t[0]==='人员汇总')[1],detail=tables.find(t=>t[0]==='逐日明细')[1],matrix=tables.find(t=>t[0]==='逐日明细（横版）')[1];
+ assert.equal(tables.length,11);assert.equal(summary[1][summary[0].indexOf('缺卡')],1);assert.equal(summary[1][summary[0].indexOf('缺卡已抵消（项）')],1);assert.equal(summary[1][summary[0].indexOf('全部有效抵消（项）')],1);
+ assert.equal(detail[1][detail[0].indexOf('最终类别')],'缺卡');assert.equal(detail[1][detail[0].indexOf('内部抵消状态')],'已抵消');assert.match(matrix[1][3],/^缺卡\n已抵消/);
+ const files=unzip(exportXlsx(s));assert.match(files['xl/worksheets/sheet1.xml'],/缺卡已抵消/);assert.match(exportHtml(s),/已抵消/);assert.equal(JSON.stringify(p.days[0].input),before);
+});

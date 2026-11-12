@@ -1,5 +1,5 @@
 export const leaveGroups=['公休假','山东省育儿假','婚假','陪产假'];
-export const publicLeaveNames=['公休假','固定班制公休假','非固定班制公休假','公休假（2025年度延长）'];
+export const publicLeaveNames=['公休假','固定班制公休假','非固定班制公休假'];
 export const leaveGroup=name=>publicLeaveNames.includes(name)?'公休假':leaveGroups.includes(name)?name:null;
 export const leaveNote='按钉钉额度扣减口径，不等同已实际休假天数；包含平台已扣减的未来已批准休假。年度以钉钉额度周期为准，不从假种名称推断。';
 export function normalizeLeaveData(quotas,records,code,userId){
@@ -25,6 +25,7 @@ export function normalizeLeaveData(quotas,records,code,userId){
  return {quotas:[...qmap.values()],records:[...rmap.values()]};
 }
 export function leaveCell(sources,year,group,now=Date.now()){
+ sources=sources.filter(s=>leaveGroup(s.name));
  const relevant=sources.filter(s=>leaveGroup(s.name)===group),quotaMap=new Map(),records=new Map(),issues=[];
  for(const s of relevant){for(const q of s.quotas){if(q.year!==year)continue;const prior=quotaMap.get(q.id);if(prior){if(JSON.stringify(prior.values)!==JSON.stringify(q.values)||prior.start!==q.start||prior.end!==q.end)issues.push('共享额度数据冲突：'+q.id);prior.names=[...new Set([...prior.names,s.name])];}else quotaMap.set(q.id,{...q,names:[s.name]});}
   for(const r of s.records){const previous=records.get(r.id);if(previous&&JSON.stringify(previous.values)!==JSON.stringify(r.values))issues.push('重复记录数据冲突：'+r.id);else records.set(r.id,{...r,name:s.name});}
