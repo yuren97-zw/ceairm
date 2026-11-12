@@ -33,3 +33,6 @@
 .att-leave-head{display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin-bottom:12px}.att-leave-head label{min-width:0}.att-leave-head select,.att-leave-head button{min-height:40px;max-width:100%}.att-leave-value{text-align:left;white-space:normal;min-width:150px;line-height:1.6}.attendance [data-leave-root]{min-width:0}.attendance [data-leave-root] .att-table{max-width:100%}
 
 .att-plan-dot{font-size:.55em;margin-left:.28em;color:var(--att-tone-fg,#607d8b);vertical-align:super;opacity:.8}.att-plan-pending{font-size:11px;color:#687c8f;white-space:normal}
+
+/* Exception explanations and processing stay readable inside the scrolling table. */
+.attendance.att-issues-active #attContent .att-table td:nth-child(n+4){white-space:normal;min-width:160px;max-width:320px;overflow-wrap:anywhere}

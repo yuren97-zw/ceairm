@@ -1,4 +1,4 @@
-export const attendanceExcludedCategories=['新冠关爱假'];
+export const attendanceExcludedCategories=['新冠关爱假','公休假（2025年度延长）'];
 export const attendanceCategoryAllowed=name=>!attendanceExcludedCategories.includes(String(name??'').trim());
 export const attendanceTones={
  day:{key:'day',foreground:'#15566c',background:'#cdeaf5'},
@@ -29,7 +29,7 @@ export function attendanceTone(category,leaves=[]){
  if(leaves.includes(category)){let hash=0;for(const c of category)hash=(hash*31+c.codePointAt(0))>>>0;return attendanceTones['leave'+hash%leavePalette.length];}
  return attendanceTones.neutral;
 }
-export const attendanceFixedCategoryOrder=['白班','休息','夜班','24小时班','待核对','未同步','缺卡','外出','跟班','出差','派驻','培训','早退','迟到','调休','公休假','婚假','山东省育儿假','病假','事假','陪产假','探亲假','产假','丧假','例假','父母护理假','产检假','产前假','女工哺乳假','非固定班制公休假','固定班制公休假','公休假（2025年度延长）','工伤假','无记录','未来日期'];
+export const attendanceFixedCategoryOrder=['白班','休息','夜班','24小时班','待核对','未同步','缺卡','外出','跟班','出差','派驻','培训','早退','迟到','调休','公休假','婚假','山东省育儿假','病假','事假','陪产假','探亲假','产假','丧假','例假','父母护理假','产检假','产前假','女工哺乳假','非固定班制公休假','固定班制公休假','工伤假','无记录','未来日期'];
 export function attendanceOrderedCategories(categories){
  const available=new Set(categories.filter(attendanceCategoryAllowed)),known=new Set(attendanceFixedCategoryOrder);
  const extra=[...available].filter(c=>!known.has(c)).sort((a,b)=>a.localeCompare(b,'zh-CN')||(a<b?-1:a>b?1:0));
@@ -77,3 +77,18 @@ export function attendanceLeaveCatalogText(catalog){
  if(catalog.status==='stale')return `假期目录本次未更新，保留上次成功目录及历史审批假种：${names}。${catalog.error||''}；目录完整性待刷新。`;
  return `完整假期目录尚未读取，暂展示已同步审批中出现过的假种：${names}。${catalog.error||'请在同步状态中刷新假期目录'}。`;
 }
+
+export function attendanceIssueDay(day){return !['未同步','未来日期','尚未到下班时间'].includes(day.category)&&(['迟到','严重迟到','早退','旷工迟到','旷工','缺卡','待核对','待核实'].includes(day.category)||day.issues?.length>0||!!day.syncError);}
+export function attendanceProcessingLines(day){
+ const items=(day.offset?.items||[]).filter(i=>i.requestId);if(!items.length)return [{result:'未申请',approver:'—'}];
+ return items.map((i,n)=>{const effective=i.decision==='approved'&&i.effective&&i.active!==0;
+ const result=i.requestStatus==='ambiguous'?'处理记录待核对':i.requestStatus==='withdrawn'?'已撤回':i.requestStatus==='source_invalid'?'抵消失效':effective?(day.offset?.label==='部分已抵消'?'部分已抵消':'已抵消'):i.decision==='approved'?'抵消失效':({pending:'申请中',rejected:'已拒绝',withdrawn:'已撤回',source_invalid:'抵消失效'})[i.decision]||({withdrawn:'已撤回',source_invalid:'抵消失效'})[i.requestStatus]||'未申请';
+ const label=items.length>1?`${n+1}. ${i.type==='day_off_early'?'下班早退':'下班缺卡'} · `:'';
+ return {result:label+result,approver:label+(i.decision==='pending'&&i.requestStatus==='pending'?`待审批：${i.assigneeName||'姓名未取得'}`:i.approverName||'—')};});
+}
+export function attendanceProcessingCells(day,escape){const lines=attendanceProcessingLines(day);return ['result','approver'].map(key=>lines.map(line=>`<div>${escape(line[key])}</div>`).join(''));}
+
+const attendanceBadgeEscape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export function attendanceCategoryBadge(category,leaves=[]){const tone=attendanceTone(category,leaves);return `<span class="att-tag att-tone" style="--att-tone-bg:${tone.background};--att-tone-fg:${tone.foreground};--att-tone-border:${tone.border||tone.background}">${attendanceBadgeEscape(category)}</span>`;}
+export const attendanceBadgeStyles='.attendance .att-tag.att-tone,.offset-table-sheet .att-tag.att-tone{display:inline-block;padding:3px 8px;border-radius:5px;border:1px solid var(--att-tone-border);background:var(--att-tone-bg);color:var(--att-tone-fg);font-size:12px;font-weight:600;white-space:nowrap;line-height:1.55}';
+export function ensureAttendanceBadgeStyles(doc){if(!doc?.getElementById||doc.getElementById('attendance-shared-badge-style'))return;const style=doc.createElement('style');style.id='attendance-shared-badge-style';style.textContent=attendanceBadgeStyles;doc.head.append(style);}

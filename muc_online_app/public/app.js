@@ -1,3 +1,8 @@
+let pendingHomeDayTarget=null;
+let offsetUiImport=null;
+const offsetUi=()=>offsetUiImport||(offsetUiImport=import('./attendance-offset-ui.mjs'));
+const openActionTasks=(...args)=>offsetUi().then(module=>module.openActionTasks(...args));
+const openPersonalAttendance=(...args)=>offsetUi().then(module=>module.openPersonalAttendance(...args));
 let attendanceModule = null, attendanceImport = null;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -300,6 +305,7 @@ async function navigate(path, options = {}) {
 }
 
 function showLoginPage(message = "") {
+  resetHomeAttendanceSession();
   state.user = emptyUser();
   setAppMode("locked");
   $("#loginPage").hidden = false;
@@ -1992,6 +1998,7 @@ const homeDataService = {
   attendanceSeq: 0,
   attendanceUser: "",
   attendanceAt: 0,
+  attendanceLoadingUser: "",
   maintenanceSeq: 0,
   maintenanceUser: "",
   maintenanceAt: 0,
@@ -2001,48 +2008,51 @@ const homeDataService = {
       state.homeAttendanceState = "";
       return true;
     }
+    const identity = state.user.id;
+    if (this.attendanceUser !== identity && this.attendanceLoadingUser !== identity) {
+      state.homeAttendance = null;
+      state.homeAttendanceState = "";
+      state.homeAttendanceError = "";
+    }
     const fresh = this.attendanceUser === state.user.id && Date.now() - this.attendanceAt < 60000;
-    if (state.homeAttendanceState === "loading" || (fresh && !force)) return true;
+    if ((state.homeAttendanceState === "loading" && this.attendanceLoadingUser === identity) || (fresh && !force)) return true;
     const seq = ++this.attendanceSeq;
+    this.attendanceLoadingUser = identity;
     state.homeAttendanceState = "loading";
     renderHome();
     try {
       const month = maintenanceLocalDateValue().slice(0, 7);
-      const [daysData, leaveData] = await Promise.all([
-        apiRequest(`/attendance/days?month=${encodeURIComponent(month)}&view=compact`),
-        apiRequest(`/attendance/leave-balances?year=${encodeURIComponent(month.slice(0, 4))}&month=${encodeURIComponent(month)}`)
-      ]);
-      if (seq !== this.attendanceSeq) return true;
-      const people = daysData.people || [];
-      const me = people.find(person => person.personId && person.personId === state.user.personId)
-        || people.find(person => person.employeeNo && person.employeeNo === state.user.employeeNo)
-        || (people.length === 1 ? people[0] : null);
-      if (!me) {
+      const summary = await apiRequest('/attendance/self/summary');
+      if (seq !== this.attendanceSeq || state.user?.id !== identity) return true;
+      if (summary.status !== 'ready') {
         state.homeAttendance = null;
-        state.homeAttendanceState = "empty";
+        state.homeAttendanceState = summary.status === 'identity_unbound' ? 'unbound' : 'empty';
       } else {
-        const today = maintenanceLocalDateValue();
-        const todayRow = (me.days || []).find(day => day.date === today);
-        const issueCount = (me.days || []).filter(day => !["未同步", "未来日期", "尚未到下班时间"].includes(day.category)
-          && (day.category === "待核对" || day.category === "缺卡" || (day.issues || []).length > 0 || day.syncError)).length;
-        const leaveCells = ((leaveData.people || []).find(person => person.personId === me.personId)?.cells) || [];
-        const leaveRemaining = group => leaveCells.filter(cell => cell.group === group)
-          .reduce((sum, cell) => sum + Number(cell.values?.remaining ?? 0), 0);
-        state.homeAttendance = {
-          schedule: todayRow?.category || "",
-          issueCount,
-          publicLeave: leaveRemaining("公休假"),
-          childcareLeave: leaveRemaining("山东省育儿假"),
-          overtimeSeconds: me.overtimeSeconds
-        };
-        state.homeAttendanceState = "ready";
+        state.homeAttendance = {...summary, publicLeave:'—', childcareLeave:'—'};
+        state.homeAttendanceState = 'ready';
+        // Holiday failure does not erase a successful attendance summary.
+        apiRequest('/attendance/self/leaves').then(leaveData => {
+          if (seq !== this.attendanceSeq || state.user?.id !== identity) return;
+          const cells = leaveData.people?.[0]?.cells || [];
+          const text = group => {
+            const cell = cells.find(c => c.group === group);
+            if (!cell || cell.coverage !== 'complete' || !cell.units?.length || cell.issues?.some(message=>message.includes('数据冲突'))) return '—';
+            return cell.units.map(v => `${Math.max(0, v.remaining - v.unavailable)}${v.unit}`).join('·');
+          };
+          const labels={'公休假':'公','山东省育儿假':'育','婚假':'婚','陪产假':'陪'};
+          const available=cells.filter(c=>c.coverage==='complete'&&c.units?.length&&!c.issues?.some(message=>message.includes('数据冲突'))).flatMap(c=>c.units.filter(u=>u.remaining-u.unavailable>0).map(u=>`${labels[c.group]||c.group}${u.remaining-u.unavailable}${u.unit}`));
+          const complete=cells.length===4&&cells.every(c=>c.coverage==='complete'&&c.units?.length&&!c.issues?.some(message=>message.includes('数据冲突')));
+          const leaveSummary=available.length?available.slice(0,2).join('·')+(available.length>2?`+${available.length-2}`:'')+(complete?'':'·…'):complete?'无可用':'—';
+          state.homeAttendance = {...state.homeAttendance, publicLeave:text('公休假'), childcareLeave:text('山东省育儿假'),leaveSummary};
+          renderHome();
+        }).catch(() => {});
       }
       this.attendanceUser = state.user.id;
       this.attendanceAt = Date.now();
       renderHome();
       return true;
     } catch (error) {
-      if (seq !== this.attendanceSeq) return true;
+      if (seq !== this.attendanceSeq || state.user?.id !== identity) return true;
       if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
       state.homeAttendanceState = "error";
       state.homeAttendanceError = error.message || "考勤数据读取失败";
@@ -2087,7 +2097,30 @@ const homeDataService = {
   }
 };
 
+let homeTaskSequence=0,homeRefreshTimer=null;
+function resetHomeAttendanceSession(){
+ homeDataService.attendanceSeq++;homeDataService.attendanceUser='';homeDataService.attendanceLoadingUser='';homeDataService.attendanceAt=0;
+ state.homeAttendance=null;state.homeAttendanceState='';state.homeAttendanceError='';pendingHomeDayTarget=null;homeTaskSequence++;
+ clearTimeout(homeRefreshTimer);homeRefreshTimer=null;const button=document.querySelector('#homeActionTasks');if(button)button.hidden=true;
+ if(offsetUiImport)offsetUiImport.then(module=>module.closeOffsetSheets());
+}
+
+function scheduleHomeRefresh(){
+ if(homeRefreshTimer||document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;
+ homeRefreshTimer=setTimeout(()=>{homeRefreshTimer=null;if(document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;Promise.allSettled([loadHomeActionTasks(),homeDataService.loadAttendance(true)]).finally(scheduleHomeRefresh);},30000);
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(homeRefreshTimer);homeRefreshTimer=null;}else if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);scheduleHomeRefresh();}});
+window.addEventListener('online',()=>{if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);}});
+
+async function loadHomeActionTasks(){
+ const seq=++homeTaskSequence,identity=state.user?.id;
+ let button=document.querySelector('#homeActionTasks');
+ if(!button){button=document.createElement('button');button.id='homeActionTasks';button.className='btn secondary';button.hidden=true;button.onclick=()=>openActionTasks(apiRequest,()=>{loadHomeActionTasks();homeDataService.loadAttendance(true);});document.querySelector('.home-user-actions')?.prepend(button);}
+ if(!isLoggedIn()){button.hidden=true;return true;}
+ try{const value=await apiRequest('/action-tasks/count');if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=value.count===0;button.textContent=`待处理 ${value.count} ›`;return true;}catch{if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=true;return false;}
+}
 function renderHome() {
+  scheduleHomeRefresh();
   const userBar = $("#homeUserBar");
   if (!userBar) return;
   if (!isLoggedIn()) {
@@ -2150,19 +2183,19 @@ function renderHomeAttendanceMetrics() {
   if (!state.homeAttendance) {
     const text = state.homeAttendanceState === "loading" ? "加载中…"
       : state.homeAttendanceState === "error" ? "读取失败"
-      : state.homeAttendanceState === "empty" ? "暂无考勤数据" : "—";
+      : state.homeAttendanceState === "unbound" ? "未关联人员" : state.homeAttendanceState === "empty" ? "暂无考勤数据" : "—";
     box.innerHTML = `<span class="home-metric-status${state.homeAttendanceState === "error" ? " error" : ""}">${escapeHtml(text)}</span>`;
     return;
   }
   const data = state.homeAttendance;
   const overtime = data.overtimeSeconds == null ? "—" : formatHomeOvertime(data.overtimeSeconds);
   const metrics = [
-    { label: "排班", value: data.schedule || "—", hint: "当前用户当日班次" },
-    { label: "异常", value: String(data.issueCount), warn: data.issueCount > 0, action: "issues", hint: "查看考勤管理异常" },
-    { label: "假期", value: `公${data.publicLeave}·育${data.childcareLeave}`, hint: "公休假·育儿假剩余" },
+    { label: "排班", value: data.schedule || "—", action:"schedule", hint: "当前用户当日班次" },
+    { label: "异常/抵消", value: `${data.issueCount??0}/${data.exceptionOffsetCount??0}`, warn: false, action: "issues", hint: "本月全部原始异常天数／有生效抵消的异常天数；点击查看全部异常及处理结果" },
+    { label: "假期", value: data.leaveSummary||'—', action:"leaves", hint: "当前可休假期；点击查看完整额度与休假记录" },
     { label: "累计/可用", value: `${overtime}/—`, hint: "累计为当月加班时长；可用次数统计尚未接入" }
   ];
-  box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.action ? ` data-home-attendance-action="${metric.action}"` : ""} title="${escapeHtml(metric.hint || metric.label)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
+  box.innerHTML = metrics.map((metric,index) => index===1?`<button class="home-metric-item" type="button" data-home-attendance-action="issues" title="${escapeHtml(metric.hint)}" aria-label="异常${data.issueCount??0}天，抵消${data.exceptionOffsetCount??0}天"><span class="home-metric-name">异常/抵消</span><strong class="home-metric-value"><span class="${data.issueCount>0?'home-exception-number':''}">${data.issueCount??0}</span><span>/</span><span class="${data.exceptionOffsetCount>0?'home-offset-number':''}">${data.exceptionOffsetCount??0}</span></strong></button>`:index===3?`<div class="home-metric-item"><span class="home-metric-name" title="本月累计／本月可用次数">累计/次</span><strong class="home-metric-value offset-credit-values"><button type="button" data-home-attendance-action="accumulation" aria-label="本月累计详情">${escapeHtml(overtime)}</button><span>/</span><button type="button" data-home-attendance-action="credits" aria-label="本月可用次数详情">${data.credits?.available??'—'}</button></strong></div>`:`<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button" data-home-attendance-action="${metric.action}" title="${escapeHtml(metric.hint||metric.label)}" aria-label="${escapeHtml(metric.label+'：'+metric.value+'。'+(metric.hint||''))}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
 }
 
 function renderHomeMaintenanceModule() {
@@ -4761,6 +4794,7 @@ async function loadActivePageData({ force = true } = {}) {
   if (page === "homePage" && (force || !loaded.has("homeMetrics"))) {
     const results = await Promise.all([
       homeDataService.loadAttendance(force),
+      loadHomeActionTasks(),
       homeDataService.loadMaintenance(force)
     ]);
     if (results.every(Boolean)) loaded.add("homeMetrics");
@@ -4987,6 +5021,7 @@ function closeBottomMoreSheet() {
 
 async function showPage(page) {
   state.activePage = canView(page) ? page : "homePage";
+  if(state.activePage!=="attendancePage")pendingHomeDayTarget=null;
   if (state.activePage === "personnelPage") {
     const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
     if (capabilityAllowed) {
@@ -8494,7 +8529,7 @@ $("#homeInfoMetrics").addEventListener("click", event => {
 $("#homeAttendanceMetrics").addEventListener("click", event => {
   const button = event.target.closest("[data-home-attendance-action]");
   if (!button) return;
-  showPage("attendancePage");
+  openPersonalAttendance(apiRequest,button.dataset.homeAttendanceAction,()=>{homeDataService.loadAttendance(true);loadHomeActionTasks();},openHomeAttendanceDay);
 });
 $("#homeMaintenanceToggle").addEventListener("click", () => {
   if (!hasRbac("maintenance.execute.view")) return;
@@ -9888,6 +9923,13 @@ function prefetchAttendanceModules() {
   try { import("/attendance.mjs?v=2").catch(() => {}); } catch {}
 }
 
+let homeDayJumpSequence=0;
+async function openHomeAttendanceDay(target){
+ const identity=state.user?.id,seq=++homeDayJumpSequence;
+ if(!identity||target.personId!==state.user.personId||!hasRbac('attendance.read'))throw Error('当前账号无权查看该人员考勤');
+ const ui=await offsetUi();if(seq!==homeDayJumpSequence||state.user?.id!==identity)return;ui.closeOffsetSheets();
+ pendingHomeDayTarget={identity,target};await showPage('attendancePage');
+}
 async function renderAttendancePage() {
   const active=()=>isLoggedIn() && state.activePage==='attendancePage' && hasRbac('attendance.read');
   if(!active())return;
@@ -9897,6 +9939,7 @@ async function renderAttendancePage() {
     const module=await attendanceImport;
     if(!active())return;
     attendanceModule ||= module.createAttendanceModule({host,api:apiRequest,hasPermission:hasRbac,isActive:active,onAuthExpired:()=>handleAuthExpired('登录状态已失效，请重新登录。')});
-    attendanceModule.setActive(true);
+    const pending=pendingHomeDayTarget;pendingHomeDayTarget=null;
+    if(pending&&pending.identity===state.user?.id)await attendanceModule.openPersonDay(pending.target);else attendanceModule.setActive(true);
   } catch(error) { attendanceImport=null;host.textContent='考勤页面加载失败：'+error.message; }
 }

@@ -100,7 +100,7 @@ class PostgresSyncDatabase {
 
   _createWorker() {
     const generation = ++this.workerGeneration;
-    const worker = new Worker(__filename, { workerData: { databaseUrl: this.databaseUrl } });
+    const worker = new Worker(__filename, { workerData: { databaseUrl: this.databaseUrl, postgresDatabaseWorker: true } });
     // 旧 worker 被 terminate 后仍可能触发 error/exit；代际检查避免它把新 worker 标记为失败。
     worker.on("error", error => {
       if (generation !== this.workerGeneration) return;
@@ -234,7 +234,7 @@ export async function createDatabase({ dbPath, databaseUrl = process.env.DATABAS
   return instrumentDatabase(sqliteDatabase(dbPath));
 }
 
-if (!isMainThread) {
+if (!isMainThread && workerData?.postgresDatabaseWorker === true) {
   const { Client } = await import("pg");
   // worker 内查询超时：8 秒内必须回传结果或错误，确保主线程最多冻结 8 秒而不是 15 秒；
   // 主线程 15 秒兜底只用于 worker 自身失去响应。超时后关闭连接（回滚未提交事务），

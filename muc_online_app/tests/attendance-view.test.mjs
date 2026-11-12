@@ -181,3 +181,5 @@ test('directory exclusions have a separate escaped informational section, not a 
  const html=attendanceDirectoryExcludedHtml([{topic:'attendance_check_record',count:12},{topic:'<script>',count:1}]);
  assert.match(html,/未在当前授权目录内/);assert.match(html,/不计入考勤或同步失败/);assert.match(html,/员工打卡：12条/);assert.doesNotMatch(html,/<script>/);
 });
+
+test('extended 2025 public leave is permanently excluded from discovery and choices',async()=>{const {attendanceCategoryAllowed,attendanceFixedCategoryOrder,attendanceOrderedCategories}=await import('../public/attendance-presentation.mjs');const {leaveGroup}=await import('../public/attendance-leave-model.mjs');const name='公休假（2025年度延长）';assert.equal(attendanceCategoryAllowed(name),false);assert.equal(attendanceFixedCategoryOrder.includes(name),false);assert.deepEqual(attendanceOrderedCategories([name,'公休假','新冠关爱假']),['公休假']);assert.equal(leaveGroup(name),null);assert.equal(leaveGroup('固定班制公休假'),'公休假');});

@@ -187,3 +187,17 @@ test('per-day classification cache invalidates when the day input hash changes a
  assert.equal(third.people[0].days.find(d=>d.date==='2026-09-01').input.points.length,1);
  f.db.close();
 });
+
+test('V1.4 self summary binds identity on server and unbound admin never falls back to one visible person',()=>{
+ const f=fixture();assert.equal(f.service.selfSummary(admin).status,'identity_unbound');
+ const result=f.service.selfSummary(reader);assert.equal(result.personId,'p1');assert.equal(result.status,'ready');assert.equal(result.availableCredits,null);assert.equal('people' in result,false);assert.equal(result.overtimeSeconds,null);
+});
+
+test('V1.4 home schedule uses trusted plan on a missing-punch day and exposes the all-exception count basis',()=>{
+ const f=fixture(),date='2026-10-22',input={date,covered:true,points:[{type:'OnDuty',planned:Date.parse(date+'T08:30:00+08:00')},{type:'OffDuty',planned:Date.parse(date+'T19:40:00+08:00')}],punches:[],approvals:[]};
+ f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',date,JSON.stringify(input),'{}','plan-only',new Date(clock()).toISOString(),'fixture');
+ const value=f.service.selfSummary(reader);assert.equal(value.schedule,'白班');assert.equal(value.issueCount,1);assert.match(value.issueCountBasis,/全部原始异常/);assert.equal(f.service.snapshot(reader,{month:'2026-10',personId:'p1'}).people[0].days.find(d=>d.date===date).category,'缺卡');f.service.stop();f.db.close();
+});
+test('R13 personal seven-day range crosses December/January in both directions without a monthly cutoff',()=>{
+ for(const date of ['2026-12-31','2027-01-01']){const f=fixture(),service=createAttendanceService({...f.deps,clock:()=>Date.parse(date+'T12:00:00+08:00')}),result=service.selfDetails(reader,'schedule');assert.equal(result.dates.length,7);assert.equal(result.days.length,7);assert.ok(result.dates.some(d=>d.startsWith('2026-12')));assert.ok(result.dates.some(d=>d.startsWith('2027-01')));service.stop();f.service.stop();f.db.close();}
+});

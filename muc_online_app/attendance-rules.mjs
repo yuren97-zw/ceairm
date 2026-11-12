@@ -1,5 +1,6 @@
+import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';
 // Canonical attendance model: timestamps are milliseconds, work dates are Asia/Shanghai.
-export const RULE_VERSION = 'attendance-api-1.2';
+export const RULE_VERSION = 'attendance-api-1.3';
 const workDateFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'});
 export const dayOf=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'Invalid Date':workDateFormatter.format(date);};
 export const stamp = value => {
@@ -24,6 +25,12 @@ export function tripPurpose(reason, detailStatus = 'ok') {
   if (typeof reason !== 'string' || !reason.trim()) return {category:null,status:'reason_missing',keywords:[],reason:reason??null};
   const keywords = ['培训','派驻'].filter(k => reason.includes(k));
   return {category:keywords.length===1?keywords[0]:keywords.length===0?'出差':null, status:keywords.length===2?'conflict':'ok', keywords, reason};
+}
+export function plannedShift(points=[]){
+ const on=points.filter(p=>p.type==='OnDuty'&&p.planned),off=points.filter(p=>p.type==='OffDuty'&&p.planned);
+ if(!on.length||!off.length)return null;
+ const first=Math.min(...on.map(p=>p.planned)),last=Math.max(...off.map(p=>p.planned));
+ return last-first===86400000?'24小时班':dayOf(last)>dayOf(first)?'夜班':'白班';
 }
 export function validPunch(p) {
   return !!p.actual && p.timeResult !== 'NotSigned' && !['SYSTEM','AUTO_CHECK'].includes(p.source) && p.valid !== false && (!!p.recordId || p.source === 'USER');
@@ -76,7 +83,7 @@ export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}
   input = {...input,points,punches,approvals};
   const issues=[];
   const result={date,category:'待核对',shift:null,purposes:[],issues,reason:'',punchDetails:context.includePunchDetails===false?[]:describePunches(input,now),overtime:calculateOvertime(input,now),ruleVersion:RULE_VERSION};
-  const finish=(category,reason)=>({...result,category,reason});
+  const finish=(category,reason)=>({...result,category:attendanceCategoryAllowed(category)?category:'待核对',reason:attendanceCategoryAllowed(category)?reason:'关联已忽略的假种，不归入该类别；原始依据保留，考勤待核对'});
   if (date>dayOf(now)) return finish('未来日期','日期尚未发生');
   if (!input.covered) return finish('未同步',input.syncError || '接口尚未成功完整覆盖该日');
   if(input.scheduleConflict){issues.push('钉钉同日排班同时返回工作与休息标记');result.overtime={seconds:null,status:'无法计算',reason:'同日排班工作／休息标记冲突',planned:null,actual:null};return finish('待核对','排班来源冲突，请在钉钉核实后重新同步');}
@@ -120,7 +127,7 @@ export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}
   const on=points.filter(p=>p.type==='OnDuty' && p.planned), off=points.filter(p=>p.type==='OffDuty' && p.planned);
   if(on.length && off.length && !notDue && matched.length===points.length && matched.every(m=>m.actual) && !conflicts && !leaves.length && !input.identityIssue && !input.rest){
     const first=Math.min(...on.map(p=>p.planned)), last=Math.max(...off.map(p=>p.planned));
-    result.shift=last-first===86400000?'24小时班':dayOf(last)>dayOf(first)?'夜班':'白班';
+    result.shift=plannedShift(points);
     const abnormal=unique(punches.filter(validPunch).map(p=>({Late:'迟到',SeriousLate:'严重迟到',Early:'早退',Absenteeism:'旷工迟到'})[p.timeResult]).filter(Boolean));
     if(abnormal.length>1) {issues.push('不同打卡异常并存');return finish('待核对','多个异常状态无法唯一归类');}
     if(abnormal.length===1) return finish(abnormal[0],'有效打卡返回异常；班次单独保留');
