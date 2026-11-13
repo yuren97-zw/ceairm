@@ -8,7 +8,7 @@ test('only unoccupied eligible items can enter a new application; rejected histo
 
 test('R12 own holiday tables show granted quota rows with validity and status, and readable record periods without inventing missing balances',()=>{
  const cell={group:'公休假',status:'ready',coverage:'complete',quotas:[{id:'q1',year:2026,names:['固定班制公休假'],availability:'expired',start:Date.parse('2026-01-01T00:00:00+08:00'),end:Date.parse('2026-10-31T23:59:59+08:00'),values:[{unit:'天',quota:5,used:1,remaining:4},{unit:'小时',quota:3,used:1,remaining:2}]}],issues:['<待核对>']};
- const quota=ownLeaveQuotaTable([cell]);assert.match(quota,/公休假<small>固定班制公休假 · 2026年度<\/small>/);assert.match(quota,/1\/5 · 4天/);assert.match(quota,/1\/3 · 2小时/);assert.match(quota,/已过期，非当前可休余额/);assert.match(quota,/2026-01-01/);assert.match(quota,/2026-10-31/);assert.match(quota,/&lt;待核对&gt;/);
+ const quota=ownLeaveQuotaTable([cell]);assert.match(quota,/公休假<small>固定班制公休假 · 2026年度<\/small>/);assert.match(quota,/1\/5 · 4天/);assert.match(quota,/1\/3 · 2小时/);assert.match(quota,/已过期，非当前可休余额/);assert.match(quota,/2026-01-01/);assert.match(quota,/2026-10-31/);assert.doesNotMatch(quota,/&lt;待核对&gt;/);
  const zeroGrant=ownLeaveQuotaTable([{group:'婚假',status:'ready',coverage:'complete',quotas:[{id:'q2',year:2026,names:['婚假'],availability:'active',values:[{unit:'天',quota:0,used:0,remaining:0}]}]}]);assert.doesNotMatch(zeroGrant,/婚假/);assert.match(zeroGrant,/暂无已发放额度的假期/);
  const entries=ownLeaveRecordEntries([[{group:'公休假',records:[{id:'r1',name:'公休假',period:'未来已批准占用',start:Date.parse('2026-11-20T08:30:00+08:00'),end:Date.parse('2026-11-20T12:30:00+08:00'),values:[{amount:0.5,unit:'天'}]}]}]],2026);assert.equal(entries.length,1);
  const records=ownLeaveRecordTable(entries);assert.match(records,/未来已批准占用/);assert.match(records,/0\.5天/);assert.match(records,/2026-11-20 08:30:00/);
@@ -41,4 +41,19 @@ test('own holiday tables hide unissued quota and zero records, merge previous-ye
  assert.deepEqual(entries.map(e=>e.id),['r6','r2','r1','r3']);
  const records=ownLeaveRecordTable(entries);assert.match(records,/-0\.5天/);assert.match(records,/已撤销／退回/);assert.match(records,/年度归属待核对/);assert.match(records,/3天/);assert.doesNotMatch(records,/婚假/);assert.equal((records.match(/<tr>/g)||[]).length,5);
  assert.match(ownLeaveRecordTable([],{incomplete:true}),/尚未同步或未完整/);assert.match(ownLeaveRecordTable([]),/暂无前一年及当年的休假记录/);
+});
+test('accumulation shows configured exchange ratio and removes only its old scrolling instruction',async()=>{
+ const {exchangeRuleText,homeAttendanceTable}=await import('../public/attendance-offset-ui.mjs');
+ assert.equal(exchangeRuleText({hours:2,count:1,cap:3}),'兑换规则：每累计2小时兑换1次，每月最多3次，下月使用。');
+ assert.equal(exchangeRuleText({hours:2.5,count:2,cap:4}),'兑换规则：每累计2.5小时兑换2次，每月最多4次，下月使用。');
+ assert.equal(exchangeRuleText({hours:2,count:1,cap:0}),'兑换规则：当前暂停兑换');assert.equal(exchangeRuleText(null),'兑换规则尚未设置');
+ assert.doesNotMatch(homeAttendanceTable([],'accumulation'),/表格可左右滑动查看完整内容/);assert.match(homeAttendanceTable([],'accumulation'),/home-att-table/);assert.match(homeAttendanceTable([],'issues'),/表格可左右滑动查看完整内容/);
+});
+test('only accumulation swaps overtime and trip purpose, keeping row cells aligned and source unchanged',async()=>{
+ const {homeAttendanceTable}=await import('../public/attendance-offset-ui.mjs');
+ const day={date:'2026-11-13',category:'白班',shift:'白班',purposes:[{category:'模拟用途'}],punchDetails:[],overtime:{seconds:7200}},before=JSON.stringify(day);
+ const cells=html=>[...html.matchAll(/<td>([\s\S]*?)<\/td>/g)].map(m=>m[1]);
+ const accumulation=homeAttendanceTable([day],'accumulation'),schedule=homeAttendanceTable([day],'schedule');
+ assert.match(accumulation,/<th>班次<\/th><th>当日加班<\/th><th>有效实际上班<\/th><th>有效实际下班<\/th><th>出差用途<\/th>/);
+ assert.match(cells(accumulation)[3],/2小时0分/);assert.equal(cells(accumulation)[6],'模拟用途');assert.equal(cells(schedule)[3],'模拟用途');assert.match(cells(schedule)[6],/2小时0分/);assert.doesNotMatch(schedule,/home-accumulation-table/);assert.equal(JSON.stringify(day),before);
 });

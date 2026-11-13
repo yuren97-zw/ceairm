@@ -7018,9 +7018,10 @@ async function routeRequest(req, res) {
       if(method==='GET'&&path==='/balance')return send(res,200,offsetService.balance(actor,month));
       if(method==='GET'&&path==='/ledger')return send(res,200,offsetService.ledger(actor,month));
       if(method==='GET'&&path==='/routing-issues')return send(res,200,offsetService.routingIssues(actor));
+      if(method==='GET'&&path==='/approval-candidates')return send(res,200,offsetService.approvalCandidates(actor));
       if(method==='GET'&&path==='/responsibility-candidates')return send(res,200,offsetService.responsibilityCandidates(actor));
       if(method==='GET'&&path==='/state')return send(res,200,offsetService.state(actor));
-      if(method==='GET'&&path==='/rules')return send(res,200,offsetService.rules(actor));
+      if(method==='GET'&&path==='/rules')return send(res,200,offsetService.monthlyRules(actor));
       if(method==='GET'&&path==='/requests')return send(res,200,offsetService.ownRequests(actor,{month,limit:Number(url.searchParams.get('limit')||20),cursor:url.searchParams.get('cursor')}));
       if(method==='GET'&&/^\/requests\/[^/]+$/.test(path))return send(res,200,offsetService.detail(actor,path.split('/')[2]));
       if(method==='POST'){
@@ -7028,9 +7029,9 @@ async function routeRequest(req, res) {
        if(!body||typeof body!=='object'||Array.isArray(body))return send(res,400,{error:'请提交有效对象'});
        const current=requireLogin(req,res);if(!current)return;
        if(current.id!==actor.id||current.personId!==actor.personId)return send(res,409,{error:'登录身份已变化，请刷新'});actor=current;
-       if(path==='/initialization/preview')return send(res,200,offsetService.initializationPreview(actor,body));
-       if(path==='/initialization/confirm')return send(res,200,offsetService.initializationConfirm(actor,body,key));
-       if(path==='/rules')return send(res,200,offsetService.saveRule(actor,body,key));
+       if(path.startsWith('/initialization/'))return send(res,409,{error:'首期初始化已停用，请设置月兑换规则'});
+
+       if(path==='/rules')return send(res,200,offsetService.saveMonthlyRule(actor,body,key));
        if(path==='/trial')return send(res,200,offsetService.trial(actor,body));
        if(path==='/issue')return send(res,200,offsetService.issue(actor,body,key));
        if(path==='/responsibility')return send(res,200,offsetService.confirmResponsibility(actor,body,key));
@@ -7045,7 +7046,7 @@ async function routeRequest(req, res) {
       const actor = requireRbacPermission(req,res,'attendance.read'); if(!actor)return;
       const filters=Object.fromEntries(['month','query','department','team','personId'].map(k=>[k,url.searchParams.get(k)||'']));
       if(method==='GET'&&['schedule','issues','accumulation'].some(kind=>url.pathname==='/api/attendance/self/'+kind)){
-        const kind=url.pathname.split('/').at(-1),data=attendanceService.selfDetails(actor,kind);return send(res,200,offsetService.decorate({...data,people:actor.personId?[{personId:actor.personId,days:data.days}]:[]}));
+        const kind=url.pathname.split('/').at(-1),data=attendanceService.selfDetails(actor,kind);if(kind==='accumulation')data.exchangeRule=data.month?offsetService.exchangeRuleForSource(actor,data.month):null;return send(res,200,offsetService.decorate({...data,people:actor.personId?[{personId:actor.personId,days:data.days}]:[]}));
       }
       if(method==='GET'&&url.pathname==='/api/attendance/self/leaves'){
         if(!actor.personId)return send(res,200,{status:'identity_unbound',people:[]});
@@ -9104,7 +9105,7 @@ db.exec(IMPORT_WORKSPACE_SCHEMA);
 capabilityService.init();
 installInfoSync(db);
 let lastOffsetMaintenance=0;
-const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<60000)return;lastOffsetMaintenance=Date.now();try{offsetService.drain(offsetSystemActor);offsetService.repairTasks(offsetSystemActor);offsetService.settleDue(offsetSystemActor);}catch{ /* Keep durable ranges for retry; writes remain disabled unless explicitly configured. */ }}, db, personnelAccess, hasRbac, audit, onSourceUpdated:(personId,date)=>{try{offsetService.markDirty(personId,date);offsetService.drain(offsetSystemActor);}catch{ /* Durable dirty range remains for the next successful source update. */ }}, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<5000)return;lastOffsetMaintenance=Date.now();try{offsetService.drain(offsetSystemActor);offsetService.repairTasks(offsetSystemActor);offsetService.settleDue(offsetSystemActor);}catch{ /* Keep durable ranges for retry; writes remain disabled unless explicitly configured. */ }}, db, personnelAccess, hasRbac, audit, onSourceUpdated:(personId,date)=>{try{offsetService.markDirty(personId,date);offsetService.drain(offsetSystemActor);}catch{ /* Durable dirty range remains for the next successful source update. */ }}, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
 const offsetSystemActor={id:'system-attendance-offset'};
 function currentOffsetActor(user){
  if(user===offsetSystemActor)return user;
@@ -9113,7 +9114,7 @@ function currentOffsetActor(user){
  return toUser(row);
 }
 
-const offsetService=createOffsetService({db,hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
+const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
 
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});

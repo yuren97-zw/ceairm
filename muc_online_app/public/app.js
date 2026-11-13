@@ -2138,7 +2138,6 @@ function renderHome() {
   grade.hidden = !user.actualGrade;
   $("#homeUserSep").hidden = !user.employeeNo;
   const unread = personalReadRecords(visibleInfoRecords()).filter(record => ["未读", "即将超期", "已超期"].includes(readState(record)));
-  $("#homeNotifyDot").hidden = !unread.length;
   renderHomeInfoMetrics(unread);
   renderHomeAttendanceMetrics();
   renderHomeMaintenanceModule();
@@ -2165,7 +2164,7 @@ function renderHomeInfoMetrics(unread) {
     { label: "未读", value: String(unread.length), warn: unread.length > 0, filter: "未读", hint: "查看未读信息" },
     { label: `${currentMonth}超期`, value: `${overdueRate}%`, warn: overdue.length > 0, filter: "超期", hint: "查看当月超期信息" },
     { label: "收藏", value: String(favorites.length), filter: "收藏", hint: "查看我的收藏" },
-    { label: "待办", value: "—", hint: "待办统计尚未接入", disabled: true }
+    { label: "预留位置", value: "—", hint: "预留位置", disabled: true }
   ];
   box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.filter ? ` data-home-info-filter="${escapeHtml(metric.filter)}"` : ""}${metric.disabled ? " disabled" : ""} title="${escapeHtml(metric.hint)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
 }
@@ -8549,7 +8548,6 @@ $("#homeMaintenanceList").addEventListener("click", event => {
   const item = event.target.closest("[data-home-maint-goto]");
   if (item) gotoMaintenanceFromHome(item.dataset.homeMaintGoto).catch(error => alert(error.message || "打开维修机会失败"));
 });
-$("#homeNotifyBtn").addEventListener("click", () => openInfoFromHome("未读"));
 $("#homeProfileBtn").addEventListener("click", event => {
   event.stopPropagation();
   const menu = $("#homeProfileMenu");

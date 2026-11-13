@@ -53,6 +53,7 @@ export function resolveOffsetFacts(personId, input, {now = Date.now(), sourceRea
 export function accumulatedCoverage(days, now = Date.now(), {expectedDates = null} = {}) {
   let seconds = 0;
   const unresolved = [];
+  const excludedDays = [];
   if (!expectedDates?.length) unresolved.push({date:null, reason:'未提供完整来源月日期范围'});
   for (const date of expectedDates || []) if (!days.some(d => d.date === date)) unresolved.push({date, reason:'来源日记录缺失'});
   for (const {date, input, sourceReadAt} of days) {
@@ -61,6 +62,11 @@ export function accumulatedCoverage(days, now = Date.now(), {expectedDates = nul
       unresolved.push({date, reason:'源覆盖或身份未核实'}); continue;
     }
     if (input.rest && !(input.points || []).length) continue;
+    const points=(input.points||[]).filter(p=>p.planned),lastOff=Math.max(0,...points.filter(p=>p.type==='OffDuty').map(p=>p.planned));
+    // An approved whole-shift absence has no required physical punch. Exclude it
+    // from accumulation rather than inventing hours or treating it as missing.
+    const exemptWholeShift=points.some(p=>p.type==='OnDuty')&&lastOff>0&&points.every(p=>(input.approvals||[]).some(a=>a.approved&&!a.revoked&&['请假','外出','出差'].includes(a.kind)&&a.start<=p.planned&&a.end>=p.planned));
+    if(exemptWholeShift&&!(input.punches||[]).some(validPunch)&&lastOff<=now&&stamp(sourceReadAt)>=lastOff){excludedDays.push({date,reason:'整班已批准审批免打卡，无真实打卡累计依据，不参与累计'});continue;}
     const value = calculateOvertime({...input, points:input.points || [], punches:input.punches || []}, now);
     if (value.seconds === null || !stamp(sourceReadAt) || stamp(sourceReadAt) < value.planned) {
       unresolved.push({date, reason:value.reason || '查询时点不足'}); continue;
@@ -68,7 +74,7 @@ export function accumulatedCoverage(days, now = Date.now(), {expectedDates = nul
     if(value.actual>now||!Number.isSafeInteger(seconds+value.seconds)||seconds+value.seconds>2147483647){unresolved.push({date,reason:value.actual>now?'实际打卡时间尚未发生':'累计超出当前数据库整数精度，需核对'});continue;}
     seconds += value.seconds;
   }
-  return {seconds, status:unresolved.length?'pending_review':'complete', unresolved};
+  return {seconds, status:unresolved.length?'pending_review':'complete', unresolved,...(excludedDays.length?{excludedDays}:{})};
 }
 
 export function exchangeSeconds(seconds, thresholdSeconds, count, cap) {

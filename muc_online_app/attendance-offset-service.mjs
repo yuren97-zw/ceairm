@@ -1,8 +1,9 @@
+import fs from 'node:fs';
 import {randomUUID,createHash} from 'node:crypto';
 import {createOffsetRegister} from './attendance-offset-register.mjs';
 import {createActionTaskService} from './action-task-service.mjs';
 import {resolveOffsetFacts,accumulatedCoverage,exchangeSeconds,offsetDayLabel} from './attendance-offset-facts.mjs';
-import {monthDates,dayOf,classifyDay} from './attendance-rules.mjs';
+import {monthDates,dayOf,classifyDay,plannedShift} from './attendance-rules.mjs';
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const nextMonth=month=>{const [y,m]=month.split('-').map(Number);return `${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,'0')}`;};
@@ -13,8 +14,11 @@ export function hoursToSeconds(value){
  if(seconds%denominator||seconds/denominator>BigInt(Number.MAX_SAFE_INTEGER)||seconds<=0n)throw fail('小时数必须精确对应正整数秒');
  return Number(seconds/denominator);
 }
-export function createOffsetService({db,clock=Date.now,hasPermission,canViewPerson,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled}){
+export function createOffsetService({db,clock=Date.now,hasPermission,canViewPerson,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled,listPeople=()=>[],allowLegacySettlement=false,listApproverIds=()=>db.prepare("select id from users where status='active'").all().map(r=>r.id)}){
  const register=createOffsetRegister({db,clock});
+ db.exec(fs.readFileSync(new URL('./migrations/033_attendance_monthly_exchange.sql',import.meta.url),'utf8'));
+ const monthlyRule=sourceMonth=>sourceMonth>='2026-10'?db.prepare('select * from attendance_monthly_exchange_rules where source_month<=? order by source_month desc,created_at desc,id desc').get(sourceMonth):null;
+ const allPeople=()=>[...new Set(listPeople())];
  const at=()=>new Date(clock()).toISOString();
  const requirePermission=(user,code)=>{if(!user?.id)throw fail('请先登录',401);if(!hasPermission(user,code))throw fail('当前账号没有权限',403);};
  const existingWritable=()=>{if(!existingActionsEnabled)throw fail('历史申请办理尚未启用',409);};
@@ -42,7 +46,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
  const request=id=>db.prepare('select * from attendance_offset_requests where id=?').get(id);
  const requestForUpdate=id=>db.prepare('select * from attendance_offset_requests where id=?'+(db.kind==='postgres'?' for update':'')).get(id);
  const items=id=>db.prepare('select * from attendance_offset_items where request_id=? order by id').all(id);
- const assigneeAllowed=(user,row)=>!!user&&row.status==='pending'&&row.assignee_user_id===user.id&&row.person_id!==user.personId&&hasPermission(user,'attendance.offset.approve');
+ const assigneeAllowed=(user,row)=>!!user&&row.status==='pending'&&row.assignee_user_id===user.id&&row.person_id!==user.personId&&user.status!=='disabled'&&hasPermission(user,'attendance.offset.approve');
  const tasks=createActionTaskService({db,clock,selectVisible:user=>hasPermission(user,'attendance.offset.approve')?db.prepare("select t.* from action_tasks t join attendance_offset_requests r on r.id=t.source_id where t.source_module='attendance' and t.source_type='offset_approval' and t.status='pending' and r.status='pending' and t.assignee_user_id=? and r.assignee_user_id=? and r.person_id<>? order by t.created_at desc,t.id desc").all(user.id,user.id,user.personId||''):[],canAct:(user,task)=>{const row=request(task.source_id);return !!row&&assigneeAllowed(user,row);}});
  function adjust(personId,month,kind,itemId){
   const expressions={freeze:'frozen=frozen+1',approve:'frozen=frozen-1,used=used+1',release:'frozen=frozen-1',refund:'used=used-1'};
@@ -110,11 +114,52 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    requirePermission(user,'attendance.offset.responsibility.manage');
    return db.prepare("select id,person_id,assignee_user_id,version,created_at,status from attendance_offset_requests where status='pending' order by created_at,id").all().filter(row=>canViewPerson(user,row.person_id)&&!assigneeAllowed(loadUser(row.assignee_user_id),row)).map(row=>({...row,reason:'原受派账号不可用、无审批权限或存在本人审批冲突；需要明确授权转办'}));
   },
+  approvalCandidates(user){
+   requirePermission(user,'attendance.offset.submit');
+   if(!user.personId)throw fail('账号尚未绑定人员',409);
+   const date=dayOf(clock());
+   const shiftFor=personId=>{const input=readDays(personId,date,date).find(d=>d?.date===date)?.input;return input?.covered&&!input.rest&&!input.scheduleConflict&&!input.identityIssue?plannedShift(input.points):null;};
+   const shift=shiftFor(user.personId);
+   const candidates=listApproverIds().map(id=>loadUser(id)).filter(u=>u&&u.status!=='disabled'&&u.id!==user.id&&u.personId!==user.personId&&hasPermission(u,'attendance.offset.approve')).map(u=>({id:u.id,personId:u.personId,name:u.name,employeeNo:u.employeeNo,recommended:!!shift&&!!u.personId&&u.position==='班组长'&&shiftFor(u.personId)===shift}));
+   candidates.sort((a,b)=>Number(b.recommended)-Number(a.recommended)||String(a.name).localeCompare(String(b.name),'zh-CN'));
+   const recommended=candidates.filter(c=>c.recommended);
+   return {date,shift,candidates,defaultUserId:recommended.length===1?recommended[0].id:null};
+  },
+  saveMonthlyRule(user,body,key){
+   requirePermission(user,'attendance.offset.rules.manage');writable();
+   const seconds=hoursToSeconds(body.hours);
+   if(seconds>2147483647||!Number.isSafeInteger(body.count)||body.count<1||body.count>2147483647||!Number.isSafeInteger(body.cap)||body.cap<0||body.cap>2147483647)throw fail('次数或月上限无效');
+   return op(user,'rule',key,body,()=>{
+    const previous=db.prepare('select * from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').get();
+    if(previous&&previous.threshold_seconds===seconds&&previous.unit_count===body.count&&previous.monthly_cap===body.cap)return {id:previous.id,sourceMonth:previous.source_month,usageMonth:nextMonth(previous.source_month),unchanged:true};
+    const current=dayOf(clock()).slice(0,7),sourceMonth=previous?(current<'2026-10'?'2026-10':current):'2026-10';
+    const id='monthly:'+randomUUID();
+    db.prepare('insert into attendance_monthly_exchange_rules values(?,?,?,?,?,?,?)').run(id,sourceMonth,seconds,body.count,body.cap,user.id,new Date(Math.max(clock(),Date.parse(previous?.created_at||'1970-01-01')+1)).toISOString());
+    audit(user,'monthly_rule',id,{...body,sourceMonth,usageMonth:nextMonth(sourceMonth),scope:'all'});
+    return {id,sourceMonth,usageMonth:nextMonth(sourceMonth)};
+   });
+  },
+  exchangeRuleForSource(user,sourceMonth){
+   requirePermission(user,'attendance.read');monthDates(sourceMonth);
+   const rule=monthlyRule(sourceMonth);
+   return rule?{sourceMonth,usageMonth:nextMonth(sourceMonth),hours:rule.threshold_seconds/3600,count:rule.unit_count,cap:rule.monthly_cap}:null;
+  },
+  monthlyRules(user){requirePermission(user,'attendance.offset.rules.manage');return db.prepare('select * from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').all();},
   responsibilityCandidates(user){
    requirePermission(user,'attendance.offset.responsibility.manage');
    return db.prepare("select id from users where status='active' and person_id is not null").all().map(row=>loadUser(row.id)).filter(u=>u&&canViewPerson(user,u.personId)&&hasPermission(u,'attendance.offset.approve')).map(({id,personId,name,employeeNo})=>({id,personId,name,employeeNo}));
   },
-  state(user){requirePermission(user,'attendance.offset.rules.manage');return {writesEnabled,existingActionsEnabled,initialization:initializationProgress(user),dirtyRanges:Number(db.prepare('select count(*) as n from attendance_offset_dirty where generation>processed_generation').get().n),differenceAccounts:Number(db.prepare("select count(*) as n from attendance_offset_accounts where status='difference_review'").get().n),...this.versions()};},
+  state(user){
+   requirePermission(user,'attendance.offset.rules.manage');
+   const currentMonth=dayOf(clock()).slice(0,7),people=allPeople(),months=[];
+   for(let month='2026-10';month<currentMonth;month=nextMonth(month))if(monthlyRule(month))months.push(month);
+   const accounts=db.prepare('select person_id,usage_month,status from attendance_offset_accounts').all();
+   const assessments=db.prepare('select person_id,source_month,status from attendance_offset_assessments').all();
+   const done=new Set(accounts.map(r=>r.person_id+'|'+r.usage_month)),checked=new Set(assessments.map(r=>r.person_id+'|'+nextMonth(r.source_month)));
+   const queuedAccounts=months.reduce((n,month)=>n+people.filter(id=>!done.has(id+'|'+nextMonth(month))&&!checked.has(id+'|'+nextMonth(month))).length,0);
+   const sourceDate=new Date(currentMonth+'-01T00:00:00Z');sourceDate.setUTCMonth(sourceDate.getUTCMonth()-1);const currentSourceMonth=sourceDate.toISOString().slice(0,7),activeRule=monthlyRule(currentSourceMonth);
+   return {writesEnabled,existingActionsEnabled,initialization:initializationProgress(user),currentMonth,currentSourceMonth,activeRule,queuedAccounts,issuedAccounts:accounts.filter(r=>r.status==='issued').length,pendingAccounts:assessments.filter(r=>r.source_month>='2026-10'&&['pending_review','not_closed'].includes(r.status)&&!done.has(r.person_id+'|'+nextMonth(r.source_month))).length,dirtyRanges:Number(db.prepare('select count(*) as n from attendance_offset_dirty where generation>processed_generation').get().n),differenceAccounts:accounts.filter(r=>r.status==='difference_review').length,...this.versions()};
+  },
   repairTasks(systemUser){
    requirePermission(systemUser,'attendance.offset.responsibility.manage');
    if(!writesEnabled&&!existingActionsEnabled)return {disabled:true};
@@ -134,19 +179,21 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   },
   settleDue(systemUser){
    if(!writesEnabled)return {disabled:true};
-   const fixed=fixedInitialization();let fixedProcessed=0;if(fixed)for(const personId of fixed.config.personIds.filter(id=>!account(id,fixed.config.usageMonth)).slice(0,50)){this.issueInitialFixed(systemUser,personId,'initial-fixed:'+fixed.id+':'+personId);fixedProcessed++;}
+   const monthly=!!monthlyRule('9999-12');if(!monthly&&!allowLegacySettlement)return {processed:0,status:'not_configured'};const fixed=monthly?null:fixedInitialization();let fixedProcessed=0;if(fixed)for(const personId of fixed.config.personIds.filter(id=>!account(id,fixed.config.usageMonth)).slice(0,50)){this.issueInitialFixed(systemUser,personId,'initial-fixed:'+fixed.id+':'+personId);fixedProcessed++;}
    const legacy=legacyInitialization();
-   const rules=db.prepare('select * from attendance_offset_rules where source_month<? order by source_month').all(dayOf(clock()).slice(0,7)).filter(r=>r.id!==legacy?.reference_id);
-   const existing=new Set(db.prepare('select person_id,source_month from attendance_offset_accounts').all().map(r=>r.person_id+'|'+r.source_month));
+   let rules=db.prepare('select * from attendance_offset_rules where source_month<? order by source_month').all(dayOf(clock()).slice(0,7)).filter(r=>r.id!==legacy?.reference_id);
+   if(monthly){rules=[];for(let month='2026-10';month<dayOf(clock()).slice(0,7);month=nextMonth(month)){const rule=monthlyRule(month);if(rule)rules.push({...rule,source_month:month,people_json:JSON.stringify(allPeople())});}}
+   if(monthly){for(const old of db.prepare("select * from attendance_offset_accounts where usage_month>='2026-11' and status<>'difference_review'").all()){const source=new Date(old.usage_month+'-01T00:00:00Z');source.setUTCMonth(source.getUTCMonth()-1);const rule=monthlyRule(source.toISOString().slice(0,7));if(rule&&old.rule_id!==rule.id){tx(()=>{db.prepare("update attendance_offset_accounts set status='difference_review',version=version+1 where person_id=? and usage_month=?").run(old.person_id,old.usage_month);audit(systemUser,'monthly_policy_difference',old.person_id,{usageMonth:old.usage_month,previousRuleId:old.rule_id,ruleId:rule.id});bump();});}}}
+   const existing=new Set(db.prepare('select person_id,usage_month from attendance_offset_accounts').all().map(r=>r.person_id+'|'+r.usage_month));
    const assessments=new Map(db.prepare('select person_id,source_month,checked_at from attendance_offset_assessments').all().map(r=>[r.person_id+'|'+r.source_month,r.checked_at]));
-   const jobs=rules.flatMap(rule=>JSON.parse(rule.people_json).map(personId=>({personId,sourceMonth:rule.source_month,checkedAt:assessments.get(personId+'|'+rule.source_month)||''}))).filter(j=>!existing.has(j.personId+'|'+j.sourceMonth)&&(!j.checkedAt||clock()-Date.parse(j.checkedAt)>=300000)).sort((a,b)=>a.checkedAt.localeCompare(b.checkedAt)).slice(0,5);
+   const jobs=rules.flatMap(rule=>JSON.parse(rule.people_json).map(personId=>({personId,sourceMonth:rule.source_month,checkedAt:assessments.get(personId+'|'+rule.source_month)||''}))).filter(j=>!existing.has(j.personId+'|'+nextMonth(j.sourceMonth))&&(!j.checkedAt||clock()-Date.parse(j.checkedAt)>=300000)).sort((a,b)=>a.checkedAt.localeCompare(b.checkedAt)).slice(0,5);
    let processed=0;
    for(const job of jobs){
     const trial=this.trial(systemUser,job);
-    if(trial.status==='ready'){this.issue(systemUser,{personId:job.personId,sourceMonth:job.sourceMonth},`auto:${job.personId}:${job.sourceMonth}`);processed++;}
+    if(trial.status==='ready'){this.issue(systemUser,{personId:job.personId,sourceMonth:job.sourceMonth},`auto:${monthly?monthlyRule(job.sourceMonth).id+':':''}${job.personId}:${job.sourceMonth}`);processed++;}
     else db.prepare('insert into attendance_offset_assessments values(?,?,?,?,?,?,?) on conflict(person_id,source_month) do update set status=excluded.status,coverage_json=excluded.coverage_json,source_seconds=excluded.source_seconds,source_version=excluded.source_version,checked_at=excluded.checked_at').run(job.personId,job.sourceMonth,trial.status,JSON.stringify(trial.coverage),trial.coverage.seconds,trial.sourceVersion,at());
    }
-   return {processed:processed+fixedProcessed};
+   return {processed:processed+fixedProcessed,assessed:jobs.length};
   },
   markDirty(personId,date){db.prepare('insert into attendance_offset_dirty(person_id,work_date,generation) values(?,?,1) on conflict(person_id,work_date) do update set generation=attendance_offset_dirty.generation+1').run(personId,date);},
   drain(systemUser){
@@ -267,14 +314,14 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    requirePermission(user,'attendance.offset.rules.manage');if(!canViewPerson(user,personId))throw fail('人员不在数据范围',403);
    const dates=monthDates(sourceMonth),days=readDays(personId,dates[0],dates.at(-1),{lock});
    const coverage=accumulatedCoverage(days,clock(),{expectedDates:dates});
-   const rule=ruleOverride||db.prepare('select * from attendance_offset_rules where source_month=?').get(sourceMonth);
-   const applicable=rule&&JSON.parse(rule.people_json).includes(personId);
+   const rule=ruleOverride||monthlyRule(sourceMonth)||db.prepare('select * from attendance_offset_rules where source_month=?').get(sourceMonth);
+   const applicable=rule&&(rule.id.startsWith('monthly:')||JSON.parse(rule.people_json).includes(personId));
    return {personId,sourceMonth,usageMonth:nextMonth(sourceMonth),coverage,ruleId:applicable?rule.id:null,sourceVersion:hash({facts:days.map(d=>[d.date,d.sourceRevision||hash(d.input)]),coverage}),earned:applicable?exchangeSeconds(coverage.seconds,rule.threshold_seconds,rule.unit_count,rule.monthly_cap):null,status:!applicable?'not_configured':sourceMonth>=dayOf(clock()).slice(0,7)?'not_closed':coverage.status==='complete'?'ready':'pending_review'};
   },
   issue(user,body,key){
    requirePermission(user,'attendance.offset.rules.manage');writable();
    return op(user,'issue',key,body,()=>{
-    const legacy=legacyInitialization();if(legacy?.config.sourceMonth===body.sourceMonth)throw fail('旧首期换算规则已停用，首期改为固定2次',409);
+    const legacy=legacyInitialization();if(!monthlyRule(body.sourceMonth)&&legacy?.config.sourceMonth===body.sourceMonth)throw fail('旧首期换算规则已停用，首期改为固定2次',409);
     const trial=this.trial(user,body,{lock:true});
     const old=account(body.personId,trial.usageMonth);
     if(!old&&trial.status==='ready'){
@@ -286,8 +333,9 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
      db.prepare('insert into attendance_offset_assessments values(?,?,?,?,?,?,?) on conflict(person_id,source_month) do update set status=excluded.status,coverage_json=excluded.coverage_json,source_seconds=excluded.source_seconds,source_version=excluded.source_version,checked_at=excluded.checked_at').run(body.personId,body.sourceMonth,trial.status,JSON.stringify(trial.coverage),trial.coverage.seconds,trial.sourceVersion,at());
      return {status:trial.status,coverage:trial.coverage,granted:null};
     }
-    if(old){if(old.source_version!==trial.sourceVersion){db.prepare("update attendance_offset_accounts set status='difference_review',version=version+1 where person_id=? and usage_month=?").run(body.personId,trial.usageMonth);audit(user,'settlement_difference',body.personId,{sourceMonth:body.sourceMonth,previousSourceVersion:old.source_version,currentSourceVersion:trial.sourceVersion,previousGranted:old.granted,trialGranted:trial.earned});return {status:'difference_review'};}return {status:old.status,unchanged:true};}
+    if(old){if(old.source_version!==trial.sourceVersion||old.rule_id!==trial.ruleId){db.prepare("update attendance_offset_accounts set status='difference_review',version=version+1 where person_id=? and usage_month=?").run(body.personId,trial.usageMonth);audit(user,'settlement_difference',body.personId,{sourceMonth:body.sourceMonth,previousSourceVersion:old.source_version,currentSourceVersion:trial.sourceVersion,previousGranted:old.granted,trialGranted:trial.earned});return {status:'difference_review'};}return {status:old.status,unchanged:true};}
     db.prepare("insert into attendance_offset_accounts(person_id,usage_month,source_month,rule_id,source_seconds,source_version,status,granted) values(?,?,?,?,?,?,'issued',?)").run(body.personId,trial.usageMonth,body.sourceMonth,trial.ruleId,trial.coverage.seconds,trial.sourceVersion,trial.earned);
+    db.prepare('delete from attendance_offset_assessments where person_id=? and source_month=?').run(body.personId,body.sourceMonth);
     ledger(body.personId,trial.usageMonth,'grant',trial.earned,body.personId+'|'+trial.usageMonth);audit(user,'issue',body.personId,trial);return {status:'issued',granted:trial.earned};
    });
   },
@@ -297,14 +345,16 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    const value=account(user.personId,month);
    const previous=new Date(month+'-01T00:00:00Z');previous.setUTCMonth(previous.getUTCMonth()-1);
    const assessment=!value?db.prepare('select status,coverage_json,checked_at from attendance_offset_assessments where person_id=? and source_month=?').get(user.personId,previous.toISOString().slice(0,7)):null;
+   const globalRule=monthlyRule(previous.toISOString().slice(0,7));
    const configured=!value&&!assessment?db.prepare('select people_json from attendance_offset_rules where source_month=?').get(previous.toISOString().slice(0,7)):null;
-   return value?{...value,sourceKind:value.rule_id.startsWith('initial-fixed:')?'initial_fixed':'earned',available:month===dayOf(clock()).slice(0,7)&&value.status==='issued'?value.granted-value.frozen-value.used:null}:{status:assessment?.status||(configured&&JSON.parse(configured.people_json).includes(user.personId)?'queued':'not_configured'),available:null,coverage:assessment?JSON.parse(assessment.coverage_json):null};
+   return value?{...value,sourceKind:value.rule_id.startsWith('initial-fixed:')?'initial_fixed':'earned',available:month===dayOf(clock()).slice(0,7)&&value.status==='issued'?value.granted-value.frozen-value.used:null}:{status:assessment?.status||(globalRule||configured&&JSON.parse(configured.people_json).includes(user.personId)?'queued':'not_configured'),available:null,coverage:assessment?JSON.parse(assessment.coverage_json):null};
   },
   ledger(user,month){if(!user?.id)throw fail('请先登录',401);monthDates(month);return db.prepare('select * from attendance_offset_ledger where person_id=? and usage_month=? order by created_at,id').all(user.personId||'',month);},
   rules(user){requirePermission(user,'attendance.offset.rules.manage');return db.prepare('select * from attendance_offset_rules order by source_month desc').all();},
   submit(user,body,key){
    requirePermission(user,'attendance.offset.submit');writable();if(!user.personId)throw fail('账号尚未绑定人员',409);
    const month=dayOf(clock()).slice(0,7);
+   if(monthlyRule('9999-12')&&month<'2026-11')throw fail('兑换额度从2026年11月开始使用',409);
    if(!Array.isArray(body.events)||!body.events.length||body.events.length>20||new Set(body.events).size!==body.events.length||typeof body.note!=='string'||!body.note.trim()||body.note.length>2000)throw fail('请选择独立异常并填写说明');
    return op(user,'submit',key,body,()=>{
     if(body.events.some(id=>!db.prepare('select id from attendance_offset_events where id=?').get(id))){
@@ -318,7 +368,9 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
     // Cross-day batching policy is unresolved: allow multiple independent points on one day only.
     if(new Set(events.map(e=>e.work_date)).size!==1)throw fail('跨日合并政策尚未启用',409);
     for(const event of events){const src=sourceItem(event);if(src.status!=='active'||src.evidenceHash!==event.evidence_hash)throw fail('异常依据已变化，请重新核对',409);}
-    const responsibility=register.responsibility(user.personId,events[0].work_date);verifyLeader(responsibility,user.personId);
+    const selection=this.approvalCandidates(user),selected=selection.candidates.find(c=>c.id===body.assigneeUserId);
+    if(!selected)throw fail('请选择有效且有审批权限的审批人',409);
+    const responsibility={status:'applicant_selected',work_date:events[0].work_date,applicationDate:selection.date,shift:selection.shift,team:selection.shift||'未取得当日排班',recommendedUserIds:selection.candidates.filter(c=>c.recommended).map(c=>c.id),assignee_user_id:selected.id,leader_person_id:selected.personId||null,assigneeName:selected.name};
     const id=randomUUID();db.prepare("insert into attendance_offset_requests values(?,?,?,?,?,?,'pending',1,?,?)").run(id,user.personId,month,responsibility.assignee_user_id,JSON.stringify(responsibility),body.note,at(),at());
     for(const event of events){const itemId=randomUUID();db.prepare('insert into attendance_offset_claims values(?,?)').run(event.id,itemId);adjust(user.personId,month,'freeze',itemId);db.prepare("insert into attendance_offset_items values(?,?,?,?,?,'pending',0,null,null,null)").run(itemId,id,event.id,event.evidence_hash,event.revision);}
     tasks.upsert({sourceModule:'attendance',sourceType:'offset_approval',sourceId:id,assigneeUserId:responsibility.assignee_user_id,title:`考勤 · 抵消审批 · ${user.name||user.employeeNo||'员工'} · ${events[0].work_date} · ${events.length}项`});audit(user,'submit',id,{applicant:{personId:user.personId,userId:user.id,name:user.name||user.employeeNo||user.id,employeeNo:user.employeeNo||null},events:body.events,submittedEvidence:events.map(event=>({eventId:event.id,revision:event.revision,evidenceHash:event.evidence_hash,evidence:JSON.parse(event.evidence_json)}))});return {id,status:'pending',version:1};
@@ -333,7 +385,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    const submittedEvidence=submitted?JSON.parse(submitted.detail_json).submittedEvidence||null:null;
    const evidenceDates=[...new Set(requestItems.map(i=>db.prepare('select work_date from attendance_offset_events where id=?').get(i.event_id)?.work_date).filter(Boolean))];
    const applicant=submitted?(JSON.parse(submitted.detail_json).applicant||{personId:row.person_id,userId:submitted.actor_id,name:loadUser(submitted.actor_id)?.name||row.person_id}):{personId:row.person_id,name:row.person_id};
-   return {...row,applicant,submittedEvidence,history,creditStatus:account(row.person_id,row.usage_month)?.status||'not_issued',dayEvidence:evidenceDates.flatMap(date=>readDays(row.person_id,date,date)).map(d=>({date:d.date,sourceReadAt:d.sourceReadAt,result:classifyDay(d.input,clock(),d.sourceReadAt),approvals:(d.input.approvals||[]).map(({id,kind,subType,approved,revoked,start,end,reason,reasonStatus})=>({id,kind,subType,approved,revoked,start,end,reason,reasonStatus}))})),items:requestItems.map(item=>({...item,event:db.prepare('select * from attendance_offset_events where id=?').get(item.event_id)})),canApprove:existingActionsEnabled&&assigneeAllowed(user,row),canWithdraw:existingActionsEnabled&&row.status==='pending'&&row.person_id===user.personId&&hasPermission(user,'attendance.offset.submit')};
+   return {...row,applicant,assignee:{id:row.assignee_user_id,name:loadUser(row.assignee_user_id)?.name||row.assignee_user_id},submittedEvidence,history,creditStatus:account(row.person_id,row.usage_month)?.status||'not_issued',dayEvidence:evidenceDates.flatMap(date=>readDays(row.person_id,date,date)).map(d=>({date:d.date,sourceReadAt:d.sourceReadAt,result:classifyDay(d.input,clock(),d.sourceReadAt),approvals:(d.input.approvals||[]).map(({id,kind,subType,approved,revoked,start,end,reason,reasonStatus})=>({id,kind,subType,approved,revoked,start,end,reason,reasonStatus}))})),items:requestItems.map(item=>({...item,event:db.prepare('select * from attendance_offset_events where id=?').get(item.event_id)})),canApprove:existingActionsEnabled&&assigneeAllowed(user,row),canWithdraw:existingActionsEnabled&&row.status==='pending'&&row.person_id===user.personId&&hasPermission(user,'attendance.offset.submit')};
   },
   decide(user,id,body,key){
    requirePermission(user,'attendance.offset.approve');existingWritable();
