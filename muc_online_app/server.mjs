@@ -7049,7 +7049,8 @@ async function routeRequest(req, res) {
       }
       if(method==='GET'&&url.pathname==='/api/attendance/self/leaves'){
         if(!actor.personId)return send(res,200,{status:'identity_unbound',people:[]});
-        return send(res,200,attendanceService.leave.snapshot(actor,{personId:actor.personId},'attendance.read'));
+        const year=url.searchParams.get('year');
+        return send(res,200,attendanceService.leave.snapshot(actor,{personId:actor.personId,...(year?{year}:{})},'attendance.read'));
       }
       if(method==='GET'&&url.pathname==='/api/attendance/self/summary'){const summary=attendanceService.selfSummary(actor),effective=summary.month?offsetService.effectiveMissingDates(actor,summary.month):[],effectiveExceptions=summary.month?offsetService.effectiveExceptionDates(actor,summary.month):[];return send(res,200,{...summary,exceptionOffsetCount:effectiveExceptions.filter(date=>(summary.exceptionDates||[]).includes(date)).length,missingOffsetCount:effective.filter(date=>(summary.missingDates||[]).includes(date)).length,credits:offsetService.balance(actor),...offsetService.versions()});}
       if(url.pathname.startsWith('/api/attendance/leave-balances')){
