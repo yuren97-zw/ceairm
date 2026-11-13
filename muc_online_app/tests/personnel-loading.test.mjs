@@ -43,7 +43,7 @@ test('destination renders before slow management loading, and superseded render 
     isLoggedIn:()=>true,clearAllDeferredReclassify:()=>{},renderShell:()=>{},
     renderActivePage:()=>renders.push(context.state.activePage),
     loadActivePageData:()=>context.state.activePage==='personnelPage'?gate:Promise.resolve(),
-    syncPeopleScopedState:()=>{},startMaintenanceSync:()=>{},startInfoSync:()=>{},isAuthExpired:()=>false});
+    syncPeopleScopedState:()=>{},startMaintenanceSync:()=>{},startInfoSync:()=>{},startActionTaskRealtime:()=>{},isAuthExpired:()=>false});
   vm.runInContext(app.slice(app.indexOf('let personnelLoading ='),app.indexOf('\nconst pullRefreshGesture',app.indexOf('let personnelLoading ='))),context);
   const first=context.renderAll();
   assert.deepEqual(renders,['personnelPage']);

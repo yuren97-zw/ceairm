@@ -1,3 +1,4 @@
+import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
 import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
@@ -7008,6 +7009,7 @@ async function routeRequest(req, res) {
 
     if(url.pathname.startsWith('/api/action-tasks')){
       const actor=requireLogin(req,res);if(!actor)return;
+      if(method==='GET'&&url.pathname==='/api/action-tasks/events'){if(!actionTaskRealtime.connect(req,res,actor))return send(res,429,{error:'实时连接数量已达上限'});return;}
       if(method==='GET'&&url.pathname==='/api/action-tasks/count')return send(res,200,offsetService.tasks.count(actor));
       if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
       return send(res,404,{error:'接口不存在'});
@@ -9116,6 +9118,8 @@ function currentOffsetActor(user){
 
 const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
 
+const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
+
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
 let infoVersion=infoSync.latest(),infoHeartbeat=Date.now();
@@ -9157,7 +9161,7 @@ function pumpInfoSync(forceHeartbeat=false){
 }
 if (process.env.MUC_NO_LISTEN !== "1") {
   attendanceService.start();
-  const infoTimer=setInterval(()=>pumpInfoSync(),2000);infoTimer.unref();
+  const infoTimer=setInterval(()=>{pumpInfoSync();actionTaskRealtime.pump();},2000);infoTimer.unref();
   const capabilityScheduler = setInterval(() => {
     const started = performance.now();
     let syncMs = 0;
@@ -9187,4 +9191,4 @@ if (process.env.MUC_NO_LISTEN !== "1") {
   });
 }
 
-export { attendanceService, route, measuredRoute, pumpInfoSync, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };
+export { actionTaskRealtime, attendanceService, route, measuredRoute, pumpInfoSync, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService };
