@@ -69,10 +69,12 @@ export function mountAttendanceView(host,data,options={}){
   const needsDetails=data.detailLevel==='summary'&&!['summary','sync','leave'].includes(ui.tab);
   const catalog=data.leaveTypes||status?.leaveTypes;
   const tabs=[...(options.canStats===false?[]:[['summary','人员统计']]),['matrix','逐日总览'],['person','个人明细'],['issues','异常核对'],...(options.onLeaves&&options.canStats!==false?[['leave','假期']]:[]),...(!options.offline?[['sync','同步状态']]:[])];
-  host.innerHTML=`<div class="att-head"><div class="att-title"><h1>考勤管理</h1><span class="att-month">${esc(data.month)}</span></div><div class="att-actions">${options.offline?'':`<label>统计月份<input type="month" min="2026-09" value="${data.month}" data-month></label><button data-reload>刷新页面</button>${options.canSync?'<button data-sync class="att-primary">同步本月</button>':''}`}${options.canExport?'<select data-export-scope aria-label="导出范围"><option value="filtered">当前筛选人员</option><option value="all">全部有权查看人员</option></select><button data-export="xlsx">导出Excel</button><button data-export="html">只读HTML</button>':''}</div></div>
-  <div class="att-note">${esc(data.historyWarning)}<br>${esc(data.overtimeNote)}<br>最近数据同步：${esc(time(data.lastSyncedAt))}；${options.offline?'快照生成':'本次读取'}：${esc(time(data.generatedAt))}${options.offline?`${data.exportedAt?`；本次导出：${esc(time(data.exportedAt))}`:''}；导出范围：${esc(data.exportScope)}，筛选：${esc(JSON.stringify(data.filters||{}))}`:''}</div>
-  ${catalog?`<div class="att-note">${esc(attendanceLeaveCatalogText(catalog))}${catalog.lastSyncedAt?`<br>假期目录最近更新：${esc(time(catalog.lastSyncedAt))}`:''}</div>`:''}
-  ${data.approvalReasonCoverage?.total?`<div class="att-note">审批事由：共${data.approvalReasonCoverage.total}个实例，尚未完整读取${data.approvalReasonCoverage.unresolved}个；未读取不代表未命中跟班。</div>`:''}
+  // 数据口径与同步说明仅在线上版本的「同步状态」页签展示；只读快照无页签，保持完整可见。
+  const showSyncNotes=options.offline||ui.tab==='sync';
+  host.innerHTML=`<div class="att-head"><div class="att-title"><h1>考勤管理</h1><span class="att-month">${esc(data.month)}</span></div><div class="att-actions">${options.offline?'':`<label>统计月份<input type="month" min="2026-09" value="${data.month}" data-month></label>${options.canSync?'<button data-sync class="att-primary">同步本月</button>':''}`}${options.canExport?'<button data-export="xlsx">导出Excel</button><button data-export="html">只读HTML</button>':''}</div></div>
+  ${showSyncNotes?`<div class="att-note">${esc(data.historyWarning)}<br>${esc(data.overtimeNote)}<br>最近数据同步：${esc(time(data.lastSyncedAt))}；${options.offline?'快照生成':'本次读取'}：${esc(time(data.generatedAt))}${options.offline?`${data.exportedAt?`；本次导出：${esc(time(data.exportedAt))}`:''}；导出范围：${esc(data.exportScope)}，筛选：${esc(JSON.stringify(data.filters||{}))}`:''}</div>`:''}
+  ${showSyncNotes&&catalog?`<div class="att-note">${esc(attendanceLeaveCatalogText(catalog))}${catalog.lastSyncedAt?`<br>假期目录最近更新：${esc(time(catalog.lastSyncedAt))}`:''}</div>`:''}
+  ${showSyncNotes&&data.approvalReasonCoverage?.total?`<div class="att-note">审批事由：共${data.approvalReasonCoverage.total}个实例，尚未完整读取${data.approvalReasonCoverage.unresolved}个；未读取不代表未命中跟班。</div>`:''}
   ${!options.offline&&status&&!status.configuration.configured?'<div class="att-note att-warning">钉钉应用待配置，当前未启用真实数据同步。由管理员配置后，可回补2026年9月起数据。</div>':''}
   <div class="att-filters"><label>姓名／工号<input data-filter="query" type="search" value="${esc(ui.queryDraft)}" placeholder="搜索人员"></label>${select('department',[...new Set(data.people.map(p=>p.department))].filter(Boolean),ui.department,'部门')}${select('team',[...new Set(data.people.map(p=>p.team))].filter(Boolean),ui.team,'班组')}<button data-clear>清除筛选</button></div>
   ${options.canOffsetSettings?'<button type="button" data-offset-settings>兑换规则／责任核实</button>':''}${options.canStats===false?'':`<div class="att-cards"><div><small>当前人员</small><strong>${ps.length}<em>人</em></strong></div><div><small>加班累计时间（下班后）</small><strong>${duration(total)}</strong></div><div><small>无法计算</small><strong>${ps.reduce((n,p)=>n+(p.uncomputableDays||0),0)}<em>人日</em></strong></div><div><small>异常核对</small><strong>${data.detailLevel==='summary'?ps.reduce((n,p)=>n+(p.issueCount||0),0):issues.length}<em>人日</em></strong></div></div>`}
@@ -179,10 +181,9 @@ export function mountAttendanceView(host,data,options={}){
   }
   b.disabled=true;
   try{
-   if(b.hasAttribute('data-reload'))await options.onReload?.();
    if(b.hasAttribute('data-sync'))await options.onSync?.();
    if(b.hasAttribute('data-refresh-leaves'))await options.onRefreshLeaveTypes?.();
-   if(b.dataset.export)await options.onExport?.(b.dataset.export,host.querySelector('[data-export-scope]').value,{query:host.querySelector('[data-filter="query"]').value,department:ui.department,team:ui.team,personId:ui.tab==='person'&&ui.query===ui.queryDraft?ui.personId:'',...(activeCategories().length?{categories:activeCategories()}: {})});
+   if(b.dataset.export)await options.onExport?.(b.dataset.export,'filtered',{query:host.querySelector('[data-filter="query"]').value,department:ui.department,team:ui.team,personId:ui.tab==='person'&&ui.query===ui.queryDraft?ui.personId:'',...(activeCategories().length?{categories:activeCategories()}: {})});
   }catch(e){host.querySelector('.att-message').textContent=e.message;}
   finally{if(b.isConnected)b.disabled=false;}
  };

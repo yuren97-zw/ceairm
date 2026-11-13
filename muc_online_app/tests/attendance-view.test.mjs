@@ -122,9 +122,11 @@ test('category predicate combines with personnel filters without treating absent
 });
 test('zero catalog columns show all people when fully selected and no people when selecting an unused leave',async()=>{
  const data={people:[{personId:'a',name:'甲',employeeNo:'001',days:[],counts:{白班:1},overtimeSeconds:null}],dates:[],month:'2026-09',categories:['白班','病假','事假'],leaveTypes:{names:['病假','事假'],status:'ready'}};
- const s=setup({data});assert.match(s.content.innerHTML,/甲/);assert.match(s.content.innerHTML,/病假/);assert.match(s.content.innerHTML,/事假/);assert.match(s.host.innerHTML,/按钉钉企业目录固定展示/);
+ const s=setup({data});assert.match(s.content.innerHTML,/甲/);assert.match(s.content.innerHTML,/病假/);assert.match(s.content.innerHTML,/事假/);assert.ok(!s.host.innerHTML.includes('按钉钉企业目录固定展示'));
+ await s.listeners.get('click')({target:s.button({tab:'sync'})});assert.match(s.host.innerHTML,/按钉钉企业目录固定展示/);assert.match(s.host.innerHTML,/本次读取/);
+ await s.listeners.get('click')({target:s.button({tab:'summary'})});assert.ok(!s.host.innerHTML.includes('按钉钉企业目录固定展示'));
  await s.listeners.get('click')({target:s.button({columnsAction:'none'})});s.listeners.get('change')({target:{dataset:{column:'病假'},checked:true,hasAttribute:()=>false}});assert.match(s.content.innerHTML,/当前条件没有数据/);assert.match(s.content.innerHTML,/0人/);s.view.destroy();
- const missing=setup({data:{...data,leaveTypes:{names:['事假'],status:'unavailable',error:'缺少权限'}}});assert.match(missing.host.innerHTML,/完整假期目录尚未读取/);missing.view.destroy();
+ const missing=setup({data:{...data,leaveTypes:{names:['事假'],status:'unavailable',error:'缺少权限'}}});assert.ok(!missing.host.innerHTML.includes('完整假期目录尚未读取'));await missing.listeners.get('click')({target:missing.button({tab:'sync'})});assert.match(missing.host.innerHTML,/完整假期目录尚未读取/);missing.view.destroy();
 });
 test('summary page size supports 20/50/100, resets page and leaves matrix at 30 with full-scope cards',async()=>{
  const people=Array.from({length:105},(_,i)=>({personId:String(i),name:'人'+i,employeeNo:String(i),days:[],counts:{},overtimeSeconds:60}));
