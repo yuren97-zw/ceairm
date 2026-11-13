@@ -54,15 +54,38 @@ export async function openOffsetRequest(api,id,onChange=()=>{}){
   };
  }catch(e){body.textContent=e.message;}
 }
+const actionTaskLists=new Set();
+export async function refreshActionTaskLists(){const results=await Promise.allSettled([...actionTaskLists].map(refresh=>refresh()));return results.every(r=>r.status==='fulfilled'&&r.value!==false);}
 export async function openActionTasks(api,onChange=()=>{}){
  const dialog=openOffsetSheet('待处理','加载中…'),body=dialog.querySelector('section');
- try{const data=await api('/action-tasks');if(!dialog.open)return;
-  body.innerHTML=data.items.length?data.items.map(item=>`<article><button type="button" data-task="${esc(item.sourceId)}">${esc(item.title)} ›</button><small>${esc(time(item.createdAt))}</small></article>`).join(''):'暂无待处理';
-  let cursor=data.nextCursor;
-  const more=document.createElement('button');more.type='button';more.textContent='加载更多';more.hidden=!cursor;body.append(more);
-  more.onclick=async()=>{more.disabled=true;try{const next=await api('/action-tasks?cursor='+encodeURIComponent(cursor));more.insertAdjacentHTML('beforebegin',next.items.map(item=>`<article><button type="button" data-task="${esc(item.sourceId)}">${esc(item.title)} ›</button><small>${esc(time(item.createdAt))}</small></article>`).join(''));cursor=next.nextCursor;more.hidden=!cursor;}catch(e){more.textContent=e.message;}finally{more.disabled=false;}};
-  body.onclick=event=>{const button=event.target.closest('[data-task]');if(button)openOffsetRequest(api,button.dataset.task,()=>{dialog.close();onChange();openActionTasks(api,onChange);});};
- }catch(e){body.textContent=e.message;}
+ let sequence=0,targetCount=20;
+ const renderItems=items=>items.map(item=>`<article><button type="button" data-task="${esc(item.sourceId)}">${esc(item.title)} ›</button><small>${esc(time(item.createdAt))}</small></article>`).join('');
+ async function refresh(){
+  if(!dialog.open)return true;const current=++sequence;
+  try{
+   const items=[];let cursor=null;
+   do{
+    const query=new URLSearchParams({limit:String(Math.min(100,targetCount-items.length))});if(cursor)query.set('cursor',cursor);
+    const page=await api('/action-tasks?'+query);if(current!==sequence||!dialog.open)return true;
+    items.push(...page.items);cursor=page.nextCursor||null;
+   }while(cursor&&items.length<targetCount);
+   const scroll=body.scrollTop,focused=body.contains(document.activeElement)?document.activeElement?.dataset?.task:null;
+   body.innerHTML=`<div data-task-list>${items.length?renderItems(items):'<p>暂无待处理</p>'}</div><button type="button" data-more-tasks ${cursor?'':'hidden'}>加载更多</button><p role="status"></p>`;
+   body.querySelector('[data-more-tasks]').onclick=()=>{targetCount+=20;refresh();};
+   body.scrollTop=scroll;
+   if(focused)[...body.querySelectorAll('[data-task]')].find(b=>b.dataset.task===focused)?.focus({preventScroll:true});
+   return true;
+  }catch(error){
+   if(current!==sequence||!dialog.open)return true;
+   let status=body.querySelector('[role=status]');if(!status){body.textContent='';status=document.createElement('p');status.setAttribute('role','status');body.append(status);}
+   status.textContent='待处理更新失败，请重试：'+error.message;
+   if(!body.querySelector('[data-retry-tasks]')){const retry=document.createElement('button');retry.type='button';retry.dataset.retryTasks='';retry.textContent='重新读取';retry.onclick=refresh;body.append(retry);}
+   return false;
+  }
+ }
+ actionTaskLists.add(refresh);dialog.addEventListener('close',()=>{sequence++;actionTaskLists.delete(refresh);},{once:true});
+ body.onclick=event=>{const button=event.target.closest('[data-task]');if(button)openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
+ await refresh();return dialog;
 }
 const ownLeaveTableHtml=(headers,rows,cls,incomplete,notes,empty)=>`${incomplete?'<p>部分假期数据尚未同步或未完整，以下仅显示已取得的记录。</p>':''}${notes.map(n=>`<p>${esc(n)}</p>`).join('')}<small>表格可左右滑动查看完整内容。</small><div class="home-att-table" tabindex="0" aria-label="可横向滚动的假期表格"><table class="${cls}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${empty}</td></tr>`}</tbody></table></div>`;
 export function ownLeaveQuotaTable(cells){
@@ -105,10 +128,10 @@ export function homeAttendanceTable(days,kind,{canApply=false}={}){
  const leaves=legalLeaveCategories({people:[{days}]});
  const category=d=>`<button type="button" data-open-day="${esc(d.date)}">${attendanceCategoryBadge(d.category,leaves)}${d.offset?.label?`<small>${esc(d.offset.label)}</small>`:''}</button>${canApply&&kind==='issues'&&availableOffsetItems(d).length?`<button type="button" data-apply="${esc(d.date)}">申请抵消</button>`:''}`;
  const schedule=kind==='schedule'||kind==='accumulation',headers=schedule?['日期','类别','班次','出差用途','有效实际上班','有效实际下班','当日加班']:['日期','类别','原因','问题','处理结果','审批人'];
- const rows=days.map(d=>{const {on,off,multiple}=punchSummary(d),actual=v=>`${esc(time(v.actual))}<small>${esc(v.status)}${multiple?' · 多段':''}</small>`;
+ const rows=days.map(d=>{const {on,off,multiple}=punchSummary(d),actual=v=>`${v.actual?`<span class="home-punch-date">${esc(time(v.actual).split(' ')[0])}</span><span class="home-punch-time">${esc(time(v.actual).split(' ').slice(1).join(' '))}</span>`:'—'}<small>${esc(v.status)}${multiple?' · 多段':''}</small>`;
  return [esc(d.date),category(d),...(schedule?[esc(d.shift||'—'),esc((d.purposes||[]).map(a=>a.category||a.status).join('；')||'—'),actual(on),actual(off),d.overtime?.seconds==null?`—<small>${esc(d.overtime?.reason||'无法计算')}</small>`:`${Math.floor(d.overtime.seconds/3600)}小时${Math.floor(d.overtime.seconds%3600/60)}分`]:[esc(d.reason),esc([...(d.issues||[]),d.syncError].filter(Boolean).join('；')||'—'),...attendanceProcessingCells(d,esc)])];});
  const order=kind==='accumulation'?[0,1,2,6,4,5,3]:headers.map((_,index)=>index);
- return `${['schedule','accumulation'].includes(kind)?'':'<small>表格可左右滑动查看完整内容。</small>'}<div class="home-att-table" tabindex="0" aria-label="可横向滚动的${kind==='issues'?'异常':kind==='accumulation'?'考勤':'排班'}表格"><table class="${schedule?'home-schedule-table':'home-issues-table'}${kind==='accumulation'?' home-accumulation-table':''}"><thead><tr>${order.map(index=>`<th>${headers[index]}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(cells=>`<tr>${order.map(index=>`<td>${cells[index]}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${kind==='accumulation'?'本月暂无记录':'本月暂无考勤异常'}</td></tr>`}</tbody></table></div>`;
+ return `${['schedule','accumulation'].includes(kind)?'':'<small>表格可左右滑动查看完整内容。</small>'}<div class="home-att-table" tabindex="0" aria-label="可横向滚动的${kind==='issues'?'异常':kind==='accumulation'?'考勤':'排班'}表格"><table class="${schedule?'home-schedule-table':'home-issues-table'}${kind==='accumulation'?' home-accumulation-table':''} home-personal-table" data-home-attendance-kind="${esc(kind)}"><thead><tr>${order.map(index=>`<th>${headers[index]}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(cells=>`<tr>${order.map(index=>`<td>${cells[index]}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${kind==='accumulation'?'本月暂无记录':'本月暂无考勤异常'}</td></tr>`}</tbody></table></div>`;
 }
 
 export async function openPersonalAttendance(api,kind,onChange=()=>{},onOpenDay=null){

@@ -3,6 +3,18 @@ let offsetUiImport=null;
 const offsetUi=()=>offsetUiImport||(offsetUiImport=import('./attendance-offset-ui.mjs'));
 const openActionTasks=(...args)=>offsetUi().then(module=>module.openActionTasks(...args));
 const openPersonalAttendance=(...args)=>offsetUi().then(module=>module.openPersonalAttendance(...args));
+let actionTaskRealtimeController=null,actionTaskRealtimeImport=null,actionTaskRealtimeEpoch=0;
+async function startActionTaskRealtime(){
+ const generation=actionTaskRealtimeEpoch;
+ if(!isLoggedIn()||document.hidden){actionTaskRealtimeController?.stop();return;}
+ try{
+  const module=await (actionTaskRealtimeImport ||= import('./action-task-realtime.mjs'));
+  if(generation!==actionTaskRealtimeEpoch||!isLoggedIn()||document.hidden)return;
+  actionTaskRealtimeController ||= module.createActionTaskRealtimeClient({url:`${API_BASE_URL}/action-tasks/events`,getIdentity:()=>isLoggedIn()?state.user.id:null,refresh:async valid=>{const ok=await loadHomeActionTasks();if(!valid())return;let listsOk=true;if(offsetUiImport){const ui=await offsetUiImport;if(valid())listsOk=await ui.refreshActionTaskLists();}return ok&&listsOk;},onAccessRevoked:()=>handleAuthExpired('登录状态已变化，请重新登录。')});
+  actionTaskRealtimeController.start();
+ }catch{ /* Existing home polling remains available if the module cannot load. */ }
+}
+function stopActionTaskRealtime(){actionTaskRealtimeEpoch++;actionTaskRealtimeController?.stop();}
 let attendanceModule = null, attendanceImport = null;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -2002,6 +2014,9 @@ const homeDataService = {
   maintenanceSeq: 0,
   maintenanceUser: "",
   maintenanceAt: 0,
+  maintenanceVersion: 0,
+  maintenanceLoadingUser: "",
+  maintenanceReloadPending: false,
   async loadAttendance(force = false) {
     if (!isLoggedIn() || !canView("attendancePage")) {
       state.homeAttendance = null;
@@ -2068,8 +2083,21 @@ const homeDataService = {
       state.homeMaintenanceState = "";
       return true;
     }
-    const fresh = this.maintenanceUser === state.user.id && Date.now() - this.maintenanceAt < 60000;
-    if (state.homeMaintenanceState === "loading" || (fresh && !force)) return true;
+    const identity = state.user.id;
+    if (this.maintenanceUser !== identity && this.maintenanceLoadingUser !== identity) {
+      state.homeMaintenanceFlights = [];
+      state.homeMaintenanceGroups = [];
+      state.homeMaintenanceNextCursor = "";
+      this.maintenanceVersion = 0;
+      this.maintenanceReloadPending = false;
+    }
+    if (this.maintenanceLoadingUser === identity) {
+      if (force) this.maintenanceReloadPending = true;
+      return true;
+    }
+    const fresh = this.maintenanceUser === identity && Date.now() - this.maintenanceAt < 60000;
+    if (fresh && !force) return true;
+    this.maintenanceLoadingUser = identity;
     const seq = ++this.maintenanceSeq;
     state.homeMaintenanceState = "loading";
     renderHome();
@@ -2077,28 +2105,41 @@ const homeDataService = {
       const query = new URLSearchParams({ scope: "execute", view: "summary", limit: "100" });
       if (state.maintenanceExecuteLocation) query.append("locationId", state.maintenanceExecuteLocation);
       const data = await apiRequest(`/maintenance/flights?${query.toString()}`);
-      if (seq !== this.maintenanceSeq) return true;
+      if (seq !== this.maintenanceSeq || state.user?.id !== identity || !isLoggedIn()) return true;
       state.homeMaintenanceFlights = data.flights || [];
       state.homeMaintenanceNextCursor = data.nextCursor || "";
       state.homeMaintenanceGroups = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights);
       state.homeMaintenanceState = "ready";
-      this.maintenanceUser = state.user.id;
+      this.maintenanceUser = identity;
       this.maintenanceAt = Date.now();
+      this.maintenanceVersion = Number(data.version || 0);
+      state.homeMaintenanceError = "";
       renderHome();
       return true;
     } catch (error) {
-      if (seq !== this.maintenanceSeq) return false;
+      if (seq !== this.maintenanceSeq || state.user?.id !== identity || !isLoggedIn()) return false;
       if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
       state.homeMaintenanceState = "error";
       state.homeMaintenanceError = error.message || "维修机会读取失败";
       renderHome();
       return false;
+    } finally {
+      if (seq === this.maintenanceSeq && state.user?.id === identity) {
+        this.maintenanceLoadingUser = "";
+        if (this.maintenanceReloadPending) {
+          this.maintenanceReloadPending = false;
+          void this.loadMaintenance(true);
+        }
+      }
     }
   }
 };
 
 let homeTaskSequence=0,homeRefreshTimer=null;
 function resetHomeAttendanceSession(){
+ stopActionTaskRealtime();
+ homeDataService.maintenanceSeq++;homeDataService.maintenanceUser='';homeDataService.maintenanceLoadingUser='';homeDataService.maintenanceAt=0;homeDataService.maintenanceVersion=0;homeDataService.maintenanceReloadPending=false;
+ state.homeMaintenanceFlights=[];state.homeMaintenanceGroups=[];state.homeMaintenanceNextCursor='';state.homeMaintenanceState='';state.homeMaintenanceError='';
  homeDataService.attendanceSeq++;homeDataService.attendanceUser='';homeDataService.attendanceLoadingUser='';homeDataService.attendanceAt=0;
  state.homeAttendance=null;state.homeAttendanceState='';state.homeAttendanceError='';pendingHomeDayTarget=null;homeTaskSequence++;
  clearTimeout(homeRefreshTimer);homeRefreshTimer=null;const button=document.querySelector('#homeActionTasks');if(button)button.hidden=true;
@@ -2107,17 +2148,17 @@ function resetHomeAttendanceSession(){
 
 function scheduleHomeRefresh(){
  if(homeRefreshTimer||document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;
- homeRefreshTimer=setTimeout(()=>{homeRefreshTimer=null;if(document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;Promise.allSettled([loadHomeActionTasks(),homeDataService.loadAttendance(true)]).finally(scheduleHomeRefresh);},30000);
+ homeRefreshTimer=setTimeout(()=>{homeRefreshTimer=null;if(document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;Promise.allSettled([...(actionTaskRealtimeController?[]:[loadHomeActionTasks()]),homeDataService.loadAttendance(true)]).finally(scheduleHomeRefresh);},30000);
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(homeRefreshTimer);homeRefreshTimer=null;}else if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);scheduleHomeRefresh();}});
-window.addEventListener('online',()=>{if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(homeRefreshTimer);homeRefreshTimer=null;}else if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);homeDataService.loadMaintenance(true);scheduleHomeRefresh();}});
+window.addEventListener('online',()=>{if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);homeDataService.loadMaintenance(true);}});
 
 async function loadHomeActionTasks(){
  const seq=++homeTaskSequence,identity=state.user?.id;
  let button=document.querySelector('#homeActionTasks');
  if(!button){button=document.createElement('button');button.id='homeActionTasks';button.className='btn secondary';button.hidden=true;button.onclick=()=>openActionTasks(apiRequest,()=>{loadHomeActionTasks();homeDataService.loadAttendance(true);});document.querySelector('.home-user-actions')?.prepend(button);}
  if(!isLoggedIn()){button.hidden=true;return true;}
- try{const value=await apiRequest('/action-tasks/count');if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=value.count===0;button.textContent=`待处理 ${value.count} ›`;return true;}catch{if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=true;return false;}
+ try{const value=await apiRequest('/action-tasks/count');if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=value.count===0;button.textContent=`待处理 ${value.count} ›`;return true;}catch(error){if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=true;if(error.status===401){stopActionTaskRealtime();await handleAuthExpired(error.message);}return false;}
 }
 function renderHome() {
   scheduleHomeRefresh();
@@ -2194,7 +2235,7 @@ function renderHomeAttendanceMetrics() {
     { label: "假期", value: data.leaveSummary||'—', action:"leaves", hint: "当前可休假期；点击查看完整额度与休假记录" },
     { label: "累计/可用", value: `${overtime}/—`, hint: "累计为当月加班时长；可用次数统计尚未接入" }
   ];
-  box.innerHTML = metrics.map((metric,index) => index===1?`<button class="home-metric-item" type="button" data-home-attendance-action="issues" title="${escapeHtml(metric.hint)}" aria-label="异常${data.issueCount??0}天，抵消${data.exceptionOffsetCount??0}天"><span class="home-metric-name">异常/抵消</span><strong class="home-metric-value"><span class="${data.issueCount>0?'home-exception-number':''}">${data.issueCount??0}</span><span>/</span><span class="${data.exceptionOffsetCount>0?'home-offset-number':''}">${data.exceptionOffsetCount??0}</span></strong></button>`:index===3?`<div class="home-metric-item"><span class="home-metric-name" title="本月累计／本月可用次数">累计/次</span><strong class="home-metric-value offset-credit-values"><button type="button" data-home-attendance-action="accumulation" aria-label="本月累计详情">${escapeHtml(overtime)}</button><span>/</span><button type="button" data-home-attendance-action="credits" aria-label="本月可用次数详情">${data.credits?.available??'—'}</button></strong></div>`:`<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button" data-home-attendance-action="${metric.action}" title="${escapeHtml(metric.hint||metric.label)}" aria-label="${escapeHtml(metric.label+'：'+metric.value+'。'+(metric.hint||''))}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
+  box.innerHTML = metrics.map((metric,index) => index===1?`<button class="home-metric-item" type="button" data-home-attendance-action="issues" title="${escapeHtml(metric.hint)}" aria-label="异常${data.issueCount??0}天，抵消${data.exceptionOffsetCount??0}天"><span class="home-metric-name">异常/抵消</span><strong class="home-metric-value"><span class="${data.issueCount>0?'home-exception-number':''}">${data.issueCount??0}</span><span>/</span><span class="${data.exceptionOffsetCount>0?'home-offset-number':''}">${data.exceptionOffsetCount??0}</span></strong></button>`:index===3?`<div class="home-metric-item"><span class="home-metric-name" title="本月累计／本月可用次数">累计/次</span><strong class="home-metric-value offset-credit-values"><button type="button" data-home-attendance-action="accumulation" aria-label="本月累计详情">${escapeHtml(overtime)}</button><span>/</span><button type="button" data-home-attendance-action="credits" class="${Number.isFinite(data.credits?.available)&&data.credits.available!==0?'home-credit-highlight':''}" aria-label="本月可用次数详情">${data.credits?.available??'—'}</button></strong></div>`:`<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button" data-home-attendance-action="${metric.action}" title="${escapeHtml(metric.hint||metric.label)}" aria-label="${escapeHtml(metric.label+'：'+metric.value+'。'+(metric.hint||''))}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
 }
 
 function renderHomeMaintenanceModule() {
@@ -2216,7 +2257,7 @@ function renderHomeMaintenanceModule() {
   if (!executeAllowed) count.textContent = "—";
   else if (state.homeMaintenanceState === "loading" && !state.homeMaintenanceGroups.length) count.textContent = "…";
   else if (state.homeMaintenanceState === "error") count.textContent = "!";
-  else if (state.homeMaintenanceState === "ready") count.textContent = String(state.homeMaintenanceGroups.length);
+  else if (["ready", "loading"].includes(state.homeMaintenanceState)) count.textContent = String(state.homeMaintenanceGroups.length);
   else count.textContent = "—";
   count.classList.toggle("error", state.homeMaintenanceState === "error");
   count.title = state.homeMaintenanceState === "error" ? state.homeMaintenanceError || "读取失败" : "";
@@ -2234,7 +2275,7 @@ function renderHomeMaintenanceList(expanded) {
     return;
   }
   list.hidden = false;
-  if (state.homeMaintenanceState === "loading") {
+  if (state.homeMaintenanceState === "loading" && !state.homeMaintenanceGroups.length) {
     list.innerHTML = `<div class="status-line">正在读取维修机会…</div>`;
     return;
   }
@@ -2247,13 +2288,9 @@ function renderHomeMaintenanceList(expanded) {
     list.innerHTML = `<div class="status-line">暂无派给你的维修任务。</div>`;
     return;
   }
-  const items = groups.map(group => {
-    const flight = group.flight;
-    return `<button class="home-maint-item" type="button" data-home-maint-goto="${escapeHtml(flight.id)}" aria-label="打开维修机会：${escapeHtml(maintenanceTitle(flight))}">
-      <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(flight)}</span>
-      <span class="home-maint-item-meta">${maintenanceStatusBadge(flight.status || "已派工")}${maintenanceFlightSecondaryHtml(flight)}</span>
-    </button>`;
-  }).join("");
+  const items = groups.map(({ flight }) => `<article class="maintenance-card execute-flight-card collapsed">
+    ${maintenanceExecuteHeaderHtml(flight, { home: true })}
+  </article>`).join("");
   const moreNote = state.homeMaintenanceNextCursor
     ? `<div class="home-maint-more">已显示前 ${groups.length} 项，更多请进入维修管控执行页查看。</div>`
     : "";
@@ -3624,6 +3661,25 @@ function maintenanceFlightSecondaryHtml(flight) {
   return `<span class="maintenance-flight-secondary">${stand}${flight.flightNo ? `<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span>` : ""}<span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span>${departure}${location}</span>`;
 }
 
+// Shared opportunity header: homepage opens execution; execution toggles its details.
+function maintenanceExecuteHeaderHtml(flight, { home = false, expanded = false } = {}) {
+  const id = escapeHtml(flight.id);
+  const action = home ? `data-home-maint-goto="${id}"` : `data-maint-execute-toggle="${id}" aria-expanded="${expanded ? "true" : "false"}"`;
+  const label = home ? `打开维修机会：${maintenanceTitle(flight)}` : `${expanded ? "收起" : "展开"}维修机会`;
+  const subtaskCount = (flight.subtasks || []).length;
+  const draftCount = flight.nonroutineDraft?.items?.length || 0;
+  const complete = flight.status === "已提报" && flight.personalReportProgress?.allAssignedWorkComplete
+    ? '<span class="execute-personal-complete-check" role="img" aria-label="个人相关工作已全部提报" title="个人相关工作已全部提报"></span>' : "";
+  return `<button class="execute-flight-toggle" type="button" ${action} aria-label="${escapeHtml(label)}">
+    <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(flight)}</span>
+    <span class="execute-flight-head-meta">${complete}${maintenanceStatusBadge(flight.status || "已派工", "", "", "", flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
+  </button>
+  <div class="execute-flight-info-row">
+    <button class="execute-flight-info-toggle" type="button" ${action} aria-label="${escapeHtml(label)}">${maintenanceFlightSecondaryHtml(flight)}</button>
+    ${String(flight.remark || "").trim() ? `<button class="maintenance-remark-indicator" type="button" ${home ? `data-home-maint-goto="${id}"` : `data-maint-remark-view="${id}"`} aria-label="${home ? "进入执行页查看维修机会备注" : "查看维修机会备注"}" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>` : ""}
+  </div>`;
+}
+
 function maintenanceAssigneeGroups(item, ownerType = "flight") {
   const grouped = new Map();
   for (const person of item.assignments || []) {
@@ -3995,11 +4051,6 @@ function renderMaintenanceExecute() {
       return `${index ? "、" : ""}<span class="execute-person-name${isSelf ? " is-self" : ""}">${escapeHtml(person.userName)}</span>`;
     }).join("");
   };
-  const statusHtml = flight => maintenanceStatusBadge(flight.status || "已派工", "", "", "", flight);
-  const personalCompleteHtml = flight => flight.status === "已提报"
-    && flight.personalReportProgress?.allAssignedWorkComplete
-    ? '<span class="execute-personal-complete-check" role="img" aria-label="个人相关工作已全部提报" title="个人相关工作已全部提报"></span>'
-    : "";
   const nonroutineHtml = flight => {
     const batchEntries = flight.reportProgress?.batches?.nonroutine?.entries || [];
     const formalItems = (flight.subtasks || []).map(item => ({ ...item, draft: false }));
@@ -4069,18 +4120,7 @@ function renderMaintenanceExecute() {
     </section>`;
   };
   const flightCardHtml = group => { const { flight } = group; const subtaskCount = (flight.subtasks || []).length; const draftCount = flight.nonroutineDraft?.items?.length || 0; const expanded = state.maintenanceExecuteOpenFlightId === flight.id; return `<article class="maintenance-card execute-flight-card ${expanded ? "expanded" : "collapsed"}">
-      <button class="execute-flight-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}">
-        <span class="maintenance-flight-identity">
-          ${maintenanceFlightPrimaryHtml(flight)}
-        </span>
-        <span class="execute-flight-head-meta">${personalCompleteHtml(flight)}${statusHtml(flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
-      </button>
-      <div class="execute-flight-info-row">
-        <button class="execute-flight-info-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起" : "展开"}维修机会">
-          ${maintenanceFlightSecondaryHtml(flight)}
-        </button>
-        ${String(flight.remark || "").trim() ? `<button class="maintenance-remark-indicator" type="button" data-maint-remark-view="${escapeHtml(flight.id)}" aria-label="查看维修机会备注" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>` : ""}
-      </div>
+      ${maintenanceExecuteHeaderHtml(flight, { expanded })}
       ${expanded ? `<div class="execute-flight-body">${mainWorkHtml(group)}${subtaskCount || draftCount ? `<div class="execute-subtask-heading">非例行${draftCount ? ` · 草稿 ${draftCount} 项` : ""}</div><div class="execute-nonroutine-list">${nonroutineHtml(flight)}</div>` : ""}</div>` : ""}
     </article>`; };
   const today = maintenanceLocalDateValue();
@@ -4879,6 +4919,7 @@ async function renderAll(options = {}) {
   renderActivePage();
   startMaintenanceSync();
   startInfoSync();
+  startActionTaskRealtime();
 }
 
 const pullRefreshGesture = {
@@ -4889,6 +4930,7 @@ const pullRefreshGesture = {
   distance: 0,
   settleTimer: null
 };
+const PULL_REFRESH_START_DISTANCE = 10;
 const PULL_REFRESH_THRESHOLD = 72;
 const PULL_REFRESH_MAX_OFFSET = 96;
 const PULL_REFRESH_HOLD_OFFSET = 48;
@@ -4922,7 +4964,14 @@ function settlePullRefresh(delay = 0) {
   window.clearTimeout(pullRefreshGesture.settleTimer);
   pullRefreshGesture.tracking = false;
   pullRefreshGesture.distance = 0;
+  const wasVisible = document.body.classList.contains("pull-refresh-tracking")
+    || document.body.classList.contains("pull-refresh-refreshing");
   document.body.classList.remove("pull-refresh-tracking", "pull-refresh-ready", "pull-refresh-refreshing");
+  // A tap only arms the gesture; never animate an indicator that was not shown.
+  if (!wasVisible) {
+    setPullRefreshVisual(0);
+    return;
+  }
   document.body.classList.add("pull-refresh-settling");
   pullRefreshGesture.settleTimer = window.setTimeout(() => {
     setPullRefreshVisual(0);
@@ -4963,10 +5012,16 @@ function handlePullRefreshStart(event) {
 }
 
 function handlePullRefreshMove(event) {
-  if (!pullRefreshGesture.tracking || pullRefreshGesture.refreshing || event.touches.length !== 1) return;
+  if (!pullRefreshGesture.tracking || pullRefreshGesture.refreshing) return;
+  if (event.touches.length !== 1) {
+    settlePullRefresh();
+    return;
+  }
   const touch = event.touches[0];
   const deltaX = touch.clientX - pullRefreshGesture.startX;
   const deltaY = touch.clientY - pullRefreshGesture.startY;
+  if (!document.body.classList.contains("pull-refresh-tracking")
+    && Math.hypot(deltaX, deltaY) < PULL_REFRESH_START_DISTANCE) return;
   if (deltaY <= 0 || Math.abs(deltaX) >= Math.abs(deltaY) || pullRefreshScrollTop() > 0) {
     settlePullRefresh();
     return;
@@ -6054,6 +6109,11 @@ function maintenanceHasOpenEditor() {
 
 async function refreshMaintenanceFromSync(version = 0) {
   const nextVersion = Number(version || 0);
+  // Home has its own snapshot version; loading the execution list must not consume its update.
+  if ((state.activePage === "homePage" || state.homeMaintenanceState)
+    && (!nextVersion || nextVersion > homeDataService.maintenanceVersion || state.homeMaintenanceState === "error")) {
+    homeDataService.loadMaintenance(true).catch(() => {});
+  }
   if (nextVersion && nextVersion <= Number(state.maintenanceSyncVersion || 0)) return;
   if (nextVersion) state.maintenanceSyncVersion = nextVersion;
   if (maintenanceHasOpenEditor()) {
@@ -6064,14 +6124,10 @@ async function refreshMaintenanceFromSync(version = 0) {
     if (state.loadedData instanceof Set) {
       for (const key of state.loadedData) if (key.startsWith("maintenance:")) state.loadedData.delete(key);
     }
-    if (["ready", "error"].includes(state.homeMaintenanceState)) {
-      homeDataService.loadMaintenance(true).catch(() => {});
-    }
     return;
   }
   state.maintenanceRefreshPending = false;
   await refreshMaintenance();
-  homeDataService.loadMaintenance(true).catch(() => {});
 }
 
 function flushMaintenancePendingRefresh() {
@@ -8495,6 +8551,7 @@ document.addEventListener("click", event => {
 });
 
 async function performLogout() {
+  stopActionTaskRealtime();
   stopMaintenanceSync();
   stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
   await authService.logout();

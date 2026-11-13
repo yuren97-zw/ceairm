@@ -2374,6 +2374,7 @@ test('leave directory metadata is visible to attendance readers and refresh cann
 
 test('V1.4 public tasks require authentication and offset write paths fail closed without expanding attendance scope',async()=>{
  assert.equal((await request('/api/action-tasks/count')).res.statusCode,401);
+ assert.equal((await request('/api/action-tasks/events')).res.statusCode,401);
  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
  const count=await request('/api/action-tasks/count',{cookie});assert.equal(count.res.statusCode,200);assert.equal(count.payload.count,0);
  const summary=await request('/api/attendance/self/summary?personId=another',{cookie});assert.equal(summary.res.statusCode,200);assert.equal('people' in summary.payload,false);
@@ -2404,4 +2405,23 @@ test('removed initialization HTTP endpoints reject writes and preserve legacy ru
  assert.equal((await request('/api/attendance/offsets/initialization/preview',{method:'POST',body})).res.statusCode,401);
  const preview=await request('/api/attendance/offsets/initialization/preview',{method:'POST',cookie,body});assert.equal(preview.res.statusCode,409);assert.match(preview.payload.error,/已停用/);assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
  const confirm=await request('/api/attendance/offsets/initialization/confirm',{method:'POST',cookie,body:{...body,previewHash:preview.payload.previewHash}});assert.equal(confirm.res.statusCode,409);assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
+});
+
+test('task SSE authenticates, sends committed recipient changes without content, and closes revoked sessions',async()=>{
+ const {actionTaskRealtime}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const req=Readable.from([]);req.method='GET';req.url='/api/action-tasks/events';req.headers={host:'127.0.0.1:8788',cookie};const res=new MockResponse();
+ const userId='54002010',original=db.prepare('select * from action_task_revisions where user_id=?').get(userId),stamp=new Date().toISOString();
+ try{
+  await measuredRoute(req,res);assert.equal(res.statusCode,200);assert.equal(res.headers['Content-Type'],'text/event-stream; charset=utf-8');assert.equal(res.headers['X-Accel-Buffering'],'no');assert.match(res.body.toString(),/"kind":"connected"/);
+  db.exec('begin immediate');
+  db.prepare("insert into attendance_offset_requests values(?,?,?,?,'{}',?,'pending',1,?,?)").run('sse-task-request','sse-other-person','2026-11',userId,'private-note',stamp,stamp);
+  db.prepare("insert into action_tasks values(?,?,?,?,?,?,?,'pending','{}',?,?)").run('sse-task','attendance','offset_approval','sse-task-request','approve',userId,'private-title',stamp,stamp);
+  db.prepare('insert into action_task_revisions values(?,1) on conflict(user_id) do update set version=action_task_revisions.version+1').run(userId);db.exec('commit');
+  actionTaskRealtime.pump();assert.match(res.body.toString(),/"kind":"changed"/);assert.doesNotMatch(res.body.toString(),/private-title|private-note|sse-task-request/);
+  req.headers.cookie='';db.prepare('update action_task_revisions set version=version+1 where user_id=?').run(userId);actionTaskRealtime.pump();assert.match(res.body.toString(),/access-revoked/);
+ }finally{
+  res.emit('close');actionTaskRealtime.close();db.prepare('delete from action_tasks where id=?').run('sse-task');db.prepare('delete from attendance_offset_requests where id=?').run('sse-task-request');
+  if(original)db.prepare('update action_task_revisions set version=? where user_id=?').run(original.version,userId);else db.prepare('delete from action_task_revisions where user_id=?').run(userId);
+ }
 });

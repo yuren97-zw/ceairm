@@ -1,4 +1,4 @@
-const CACHE_NAME = "airline-operations-center-shell-v41";
+const CACHE_NAME = "airline-operations-center-shell-v43";
 const APP_SHELL = [
   "/",
   "/login",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "/attendance.mjs?v=2",
   "/attendance-view.mjs",
   "/attendance-offset-ui.mjs",
+  "/action-task-realtime.mjs",
   "/attendance-presentation.mjs",
   "/attendance-leave-view.mjs",
   "/attendance-approval-plan-view.mjs",

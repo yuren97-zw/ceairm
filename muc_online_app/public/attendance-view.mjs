@@ -23,7 +23,7 @@ export function mountAttendanceView(host,data,options={}){
  let savedDisplay=data.displaySettings||{pageSize:20};
  let ui={pageSize:savedDisplay.pageSize,displayMessage:'',tab:options.canStats===false?'matrix':'summary',query:'',department:'',team:'',personId:'',page:1,columns:new Set(data.categories),columnsOpen:false,queryDraft:'',...(options.initialState||{})},destroyed=false,queryTimer=null,composing=false,restoreQuery=options.initialState?.focusQuery||false,scrollLock=null;
  delete ui.categoryOrder;delete ui.ordering;
- let leaveView=null;
+ let leaveView=null,renderedTab=null;
  const guardedDialogs=new WeakSet();
  let overviewPending=null,overviewError='',detailSequence=0;
  const personDetails=new Map();
@@ -56,10 +56,11 @@ export function mountAttendanceView(host,data,options={}){
   if(!personDetails.has(p.personId))personDetails.set(p.personId,Promise.resolve().then(()=>options.onLoadPerson(p.personId)).then(value=>{if(!value)throw Error('人员已不在当前可查看范围，请刷新');return value;}).catch(e=>{personDetails.delete(p.personId);throw e;}));
   return personDetails.get(p.personId);
  }
- function render({preserveTableScroll=false}={}){
+ function render({preserveTableScroll=false,resultsOnly=false}={}){
   if(destroyed)return;
   closeDialog();leaveView?.destroy();leaveView=null;host.classList?.toggle('att-leave-active',ui.tab==='leave');host.classList?.toggle('att-issues-active',ui.tab==='issues');host.classList?.toggle('att-main-list-active',['summary','matrix','person','issues','leave'].includes(ui.tab));
   const active=host.ownerDocument.activeElement,queryFocused=active?.matches('[data-filter="query"]')||restoreQuery,selection=restoreQuery?ui.querySelection:queryFocused?[active.selectionStart,active.selectionEnd]:null;restoreQuery=false;
+  resultsOnly=ui.tab!=='leave'&&renderedTab===ui.tab&&!!host.querySelector('#attContent')&&(resultsOnly||queryFocused);
   const columnFocus=active?.dataset?.column, bulkFocus=active?.dataset?.columnsAction;
   const existingColumns=host.querySelector('.att-columns');if(existingColumns)ui.columnsOpen=existingColumns.open;
   const oldTable=host.querySelector('.att-table'),scroll=oldTable?{left:oldTable.scrollLeft,top:oldTable.scrollTop}:ui.tableScroll;
@@ -71,14 +72,18 @@ export function mountAttendanceView(host,data,options={}){
   const tabs=[...(options.canStats===false?[]:[['summary','人员统计']]),['matrix','逐日总览'],['person','个人明细'],['issues','异常核对'],...(options.onLeaves&&options.canStats!==false?[['leave','假期']]:[]),...(!options.offline?[['sync','同步状态']]:[])];
   // 数据口径与同步说明仅在线上版本的「同步状态」页签展示；只读快照无页签，保持完整可见。
   const showSyncNotes=options.offline||ui.tab==='sync';
+  const cardsMarkup=options.canStats===false?'':`<div class="att-cards"><div><small>当前人员</small><strong>${ps.length}<em>人</em></strong></div><div><small>累计时间<span class="att-metric-context">（下班后）</span></small><strong>${duration(total)}</strong></div><div><small>无法计算</small><strong>${ps.reduce((n,p)=>n+(p.uncomputableDays||0),0)}<em>人日</em></strong></div><div><small>异常核对</small><strong>${data.detailLevel==='summary'?ps.reduce((n,p)=>n+(p.issueCount||0),0):issues.length}<em>人日</em></strong></div></div>`;
+  if(!resultsOnly){
   host.innerHTML=`<div class="att-head"><div class="att-title"><h1>考勤管理</h1><span class="att-month">${esc(data.month)}</span></div><div class="att-actions">${options.offline?'':`<div class="att-period-actions"><label><span class="att-sr-only">统计月份</span><input type="month" min="2026-09" value="${data.month}" data-month></label>${options.canSync?'<button data-sync class="att-primary">同步本月</button>':''}</div>`}<div class="att-export-actions">${options.canExport?'<button data-export="xlsx">导出Excel</button><button data-export="html">只读HTML</button>':''}${options.canOffsetSettings?'<button type="button" data-offset-settings>月兑换规则</button>':''}</div></div></div>
   ${showSyncNotes?`<div class="att-note">${esc(data.historyWarning)}<br>${esc(data.overtimeNote)}<br>最近数据同步：${esc(time(data.lastSyncedAt))}；${options.offline?'快照生成':'本次读取'}：${esc(time(data.generatedAt))}${options.offline?`${data.exportedAt?`；本次导出：${esc(time(data.exportedAt))}`:''}；导出范围：${esc(data.exportScope)}，筛选：${esc(JSON.stringify(data.filters||{}))}`:''}</div>`:''}
   ${showSyncNotes&&catalog?`<div class="att-note">${esc(attendanceLeaveCatalogText(catalog))}${catalog.lastSyncedAt?`<br>假期目录最近更新：${esc(time(catalog.lastSyncedAt))}`:''}</div>`:''}
   ${showSyncNotes&&data.approvalReasonCoverage?.total?`<div class="att-note">审批事由：共${data.approvalReasonCoverage.total}个实例，尚未完整读取${data.approvalReasonCoverage.unresolved}个；未读取不代表未命中跟班。</div>`:''}
   ${!options.offline&&status&&!status.configuration.configured?'<div class="att-note att-warning">钉钉应用待配置，当前未启用真实数据同步。由管理员配置后，可回补2026年9月起数据。</div>':''}
   <div class="att-filters"><label><span class="att-sr-only">姓名／工号</span><input data-filter="query" type="search" value="${esc(ui.queryDraft)}" placeholder="搜索姓名／工号"></label>${select('department',[...new Set(data.people.map(p=>p.department))].filter(Boolean),ui.department,'部门')}${select('team',[...new Set(data.people.map(p=>p.team))].filter(Boolean),ui.team,'班组')}<button data-clear>清除筛选</button></div>
-  ${options.canStats===false?'':`<div class="att-cards"><div><small>当前人员</small><strong>${ps.length}<em>人</em></strong></div><div><small>累计时间<span class="att-metric-context">（下班后）</span></small><strong>${duration(total)}</strong></div><div><small>无法计算</small><strong>${ps.reduce((n,p)=>n+(p.uncomputableDays||0),0)}<em>人日</em></strong></div><div><small>异常核对</small><strong>${data.detailLevel==='summary'?ps.reduce((n,p)=>n+(p.issueCount||0),0):issues.length}<em>人日</em></strong></div></div>`}
+  ${cardsMarkup}
   <nav class="att-tabs" aria-label="考勤视图">${tabs.map(([k,l])=>`<button data-tab="${k}" class="${ui.tab===k?'active':''}" aria-current="${ui.tab===k?'page':'false'}">${l}</button>`).join('')}</nav>${legend}<section class="att-panel" id="attContent"></section><div class="att-message" role="status" aria-live="polite"></div><dialog class="att-dialog"></dialog>`;
+  renderedTab=ui.tab;
+  }else{const cards=host.querySelector('.att-cards');if(cards)cards.outerHTML=cardsMarkup;}
   const content=host.querySelector('#attContent');
   if(needsDetails)content.innerHTML=`<p role="status">${esc(overviewError||'正在读取考勤明细…')}</p>${overviewError?'<button data-retry-details>重试明细</button>':''}`;
   else if(ui.tab==='leave'){content.dataset.leaveRoot='true';leaveView=options.onLeaves(content,{...(ui.leaveState||{}),query:ui.queryDraft,department:ui.department,team:ui.team},state=>{ui.leaveState=state;ui.query=state.query;ui.queryDraft=state.query;ui.department=state.department;ui.team=state.team;const hidden=host.querySelector('[data-filter="query"]');if(hidden)hidden.value=state.query;},dialog);}
@@ -100,7 +105,7 @@ export function mountAttendanceView(host,data,options={}){
   if(ui.tab==='summary')content.insertAdjacentHTML('beforeend',`<p class="att-detail-note" role="status">${esc(ui.displayMessage)}</p>`);
   if(ui.tab==='issues'&&issues.length>100)content.insertAdjacentHTML('beforeend',`<div class="att-pagination"><div class="att-pagination-info"><span>${ui.page} / ${Math.ceil(issues.length/100)}</span></div><div class="att-pagination-actions"><button data-page="-1" ${ui.page===1?'disabled':''}>上一页</button><button data-page="1" ${ui.page>=Math.ceil(issues.length/100)?'disabled':''}>下一页</button></div></div>`);
   if(preserveTableScroll&&scroll){const table=host.querySelector('.att-table');if(table){table.scrollLeft=scroll.left;table.scrollTop=scroll.top;}}
-  if(queryFocused){const input=host.querySelector('[data-filter="query"]');input.focus({preventScroll:true});if(selection&&selection[0]!==null)input.setSelectionRange(...selection);}
+  if(queryFocused&&!resultsOnly){const input=host.querySelector('[data-filter="query"]');input.focus({preventScroll:true});if(selection&&selection[0]!==null)input.setSelectionRange(...selection);}
   if(columnFocus){const target=[...host.querySelectorAll('[data-column]')].find(el=>el.dataset.column===columnFocus);target?.focus({preventScroll:true});}
   if(bulkFocus)host.querySelector(`[data-columns-action="${bulkFocus}"]`)?.focus({preventScroll:true});
   if(needsDetails&&!overviewPending&&!overviewError&&options.onLoadOverview)void loadOverview();
@@ -169,7 +174,7 @@ export function mountAttendanceView(host,data,options={}){
   if(b.dataset.tab){ui.tab=b.dataset.tab;ui.page=1;render();return;}
   if(b.dataset.person){ui.personId=b.dataset.person;ui.tab='person';render();return;}
   if(b.dataset.page){ui.page=Math.max(1,ui.page+Number(b.dataset.page));render();return;}
-  if(b.hasAttribute('data-clear')){clearTimeout(queryTimer);composing=false;ui={...ui,query:'',queryDraft:'',department:'',team:'',personId:'',page:1};render();return;}
+  if(b.hasAttribute('data-clear')){clearTimeout(queryTimer);composing=false;ui={...ui,query:'',queryDraft:'',department:'',team:'',personId:'',page:1};const query=host.querySelector('[data-filter="query"]');if(query)query.value='';for(const el of host.querySelectorAll('[data-filter]'))el.value='';render({resultsOnly:true});return;}
   if(b.dataset.day||b.dataset.count){
    const [id,value]=(b.dataset.day||b.dataset.count).split('|'),base=data.people.find(p=>p.personId===id);if(!base)return;
    const seq=++detailSequence;b.disabled=true;
@@ -192,11 +197,11 @@ export function mountAttendanceView(host,data,options={}){
   if(el.hasAttribute('data-page-size')){const size=Number(el.value);if([20,50,100].includes(size)){ui.pageSize=size;ui.page=1;render({preserveTableScroll:true});host.querySelector('[data-page-size]')?.focus({preventScroll:true});}return;}
   if(el.hasAttribute('data-month')){options.onMonth?.(el.value);return;}
   if(el.dataset.filter==='query')return;
-  if(el.dataset.filter){ui[el.dataset.filter]=el.value;ui.personId='';ui.page=1;render();return;}
+  if(el.dataset.filter){ui[el.dataset.filter]=el.value;ui.personId='';ui.page=1;render({resultsOnly:true});return;}
   if(el.dataset.column){el.checked?ui.columns.add(el.dataset.column):ui.columns.delete(el.dataset.column);ui.page=1;render({preserveTableScroll:true});return;}
   if(el.hasAttribute('data-person-select')){ui.personId=el.value;render();}
  };
- const applyQuery=()=>{clearTimeout(queryTimer);queryTimer=null;if(destroyed||composing)return;const value=ui.queryDraft;if(value===ui.query)return;ui.query=value;ui.personId='';ui.page=1;render();};
+ const applyQuery=()=>{clearTimeout(queryTimer);queryTimer=null;if(destroyed||composing)return;const value=ui.queryDraft;if(value===ui.query)return;ui.query=value;ui.personId='';ui.page=1;render({resultsOnly:true});};
  const onInput=event=>{if(event.target.dataset.filter!=='query')return;ui.queryDraft=event.target.value;clearTimeout(queryTimer);if(composing||event.isComposing)return;if(!ui.queryDraft)applyQuery();else queryTimer=setTimeout(applyQuery,300);};
  const onCompositionStart=event=>{if(event.target.dataset.filter==='query'){composing=true;clearTimeout(queryTimer);}};
  const onCompositionEnd=event=>{if(event.target.dataset.filter==='query'){composing=false;onInput(event);}};

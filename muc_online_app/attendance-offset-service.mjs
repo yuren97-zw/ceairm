@@ -164,7 +164,9 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    requirePermission(systemUser,'attendance.offset.responsibility.manage');
    if(!writesEnabled&&!existingActionsEnabled)return {disabled:true};
    return tx(()=>{
+    const staleRecipients=db.prepare("select distinct assignee_user_id from action_tasks where source_module='attendance' and source_type='offset_approval' and status='pending' and not exists(select 1 from attendance_offset_requests r where r.id=action_tasks.source_id and r.status='pending' and r.assignee_user_id=action_tasks.assignee_user_id)").all();
     const stale=db.prepare("update action_tasks set status='invalidated',updated_at=? where source_module='attendance' and source_type='offset_approval' and status='pending' and not exists(select 1 from attendance_offset_requests r where r.id=action_tasks.source_id and r.status='pending' and r.assignee_user_id=action_tasks.assignee_user_id)").run(at());
+    if(Number(stale.changes))tasks.touchRecipients(staleRecipients.map(row=>row.assignee_user_id));
     const missing=db.prepare("select r.* from attendance_offset_requests r where r.status='pending' and not exists(select 1 from action_tasks t where t.source_module='attendance' and t.source_type='offset_approval' and t.source_id=r.id and t.assignee_user_id=r.assignee_user_id and t.status='pending') order by r.created_at,r.id limit 50").all();
     let restored=0;
     for(const row of missing){
