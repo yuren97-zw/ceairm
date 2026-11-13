@@ -72,3 +72,10 @@ test('capped conversion uses exact integer arithmetic even when the intermediate
 test('future actual punches cannot fund an issued monthly allowance',()=>{
  const a=make();a.punches=[{...a.points[1],actual:now+1000,source:'USER',timeResult:'Normal'}];const result=accumulatedCoverage([{date,input:a,sourceReadAt:now}],now,{expectedDates:[date]});assert.equal(result.status,'pending_review');assert.equal(result.seconds,0);assert.match(result.unresolved[0].reason,/尚未发生/);
 });
+test('whole-shift approval-exempt days are excluded without fabricated punches or blocking earned hours',()=>{
+ const input=make();input.approvals=[{kind:'请假',approved:true,start:on,end:off}];input.punches=input.points.map(p=>({...p,actual:p.planned,source:'SYSTEM',timeResult:'NotSigned'}));const original=JSON.stringify(input);
+ const result=accumulatedCoverage([{date,input,sourceReadAt:now}],now,{expectedDates:[date]});assert.equal(result.status,'complete');assert.equal(result.seconds,0);assert.equal(result.excludedDays[0].date,date);assert.equal(JSON.stringify(input),original);
+ for(const change of [a=>a.approvals[0].revoked=true,a=>a.approvals[0].end=off-1,a=>a.approvals[0].approved=false]){const day=structuredClone(input);change(day);assert.equal(accumulatedCoverage([{date,input:day,sourceReadAt:now}],now,{expectedDates:[date]}).status,'pending_review');}
+ assert.equal(accumulatedCoverage([{date,input,sourceReadAt:on}],now,{expectedDates:[date]}).status,'pending_review');
+ const worked=structuredClone(input);worked.punches=[{...worked.points[1],actual:off+1800000,source:'USER',timeResult:'Normal'}];const earned=accumulatedCoverage([{date,input:worked,sourceReadAt:now}],now,{expectedDates:[date]});assert.equal(earned.status,'complete');assert.equal(earned.seconds,1800);assert.equal(earned.excludedDays,undefined);
+});
