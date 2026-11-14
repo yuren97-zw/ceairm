@@ -5096,7 +5096,7 @@ async function showPage(page) {
 }
 
 // ===== 班组交接（信息传达左上角菜单第三项）=====
-const handoverUi={tab:"create",epoch:0,editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+const handoverUi={tab:"create",epoch:0,listEpoch:0,editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
 function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
 function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
 const HANDOVER_ENTITY_LABEL={opportunity:"维修机会",opportunity_note:"机会交接说明",recipient:"接收人",to_team:"接班班组",other_items:"其他事项"};
@@ -5186,13 +5186,14 @@ function paintHandover(){
 }
 function renderHandover(){
   if(!handoverActive())return;
+  if(handoverUi.tab==="create"&&!handoverUi.editor){handoverUi.editor=newHandoverEditor();openHandoverEditor();}
   paintHandover();
   refreshHandoverView();
   if(handoverUi.tab==="create"&&hasRbac("handover.baseline.manage")&&!handoverUi.baseline)refreshHandoverBaseline();
 }
 function handoverRepaint(){paintHandover();}
 function refreshHandoverView(){
-  const token=handoverBegin();
+  const token=++handoverUi.listEpoch;
   (async()=>{
     if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id){
       try{const detail=await apiRequest(`/handover/${encodeURIComponent(handoverUi.detail.handover.id)}`);if(handoverValid(token)){handoverUi.detail=detail;handoverRepaint();}}catch{}
@@ -5201,7 +5202,7 @@ function refreshHandoverView(){
     if(handoverUi.tab==="pending"){
       try{
         const [pending,drafts,mine]=await Promise.all([apiRequest("/handover?scope=pending"),apiRequest("/handover?scope=drafts"),apiRequest("/handover?scope=mine")]);
-        if(!handoverValid(token))return;
+        if(token!==handoverUi.listEpoch)return;
         handoverUi.lists={pending:pending.items||[],drafts:drafts.items||[],history:mine.items||[]};
         if(handoverUi.tab==="pending"&&handoverUi.view.mode==="list")panelRenderHandover();
       }catch{}
@@ -5217,7 +5218,7 @@ function refreshHandoverView(){
         if(handoverUi.historyFilter.aircraft)query.set("aircraft",handoverUi.historyFilter.aircraft);
         if(handoverUi.historyFilter.q)query.set("q",handoverUi.historyFilter.q);
         const data=await apiRequest(`/handover?${query}`);
-        if(!handoverValid(token))return;
+        if(token!==handoverUi.listEpoch)return;
         handoverUi.lists.history=data.items||[];
         if(handoverUi.tab==="history"&&handoverUi.view.mode==="list")panelRenderHandover();
       }catch{}
@@ -5405,7 +5406,7 @@ async function submitHandover(){
   if(!editor.recipients.length){editor.message="请至少选择一名接收人。";handoverRepaint();return;}
   if(!editor.opportunities.length&&!editor.otherItems.trim()){editor.message="请至少勾选一个维修机会或填写其他交接事项。";handoverRepaint();return;}
   try{
-    if(!editor.id)await saveHandoverDraft();
+    await saveHandoverDraft();
     const current=handoverUi.editor;
     const result=await apiRequest(`/handover/${encodeURIComponent(current.id)}/submit`,{method:"POST",body:{expectedVersion:current.version}});
     handoverUi.editor={...current,version:result.handover.version,status:result.handover.status,message:"已提交待接收。"};
@@ -5433,8 +5434,8 @@ if(handoverPanelElement){
   if(target.dataset.hovOpen)return openHandoverDetail(target.dataset.hovOpen);
   if(target.dataset.hovEdit)return openHandoverEditor(target.dataset.hovEdit);
   if(target.dataset.hovConfirm){target.disabled=true;try{handoverUi.detail=await apiRequest(`/handover/${encodeURIComponent(target.dataset.hovConfirm)}/confirm`,{method:"POST",body:{}});handoverUi.view={mode:"detail"};handoverRepaint();}catch(error){alert(`确认失败：${error.message}`);target.disabled=false;}return;}
-  if(target.dataset.hovSave)return saveHandoverDraft();
-  if(target.dataset.hovSubmit)return submitHandover();
+  if(target.dataset.hovSave!==undefined)return saveHandoverDraft();
+  if(target.dataset.hovSubmit!==undefined)return submitHandover();
   if(target.dataset.hovPick){const flightId=target.dataset.hovPick;const editor2=handoverUi.editor;if(!editor2)return;const existing=editor2.opportunities.find(o=>o.flightId===flightId);if(existing)editor2.opportunities=editor2.opportunities.filter(o=>o.flightId!==flightId);else{const option=handoverUi.options.find(o=>o.id===flightId);editor2.opportunities.push({flightId,note:"",snapshot:option?{date:option.date,aircraftNo:option.aircraftNo,flightNo:option.flightNo,workKind:option.workKind,stand:option.stand,plannedArrival:option.plannedArrival,status:option.status}:{}});}handoverRepaint();return;}
   if(target.dataset.hovExpand){const set=editor?.pickerOpen;if(!set)return;const id=target.dataset.hovExpand;set.has(id)?set.delete(id):set.add(id);handoverRepaint();return;}
   if(target.dataset.hovScope){handoverUi.optionsScope=target.dataset.hovScope;await handoverLoadOptions();handoverRepaint();return;}
@@ -5447,10 +5448,10 @@ if(handoverPanelElement){
    window.open(`${API_BASE_URL}/handover/export.xlsx?${params}`);
    return;
   }
-  if(target.dataset.hovBack){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
+  if(target.dataset.hovBack!==undefined){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
   if(target.dataset.hovChanges!==undefined){handoverUi.changesOpen=target.dataset.hovChanges;handoverRepaint();return;}
   if(target.dataset.hovExpandDetail){handoverUi.changesOpen=handoverUi.changesOpen===`opp:${target.dataset.hovExpandDetail}`?"":`opp:${target.dataset.hovExpandDetail}`;handoverRepaint();return;}
-  if(target.dataset.hovConfirmBaseline){
+  if(target.dataset.hovConfirmBaseline!==undefined){
    const teams=(handoverUi.baseline?.teams||[]).filter(t=>t.row).map(t=>({teamId:t.teamId,anchorDate:t.row.anchor_date,anchorPhase:t.row.anchor_phase,leaderPersonId:handoverUi.baselineLeaders[t.teamId]||null}));
    try{await apiRequest("/handover/shift-baseline/confirm",{method:"POST",body:{teams}});handoverUi.baseline=null;await refreshHandoverBaseline();alert("班序基准已确认。");}catch(error){alert(`确认失败：${error.message}`);}
    return;
@@ -5459,7 +5460,7 @@ if(handoverPanelElement){
  handoverPanelElement.addEventListener("change",async event=>{
   const target=event.target;
   if(target.dataset?.hovToTeam!==undefined){const editor=handoverUi.editor;if(!editor)return;editor.toTeamId=target.value;await handoverLoadRecipientOptions(editor.toTeamId);handoverRepaint();return;}
-  if(target.dataset?.hovAddRecipient){const editor=handoverUi.editor;if(!editor||!target.value)return;const option=editor.available.find(r=>r.userId===target.value);if(option&&!editor.recipients.some(r=>r.userId===option.userId))editor.recipients.push({userId:option.userId,user_name:option.name});handoverRepaint();return;}
+  if(target.dataset?.hovAddRecipient!==undefined){const editor=handoverUi.editor;if(!editor||!target.value)return;const option=editor.available.find(r=>r.userId===target.value);if(option&&!editor.recipients.some(r=>r.userId===option.userId))editor.recipients.push({userId:option.userId,user_name:option.name});handoverRepaint();return;}
   if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;handoverRepaint();return;}
   if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;handoverRepaint();return;}
   if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;handoverRepaint();return;}
