@@ -1,5 +1,6 @@
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
+import {createHandoverService} from './handover-service.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
 import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
@@ -7014,6 +7015,17 @@ async function routeRequest(req, res) {
       if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
       return send(res,404,{error:'接口不存在'});
     }
+    if(url.pathname.startsWith('/api/handover/')){
+      const actor=requireLogin(req,res);if(!actor)return;
+      if(!requireRbacPermission(req,res,'handover.view'))return;
+      if(method==='GET'&&url.pathname==='/api/handover/shift-context')return send(res,200,handoverService.shiftContext(actor));
+      if(url.pathname.startsWith('/api/handover/shift-baseline')){
+        if(!requireRbacPermission(req,res,'handover.baseline.manage'))return;
+        if(method==='GET'&&url.pathname==='/api/handover/shift-baseline')return send(res,200,handoverService.baselineOverview(actor));
+        if(method==='POST'&&url.pathname==='/api/handover/shift-baseline/confirm')return send(res,200,handoverService.confirmBaseline(actor,await bodyJson(req)));
+      }
+      return send(res,404,{error:'接口不存在'});
+    }
     if(url.pathname.startsWith('/api/attendance/offsets')){
       let actor=requireLogin(req,res);if(!actor)return;
       const path=url.pathname.slice('/api/attendance/offsets'.length),month=url.searchParams.get('month')||new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,7);
@@ -9119,6 +9131,8 @@ function currentOffsetActor(user){
 const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
 
 const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
+
+const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now});
 
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
