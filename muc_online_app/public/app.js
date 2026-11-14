@@ -5096,7 +5096,7 @@ async function showPage(page) {
 }
 
 // ===== 班组交接（信息传达左上角菜单第三项）=====
-const handoverUi={tab:"create",epoch:0,editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+const handoverUi={tab:"create",epoch:0,editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
 function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
 function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
 const HANDOVER_ENTITY_LABEL={opportunity:"维修机会",opportunity_note:"机会交接说明",recipient:"接收人",to_team:"接班班组",other_items:"其他事项"};
@@ -5214,6 +5214,8 @@ function refreshHandoverView(){
         if(handoverUi.historyFilter.from)query.set("from",handoverUi.historyFilter.from);
         if(handoverUi.historyFilter.to)query.set("to",handoverUi.historyFilter.to);
         if(handoverUi.historyFilter.teamId)query.set("teamId",handoverUi.historyFilter.teamId);
+        if(handoverUi.historyFilter.aircraft)query.set("aircraft",handoverUi.historyFilter.aircraft);
+        if(handoverUi.historyFilter.q)query.set("q",handoverUi.historyFilter.q);
         const data=await apiRequest(`/handover?${query}`);
         if(!handoverValid(token))return;
         handoverUi.lists.history=data.items||[];
@@ -5296,7 +5298,7 @@ function handoverListCardHtml(item,actions){
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${escapeHtml(item.fromTeamName)} → ${escapeHtml(item.toTeamName||"—")}</strong><span class="chip">${escapeHtml(handoverStatusText(item.status))}</span></div>
     <small class="status-line">交班 ${escapeHtml(item.createdByName||"")} · ${handoverTime(item.submittedAt||item.createdAt)} · 机会 ${item.opportunityCount} 项 · 接收 ${item.recipientCount} 人${item.confirmedByName?` · 确认 ${escapeHtml(item.confirmedByName)} ${handoverTime(item.confirmedAt)}`:""}</small>
     ${item.otherItems?`<p style="margin:6px 0 0"><small>${escapeHtml(item.otherItems.length>60?item.otherItems.slice(0,60)+"…":item.otherItems)}</small></p>`:""}
-    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${actions}</div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${actions}<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(item.id)}">导出</button></div>
   </article>`;
 }
 function handoverPendingHtml(){
@@ -5317,7 +5319,10 @@ function handoverHistoryHtml(){
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
     <label>从 <input type="date" data-hov-filter-from value="${escapeHtml(handoverUi.historyFilter.from)}"></label>
     <label>至 <input type="date" data-hov-filter-to value="${escapeHtml(handoverUi.historyFilter.to)}"></label>
+    <label>机号 <input type="search" data-hov-filter-aircraft value="${escapeHtml(handoverUi.historyFilter.aircraft||"")}" placeholder="如 B-1234" style="width:110px"></label>
+    <label>关键词 <input type="search" data-hov-filter-q value="${escapeHtml(handoverUi.historyFilter.q||"")}" placeholder="交接说明" style="width:110px"></label>
     ${canAll?`<label>班组 <select data-hov-filter-team>${teamOptions.map(([value,label])=>`<option value="${value}" ${handoverUi.historyFilter.teamId===value?"selected":""}>${label}</option>`).join("")}</select></label>`:""}
+    <button type="button" class="btn secondary" data-hov-export>批量导出 Excel</button>
   </div>
   ${(handoverUi.lists.history||[]).length?handoverUi.lists.history.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看原始记录</button>`)).join(""):'<p class="status-line">没有匹配的交接记录。</p>'}
   <small class="status-line">历史记录默认按最近时间倒序；卡片为整张交接单，查看不授予维修派工或报工权限。</small>`;
@@ -5346,6 +5351,7 @@ function handoverDetailBodyHtml(){
   if(handover.status==="pending"&&isRecipient)actionButtons.push(`<button type="button" class="btn" data-hov-confirm="${escapeHtml(handover.id)}">确认接收（整单完成）</button>`);
   if(canEdit)actionButtons.push(`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(handover.id)}">编辑</button>`);
   actionButtons.push(`<button type="button" class="btn secondary" data-hov-changes="all">全部变更</button>`);
+  actionButtons.push(`<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(handover.id)}">导出 Excel</button>`);
   actionButtons.push(`<button type="button" class="btn secondary" data-hov-back>返回</button>`);
   return `${handoverTabsHtml()}
   <article class="card" style="padding:12px;border:1px solid var(--line,#e2e8f0);border-radius:12px">
@@ -5420,7 +5426,7 @@ async function gotoHandoverMaintenance(flightId,snapshot){
 const handoverPanelElement=document.getElementById("handoverPanel");
 if(handoverPanelElement){
  handoverPanelElement.addEventListener("click",async event=>{
-  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-confirm-baseline],[data-hov-expand-detail]");
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-confirm-baseline],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id]");
   if(!target)return;
   const editor=handoverUi.editor;
   if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
@@ -5434,6 +5440,13 @@ if(handoverPanelElement){
   if(target.dataset.hovScope){handoverUi.optionsScope=target.dataset.hovScope;await handoverLoadOptions();handoverRepaint();return;}
   if(target.dataset.hovRemoveRecipient){editor.recipients=editor.recipients.filter(r=>r.userId!==target.dataset.hovRemoveRecipient);handoverRepaint();return;}
   if(target.dataset.hovRemoveOpp){editor.opportunities.splice(Number(target.dataset.hovRemoveOpp),1);handoverRepaint();return;}
+  if(target.dataset.hovExportId!==undefined||target.dataset.hovExport!==undefined){
+   const params=new URLSearchParams();
+   if(target.dataset.hovExportId)params.set("id",target.dataset.hovExportId);
+   else{const f=handoverUi.historyFilter;if(f.from)params.set("from",f.from);if(f.to)params.set("to",f.to);if(f.teamId)params.set("teamId",f.teamId);if(f.aircraft)params.set("aircraft",f.aircraft);if(f.q)params.set("q",f.q);}
+   window.open(`${API_BASE_URL}/handover/export.xlsx?${params}`);
+   return;
+  }
   if(target.dataset.hovBack){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
   if(target.dataset.hovChanges!==undefined){handoverUi.changesOpen=target.dataset.hovChanges;handoverRepaint();return;}
   if(target.dataset.hovExpandDetail){handoverUi.changesOpen=handoverUi.changesOpen===`opp:${target.dataset.hovExpandDetail}`?"":`opp:${target.dataset.hovExpandDetail}`;handoverRepaint();return;}
@@ -5450,6 +5463,8 @@ if(handoverPanelElement){
   if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;handoverRepaint();return;}
   if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;handoverRepaint();return;}
   if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovFilterAircraft!==undefined){handoverUi.historyFilter.aircraft=target.value;return;}
+  if(target.dataset?.hovFilterQ!==undefined){handoverUi.historyFilter.q=target.value;return;}
   if(target.dataset?.hovLeaderTeam){handoverUi.baselineLeaders[target.dataset.hovLeaderTeam]=target.value;return;}
  });
  handoverPanelElement.addEventListener("input",event=>{

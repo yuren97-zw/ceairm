@@ -353,8 +353,10 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
    requirePermission(user,'handover.history.all');
    const clauses=[],args=[];
    if(filters.teamId){clauses.push('(h.from_team_id=? or h.to_team_id=?)');args.push(filters.teamId,filters.teamId);}
-   if(filters.from){clauses.push('coalesce(h.submitted_at,h.created_at)>=?');args.push(filters.from);}
-   if(filters.to){clauses.push('coalesce(h.submitted_at,h.created_at)<=?');args.push(filters.to);}
+   if(filters.from){clauses.push('coalesce(h.submitted_at,h.created_at)>=?');args.push(filters.from.length===10?new Date(filters.from+'T00:00:00+08:00').toISOString():filters.from);}
+   if(filters.to){clauses.push('coalesce(h.submitted_at,h.created_at)<=?');args.push(filters.to.length===10?new Date(filters.to+'T23:59:59.999+08:00').toISOString():filters.to);}
+   if(filters.aircraft){clauses.push('exists(select 1 from handover_opportunity o join maintenance_flights f on f.id=o.maintenance_flight_id where o.handover_id=h.id and f.aircraft_no like ?)');args.push(`%${filters.aircraft}%`);}
+   if(filters.q){clauses.push('(h.other_items like ? or exists(select 1 from handover_opportunity o where o.handover_id=h.id and o.handover_note like ?))');args.push(`%${filters.q}%`,`%${filters.q}%`);}
    const where=clauses.length?'where '+clauses.join(' and '):'';
    return {items:db.prepare(`select h.* from handover h ${where} order by coalesce(h.submitted_at,h.created_at) desc limit 200`).all(...args).map(listRow)};
   }
@@ -367,6 +369,33 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const opportunities=db.prepare('select * from handover_opportunity where handover_id=? order by display_order,id').all(id).map(r=>({id:r.id,flightId:r.maintenance_flight_id,note:r.handover_note,snapshot:parse(r.snapshot_json,{}),displayOrder:r.display_order,removedAt:r.removed_at,removedBy:r.removed_by}));
   const changes=db.prepare('select * from handover_change_log where handover_id=? order by version desc,id desc limit 500').all(id).map(r=>({id:r.id,version:r.version,entityType:r.entity_type,entityId:r.entity_id,action:r.action,old:parse(r.old_value_json),new:parse(r.new_value_json),changedBy:r.changed_by,changedByName:r.changed_by_name,changedAt:r.changed_at}));
   return {handover:{...listRow(handover),version:handover.version},recipients,opportunities,changes};
+ }
+ // 完整交接单装配（权限由调用方把关）：机会附「导出时状态」，历史原文与当前维修状态分列。
+ function handoverFull(id,generatedAt){
+  const handover=loadHandover(id);
+  const recipients=db.prepare('select user_id,user_name,added_by,added_at from handover_recipient where handover_id=? order by added_at').all(id);
+  const opportunities=db.prepare('select * from handover_opportunity where handover_id=? order by display_order,id').all(id).map(r=>{
+   const live=db.prepare('select status,archived_at from maintenance_flights where id=?').get(r.maintenance_flight_id);
+   return {id:r.id,flightId:r.maintenance_flight_id,note:r.handover_note,snapshot:parse(r.snapshot_json,{}),displayOrder:r.display_order,removedAt:r.removed_at,removedBy:r.removed_by,liveStatus:live?(live.archived_at?'已确认（归档）':live.status):'（机会已不存在）'};
+  });
+  const changes=db.prepare('select * from handover_change_log where handover_id=? order by version,id limit 1000').all(id).map(r=>({id:r.id,version:r.version,entityType:r.entity_type,entityId:r.entity_id,action:r.action,old:parse(r.old_value_json),new:parse(r.new_value_json),changedBy:r.changed_by,changedByName:r.changed_by_name,changedAt:r.changed_at}));
+  return {handover:{...listRow(handover),version:handover.version},recipients,opportunities,changes,generatedAt};
+ }
+ function exportData(user,filters={}){
+  requirePermission(user,'handover.export');
+  const ids=String(filters.id||'').trim()?[String(filters.id).trim()]:db.prepare("select id from handover order by coalesce(submitted_at,created_at) desc limit 200").all().map(r=>r.id).filter(id=>{const h=db.prepare('select * from handover where id=?').get(id);return historyFilterMatch(h,filters);});
+  const generatedAt=now();
+  return {generatedAt,handovers:ids.map(id=>handoverFull(id,generatedAt))};
+ }
+ function historyFilterMatch(handover,filters){
+  if(!handover)return false;
+  const at=handover.submitted_at||handover.created_at;
+  if(filters.from&&at<(filters.from.length===10?new Date(filters.from+'T00:00:00+08:00').toISOString():filters.from))return false;
+  if(filters.to&&at>(filters.to.length===10?new Date(filters.to+'T23:59:59.999+08:00').toISOString():filters.to))return false;
+  if(filters.teamId&&handover.from_team_id!==filters.teamId&&handover.to_team_id!==filters.teamId)return false;
+  if(filters.aircraft&&!db.prepare('select 1 from handover_opportunity o join maintenance_flights f on f.id=o.maintenance_flight_id where o.handover_id=? and f.aircraft_no like ?').get(handover.id,`%${filters.aircraft}%`))return false;
+  if(filters.q&&!((handover.other_items||'').includes(filters.q)||db.prepare('select 1 from handover_opportunity o where o.handover_id=? and o.handover_note like ?').get(handover.id,`%${filters.q}%`)))return false;
+  return true;
  }
  // 交接单维修机会候选：读维修管控现存机会（未完成优先，可切换全部），只读不改维修模块。
  function maintenanceOptions(user,filters={}){
@@ -387,5 +416,5 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const recommendation=recommendRecipients(rows,team);
   return {items,recommended:recommendation.recipients,recipientBasis:recommendation.basis};
  }
- return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,inferTeam:(teamId)=>inferTeam(teamId),teamMembers,create,update,submit,confirm,list,detail,maintenanceOptions,recipientOptions,canSeeHandover,loadHandover};
+ return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,inferTeam:(teamId)=>inferTeam(teamId),teamMembers,create,update,submit,confirm,list,detail,exportData,maintenanceOptions,recipientOptions,canSeeHandover,loadHandover};
 }

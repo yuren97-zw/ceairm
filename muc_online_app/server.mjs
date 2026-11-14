@@ -4,6 +4,7 @@ import {createHandoverService} from './handover-service.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
 import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
+import {handoverXlsx} from './handover-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
 import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
@@ -7019,7 +7020,7 @@ async function routeRequest(req, res) {
       const actor=requireLogin(req,res);if(!actor)return;
       if(!requireRbacPermission(req,res,'handover.view'))return;
       if(method==='POST'&&url.pathname==='/api/handover')return send(res,200,handoverService.create(actor,await bodyJson(req)));
-      if(method==='GET'&&url.pathname==='/api/handover')return send(res,200,handoverService.list(actor,{scope:url.searchParams.get('scope'),teamId:url.searchParams.get('teamId'),from:url.searchParams.get('from'),to:url.searchParams.get('to')}));
+      if(method==='GET'&&url.pathname==='/api/handover')return send(res,200,handoverService.list(actor,{scope:url.searchParams.get('scope'),teamId:url.searchParams.get('teamId'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')}));
       if(method==='GET'&&url.pathname==='/api/handover/shift-context')return send(res,200,handoverService.shiftContext(actor));
       if(url.pathname.startsWith('/api/handover/shift-baseline')){
         if(!requireRbacPermission(req,res,'handover.baseline.manage'))return;
@@ -7029,6 +7030,16 @@ async function routeRequest(req, res) {
       }
       if(method==='GET'&&url.pathname==='/api/handover/maintenance-options')return send(res,200,handoverService.maintenanceOptions(actor,{scope:url.searchParams.get('scope'),date:url.searchParams.get('date')}));
       if(method==='GET'&&url.pathname==='/api/handover/recipient-options')return send(res,200,handoverService.recipientOptions(actor,{teamId:url.searchParams.get('teamId')}));
+      if(method==='GET'&&url.pathname==='/api/handover/export.xlsx'){
+        if(!hasRbac(actor,'handover.export')){audit(actor,'permission_denied','handover','export',JSON.stringify({}));return send(res,403,{error:'没有导出交接记录的权限'});}
+        const filters={id:url.searchParams.get('id'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),teamId:url.searchParams.get('teamId'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')};
+        const data=handoverService.exportData(actor,filters);
+        if(!data.handovers.length)return send(res,404,{error:'没有匹配的交接单'});
+        const body=handoverXlsx(data.handovers);
+        const name=filters.id?`handover-${filters.id}`:`handover-${filters.from||'all'}-${filters.to||'all'}`;
+        audit(actor,'handover_export','handover',name,JSON.stringify({handovers:data.handovers.length}));
+        return sendBinary(res,200,body,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',{'Content-Disposition':`attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}.xlsx`,'Cache-Control':'no-store'});
+      }
       const seg=url.pathname.slice('/api/handover/'.length).split('/');
       if(seg.length===1&&seg[0]){
         if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
