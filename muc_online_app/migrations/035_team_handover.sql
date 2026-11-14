@@ -1,0 +1,10 @@
+-- Team handover module. Additive only: no changes to existing tables or data. SQLite / PostgreSQL.
+-- 班组交接：一单＝一次交班班组向接班班组的完整交接；多人接收、任一人确认整单锁定（状态机在服务层校验）。
+create table if not exists handover(id text primary key,status text not null,created_by text not null,created_by_name text not null,created_at text not null,submitted_at text,from_team_id text not null,from_team_name text not null,to_team_id text not null,to_team_name text not null,other_items text,confirmed_by text,confirmed_by_name text,confirmed_at text,version integer not null default 1,updated_at text not null);
+create table if not exists handover_opportunity(id text primary key,handover_id text not null,maintenance_flight_id text not null,handover_note text,display_order integer not null default 0,snapshot_json text,created_by text not null,created_at text not null,removed_at text,removed_by text,unique(handover_id,maintenance_flight_id));
+create table if not exists handover_recipient(handover_id text not null,user_id text not null,user_name text not null,added_by text not null,added_at text not null,primary key(handover_id,user_id));
+create table if not exists handover_change_log(id text primary key,handover_id text not null,version integer not null,entity_type text not null,entity_id text,action text not null,old_value_json text,new_value_json text,changed_by text not null,changed_by_name text not null,changed_at text not null);
+create index if not exists handover_change_log_handover on handover_change_log(handover_id,version);
+create index if not exists handover_opportunity_flight on handover_opportunity(maintenance_flight_id);
+create index if not exists handover_submitted on handover(submitted_at);
+create table if not exists handover_shift_baseline(team_id text primary key,team_name text not null,cycle_json text not null,anchor_date text not null,anchor_phase integer not null,leader_person_id text,leader_name text,evidence_json text,status text not null,confirmed_by text,confirmed_at text,version integer not null default 1,updated_at text not null);
