@@ -7015,15 +7015,26 @@ async function routeRequest(req, res) {
       if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
       return send(res,404,{error:'接口不存在'});
     }
-    if(url.pathname.startsWith('/api/handover/')){
+    if(url.pathname==='/api/handover'||url.pathname.startsWith('/api/handover/')){
       const actor=requireLogin(req,res);if(!actor)return;
       if(!requireRbacPermission(req,res,'handover.view'))return;
+      if(method==='POST'&&url.pathname==='/api/handover')return send(res,200,handoverService.create(actor,await bodyJson(req)));
+      if(method==='GET'&&url.pathname==='/api/handover')return send(res,200,handoverService.list(actor,{scope:url.searchParams.get('scope'),teamId:url.searchParams.get('teamId'),from:url.searchParams.get('from'),to:url.searchParams.get('to')}));
       if(method==='GET'&&url.pathname==='/api/handover/shift-context')return send(res,200,handoverService.shiftContext(actor));
       if(url.pathname.startsWith('/api/handover/shift-baseline')){
         if(!requireRbacPermission(req,res,'handover.baseline.manage'))return;
         if(method==='GET'&&url.pathname==='/api/handover/shift-baseline')return send(res,200,handoverService.baselineOverview(actor));
         if(method==='POST'&&url.pathname==='/api/handover/shift-baseline/confirm')return send(res,200,handoverService.confirmBaseline(actor,await bodyJson(req)));
+        return send(res,404,{error:'接口不存在'});
       }
+      if(method==='GET'&&url.pathname==='/api/handover/maintenance-options')return send(res,200,handoverService.maintenanceOptions(actor,{scope:url.searchParams.get('scope'),date:url.searchParams.get('date')}));
+      const seg=url.pathname.slice('/api/handover/'.length).split('/');
+      if(seg.length===1&&seg[0]){
+        if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
+        if(method==='PUT')return send(res,200,handoverService.update(actor,seg[0],await bodyJson(req)));
+      }
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='submit')return send(res,200,handoverService.submit(actor,seg[0],await bodyJson(req)));
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='confirm')return send(res,200,handoverService.confirm(actor,seg[0]));
       return send(res,404,{error:'接口不存在'});
     }
     if(url.pathname.startsWith('/api/attendance/offsets')){
