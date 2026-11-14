@@ -9144,7 +9144,7 @@ const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id
 
 const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
 
-const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now});
+const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,actionTask:offsetService.tasks});
 
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});

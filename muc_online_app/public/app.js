@@ -2157,7 +2157,7 @@ window.addEventListener('online',()=>{if(isLoggedIn()&&document.querySelector('#
 async function loadHomeActionTasks(){
  const seq=++homeTaskSequence,identity=state.user?.id;
  let button=document.querySelector('#homeActionTasks');
- if(!button){button=document.createElement('button');button.id='homeActionTasks';button.className='btn secondary';button.hidden=true;button.onclick=()=>openActionTasks(apiRequest,()=>{loadHomeActionTasks();homeDataService.loadAttendance(true);});document.querySelector('.home-user-actions')?.prepend(button);}
+ if(!button){button=document.createElement('button');button.id='homeActionTasks';button.className='btn secondary';button.hidden=true;button.onclick=()=>openActionTasks(apiRequest,()=>{loadHomeActionTasks();homeDataService.loadAttendance(true);},item=>{if(item?.sourceModule==='handover')openHandoverTask(item.target?.id||item.sourceId);});document.querySelector('.home-user-actions')?.prepend(button);}
  if(!isLoggedIn()){button.hidden=true;return true;}
  try{const value=await apiRequest('/action-tasks/count');if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=value.count===0;button.textContent=`待处理 ${value.count} ›`;return true;}catch(error){if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=true;if(error.status===401){stopActionTaskRealtime();await handleAuthExpired(error.message);}return false;}
 }
@@ -5119,6 +5119,12 @@ function handoverValid(token){return token===handoverUi.epoch&&handoverActive();
 function handoverFlightLike(entry){
   const snapshot=entry.snapshot||{};
   return {date:snapshot.date||snapshot.plannedArrival||"",aircraftNo:snapshot.aircraftNo||"",flightNo:snapshot.flightNo||"",workKind:snapshot.workKind||"",stand:snapshot.stand||"",plannedArrival:snapshot.plannedArrival||"",locationName:snapshot.locationName||"青岛"};
+}
+async function openHandoverTask(id){
+ if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}
+ state.activePage="infoPage";state.activeSubpage="handoverSubpage";handoverUi.tab="pending";handoverUi.view={mode:"list"};
+ await showPage("infoPage");
+ await openHandoverDetail(id);
 }
 async function openHandoverDetail(id){
   if(!handoverActive()){if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}state.activePage="infoPage";state.activeSubpage="handoverSubpage";await showPage("infoPage");}

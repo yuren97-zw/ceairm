@@ -56,18 +56,18 @@ export async function openOffsetRequest(api,id,onChange=()=>{}){
 }
 const actionTaskLists=new Set();
 export async function refreshActionTaskLists(){const results=await Promise.allSettled([...actionTaskLists].map(refresh=>refresh()));return results.every(r=>r.status==='fulfilled'&&r.value!==false);}
-export async function openActionTasks(api,onChange=()=>{}){
+export async function openActionTasks(api,onChange=()=>{},openExternalTask=null){
  const dialog=openOffsetSheet('待处理','加载中…'),body=dialog.querySelector('section');
  let sequence=0,targetCount=20;
  const renderItems=items=>items.map(item=>`<article><button type="button" data-task="${esc(item.sourceId)}">${esc(item.title)} ›</button><small>${esc(time(item.createdAt))}</small></article>`).join('');
  async function refresh(){
   if(!dialog.open)return true;const current=++sequence;
   try{
-   const items=[];let cursor=null;
+   const items=[];let cursor=null;taskIndex.clear();
    do{
     const query=new URLSearchParams({limit:String(Math.min(100,targetCount-items.length))});if(cursor)query.set('cursor',cursor);
     const page=await api('/action-tasks?'+query);if(current!==sequence||!dialog.open)return true;
-    items.push(...page.items);cursor=page.nextCursor||null;
+    items.push(...page.items);for(const item of page.items)taskIndex.set(item.sourceId,item);cursor=page.nextCursor||null;
    }while(cursor&&items.length<targetCount);
    const scroll=body.scrollTop,focused=body.contains(document.activeElement)?document.activeElement?.dataset?.task:null;
    body.innerHTML=`<div data-task-list>${items.length?renderItems(items):'<p>暂无待处理</p>'}</div><button type="button" data-more-tasks ${cursor?'':'hidden'}>加载更多</button><p role="status"></p>`;
@@ -83,8 +83,9 @@ export async function openActionTasks(api,onChange=()=>{}){
    return false;
   }
  }
+ const taskIndex=new Map();
  actionTaskLists.add(refresh);dialog.addEventListener('close',()=>{sequence++;actionTaskLists.delete(refresh);},{once:true});
- body.onclick=event=>{const button=event.target.closest('[data-task]');if(button)openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
+ body.onclick=event=>{const button=event.target.closest('[data-task]');if(!button)return;const item=taskIndex.get(button.dataset.task);if(item&&item.sourceModule!=='attendance'&&openExternalTask){openExternalTask(item);refreshActionTaskLists();return;}openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
  await refresh();return dialog;
 }
 const ownLeaveTableHtml=(headers,rows,cls,incomplete,notes,empty)=>`${incomplete?'<p>部分假期数据尚未同步或未完整，以下仅显示已取得的记录。</p>':''}${notes.map(n=>`<p>${esc(n)}</p>`).join('')}<small>表格可左右滑动查看完整内容。</small><div class="home-att-table" tabindex="0" aria-label="可横向滚动的假期表格"><table class="${cls}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${empty}</td></tr>`}</tbody></table></div>`;

@@ -3,6 +3,11 @@ import crypto from 'node:crypto';
 import {plannedShift,stamp} from './attendance-rules.mjs';
 import {FIXED_ORGANIZATIONS} from './personnel-access.mjs';
 const failure=(m,status=400)=>Object.assign(Error(m),{status});
+// 交接待办权威校验：展示/执行前确认用户仍是当前接收人且整单待接收（供 action-task 注册表调用）。
+export function handoverTaskCanAct(db,user,task){
+ if(!db||!user?.id||!task?.source_id)return false;
+ return !!db.prepare("select 1 from handover h join handover_recipient r on r.handover_id=h.id and r.user_id=? where h.id=? and h.status='pending'").get(user.id,task.source_id);
+}
 const parse=(s,f=null)=>{try{return JSON.parse(s);}catch{return f;}};
 export const HANDOVER_STATUSES=['draft','pending','accepted'];
 export const HANDOVER_BASELINE_STATUSES=['inferred','confirmed'];
@@ -179,6 +184,12 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   for(const entry of entries)db.prepare('insert into handover_change_log(id,handover_id,version,entity_type,entity_id,action,old_value_json,new_value_json,changed_by,changed_by_name,changed_at) values(?,?,?,?,?,?,?,?,?,?,?)').run(uid('hdoc'),handoverId,version,entry.entityType,entry.entityId||null,entry.action,entry.old===undefined?null:JSON.stringify(entry.old),entry.new===undefined?null:JSON.stringify(entry.new),user.id,user.name||'',now());
  }
  const loadHandover=id=>{const row=db.prepare('select * from handover where id=?').get(String(id||''));if(!row)throw failure('交接单不存在',404);return row;};
+ const handoverTaskTitle=handover=>`班组交接：${handover.from_team_name||''} → ${handover.to_team_name||'—'}（${handover.created_by_name||''}）`;
+ const upsertRecipientTasks=(handoverId,userIds)=>{
+  if(!actionTask)return;
+  const handover=db.prepare('select * from handover where id=?').get(handoverId);if(!handover)return;
+  for(const userId of new Set(userIds))try{actionTask.upsert({sourceModule:'handover',sourceType:'confirm',sourceId:handoverId,assigneeUserId:userId,title:handoverTaskTitle(handover)});}catch{/* 待办索引失败不阻塞业务主流程，幂等 upsert 会在下次变更重试 */}
+ };
  const canEditHandover=(user,handover)=>{
   if(user?.id===handover.created_by)return true;
   return hasRbac?.(user,'handover.create')&&personOf(user)?.teamId===handover.from_team_id;
@@ -288,6 +299,14 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
    const changed=db.prepare("update handover set version=?,updated_at=? where id=? and version=? and status<>'accepted'").run(newVersion,now(),id,handover.version);
    if(!Number(changed.changes))throw failure('交接单状态已变化，请刷新后重试',409);
    if(track&&changes.length)writeChanges(id,newVersion,user,changes);
+   if(track&&actionTask){
+    for(const change of changes){
+     if(change.entityType!=='recipient')continue;
+     if(change.action==='add')upsertRecipientTasks(id,[change.entityId]);
+     if(change.action==='remove')try{actionTask.closeOne(id,change.entityId,'invalidated');}catch{/* 同上，不阻塞 */}
+    }
+    if(changes.length)try{actionTask.touchRecipients(db.prepare('select user_id from handover_recipient where handover_id=?').all(id).map(r=>r.user_id));}catch{}
+   }
    db.exec('commit');
   }catch(error){db.exec('rollback');throw error;}
   return detail(user,id);
@@ -305,6 +324,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   if(!opportunities&&!String(handover.other_items||'').trim())throw failure('请至少勾选一个维修机会或填写其他交接事项');
   const changed=db.prepare("update handover set status='pending',submitted_at=?,version=version+1,updated_at=? where id=? and status='draft'").run(now(),now(),id);
   if(!Number(changed.changes))throw failure('交接单状态已变化，请刷新后重试',409);
+  upsertRecipientTasks(id,recipients.map(r=>r.user_id));
   audit(user,'handover_submit','handover',id,JSON.stringify({recipients:recipients.length,opportunities}));
   return detail(user,id);
  }
@@ -317,6 +337,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   try{
    const changed=db.prepare("update handover set status='accepted',confirmed_by=?,confirmed_by_name=?,confirmed_at=?,version=version+1,updated_at=? where id=? and status='pending'").run(user.id,recipient.user_name,now(),now(),id);
    if(!Number(changed.changes))throw failure('交接单已被确认或状态已变化',409);
+   if(actionTask)try{actionTask.close(id,'completed',{sourceModule:'handover',sourceType:'confirm'});}catch{/* 待办终结失败不阻塞确认主流程 */}
    db.exec('commit');
   }catch(error){db.exec('rollback');throw error;}
   audit(user,'handover_confirm','handover',id,JSON.stringify({confirmedBy:user.id}));

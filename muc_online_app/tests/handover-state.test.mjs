@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {createHandoverService} from '../handover-service.mjs';
+import {createActionTaskService} from '../action-task-service.mjs';
 const CLOCK=Date.parse('2026-11-14T09:00:00+08:00');
-function fixture(){
+function fixture({withTasks=false}={}){
  const db=new DatabaseSync(':memory:');
  db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
  db.exec("create table users(id text primary key,person_id text,status text default 'active')");
@@ -20,8 +21,13 @@ function fixture(){
  db.prepare('insert into maintenance_subtasks(id,flight_id,title) values(?,?,?)').run('s1','f1');
  const allPerms=['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all'];
  const user=(id,perms=['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all'])=>({id,permissions:perms});
- const service=createHandoverService({db,clock:()=>CLOCK,hasRbac:(u,code)=>!!u?.permissions?.includes(code)});
- return {db,service,user,allPerms};
+ let tasks=null;
+ if(withTasks){
+  db.exec("create table if not exists action_tasks(id text primary key,source_module text not null,source_type text not null,source_id text not null,action_type text not null,assignee_user_id text not null,title text not null,status text not null,target_json text not null,created_at text not null,updated_at text not null,unique(source_module,source_type,source_id,action_type,assignee_user_id))");
+  tasks=createActionTaskService({db,canAct:()=>true});
+ }
+ const service=createHandoverService({db,clock:()=>CLOCK,hasRbac:(u,code)=>!!u?.permissions?.includes(code),actionTask:tasks});
+ return {db,service,user,allPerms,tasks};
 }
 const draftPayload={toTeamId:'TEAM-LINE-2',recipients:[{userId:'u3'}],opportunities:[{flightId:'f1',note:'航后检查注意右发振动'}],otherItems:'工具间钥匙已交接'};
 test('create draft auto-fills from team, resolves recipients and snapshots opportunities',()=>{
@@ -126,4 +132,25 @@ test('maintenance options default to unfinished and support full view',()=>{
  assert.equal(all.items.length,3);
  const byDate=service.maintenanceOptions(user('u1'),{date:'2026-11-13',scope:'all'});
  assert.deepEqual(byDate.items.map(i=>i.id),['f3']);
+});
+
+test('action tasks follow recipients through submit, edit and confirm',()=>{
+ const {service,user,tasks}=fixture({withTasks:true});
+ const creator=user('u1');
+ const created=service.create(creator,{toTeamId:'TEAM-LINE-2',recipients:[{userId:'u2'},{userId:'u3'}],otherItems:'双人接收待办验证'});
+ const submitted=service.submit(creator,created.handover.id,{expectedVersion:created.handover.version});
+ assert.equal(tasks.count({id:'u2'}).count,1,'每名接收人各一条待办');
+ assert.equal(tasks.count({id:'u3'}).count,1);
+ assert.equal(tasks.count({id:'u1'}).count,0,'交班人无待办');
+ const listed=tasks.list({id:'u3'}).items[0];
+ assert.equal(listed.sourceModule,'handover');
+ assert.equal(listed.target.action,'handover','点击跳转班组交接');
+ assert.match(listed.title,/一组 → 二组/);
+ const updated=service.update(creator,created.handover.id,{recipients:[{userId:'u3'},{userId:'u1'}],expectedVersion:submitted.handover.version});
+ assert.equal(tasks.count({id:'u2'}).count,0,'被移除接收人的待办失效');
+ assert.equal(tasks.count({id:'u1'}).count,1,'新增接收人获得待办');
+ service.confirm(user('u3'),created.handover.id);
+ assert.equal(tasks.count({id:'u3'}).count,0,'一人确认后全部待办终结');
+ assert.equal(tasks.count({id:'u1'}).count,0);
+ assert.ok(updated);
 });
