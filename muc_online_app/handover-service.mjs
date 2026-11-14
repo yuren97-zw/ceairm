@@ -357,5 +357,14 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const rows=db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.work_kind,f.stand,f.planned_arrival,f.status,f.archived_at,(select count(*) from maintenance_subtasks s where s.flight_id=f.id) as subtaskCount from maintenance_flights f where ${clauses.join(' and ')} order by f.date desc,f.id desc limit 200`).all(...args);
   return {items:rows.map(r=>({id:r.id,date:r.date,aircraftNo:r.aircraft_no,flightNo:r.flight_no,workKind:r.work_kind,stand:r.stand,plannedArrival:r.planned_arrival,status:r.status,archived:!!r.archived_at,subtaskCount:Number(r.subtaskCount)}))};
  }
- return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,inferTeam:(teamId)=>inferTeam(teamId),teamMembers,create,update,submit,confirm,list,detail,maintenanceOptions,canSeeHandover,loadHandover};
+ // 接收人候选：在职账号花名册（交接场景需要跨班组选人，不走人员数据范围过滤）；推荐=接班班组固定班组长，缺失时按职位兜底。
+ function recipientOptions(user,filters={}){
+  requirePermission(user,'handover.create');
+  const rows=ensureBaseline();
+  const items=db.prepare("select u.id as userId,p.id as personId,p.name,p.position_code as position,t.name as teamName from users u join personnel p on p.id=u.person_id left join organization_units t on t.id=p.administrative_team_id where u.status='active' and coalesce(p.data_status,'active')<>'deleted' and p.employment_status not in ('离职','停职') order by p.employee_no limit 500").all();
+  const team=String(filters.teamId||'').trim()?validateTeam(filters.teamId,{allowEmpty:false}):null;
+  const recommendation=recommendRecipients(rows,team);
+  return {items,recommended:recommendation.recipients,recipientBasis:recommendation.basis};
+ }
+ return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,inferTeam:(teamId)=>inferTeam(teamId),teamMembers,create,update,submit,confirm,list,detail,maintenanceOptions,recipientOptions,canSeeHandover,loadHandover};
 }

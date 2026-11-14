@@ -1695,6 +1695,7 @@ function canViewSubpage(subpage) {
   if (!isLoggedIn()) return false;
   if (subpage === "infoListSubpage") return true;
   if (subpage === "statsSubpage") return hasRbac("info.stats.read");
+  if (subpage === "handoverSubpage") return hasRbac("handover.view");
   return false;
 }
 
@@ -4878,6 +4879,7 @@ function renderActivePage() {
     renderHome();
     renderRecords();
     renderStats();
+    renderHandover();
   } else if (state.activePage === "settingsPage") {
     renderSettings();
   } else if (state.activePage === "fixedPage") {
@@ -5093,6 +5095,363 @@ async function showPage(page) {
   }
 }
 
+// ===== 班组交接（信息传达左上角菜单第三项）=====
+const handoverUi={tab:"create",epoch:0,editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
+function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
+const HANDOVER_ENTITY_LABEL={opportunity:"维修机会",opportunity_note:"机会交接说明",recipient:"接收人",to_team:"接班班组",other_items:"其他事项"};
+function handoverChangeText(change){
+  const label=HANDOVER_ENTITY_LABEL[change.entityType]||change.entityType;
+  const who=change.changedByName||"";
+  const when=handoverTime(change.changedAt);
+  if(change.entityType==="opportunity"){
+    const flight=change.old?.snapshot?.aircraftNo||change.new?.snapshot?.aircraftNo||change.old?.flightId||change.new?.flightId||"";
+    return change.action==="add"?`${who} 勾选了维修机会 ${flight}（v${change.version}）`:change.action==="remove"?`${who} 取消勾选了维修机会 ${flight}（v${change.version}）`:`${label}变更（v${change.version}）`;
+  }
+  return `${who} 修改了${label}（v${change.version}）`;
+}
+function handoverTime(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});}
+function newHandoverEditor(){
+  return {id:null,version:0,status:"draft",fromTeam:"",toTeamId:"",otherItems:"",recipients:[],opportunities:[],recommended:[],recipientBasis:"none",available:[],pickerOpen:new Set(),saving:false,message:""};
+}
+function handoverBegin(){return ++handoverUi.epoch;}
+function handoverValid(token){return token===handoverUi.epoch&&handoverActive();}
+function handoverFlightLike(entry){
+  const snapshot=entry.snapshot||{};
+  return {date:snapshot.date||snapshot.plannedArrival||"",aircraftNo:snapshot.aircraftNo||"",flightNo:snapshot.flightNo||"",workKind:snapshot.workKind||"",stand:snapshot.stand||"",plannedArrival:snapshot.plannedArrival||"",locationName:snapshot.locationName||"青岛"};
+}
+async function openHandoverDetail(id){
+  if(!handoverActive()){if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}state.activePage="infoPage";state.activeSubpage="handoverSubpage";await showPage("infoPage");}
+  const token=handoverBegin();
+  try{
+    const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+    if(!handoverValid(token))return;
+    handoverUi.detail=detail;handoverUi.view={mode:"detail"};handoverUi.changesOpen="";
+    renderHandover();
+  }catch(error){if(handoverValid(token))alert(`载入交接单失败：${error.message}`);}
+}
+async function openHandoverEditor(id){
+  if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}
+  if(!handoverActive()){state.activePage="infoPage";state.activeSubpage="handoverSubpage";await showPage("infoPage");}
+  handoverUi.tab="create";handoverUi.view={mode:"list"};handoverUi.editor=newHandoverEditor();
+  renderHandover();
+  const token=handoverBegin();
+  try{
+    if(id){
+      const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+      if(!handoverValid(token))return;
+      handoverUi.editor={...newHandoverEditor(),id:detail.handover.id,version:detail.handover.version,status:detail.handover.status,fromTeam:detail.handover.fromTeamName,toTeamId:detail.handover.toTeamId||"",otherItems:detail.handover.otherItems||"",recipients:detail.recipients.map(r=>({userId:r.user_id,user_name:r.user_name})),opportunities:detail.opportunities.filter(o=>!o.removedAt).map(o=>({flightId:o.flightId,note:o.note||"",snapshot:o.snapshot||{}}))};
+    }else{
+      const context=await apiRequest("/handover/shift-context");
+      if(!handoverValid(token))return;
+      handoverUi.context=context;
+      handoverUi.editor.toTeamId=context.toTeam?.id||"";
+    }
+    await handoverLoadRecipientOptions(handoverUi.editor.toTeamId,token);
+    if(!id)for(const recipient of handoverUi.editor.recommended)if(!handoverUi.editor.recipients.some(r=>r.userId===recipient.userId))handoverUi.editor.recipients.push(recipient);
+    await handoverLoadOptions(token);
+    if(handoverValid(token))handoverRepaint();
+  }catch(error){if(handoverValid(token)){handoverUi.editor.message=`载入失败：${error.message}`;handoverRepaint();}}
+}
+async function handoverLoadRecipientOptions(teamId,token){
+  try{
+    const query=teamId?`?teamId=${encodeURIComponent(teamId)}`:"";
+    const data=await apiRequest(`/handover/recipient-options${query}`);
+    if(!handoverValid(token??handoverUi.epoch))return;
+    const editor=handoverUi.editor;if(!editor)return;
+    editor.available=data.items||[];editor.recommended=data.recommended||[];editor.recipientBasis=data.recipientBasis||"none";
+  }catch{}
+}
+async function handoverLoadOptions(token){
+  try{
+    const query=new URLSearchParams({scope:handoverUi.optionsScope});
+    const data=await apiRequest(`/handover/maintenance-options?${query}`);
+    if(!handoverValid(token??handoverUi.epoch))return;
+    handoverUi.options=data.items||[];
+  }catch{handoverUi.options=[];}
+}
+function paintHandover(){
+  if(!handoverActive())return;
+  const panel=$("#handoverPanel");if(!panel)return;
+  if(handoverUi.view.mode==="detail")panel.innerHTML=handoverDetailBodyHtml();
+  else if(handoverUi.tab==="create")panel.innerHTML=handoverEditorHtml();
+  else if(handoverUi.tab==="pending")panel.innerHTML=handoverPendingHtml();
+  else panel.innerHTML=handoverHistoryHtml();
+}
+function renderHandover(){
+  if(!handoverActive())return;
+  paintHandover();
+  refreshHandoverView();
+  if(handoverUi.tab==="create"&&hasRbac("handover.baseline.manage")&&!handoverUi.baseline)refreshHandoverBaseline();
+}
+function handoverRepaint(){paintHandover();}
+function refreshHandoverView(){
+  const token=handoverBegin();
+  (async()=>{
+    if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id){
+      try{const detail=await apiRequest(`/handover/${encodeURIComponent(handoverUi.detail.handover.id)}`);if(handoverValid(token)){handoverUi.detail=detail;handoverRepaint();}}catch{}
+      return;
+    }
+    if(handoverUi.tab==="pending"){
+      try{
+        const [pending,drafts,mine]=await Promise.all([apiRequest("/handover?scope=pending"),apiRequest("/handover?scope=drafts"),apiRequest("/handover?scope=mine")]);
+        if(!handoverValid(token))return;
+        handoverUi.lists={pending:pending.items||[],drafts:drafts.items||[],history:mine.items||[]};
+        if(handoverUi.tab==="pending"&&handoverUi.view.mode==="list")panelRenderHandover();
+      }catch{}
+      return;
+    }
+    if(handoverUi.tab==="history"){
+      try{
+        const scope=hasRbac("handover.history.all")?"all":"mine";
+        const query=new URLSearchParams({scope});
+        if(handoverUi.historyFilter.from)query.set("from",handoverUi.historyFilter.from);
+        if(handoverUi.historyFilter.to)query.set("to",handoverUi.historyFilter.to);
+        if(handoverUi.historyFilter.teamId)query.set("teamId",handoverUi.historyFilter.teamId);
+        const data=await apiRequest(`/handover?${query}`);
+        if(!handoverValid(token))return;
+        handoverUi.lists.history=data.items||[];
+        if(handoverUi.tab==="history"&&handoverUi.view.mode==="list")panelRenderHandover();
+      }catch{}
+    }
+  })();
+}
+function panelRenderHandover(){const panel=$("#handoverPanel");if(!panel)return;panel.innerHTML=handoverUi.tab==="pending"?handoverPendingHtml():handoverHistoryHtml();}
+function handoverTabsHtml(){
+  const tabs=[["create","发起交接"],["pending","待接收"],["history","历史记录"]];
+  return `<div class="handover-tabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">${tabs.map(([key,label])=>`<button type="button" class="btn ${handoverUi.tab===key?"":"secondary"}" data-hov-tab="${key}">${label}</button>`).join("")}</div>`;
+}
+function handoverEditorHtml(){
+  const editor=handoverUi.editor||(handoverUi.editor=newHandoverEditor());
+  const context=handoverUi.context;
+  const fromLabel=editor.fromTeam||context?.user?.teamName||"我的班组";
+  const fromTag=context?.fromTeam?.category?`<small>（当前班次：${escapeHtml(context.fromTeam.category)}）</small>`:"";
+  const teamOptions=[["TEAM-LINE-1","一组"],["TEAM-LINE-2","二组"],["TEAM-LINE-3","三组"],["TEAM-LINE-4","四组"]];
+  const selectedIds=new Set(editor.recipients.map(r=>r.userId));
+  const recommendedIds=new Set(editor.recommended.map(r=>r.userId));
+  const addOptions=editor.available.filter(r=>!selectedIds.has(r.userId)).map(r=>`<option value="${escapeHtml(r.userId)}">${escapeHtml(r.name)}${r.teamName?`（${escapeHtml(r.teamName)}）`:""}${recommendedIds.has(r.userId)?" ★":""}</option>`).join("");
+  const pickedChips=editor.recipients.map(r=>`<span class="chip" style="display:inline-flex;align-items:center;gap:4px">${escapeHtml(r.user_name)}${recommendedIds.has(r.userId)?" ★":""}<button type="button" data-hov-remove-recipient="${escapeHtml(r.userId)}" aria-label="移除接收人" style="border:none;background:none;cursor:pointer;padding:0 2px">×</button></span>`).join("");
+  const pickedOpps=editor.opportunities.map((entry,index)=>handoverPickedRow(entry,index)).join("");
+  const pickerRows=handoverUi.options.filter(item=>!editor.opportunities.some(o=>o.flightId===item.id)).map(item=>handoverPickerRow(item)).join("");
+  const pendingHint=editor.status==="pending"?`<p class="status-line">该单已提交待接收：继续修改会记录变更历史（修改人、时间、前后值）。</p>`:"";
+  return `${handoverTabsHtml()}
+  <article class="card" style="padding:12px;border:1px solid var(--line,#e2e8f0);border-radius:12px">
+    <h3 style="margin:0 0 8px">发起交接 ${editor.status==="pending"?"<small>（待接收单）</small>":""}</h3>
+    ${pendingHint}
+    <p><strong>交班班组：</strong>${escapeHtml(fromLabel)}${fromTag}</p>
+    <label style="display:block;margin:8px 0"><strong>接班班组：</strong><select data-hov-to-team style="margin-left:6px;padding:6px 8px;border-radius:8px">${teamOptions.map(([value,label])=>`<option value="${value}" ${editor.toTeamId===value?"selected":""}>${label}</option>`).join("")}</select></label>
+    <fieldset style="border:1px solid var(--line,#e2e8f0);border-radius:10px;margin:10px 0;padding:8px"><legend>接收人员（多选，任一人确认整单完成）</legend>
+      <div class="chips" style="margin:4px 0">${pickedChips||'<small class="status-line">尚未选择接收人</small>'}</div>
+      <select data-hov-add-recipient style="max-width:100%;padding:6px 8px;border-radius:8px"><option value="">添加接收人…</option>${addOptions}</select>
+      <small class="status-line">${editor.recipientBasis==="baseline_leader"?"★ 为接班班组固定班组长（系统推荐）":editor.recipientBasis==="position_fallback"?"★ 为按职位识别的班组长（系统推荐，建议核对）":"换接班班组后自动更新推荐，可手动增删"}</small>
+    </fieldset>
+    <fieldset style="border:1px solid var(--line,#e2e8f0);border-radius:10px;margin:10px 0;padding:8px"><legend>维修机会（可选 0~N 项）</legend>
+      <div style="margin:4px 0">${pickedOpps||'<small class="status-line">尚未勾选维修机会</small>'}</div>
+      <details ${editor.opportunities.length?"":"open"}><summary>从维修管控选择机会（${handoverUi.optionsScope==="unfinished"?"未完成":"全部"}）</summary>
+        <div style="display:flex;gap:8px;margin:6px 0"><button type="button" class="btn secondary" data-hov-scope="unfinished">未完成</button><button type="button" class="btn secondary" data-hov-scope="all">全部</button></div>
+        <div>${pickerRows||'<p class="status-line">没有可选机会。</p>'}</div>
+      </details>
+    </fieldset>
+    <label style="display:block;margin:10px 0"><strong>其他交接事项</strong><textarea data-hov-other rows="3" style="width:100%;margin-top:4px;padding:8px;border-radius:8px" placeholder="没有维修机会时必须填写此处">${escapeHtml(editor.otherItems)}</textarea></label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn secondary" data-hov-save>${editor.status==="pending"?"保存修改（记录变更）":"存草稿"}</button>${editor.status==="draft"?`<button type="button" class="btn" data-hov-submit>提交交接</button>`:""}</div>
+    ${editor.message?`<p class="status-line" role="status">${escapeHtml(editor.message)}</p>`:""}
+  </article>
+  ${handoverBaselineHtml()}`;
+}
+function handoverPickedRow(entry,index){
+  const flight=handoverFlightLike(entry);
+  return `<div style="border:1px solid var(--line,#e2e8f0);border-radius:10px;padding:8px;margin:6px 0">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div>${maintenanceFlightPrimaryHtml(flight)}<div style="margin-top:2px">${maintenanceFlightSecondaryHtml(flight)}</div></div>
+    <button type="button" class="btn secondary" data-hov-remove-opp="${index}">移除</button></div>
+    <label style="display:block;margin-top:6px"><small>交接说明（该机会仅一条整体说明）</small><textarea data-hov-note="${index}" rows="2" style="width:100%;padding:6px;border-radius:8px">${escapeHtml(entry.note)}</textarea></label>
+  </div>`;
+}
+function handoverPickerRow(item){
+  const open=handoverUi.editor?.pickerOpen?.has(item.id);
+  const flight={date:item.date,aircraftNo:item.aircraftNo,flightNo:item.flightNo,workKind:item.workKind,stand:item.stand,plannedArrival:item.plannedArrival,locationName:"青岛"};
+  return `<div style="border-top:1px dashed var(--line,#e2e8f0);padding:6px 0">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center;flex:1;min-width:0"><input type="checkbox" data-hov-pick="${escapeHtml(item.id)}"><span style="min-width:0">${maintenanceFlightPrimaryHtml(flight)}</span></label>
+      <button type="button" class="btn secondary" data-hov-expand="${escapeHtml(item.id)}" aria-expanded="${open?"true":"false"}">${open?"收起":"展开"}</button>
+    </div>
+    ${open?`<div style="margin:4px 0 0 24px">${maintenanceFlightSecondaryHtml(flight)}<div style="margin-top:4px">${maintenanceStatusBadge(item.status)}<small> 附加工作 ${item.subtaskCount} 项 · 状态以维修管控实时为准</small></div></div>`:""}
+  </div>`;
+}
+function handoverBaselineHtml(){
+  if(!hasRbac("handover.baseline.manage")||!handoverUi.baseline)return "";
+  const rows=handoverUi.baseline.teams.map(team=>`<tr><td>${escapeHtml(team.teamName)}</td>${team.upcoming.map(u=>`<td>${escapeHtml(u.phase||"?")}</td>`).join("")}<td>${escapeHtml(team.row?(team.row.status==="confirmed"?"已确认":"待核对"):"未推断")}</td><td><select data-hov-leader-team="${escapeHtml(team.teamId)}"><option value="">班组长…</option>${(handoverUi.baselineLeaders.options||[]).filter(p=>p.teamName===team.teamName).map(p=>`<option value="${escapeHtml(p.personId||p.userId)}" ${handoverUi.baselineLeaders[team.teamId]===(p.personId||p.userId)?"selected":""}>${escapeHtml(p.name)}</option>`).join("")}</select></td></tr>`).join("");
+  return `<details style="margin-top:12px"><summary>班序基准核对（管理员）</summary>
+  <table style="width:100%;border-collapse:collapse;margin-top:8px"><thead><tr><th>班组</th><th>今日</th><th>明日</th><th>后日</th><th>大后日</th><th>状态</th><th>固定班组长</th></tr></thead><tbody>${rows}</tbody></table>
+  <p class="status-line">基准依据排班推断（${escapeHtml(handoverUi.baseline.teams.map(t=>t.row?.evidence?.sampleDays||0).join("/"))} 天样本）。确认后作为交接推荐依据；人工调整仅影响后续推荐，不改排班。</p>
+  <button type="button" class="btn" data-hov-confirm-baseline>确认班序基准</button></details>`;
+}
+function handoverListCardHtml(item,actions){
+  return `<article style="border:1px solid var(--line,#e2e8f0);border-radius:12px;padding:10px;margin:8px 0">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${escapeHtml(item.fromTeamName)} → ${escapeHtml(item.toTeamName||"—")}</strong><span class="chip">${escapeHtml(handoverStatusText(item.status))}</span></div>
+    <small class="status-line">交班 ${escapeHtml(item.createdByName||"")} · ${handoverTime(item.submittedAt||item.createdAt)} · 机会 ${item.opportunityCount} 项 · 接收 ${item.recipientCount} 人${item.confirmedByName?` · 确认 ${escapeHtml(item.confirmedByName)} ${handoverTime(item.confirmedAt)}`:""}</small>
+    ${item.otherItems?`<p style="margin:6px 0 0"><small>${escapeHtml(item.otherItems.length>60?item.otherItems.slice(0,60)+"…":item.otherItems)}</small></p>`:""}
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${actions}</div>
+  </article>`;
+}
+function handoverPendingHtml(){
+  const me=state.user?.id;
+  const pendingMine=handoverUi.lists.pending||[];
+  const outgoing=(handoverUi.lists.history||[]).filter(h=>h.status==="pending"&&h.createdBy===me);
+  const drafts=handoverUi.lists.drafts||[];
+  const section=(title,items,build)=>`<h3 style="margin:12px 0 4px">${title}</h3>${items.length?items.map(build).join(""):'<p class="status-line">暂无。</p>'}`;
+  return `${handoverTabsHtml()}
+  ${section("待我确认",pendingMine,item=>handoverListCardHtml(item,`<button type="button" class="btn" data-hov-open="${escapeHtml(item.id)}">查看并确认</button>`))}
+  ${section("我发起的待接收",outgoing,item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续修改</button><button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看</button>`))}
+  ${section("我的草稿",drafts,item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续填写</button>`))}`;
+}
+function handoverHistoryHtml(){
+  const canAll=hasRbac("handover.history.all");
+  const teamOptions=[["","全部班组"],["TEAM-LINE-1","一组"],["TEAM-LINE-2","二组"],["TEAM-LINE-3","三组"],["TEAM-LINE-4","四组"]];
+  return `${handoverTabsHtml()}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+    <label>从 <input type="date" data-hov-filter-from value="${escapeHtml(handoverUi.historyFilter.from)}"></label>
+    <label>至 <input type="date" data-hov-filter-to value="${escapeHtml(handoverUi.historyFilter.to)}"></label>
+    ${canAll?`<label>班组 <select data-hov-filter-team>${teamOptions.map(([value,label])=>`<option value="${value}" ${handoverUi.historyFilter.teamId===value?"selected":""}>${label}</option>`).join("")}</select></label>`:""}
+  </div>
+  ${(handoverUi.lists.history||[]).length?handoverUi.lists.history.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看原始记录</button>`)).join(""):'<p class="status-line">没有匹配的交接记录。</p>'}
+  <small class="status-line">历史记录默认按最近时间倒序；卡片为整张交接单，查看不授予维修派工或报工权限。</small>`;
+}
+function handoverDetailBodyHtml(){
+  const detail=handoverUi.detail;if(!detail)return '<p class="status-line">正在载入交接单…</p>';
+  const handover=detail.handover,me=state.user?.id;
+  const isRecipient=detail.recipients.some(r=>r.user_id===me);
+  const canEdit=handover.status!=="accepted"&&(handover.createdBy===me||hasRbac("handover.create"));
+  const changesBlock=handoverChangesBlockHtml();
+  const opportunities=detail.opportunities.map(entry=>{
+    const flight=handoverFlightLike(entry);
+    const open=handoverUi.changesOpen===`opp:${entry.id}`;
+    return `<article style="border:1px solid var(--line,#e2e8f0);border-radius:12px;padding:10px;margin:8px 0;${entry.removedAt?"opacity:.55":""}">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+        <div style="min-width:0">${maintenanceFlightPrimaryHtml(flight)}<div style="margin-top:2px">${maintenanceFlightSecondaryHtml(flight)}</div></div>
+        <button type="button" class="btn secondary" data-hov-expand-detail="${escapeHtml(entry.id)}" aria-expanded="${open?"true":"false"}">${open?"收起":"展开"}</button>
+      </div>
+      ${open?`<div style="margin-top:6px"><small>提交时快照：${escapeHtml(flight.workKind||"—")} · 状态 ${escapeHtml(entry.snapshot?.status||"—")} · 附加工作以执行页实时口径为准</small>
+        ${entry.note?`<p style="margin:6px 0 0"><strong>交接说明：</strong>${escapeHtml(entry.note)}</p>`:'<p class="status-line">无交接说明</p>'}
+        ${entry.removedAt?`<p class="status-line">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</p>`:""}
+        <button type="button" class="btn secondary" data-hov-changes="opp:${escapeHtml(entry.id)}">修改记录</button></div>`:""}
+    </article>`;
+  }).join("");
+  const actionButtons=[];
+  if(handover.status==="pending"&&isRecipient)actionButtons.push(`<button type="button" class="btn" data-hov-confirm="${escapeHtml(handover.id)}">确认接收（整单完成）</button>`);
+  if(canEdit)actionButtons.push(`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(handover.id)}">编辑</button>`);
+  actionButtons.push(`<button type="button" class="btn secondary" data-hov-changes="all">全部变更</button>`);
+  actionButtons.push(`<button type="button" class="btn secondary" data-hov-back>返回</button>`);
+  return `${handoverTabsHtml()}
+  <article class="card" style="padding:12px;border:1px solid var(--line,#e2e8f0);border-radius:12px">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3 style="margin:0">${escapeHtml(handover.fromTeamName)} → ${escapeHtml(handover.toTeamName||"—")}</h3><span class="chip">${escapeHtml(handoverStatusText(handover.status))}</span></div>
+    <small class="status-line">交班 ${escapeHtml(handover.createdByName||"")} · 提交 ${handoverTime(handover.submittedAt)} ${handover.confirmedByName?`· 确认 ${escapeHtml(handover.confirmedByName)} ${handoverTime(handover.confirmedAt)}`:""} · 版本 v${handover.version}</small>
+    <p><strong>接收人员：</strong>${detail.recipients.map(r=>escapeHtml(r.user_name)).join("、")||"—"}</p>
+    <h4 style="margin:10px 0 4px">维修机会（${detail.opportunities.filter(o=>!o.removedAt).length} 项在册）</h4>
+    ${opportunities||'<p class="status-line">本单未勾选维修机会。</p>'}
+    <h4 style="margin:10px 0 4px">其他交接事项</h4>
+    <p style="white-space:pre-wrap">${escapeHtml(handover.otherItems||"—")}</p>
+    ${changesBlock}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${actionButtons.join("")}</div>
+  </article>`;
+}
+function handoverChangesBlockHtml(){
+  const detail=handoverUi.detail;if(!detail||!handoverUi.changesOpen)return "";
+  const changes=detail.changes.filter(change=>handoverUi.changesOpen==="all"||handoverUi.changesOpen===`opp:${change.entityId}`||(handoverUi.changesOpen.startsWith("opp:")&&change.entityType==="opportunity_note"&&change.entityId===handoverUi.changesOpen.slice(4)));
+  const rows=changes.map(change=>{
+    let detail2="";
+    if(change.entityType==="opportunity_note"||change.entityType==="other_items")detail2=`<small>「${escapeHtml(change.old?.text||"")}」→「${escapeHtml(change.new?.text||"（已删除）")}」</small>`;
+    else if(change.entityType==="recipient")detail2=`<small>${change.action==="add"?`加入 ${escapeHtml(change.new?.userName||"")}`:`移除 ${escapeHtml(change.old?.userName||"")}`}</small>`;
+    else if(change.entityType==="to_team")detail2=`<small>${escapeHtml(change.old?.teamName||"—")} → ${escapeHtml(change.new?.teamName||"—")}</small>`;
+    else if(change.entityType==="opportunity")detail2=`<small>${escapeHtml(change.new?.snapshot?.aircraftNo||change.old?.snapshot?.aircraftNo||change.new?.flightId||change.old?.flightId||"")}${change.old?.note?` · 说明「${escapeHtml(change.old.note)}」`:""}</small>`;
+    return `<li>${escapeHtml(handoverChangeText(change))} ${detail2} <small class="status-line">${handoverTime(change.changedAt)}</small></li>`;
+  }).join("");
+  return `<div style="border-top:1px dashed var(--line,#e2e8f0);margin-top:10px;padding-top:8px"><h4 style="margin:0 0 6px">${handoverUi.changesOpen==="all"?"全部变更":"修改记录"}</h4>${rows?`<ul style="margin:0;padding-left:18px">${rows}</ul>`:'<p class="status-line">暂无变更记录。</p>'}<button type="button" class="btn secondary" data-hov-changes="" style="margin-top:6px">收起</button></div>`;
+}
+async function refreshHandoverBaseline(){
+  if(!hasRbac("handover.baseline.manage"))return;
+  try{
+    const [baseline,options]=await Promise.all([apiRequest("/handover/shift-baseline"),apiRequest("/handover/recipient-options")]);
+    handoverUi.baseline=baseline;
+    handoverUi.baselineLeaders={...handoverUi.baselineLeaders,options:options.items||[]};
+    for(const team of baseline.teams||[])if(team.row?.leader_person_id)handoverUi.baselineLeaders[team.teamId]=team.row.leader_person_id;
+    if(handoverActive()&&handoverUi.tab==="create")handoverRepaint();
+  }catch{}
+}
+async function saveHandoverDraft(){
+  const editor=handoverUi.editor;if(!editor)return;
+  const payload={toTeamId:editor.toTeamId||null,otherItems:editor.otherItems,recipients:editor.recipients.map(r=>({userId:r.userId})),opportunities:editor.opportunities.map(o=>({flightId:o.flightId,note:o.note})),expectedVersion:editor.version};
+  try{
+    const result=editor.id?await apiRequest(`/handover/${encodeURIComponent(editor.id)}`,{method:"PUT",body:payload}):await apiRequest("/handover",{method:"POST",body:payload});
+    handoverUi.editor={...editor,id:result.handover.id,version:result.handover.version,status:result.handover.status,message:"已保存。"};
+    if(editor.status==="pending")handoverUi.editor.message="已保存，修改已记录变更历史。";
+    handoverRepaint();
+  }catch(error){editor.message=`保存失败：${error.message}`;handoverRepaint();}
+}
+async function submitHandover(){
+  const editor=handoverUi.editor;if(!editor)return;
+  if(!editor.toTeamId){editor.message="请先选择接班班组。";handoverRepaint();return;}
+  if(!editor.recipients.length){editor.message="请至少选择一名接收人。";handoverRepaint();return;}
+  if(!editor.opportunities.length&&!editor.otherItems.trim()){editor.message="请至少勾选一个维修机会或填写其他交接事项。";handoverRepaint();return;}
+  try{
+    if(!editor.id)await saveHandoverDraft();
+    const current=handoverUi.editor;
+    const result=await apiRequest(`/handover/${encodeURIComponent(current.id)}/submit`,{method:"POST",body:{expectedVersion:current.version}});
+    handoverUi.editor={...current,version:result.handover.version,status:result.handover.status,message:"已提交待接收。"};
+    handoverRepaint();
+  }catch(error){handoverUi.editor.message=`提交失败：${error.message}`;handoverRepaint();}
+}
+async function gotoHandoverMaintenance(flightId,snapshot){
+  if(!canView("maintenancePage")){alert("你没有维修管控页面的访问权限。");return;}
+  state.maintenanceTab="execute";
+  try{await maintenanceService.load();}catch(error){alert(`进入维修页面失败：${error.message}`);return;}
+  state.maintenanceExecuteOpenDate=snapshot?.date||"__undated__";
+  state.maintenanceExecuteOpenFlightId=flightId;
+  await showPage("maintenancePage");
+  try{await hydrateMaintenanceFlight(flightId);renderMaintenance();}catch{}
+  const target=document.querySelector(`[data-maint-execute-toggle="${cssEscapeValue(flightId)}"]`);
+  if(!target)alert("该机会可能不在执行页显示范围（未派工给你或已归档），你可在执行页检索查看。");
+}
+const handoverPanelElement=document.getElementById("handoverPanel");
+if(handoverPanelElement){
+ handoverPanelElement.addEventListener("click",async event=>{
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-confirm-baseline],[data-hov-expand-detail]");
+  if(!target)return;
+  const editor=handoverUi.editor;
+  if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
+  if(target.dataset.hovOpen)return openHandoverDetail(target.dataset.hovOpen);
+  if(target.dataset.hovEdit)return openHandoverEditor(target.dataset.hovEdit);
+  if(target.dataset.hovConfirm){target.disabled=true;try{handoverUi.detail=await apiRequest(`/handover/${encodeURIComponent(target.dataset.hovConfirm)}/confirm`,{method:"POST",body:{}});handoverUi.view={mode:"detail"};handoverRepaint();}catch(error){alert(`确认失败：${error.message}`);target.disabled=false;}return;}
+  if(target.dataset.hovSave)return saveHandoverDraft();
+  if(target.dataset.hovSubmit)return submitHandover();
+  if(target.dataset.hovPick){const flightId=target.dataset.hovPick;const editor2=handoverUi.editor;if(!editor2)return;const existing=editor2.opportunities.find(o=>o.flightId===flightId);if(existing)editor2.opportunities=editor2.opportunities.filter(o=>o.flightId!==flightId);else{const option=handoverUi.options.find(o=>o.id===flightId);editor2.opportunities.push({flightId,note:"",snapshot:option?{date:option.date,aircraftNo:option.aircraftNo,flightNo:option.flightNo,workKind:option.workKind,stand:option.stand,plannedArrival:option.plannedArrival,status:option.status}:{}});}handoverRepaint();return;}
+  if(target.dataset.hovExpand){const set=editor?.pickerOpen;if(!set)return;const id=target.dataset.hovExpand;set.has(id)?set.delete(id):set.add(id);handoverRepaint();return;}
+  if(target.dataset.hovScope){handoverUi.optionsScope=target.dataset.hovScope;await handoverLoadOptions();handoverRepaint();return;}
+  if(target.dataset.hovRemoveRecipient){editor.recipients=editor.recipients.filter(r=>r.userId!==target.dataset.hovRemoveRecipient);handoverRepaint();return;}
+  if(target.dataset.hovRemoveOpp){editor.opportunities.splice(Number(target.dataset.hovRemoveOpp),1);handoverRepaint();return;}
+  if(target.dataset.hovBack){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
+  if(target.dataset.hovChanges!==undefined){handoverUi.changesOpen=target.dataset.hovChanges;handoverRepaint();return;}
+  if(target.dataset.hovExpandDetail){handoverUi.changesOpen=handoverUi.changesOpen===`opp:${target.dataset.hovExpandDetail}`?"":`opp:${target.dataset.hovExpandDetail}`;handoverRepaint();return;}
+  if(target.dataset.hovConfirmBaseline){
+   const teams=(handoverUi.baseline?.teams||[]).filter(t=>t.row).map(t=>({teamId:t.teamId,anchorDate:t.row.anchor_date,anchorPhase:t.row.anchor_phase,leaderPersonId:handoverUi.baselineLeaders[t.teamId]||null}));
+   try{await apiRequest("/handover/shift-baseline/confirm",{method:"POST",body:{teams}});handoverUi.baseline=null;await refreshHandoverBaseline();alert("班序基准已确认。");}catch(error){alert(`确认失败：${error.message}`);}
+   return;
+  }
+ });
+ handoverPanelElement.addEventListener("change",async event=>{
+  const target=event.target;
+  if(target.dataset?.hovToTeam!==undefined){const editor=handoverUi.editor;if(!editor)return;editor.toTeamId=target.value;await handoverLoadRecipientOptions(editor.toTeamId);handoverRepaint();return;}
+  if(target.dataset?.hovAddRecipient){const editor=handoverUi.editor;if(!editor||!target.value)return;const option=editor.available.find(r=>r.userId===target.value);if(option&&!editor.recipients.some(r=>r.userId===option.userId))editor.recipients.push({userId:option.userId,user_name:option.name});handoverRepaint();return;}
+  if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovLeaderTeam){handoverUi.baselineLeaders[target.dataset.hovLeaderTeam]=target.value;return;}
+ });
+ handoverPanelElement.addEventListener("input",event=>{
+  const target=event.target;
+  if(target.dataset?.hovNote!==undefined){const editor=handoverUi.editor;if(editor?.opportunities[Number(target.dataset.hovNote)])editor.opportunities[Number(target.dataset.hovNote)].note=target.value;return;}
+  if(target.dataset?.hovOther!==undefined){const editor=handoverUi.editor;if(editor)editor.otherItems=target.value;return;}
+ });
+}
 async function showSubpage(subpage) {
   if (!canViewSubpage(subpage)) subpage = "infoListSubpage";
   state.activeSubpage = subpage;

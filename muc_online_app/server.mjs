@@ -7028,6 +7028,7 @@ async function routeRequest(req, res) {
         return send(res,404,{error:'接口不存在'});
       }
       if(method==='GET'&&url.pathname==='/api/handover/maintenance-options')return send(res,200,handoverService.maintenanceOptions(actor,{scope:url.searchParams.get('scope'),date:url.searchParams.get('date')}));
+      if(method==='GET'&&url.pathname==='/api/handover/recipient-options')return send(res,200,handoverService.recipientOptions(actor,{teamId:url.searchParams.get('teamId')}));
       const seg=url.pathname.slice('/api/handover/'.length).split('/');
       if(seg.length===1&&seg[0]){
         if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
