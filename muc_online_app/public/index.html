@@ -2002,6 +2002,10 @@
   #appConfirmDialog .btn{border-radius:6px}
   dialog[id^="maintenance"] .maintenance-person-role,
   dialog[id^="maintenance"] .status-badge{border-radius:4px}
+
+    /* 分页条每页条数下拉：字号对齐页码按钮（规则需晚置以覆盖早前作用域） */
+    .pager .pager-left label.pager-text #pageSizeSelect{font-size:12px;height:24px;line-height:24px}
+    @media(max-width:520px){.pager .pager-left label.pager-text #pageSizeSelect{font-size:11px;height:22px;line-height:22px}}
 </style>
 </head>
 <body class="app-booting">
