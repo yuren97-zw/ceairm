@@ -5102,17 +5102,6 @@ async function showPage(page) {
 const handoverUi={tab:"create",epoch:0,listEpoch:0,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
 function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
 function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
-const HANDOVER_ENTITY_LABEL={opportunity:"维修机会",opportunity_note:"机会交接说明",recipient:"接收人",to_team:"接班班组",other_items:"其他事项"};
-function handoverChangeText(change){
-  const label=HANDOVER_ENTITY_LABEL[change.entityType]||change.entityType;
-  const who=change.changedByName||"";
-  const when=handoverTime(change.changedAt);
-  if(change.entityType==="opportunity"){
-    const flight=change.old?.snapshot?.aircraftNo||change.new?.snapshot?.aircraftNo||change.old?.flightId||change.new?.flightId||"";
-    return change.action==="add"?`${who} 勾选了维修机会 ${flight}（v${change.version}）`:change.action==="remove"?`${who} 取消勾选了维修机会 ${flight}（v${change.version}）`:`${label}变更（v${change.version}）`;
-  }
-  return `${who} 修改了${label}（v${change.version}）`;
-}
 function handoverTime(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});}
 function newHandoverEditor(){
   return {id:null,version:0,status:"draft",fromTeam:"",toTeamId:"",otherItems:"",recipients:[],opportunities:[],recommended:[],recipientBasis:"none",available:[],pickerOpen:new Set(),saving:false,message:""};
@@ -5136,6 +5125,7 @@ async function openHandoverDetail(id){
     const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
     if(!handoverValid(token))return;
     handoverUi.detail=detail;handoverUi.view={mode:"detail"};handoverUi.changesOpen="";
+    if(detail.handover.status==="pending"&&hasRbac("maintenance.dispatch.view"))maintenanceService.load().catch(()=>{});
     renderHandover();
   }catch(error){if(handoverValid(token))alert(`载入交接单失败：${error.message}`);}
 }
@@ -5376,28 +5366,27 @@ function handoverDetailBodyHtml(){
   const canEdit=handover.status==="draft"&&(handover.createdBy===me||hasRbac("handover.create"));
   const recipientChips=detail.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}</span>`).join("");
   const opportunities=detail.opportunities.map(entry=>{
-    const live=entry.live;
-    const merged={...(entry.snapshot||{}),...(live||{}),id:entry.flightId};
-    const open=handoverUi.changesOpen===`opp:${entry.id}`;
-    const snapshotBadge=entry.snapshot?.status&&live&&entry.snapshot.status!==live.status?`<span class="execute-subtask-count">提交时快照：${escapeHtml(entry.snapshot.status)}</span>`:"";
-    const liveSubtaskCount=(live?.subtasks||[]).length;
-    const canDispatch=Boolean(live&&!live.archived&&handover.status==="pending"&&hasRbac("maintenance.assignment.manage")&&["未派工","已派工"].includes(live.status));
-    const liveStatus=live?(live.archived?"已确认":live.status):(entry.snapshot?.status||"未派工");
-    const statusBadge=canDispatch?`<button class="status-badge status-action" type="button" data-hov-dispatch="${escapeHtml(entry.flightId)}" title="点击派工调整人员">${escapeHtml(liveStatus)}</button>`:maintenanceStatusBadge(liveStatus);
-    return `<article class="maintenance-card execute-flight-card ${open?"expanded":"collapsed"}"${entry.removedAt?' style="opacity:.55"':""}>
-      <button class="execute-flight-toggle" type="button" data-hov-expand-detail="${escapeHtml(entry.id)}" aria-expanded="${open?"true":"false"}" aria-label="${open?"收起":"展开"}维修机会">
-        <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(merged)}</span>
-        <span class="execute-flight-head-meta">${statusBadge}${snapshotBadge}${entry.removedAt?'<span class="execute-subtask-count draft-count">已取消勾选</span>':""}<span class="execute-subtask-count ${liveSubtaskCount>0?"has-items":""}">非例行 ${liveSubtaskCount} 项</span></span>
-      </button>
-      <div class="execute-flight-info-row"><button class="execute-flight-info-toggle" type="button" data-hov-expand-detail="${escapeHtml(entry.id)}" aria-expanded="${open?"true":"false"}">${maintenanceFlightSecondaryHtml(merged)}</button></div>
+   const live=entry.live;
+   const merged={...(entry.snapshot||{}),...(live||{}),id:entry.flightId};
+   const open=handoverUi.changesOpen===`opp:${entry.id}`;
+   const liveSubtaskCount=(live?.subtasks||[]).length;
+   const dispatchable=live&&!live.archived&&handover.status==="pending";
+   const liveStatus=live?(live.archived?"已确认":live.status):(entry.snapshot?.status||"未派工");
+   const noteBody=entry.note?`<div class="handover-note-box"><strong>交接说明：</strong>${escapeHtml(entry.note)}</div>`:'<div class="handover-note-box muted">未填写交接说明</div>';
+   const summaryToggle=`<button class="handover-summary-toggle" type="button" data-hov-expand-detail="${escapeHtml(entry.id)}" aria-expanded="${open?"true":"false"}">${maintenanceOpportunityTag(merged)}<span class="handover-summary-weak">${escapeHtml(merged.aircraftNo||"-")}${merged.flightNo?` · ${escapeHtml(merged.flightNo)}`:""} · ${escapeHtml(merged.date||"")}</span><span class="handover-summary-weak">非例行 ${liveSubtaskCount} 项</span></button>`;
+   const statusBadge=maintenanceStatusBadge(liveStatus,dispatchable?`flight:${escapeHtml(entry.flightId)}`:"","","",live);
+   const dispatchButton=dispatchable?`<button class="btn secondary" type="button" data-maint-dispatch="flight:${escapeHtml(entry.flightId)}">派工调整人员</button>`:"";
+   return `<article class="handover-note-card${entry.removedAt?" removed":""}">
+      ${noteBody}
+      <div class="handover-opp-summary">${summaryToggle}${statusBadge}${dispatchButton}<span class="handover-summary-more">${open?"收起 ▴":"维修详情 ▾"}</span></div>
+      ${entry.removedAt?`<small class="handover-meta">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</small>`:""}
       ${open?`<div class="execute-flight-body">
-        <small class="handover-meta">${live?"派工人员与附加工作为维修管控实时状态；交接说明为交接原始记录。":"该维修机会已不在维修管控中，以下为提交时快照。"}</small>
+        <small class="handover-meta">${live?"以下为维修管控实时状态（派工人员与附加工作）；上方交接说明为交接原始记录。":"该维修机会已不在维修管控中，以下为提交时快照。"}</small>
         ${handoverOpportunityBodyHtml(live||merged)}
-        ${entry.note?`<div class="handover-note-box"><strong>交接说明（原始）：</strong>${escapeHtml(entry.note)}</div>`:'<p class="status-line">交接说明：—</p>'}
-        ${entry.removedAt?`<p class="handover-meta">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</p>`:""}
       </div>`:""}
     </article>`;
   }).join("");
+  const activeCount=detail.opportunities.filter(o=>!o.removedAt).length;
   const actionButtons=[];
   if(handover.status==="pending"&&isRecipient)actionButtons.push(`<button type="button" class="btn" data-hov-confirm="${escapeHtml(handover.id)}">确认接收（整单完成）</button>`);
   if(canEdit)actionButtons.push(`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(handover.id)}">编辑</button>`);
@@ -5408,7 +5397,7 @@ function handoverDetailBodyHtml(){
     <div class="handover-card-head"><h3 style="margin:0">${escapeHtml(handover.fromTeamName)} → ${escapeHtml(handover.toTeamName||"—")}</h3><span class="status-badge ${handoverStatusBadgeClass(handover.status)}">${escapeHtml(handoverStatusText(handover.status))}</span></div>
     <small class="handover-meta">交班 ${escapeHtml(handover.createdByName||"")} · 提交 ${handoverTime(handover.submittedAt)} ${handover.confirmedByName?`· 确认 ${escapeHtml(handover.confirmedByName)} ${handoverTime(handover.confirmedAt)}`:""} · 版本 v${handover.version}</small>
     <p class="handover-meta"><strong>接收人员：</strong>${recipientChips||"—"}</p>
-    <h4 style="margin:12px 0 4px">维修机会（${detail.opportunities.filter(o=>!o.removedAt).length} 项在册）</h4>
+    <h4 style="margin:12px 0 4px">交接内容（${activeCount} 项维修机会）</h4>
     ${opportunities||'<p class="status-line">本单未勾选维修机会。</p>'}
     <h4 style="margin:12px 0 4px">其他交接事项</h4>
     ${handover.otherItems?`<div class="handover-note-box">${escapeHtml(handover.otherItems)}</div>`:'<p class="status-line">—</p>'}
