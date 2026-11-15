@@ -346,23 +346,34 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   return detail(user,id);
  }
  const listRow=h=>({id:h.id,status:h.status,fromTeamId:h.from_team_id,fromTeamName:h.from_team_name,toTeamId:h.to_team_id,toTeamName:h.to_team_name,otherItems:h.other_items,createdBy:h.created_by,createdByName:h.created_by_name,createdAt:h.created_at,submittedAt:h.submitted_at,confirmedBy:h.confirmed_by,confirmedByName:h.confirmed_by_name,confirmedAt:h.confirmed_at,opportunityCount:Number(db.prepare('select count(*) c from handover_opportunity where handover_id=? and removed_at is null').get(h.id).c),recipientCount:Number(db.prepare('select count(*) c from handover_recipient where handover_id=?').get(h.id).c)});
+ // 历史筛选：日期/班组/机号/关键词（其他事项、交接说明、机号、交班人、接收人、确认人）——mine 与 all 共用。
+ const historyClauses=(filters,clauses,args)=>{
+  if(filters.teamId){clauses.push('(h.from_team_id=? or h.to_team_id=?)');args.push(filters.teamId,filters.teamId);}
+  if(filters.from){clauses.push('coalesce(h.submitted_at,h.created_at)>=?');args.push(filters.from.length===10?new Date(filters.from+'T00:00:00+08:00').toISOString():filters.from);}
+  if(filters.to){clauses.push('coalesce(h.submitted_at,h.created_at)<=?');args.push(filters.to.length===10?new Date(filters.to+'T23:59:59.999+08:00').toISOString():filters.to);}
+  if(filters.aircraft){clauses.push('exists(select 1 from handover_opportunity o join maintenance_flights f on f.id=o.maintenance_flight_id where o.handover_id=h.id and f.aircraft_no like ?)');args.push(`%${filters.aircraft}%`);}
+  if(filters.q){
+   const like=`%${filters.q}%`;
+   clauses.push('(h.other_items like ? or h.created_by_name like ? or h.confirmed_by_name like ? or exists(select 1 from handover_opportunity o where o.handover_id=h.id and (o.handover_note like ? or exists(select 1 from maintenance_flights f where f.id=o.maintenance_flight_id and f.aircraft_no like ?))) or exists(select 1 from handover_recipient r where r.handover_id=h.id and r.user_name like ?))');
+   args.push(like,like,like,like,like,like);
+  }
+ };
+ const matchedAircraftOf=(handoverId,filters)=>{
+  if(!filters.aircraft&&!filters.q)return null;
+  return db.prepare('select f.aircraft_no from handover_opportunity o join maintenance_flights f on f.id=o.maintenance_flight_id where o.handover_id=? and (f.aircraft_no like ? or o.handover_note like ?) limit 1').get(handoverId,`%${filters.aircraft||filters.q}%`,`%${filters.q}%`)?.aircraft_no||null;
+ };
  function list(user,filters={}){
   requirePermission(user,'handover.view');
   const scope=String(filters.scope||'mine');
   if(scope==='pending')return {items:db.prepare("select h.* from handover h join handover_recipient r on r.handover_id=h.id and r.user_id=? where h.status='pending' order by coalesce(h.submitted_at,h.created_at) desc limit 100").all(user.id).map(listRow)};
   if(scope==='drafts')return {items:db.prepare("select * from handover where created_by=? and status='draft' order by created_at desc limit 100").all(user.id).map(listRow)};
-  if(scope==='all'){
-   requirePermission(user,'handover.history.all');
-   const clauses=[],args=[];
-   if(filters.teamId){clauses.push('(h.from_team_id=? or h.to_team_id=?)');args.push(filters.teamId,filters.teamId);}
-   if(filters.from){clauses.push('coalesce(h.submitted_at,h.created_at)>=?');args.push(filters.from.length===10?new Date(filters.from+'T00:00:00+08:00').toISOString():filters.from);}
-   if(filters.to){clauses.push('coalesce(h.submitted_at,h.created_at)<=?');args.push(filters.to.length===10?new Date(filters.to+'T23:59:59.999+08:00').toISOString():filters.to);}
-   if(filters.aircraft){clauses.push('exists(select 1 from handover_opportunity o join maintenance_flights f on f.id=o.maintenance_flight_id where o.handover_id=h.id and f.aircraft_no like ?)');args.push(`%${filters.aircraft}%`);}
-   if(filters.q){clauses.push('(h.other_items like ? or exists(select 1 from handover_opportunity o where o.handover_id=h.id and o.handover_note like ?))');args.push(`%${filters.q}%`,`%${filters.q}%`);}
-   const where=clauses.length?'where '+clauses.join(' and '):'';
-   return {items:db.prepare(`select h.* from handover h ${where} order by coalesce(h.submitted_at,h.created_at) desc limit 200`).all(...args).map(listRow)};
-  }
-  return {items:db.prepare("select distinct h.* from handover h left join handover_recipient r on r.handover_id=h.id and r.user_id=? where h.created_by=? or r.user_id=? order by coalesce(h.submitted_at,h.created_at) desc limit 100").all(user.id,user.id,user.id).map(listRow)};
+  const clauses=[],args=[];
+  if(scope==='all')requirePermission(user,'handover.history.all');
+  else{clauses.push('(h.created_by=? or exists(select 1 from handover_recipient r where r.handover_id=h.id and r.user_id=?))');args.push(user.id,user.id);}
+  historyClauses(filters,clauses,args);
+  const where=clauses.length?'where '+clauses.join(' and '):'';
+  const limit=scope==='all'?200:100;
+  return {items:db.prepare(`select distinct h.* from handover h ${where} order by coalesce(h.submitted_at,h.created_at) desc limit ${limit}`).all(...args).map(row=>{const item=listRow(row);const aircraft=matchedAircraftOf(row.id,filters);if(aircraft)item.matchedAircraft=aircraft;return item;})};
  }
  function detail(user,id){
   const handover=loadHandover(id);

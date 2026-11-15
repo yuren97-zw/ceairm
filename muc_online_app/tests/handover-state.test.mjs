@@ -66,6 +66,23 @@ test('drafts can be deleted by the creator only while still drafts',()=>{
  service.submit(creator,second.handover.id,{expectedVersion:second.handover.version});
  assert.throws(()=>service.deleteDraft(creator,second.handover.id),/仅草稿可以删除/);
 });
+test('history keyword search spans notes, aircraft and people with matched aircraft',()=>{
+ const {service,user}=fixture();
+ const creator=user('u1');
+ const first=service.create(creator,draftPayload);
+ service.submit(creator,first.handover.id,{expectedVersion:first.handover.version});
+ service.confirm(user('u3'),first.handover.id);
+ const byNote=service.list(user('u1'),{scope:'mine',q:'右发振动'});
+ assert.equal(byNote.items.length,1,'交接说明可搜');
+ assert.equal(byNote.items[0].matchedAircraft,'B-1234','命中机号随结果返回');
+ const byAircraft=service.list(user('u1'),{scope:'mine',aircraft:'B-12'});
+ assert.equal(byAircraft.items.length,1,'机号筛选可搜');
+ const byPerson=service.list(user('u1'),{scope:'mine',q:'王五'});
+ assert.equal(byPerson.items.length,1,'接收人姓名可搜');
+ const byCreator=service.list(user('u1'),{scope:'mine',q:'张三'});
+ assert.equal(byCreator.items.length,1,'交班人姓名可搜');
+ assert.equal(service.list(user('u1'),{scope:'mine',q:'绝不存在的关键词'}).items.length,0);
+});
 test('create rejects unknown flights and disabled recipient accounts atomically',()=>{
  const {service,user,db}=fixture();
  assert.throws(()=>service.create(user('u1'),{...draftPayload,opportunities:[{flightId:'nope'}]}),/维修机会不存在/);

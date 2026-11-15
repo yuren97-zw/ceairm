@@ -5099,7 +5099,7 @@ async function showPage(page) {
 }
 
 // ===== 班组交接（信息传达左上角菜单第三项）=====
-const handoverUi={tab:"create",epoch:0,listEpoch:0,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+const handoverUi={tab:"create",epoch:0,listEpoch:0,successMessage:"",successTimer:null,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
 function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
 function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
 function handoverTime(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});}
@@ -5232,6 +5232,16 @@ function refreshHandoverView(){
 }
 function panelRenderHandover(){const panel=$("#handoverPanel");if(!panel)return;panel.innerHTML=handoverUi.tab==="pending"?handoverPendingHtml():handoverUi.tab==="drafts"?handoverDraftsHtml():handoverUi.tab==="history"?handoverHistoryHtml():handoverEditorHtml();}
 function handoverStatusBadgeClass(status){return status==="accepted"?"ok":status==="pending"?"warn":"";}
+function handoverMark(text,terms){
+  let html=escapeHtml(String(text??""));
+  for(const term of terms||[]){
+   const safe=escapeHtml(String(term||"")).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+   if(!safe)continue;
+   html=html.replace(new RegExp(`(${safe})`,"gi"),'<mark class="handover-mark">$1</mark>');
+  }
+  return html;
+}
+function handoverHistoryTerms(){return [handoverUi.historyFilter.q,handoverUi.historyFilter.aircraft].filter(v=>String(v||"").trim());}
 function handoverTabsHtml(){
   const tabs=[["create","发起交接"],["drafts","草稿"],["pending","待接收"],["history","历史记录"]];
   return `<div class="chips handover-tabs">${tabs.map(([key,label])=>`<button class="chip ${handoverUi.tab===key?"active":""}" type="button" data-hov-tab="${key}">${label}</button>`).join("")}</div>`;
@@ -5290,7 +5300,11 @@ function handoverEditorHtml(){
   const addOptions=editor.available.filter(r=>!selectedIds.has(r.userId)).map(r=>`<option value="${escapeHtml(r.userId)}">${escapeHtml(r.name)}${r.teamName?`（${escapeHtml(r.teamName)}）`:""}${recommendedIds.has(r.userId)?" ★":""}</option>`).join("");
   const recipientChips=editor.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}${recommendedIds.has(r.userId)?" ★":""}<button type="button" class="handover-recipient-remove" data-hov-remove-recipient="${escapeHtml(r.userId)}" aria-label="移除接收人">×</button></span>`).join("");
   const pickerRows=handoverUi.options.filter(item=>(!handoverUi.oppFilter.aircraft||(item.aircraftNo||"").toUpperCase().includes(handoverUi.oppFilter.aircraft.toUpperCase()))&&(!handoverUi.oppFilter.kind||handoverUi.oppFilter.kind==="全部"||item.workKind===handoverUi.oppFilter.kind)).map(item=>{const oppIndex=editor.opportunities.findIndex(o=>o.flightId===item.id);return handoverOpportunityCardHtml(oppIndex>=0?{...item,note:editor.opportunities[oppIndex].note}:item,{selectable:true,checked:oppIndex>=0,expanded:editor.pickerOpen.has(item.id),note:oppIndex>=0,noteIndex:oppIndex});}).join("");
+  if(handoverUi.successMessage&&!handoverUi.successTimer){
+   handoverUi.successTimer=setTimeout(()=>{handoverUi.successMessage="";handoverUi.successTimer=null;if(handoverActive()&&handoverUi.tab==="create")handoverRepaint();},6000);
+  }
   return `${handoverTabsHtml()}
+  ${handoverUi.successMessage?`<div class="handover-success" role="status">✓ ${escapeHtml(handoverUi.successMessage)}</div>`:""}
   <section class="data-panel handover-card">
     <h3 style="margin:0 0 6px">发起交接</h3>
     <div class="handover-team-row">
@@ -5318,11 +5332,13 @@ function handoverEditorHtml(){
     ${editor.message?`<p class="status-line" role="status">${escapeHtml(editor.message)}</p>`:""}
   </section>`;
 }
-function handoverListCardHtml(item,actions,{exportable=true}={}){
+function handoverListCardHtml(item,actions,{exportable=true,terms=null}={}){
+  const mark=t=>terms&&terms.length?handoverMark(t,terms):escapeHtml(t);
   return `<article class="data-panel handover-card">
     <div class="handover-card-head"><div class="handover-card-title">${escapeHtml(item.fromTeamName)} <span aria-hidden="true">→</span> ${escapeHtml(item.toTeamName||"—")}</div><span class="status-badge ${handoverStatusBadgeClass(item.status)}">${escapeHtml(handoverStatusText(item.status))}</span></div>
-    <small class="handover-meta">交班 ${escapeHtml(item.createdByName||"")} · ${handoverTime(item.submittedAt||item.createdAt)} · 机会 ${item.opportunityCount} 项 · 接收 ${item.recipientCount} 人${item.confirmedByName?` · 确认 ${escapeHtml(item.confirmedByName)} ${handoverTime(item.confirmedAt)}`:""}</small>
-    ${item.otherItems?`<div class="handover-note-box"><strong>其他交接事项：</strong>${escapeHtml(item.otherItems)}</div>`:""}
+    <small class="handover-meta">交班 ${mark(item.createdByName||"")} · ${handoverTime(item.submittedAt||item.createdAt)} · 机会 ${item.opportunityCount} 项 · 接收 ${item.recipientCount} 人${item.confirmedByName?` · 确认 ${mark(item.confirmedByName)} ${handoverTime(item.confirmedAt)}`:""}</small>
+    ${item.otherItems?`<div class="handover-note-box"><strong>其他交接事项：</strong>${mark(item.otherItems)}</div>`:""}
+    ${item.matchedAircraft?`<div class="handover-meta">匹配机号：${handoverMark(item.matchedAircraft,terms||[])}</div>`:""}
     <div class="handover-actions">${actions}${exportable?`<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(item.id)}">导出</button>`:""}</div>
   </article>`;
 }
@@ -5356,7 +5372,7 @@ function handoverHistoryHtml(){
     ${canAll?`<label>班组 <select class="handover-select" data-hov-filter-team>${teamOptions.map(([value,label])=>`<option value="${value}" ${handoverUi.historyFilter.teamId===value?"selected":""}>${label}</option>`).join("")}</select></label>`:""}
     <button type="button" class="btn secondary" data-hov-export>批量导出 Excel</button>
   </div>
-  ${(handoverUi.lists.history||[]).length?handoverUi.lists.history.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看原始记录</button>`)).join(""):'<section class="data-panel handover-card"><div class="status-line">没有匹配的交接记录。</div></section>'}
+  ${(handoverUi.lists.history||[]).length?handoverUi.lists.history.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看原始记录</button>`,{terms:handoverHistoryTerms()})).join(""):'<section class="data-panel handover-card"><div class="status-line">没有匹配的交接记录。</div></section>'}
   <small class="status-line">历史记录按最近交接时间倒序；卡片为整张交接单，查看历史不授予维修派工或报工权限。</small>`;
 }
 function handoverDetailBodyHtml(){
@@ -5440,6 +5456,7 @@ async function submitHandover(){
     const current=handoverUi.editor;
     if(!saved||!current?.id){handoverRepaint();return;}
     const result=await apiRequest(`/handover/${encodeURIComponent(current.id)}/submit`,{method:"POST",body:{expectedVersion:current.version}});
+    handoverUi.successMessage="交接单已提交待接收：任一接收人确认后整单完成，可在「待接收」页签跟踪。";
     handoverUi.editor=null;
     renderHandover();
   }catch(error){handoverUi.editor.message=`提交失败：${error.message}`;handoverRepaint();}
@@ -5506,11 +5523,11 @@ if(handoverPanelElement){
   if(target.dataset?.hovOppAircraft!==undefined){handoverUi.oppFilter.aircraft=target.value;handoverRepaint();return;}
   if(target.dataset?.hovOppKind!==undefined){handoverUi.oppFilter.kind=target.value;handoverRepaint();return;}
   if(target.dataset?.hovAddRecipient!==undefined){const editor=handoverUi.editor;if(!editor||!target.value)return;const option=editor.available.find(r=>r.userId===target.value);if(option&&!editor.recipients.some(r=>r.userId===option.userId))editor.recipients.push({userId:option.userId,user_name:option.name});handoverRepaint();return;}
-  if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;handoverRepaint();return;}
-  if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;handoverRepaint();return;}
-  if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;handoverRepaint();return;}
-  if(target.dataset?.hovFilterAircraft!==undefined){handoverUi.historyFilter.aircraft=target.value;return;}
-  if(target.dataset?.hovFilterQ!==undefined){handoverUi.historyFilter.q=target.value;return;}
+  if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterAircraft!==undefined){handoverUi.historyFilter.aircraft=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterQ!==undefined){handoverUi.historyFilter.q=target.value;refreshHandoverView();return;}
   if(target.dataset?.hovLeaderTeam){handoverUi.baselineLeaders[target.dataset.hovLeaderTeam]=target.value;return;}
  });
  handoverPanelElement.addEventListener("input",event=>{
