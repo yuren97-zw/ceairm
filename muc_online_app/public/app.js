@@ -6559,12 +6559,12 @@ async function refreshMaintenanceFromSync(version = 0) {
   }
   if (nextVersion && nextVersion <= Number(state.maintenanceSyncVersion || 0)) return;
   if (nextVersion) state.maintenanceSyncVersion = nextVersion;
+  if (typeof handoverUi !== "undefined" && handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.status === "pending") {
+    refreshHandoverView();
+  }
   if (maintenanceHasOpenEditor()) {
     state.maintenanceRefreshPending = true;
     return;
-  }
-  if (typeof handoverUi !== "undefined" && handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.status === "pending") {
-    refreshHandoverView();
   }
   if (state.activePage !== "maintenancePage") {
     if (state.loadedData instanceof Set) {
