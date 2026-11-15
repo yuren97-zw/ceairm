@@ -2,93 +2,66 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {createHandoverService} from '../handover-service.mjs';
-const TODAY='2026-11-14',CYCLE=['白班','夜班','休息','休息'];
-const dateAdd=(date,n)=>new Date(Date.parse(date+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
-function shiftRows(category,date){
- if(category==='休息')return JSON.stringify([{is_rest:'Y'}]);
- if(category==='白班')return JSON.stringify([{is_rest:'N',check_type:'OnDuty',plan_check_time:date+' 08:00:00'},{is_rest:'N',check_type:'OffDuty',plan_check_time:date+' 20:00:00'}]);
- return JSON.stringify([{is_rest:'N',check_type:'OnDuty',plan_check_time:date+' 20:00:00'},{is_rest:'N',check_type:'OffDuty',plan_check_time:dateAdd(date,1)+' 08:00:00'}]);
-}
-function fixture({days=8,clock=Date.parse(TODAY+'T09:00:00+08:00'),permissions=['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all']}={}){
+const TODAY='2026-11-15';
+function fixture({clock=Date.parse(TODAY+'T09:00:00+08:00'),teamOfUser='TEAM-LINE-4'}={}){
  const db=new DatabaseSync(':memory:');
  db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
  db.exec("create table users(id text primary key,person_id text,status text default 'active')");
- db.exec("create table attendance_schedule_cache(person_id text,work_date text,schedules_json text,verified_at text,invalidated_at text)");
- db.exec("create table attendance_days(person_id text,work_date text,input_json text)");
- const phases={'TEAM-LINE-1':0,'TEAM-LINE-2':1,'TEAM-LINE-3':2,'TEAM-LINE-4':3};
- let seq=0;const members=[];
- for(const [teamId,phaseToday] of Object.entries(phases))for(let m=0;m<3;m++){
-  const pid=teamId+'-p'+m,person={pid,uid:teamId+'-u'+m,teamId,position:m===0?'班组长':'组员'};
-  db.prepare("insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)").run(pid,String(10000+seq++),'成员'+m,person.position,teamId);
-  db.prepare('insert into users(id,person_id) values(?,?)').run(person.uid,pid);
-  members.push(person);
+ db.exec("create table organization_units(id text primary key,code text,name text,unit_type text,parent_id text,status text default 'active')");
+ for(const [code,name] of [['TEAM-LINE-1','一组'],['TEAM-LINE-2','二组'],['TEAM-LINE-3','三组'],['TEAM-LINE-4','四组']])db.prepare('insert into organization_units(id,code,name,unit_type) values(?,?,?,?)').run('org-'+code,code,name,'administrative_team');
+ let seq=0;
+ for(const [code,name] of [['TEAM-LINE-1','一组'],['TEAM-LINE-2','二组'],['TEAM-LINE-3','三组'],['TEAM-LINE-4','四组']]){
+  db.prepare('insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)').run('p-'+code,String(10000+seq++),name+'组长','班组长','org-'+code);
+  db.prepare('insert into users(id,person_id) values(?,?)').run('u-'+code,'p-'+code);
  }
- for(let i=-days+1;i<=0;i++){
-  const date=dateAdd(TODAY,i);
-  for(const member of members)db.prepare('insert into attendance_schedule_cache(person_id,work_date,schedules_json,verified_at) values(?,?,?,?)').run(member.pid,date,shiftRows(CYCLE[((phases[member.teamId]+i)%4+4)%4],date),'2026-11-13T20:00:00.000Z');
- }
- const admin={id:'admin',personId:'admin-p',permissions};
- const service=createHandoverService({db,clock:()=>clock,hasRbac:(user,code)=>!!user?.permissions?.includes(code)});
- return {db,service,members,admin};
+ const admin={id:'admin',permissions:['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all']};
+ const me={id:'u-'+teamOfUser,permissions:['handover.view','handover.create','handover.export','handover.history.all','handover.baseline.manage']};
+ const service=createHandoverService({db,clock:()=>clock,hasRbac:(u,code)=>!!u?.permissions?.includes(code)});
+ return {db,service,admin,me};
 }
-test('four teams are inferred from schedule data with correct phases',()=>{
+test('fixed rotation seeds anchors and reproduces the stated sequence',()=>{
  const {service,admin}=fixture();
  const overview=service.baselineOverview(admin);
- const byTeam=new Map(overview.teams.map(t=>[t.teamId,t]));
- assert.equal(byTeam.get('TEAM-LINE-1').upcoming[0].phase,'白班');
- assert.equal(byTeam.get('TEAM-LINE-2').upcoming[0].phase,'夜班');
- assert.equal(byTeam.get('TEAM-LINE-3').upcoming[0].phase,'休息');
- assert.equal(byTeam.get('TEAM-LINE-4').upcoming[0].phase,'休息');
- assert.equal(byTeam.get('TEAM-LINE-1').upcoming[1].phase,'夜班','明日相位推进一天');
- assert.equal(byTeam.get('TEAM-LINE-1').row.status,'inferred');
+ const phaseAt=(teamId,offset)=>overview.teams.find(t=>t.teamId===teamId).upcoming[offset].phase;
+ const expectDay=(offset,white,night)=>{assert.equal(phaseAt(white,offset),'白班',`D+${offset} 白班`);assert.equal(phaseAt(night,offset),'夜班',`D+${offset} 夜班`);};
+ expectDay(0,'TEAM-LINE-4','TEAM-LINE-2');
+ expectDay(1,'TEAM-LINE-1','TEAM-LINE-4');
+ expectDay(2,'TEAM-LINE-3','TEAM-LINE-1');
+ expectDay(3,'TEAM-LINE-2','TEAM-LINE-3');
+ assert.equal(overview.teams.every(t=>t.row?.status==='confirmed'),true,'固定规则种子即视为已确认');
 });
-test('shift context recommends the pairing by duty window and falls back to position leaders',()=>{
- const {service,admin,members}=fixture();
- const morning=service.shiftContext(admin);
- assert.equal(morning.fromTeam.id,'TEAM-LINE-3','上午交班=昨日夜班组');
- assert.equal(morning.toTeam.id,'TEAM-LINE-1','上午接班=今日白班组');
- assert.equal(morning.recipientBasis,'position_fallback');
- assert.ok(morning.recipients.some(r=>r.userId===members.find(m=>m.teamId==='TEAM-LINE-1'&&m.position==='班组长').uid));
- assert.equal(morning.needsConfirmation,true);
- const {db}=fixture();
- const evening=createHandoverService({db,clock:()=>Date.parse(TODAY+'T19:00:00+08:00'),hasRbac:(user,code)=>!!user?.permissions?.includes(code)}).shiftContext(admin);
- assert.equal(evening.fromTeam.id,'TEAM-LINE-1','傍晚交班=今日白班组');
- assert.equal(evening.toTeam.id,'TEAM-LINE-2','傍晚接班=今日夜班组');
+test('shift context recommends the operator team and rotation-based receiver',()=>{
+ const {service,me}=fixture({teamOfUser:'TEAM-LINE-4',clock:Date.parse(TODAY+'T19:00:00+08:00')});
+ const context=service.shiftContext(me);
+ assert.equal(context.fromTeam.id,'TEAM-LINE-4','交班=提交人所在班组');
+ assert.equal(context.toTeam.id,'TEAM-LINE-2','四组白→二组夜');
+ assert.equal(context.recipientBasis,'team_leader_position');
+ assert.equal(context.recipients[0].userId,'u-TEAM-LINE-2','推荐接班班组班组长');
 });
-test('confirmed baseline with leader drives recipient recommendation',()=>{
- const {service,admin,members}=fixture({clock:Date.parse(TODAY+'T19:00:00+08:00')});
- const leader=members.find(m=>m.teamId==='TEAM-LINE-2'&&m.position==='班组长');
- service.confirmBaseline(admin,{teams:[{teamId:'TEAM-LINE-1',anchorDate:TODAY,anchorPhase:0},{teamId:'TEAM-LINE-2',anchorDate:TODAY,anchorPhase:1,leaderPersonId:leader.pid},{teamId:'TEAM-LINE-3',anchorDate:TODAY,anchorPhase:2},{teamId:'TEAM-LINE-4',anchorDate:TODAY,anchorPhase:3}]});
- const context=service.shiftContext(admin);
- assert.equal(context.toTeam.id,'TEAM-LINE-2');
- assert.equal(context.recipientBasis,'baseline_leader');
- assert.equal(context.recipients[0].userId,leader.uid);
- assert.equal(context.needsConfirmation,false);
+test('night-shift operator hands to the next morning white team',()=>{
+ const {service,me}=fixture({teamOfUser:'TEAM-LINE-2',clock:Date.parse('2026-11-16T09:00:00+08:00')});
+ const context=service.shiftContext(me);
+ assert.equal(context.fromTeam.id,'TEAM-LINE-2','交班=提交人班组（昨夜二组）');
+ assert.equal(context.toTeam.id,'TEAM-LINE-1','11-16 白班=一组');
 });
-test('individual absence does not distort the team phase',()=>{
- const {db}=fixture();
- db.prepare('update attendance_schedule_cache set schedules_json=? where person_id=? and work_date=?').run(JSON.stringify([{is_rest:'Y'}]),'TEAM-LINE-1-p1',TODAY);
- const service=createHandoverService({db,clock:()=>Date.parse(TODAY+'T09:00:00+08:00'),hasRbac:()=>true});
- const overview=service.baselineOverview({id:'admin',permissions:['handover.baseline.manage']});
- assert.equal(overview.teams.find(t=>t.teamId==='TEAM-LINE-1').upcoming[0].phase,'白班','个别成员请假不改变班组多数相位');
+test('resting operator falls back to the duty-window pairing',()=>{
+ const {service,me}=fixture({teamOfUser:'TEAM-LINE-3',clock:Date.parse(TODAY+'T09:00:00+08:00')});
+ const context=service.shiftContext(me);
+ assert.equal(context.toTeam.id,'TEAM-LINE-4','三组休班时按窗口推荐当日白班组');
 });
-test('insufficient schedule data leaves baseline empty and flags setup',()=>{
- const {service,admin}=fixture({days:2});
- const context=service.shiftContext(admin);
- assert.equal(context.needsSetup,true);
- assert.match(context.setupHint,/管理员/);
- const overview=service.baselineOverview(admin);
- assert.ok(overview.teams.every(t=>!t.row));
+test('recipient options only list 班组长 positions with team recommendation',()=>{
+ const {service,me}=fixture();
+ const options=service.recipientOptions(me,{teamId:'TEAM-LINE-2'});
+ assert.equal(options.items.length,4,'候选仅班组长职位');
+ assert.deepEqual(options.recommended.map(r=>r.user_name),['二组组长']);
+ assert.equal(service.recipientOptions(me,{}).recommended.length,0,'未指定接班班组时不推荐');
 });
-test('baseline management requires the permission',()=>{
- const {service}=fixture();
- assert.throws(()=>service.baselineOverview({id:'x',permissions:[]}),/没有执行该操作的权限/);
- assert.throws(()=>service.confirmBaseline({id:'x',permissions:[]},{teams:[]}),/没有执行该操作的权限/);
-});
-test('confirm rejects leaders outside the team and invalid phases',()=>{
- const {service,admin,members}=fixture();
- const outsider=members.find(m=>m.teamId==='TEAM-LINE-1');
- assert.throws(()=>service.confirmBaseline(admin,{teams:[{teamId:'TEAM-LINE-2',anchorDate:TODAY,anchorPhase:1,leaderPersonId:outsider.pid}]}),/班组长不属于该班组/);
- assert.throws(()=>service.confirmBaseline(admin,{teams:[{teamId:'TEAM-LINE-2',anchorDate:TODAY,anchorPhase:5}]}),/基准相位无效/);
- assert.throws(()=>service.confirmBaseline(admin,{teams:[{teamId:'TEAM-LINE-9',anchorDate:TODAY,anchorPhase:1}]}),/未知班组/);
+test('create accepts an explicit from team and org-row ids map to fixed codes',()=>{
+ const {service,db}=fixture();
+ db.prepare("insert into personnel(id,employee_no,name,administrative_team_id) values('p-x','19990001','外来','org-TEAM-LINE-3')");
+ db.prepare("insert into users(id,person_id) values('u-X','p-x')");
+ const created=service.create({id:'u-X',permissions:['handover.view','handover.create']},{fromTeamId:'org-TEAM-LINE-3',toTeamId:'TEAM-LINE-1',otherItems:'跨班组发起'});
+ assert.equal(created.handover.fromTeamId,'TEAM-LINE-3','组织行 id 映射到固定代码');
+ assert.equal(created.handover.fromTeamName,'三组');
+ assert.throws(()=>service.create({id:'u-X',permissions:['handover.view','handover.create']},{fromTeamId:'org-nope'}),/未知班组/);
 });
