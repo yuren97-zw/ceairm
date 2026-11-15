@@ -171,9 +171,6 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   return {ok:true,rows:db.prepare('select * from handover_shift_baseline').all()};
  }
  // —— 交接单状态机：草稿→待接收→已接收；待接收修改全留痕；确认原子锁定。——
- const writeChanges=(handoverId,version,user,entries)=>{
-  for(const entry of entries)db.prepare('insert into handover_change_log(id,handover_id,version,entity_type,entity_id,action,old_value_json,new_value_json,changed_by,changed_by_name,changed_at) values(?,?,?,?,?,?,?,?,?,?,?)').run(uid('hdoc'),handoverId,version,entry.entityType,entry.entityId||null,entry.action,entry.old===undefined?null:JSON.stringify(entry.old),entry.new===undefined?null:JSON.stringify(entry.new),user.id,user.name||'',now());
- };
  const loadHandover=id=>{const row=db.prepare('select * from handover where id=?').get(String(id||''));if(!row)throw failure('交接单不存在',404);return row;};
  const canEditHandover=(user,handover)=>{
   if(user?.id===handover.created_by)return true;
@@ -276,45 +273,27 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
  }
  function update(user,id,payload){
   const handover=loadHandover(id);
-  if(handover.status==='accepted')throw failure('交接单已接收锁定，任何字段不可修改',409);
+  // 业务规则（2026-11-15）：提交后即锁定，仅草稿可修改；不再支持待接收阶段变更。
+  if(handover.status!=='draft')throw failure('交接单已提交，不可修改',409);
   if(!canEditHandover(user,handover))throw failure('只有交班班组可以修改交接单',403);
   const expectedVersion=Number(payload?.expectedVersion);
   if(!Number.isInteger(expectedVersion)||expectedVersion!==handover.version)throw failure('交接单已被他人修改，请刷新后重试',409);
-  const track=handover.status==='pending';
   db.exec('begin immediate');
   try{
-   const changes=[],newVersion=handover.version+1;
+   const newVersion=handover.version+1;
    if(payload?.fromTeamId!==undefined){
     const fromTeam=validateTeam(payload.fromTeamId);
-    if(fromTeam.id!==handover.from_team_id){
-     if(track)changes.push({entityType:'from_team',action:'update',old:{teamId:handover.from_team_id,teamName:handover.from_team_name},new:{teamId:fromTeam.id,teamName:fromTeam.name}});
-     db.prepare('update handover set from_team_id=?,from_team_name=? where id=?').run(fromTeam.id,fromTeam.name,id);
-    }
+    if(fromTeam.id!==handover.from_team_id)db.prepare('update handover set from_team_id=?,from_team_name=? where id=?').run(fromTeam.id,fromTeam.name,id);
    }
    if(payload?.toTeamId!==undefined){
-    const toTeam=validateTeam(payload.toTeamId,{allowEmpty:!track});
-    if((toTeam?.id||null)!==(handover.to_team_id||null)){
-     if(track)changes.push({entityType:'to_team',action:'update',old:{teamId:handover.to_team_id,teamName:handover.to_team_name},new:{teamId:toTeam?.id||null,teamName:toTeam?.name||null}});
-     db.prepare('update handover set to_team_id=?,to_team_name=? where id=?').run(toTeam?.id||null,toTeam?.name||null,id);
-    }
+    const toTeam=validateTeam(payload.toTeamId,{allowEmpty:true});
+    db.prepare('update handover set to_team_id=?,to_team_name=? where id=?').run(toTeam?.id||null,toTeam?.name||null,id);
    }
-   if(payload?.otherItems!==undefined&&String(payload.otherItems||'')!==(handover.other_items||'')){
-    if(track)changes.push({entityType:'other_items',action:'update',old:{text:handover.other_items||''},new:{text:String(payload.otherItems||'')}});
-    db.prepare('update handover set other_items=? where id=?').run(String(payload.otherItems||''),id);
-   }
-   if(payload?.recipients!==undefined)changes.push(...syncRecipients(id,user,payload.recipients,track));
-   if(payload?.opportunities!==undefined)changes.push(...syncOpportunities(id,user,payload.opportunities,track));
-   const changed=db.prepare("update handover set version=?,updated_at=? where id=? and version=? and status<>'accepted'").run(newVersion,now(),id,handover.version);
+   if(payload?.otherItems!==undefined)db.prepare('update handover set other_items=? where id=?').run(String(payload.otherItems||''),id);
+   if(payload?.recipients!==undefined)syncRecipients(id,user,payload.recipients,false);
+   if(payload?.opportunities!==undefined)syncOpportunities(id,user,payload.opportunities,false);
+   const changed=db.prepare("update handover set version=?,updated_at=? where id=? and version=? and status='draft'").run(newVersion,now(),id,handover.version);
    if(!Number(changed.changes))throw failure('交接单状态已变化，请刷新后重试',409);
-   if(track&&changes.length)writeChanges(id,newVersion,user,changes);
-   if(track&&actionTask){
-    for(const change of changes){
-     if(change.entityType!=='recipient')continue;
-     if(change.action==='add')upsertRecipientTasks(id,[change.entityId]);
-     if(change.action==='remove')try{actionTask.closeOne(id,change.entityId,'invalidated');}catch{/* 不阻塞 */}
-    }
-    if(changes.length)try{actionTask.touchRecipients(db.prepare('select user_id from handover_recipient where handover_id=?').all(id).map(r=>r.user_id));}catch{}
-   }
    db.exec('commit');
   }catch(error){db.exec('rollback');throw error;}
   return detail(user,id);

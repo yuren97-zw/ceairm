@@ -85,7 +85,7 @@ export async function openActionTasks(api,onChange=()=>{},openExternalTask=null)
  }
  const taskIndex=new Map();
  actionTaskLists.add(refresh);dialog.addEventListener('close',()=>{sequence++;actionTaskLists.delete(refresh);},{once:true});
- body.onclick=event=>{const button=event.target.closest('[data-task]');if(!button)return;const item=taskIndex.get(button.dataset.task);if(item&&item.sourceModule!=='attendance'&&openExternalTask){openExternalTask(item);refreshActionTaskLists();return;}openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
+ body.onclick=event=>{const button=event.target.closest('[data-task]');if(!button)return;const item=taskIndex.get(button.dataset.task);if(item&&item.sourceModule!=='attendance'&&openExternalTask){dialog.close();openExternalTask(item);refreshActionTaskLists();return;}openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
  await refresh();return dialog;
 }
 const ownLeaveTableHtml=(headers,rows,cls,incomplete,notes,empty)=>`${incomplete?'<p>部分假期数据尚未同步或未完整，以下仅显示已取得的记录。</p>':''}${notes.map(n=>`<p>${esc(n)}</p>`).join('')}<small>表格可左右滑动查看完整内容。</small><div class="home-att-table" tabindex="0" aria-label="可横向滚动的假期表格"><table class="${cls}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${empty}</td></tr>`}</tbody></table></div>`;

@@ -5297,12 +5297,9 @@ function handoverEditorHtml(){
   const recommendedIds=new Set(editor.recommended.map(r=>r.userId));
   const addOptions=editor.available.filter(r=>!selectedIds.has(r.userId)).map(r=>`<option value="${escapeHtml(r.userId)}">${escapeHtml(r.name)}${r.teamName&&r.teamName!==fromLabel?`（${escapeHtml(r.teamName)}）`:""}${recommendedIds.has(r.userId)?" ★":""}</option>`).join("");
   const recipientChips=editor.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}${recommendedIds.has(r.userId)?" ★":""}<button type="button" class="handover-recipient-remove" data-hov-remove-recipient="${escapeHtml(r.userId)}" aria-label="移除接收人">×</button></span>`).join("");
-  const pickedRows=editor.opportunities.map((entry,index)=>{
-    const view=handoverLiveFlight(entry);
-    return handoverOpportunityCardHtml({...view,note:entry.note},{expanded:editor.pickerOpen.has(`picked:${index}`),note:true,noteIndex:index,expandKey:`picked:${index}`});
-  }).join("");
-  const pickerRows=handoverUi.options.filter(item=>(!handoverUi.oppFilter.aircraft||(item.aircraftNo||"").toUpperCase().includes(handoverUi.oppFilter.aircraft.toUpperCase()))&&(!handoverUi.oppFilter.kind||handoverUi.oppFilter.kind==="全部"||item.workKind===handoverUi.oppFilter.kind)).map(item=>handoverOpportunityCardHtml(item,{selectable:true,checked:editor.opportunities.some(o=>o.flightId===item.id),expanded:editor.pickerOpen.has(item.id)})).join("");
-  const pendingHint=editor.status==="pending"?'<p class="status-line">该单已提交待接收：继续修改会记录变更历史（修改人、时间、前后值）。</p>':"";
+  const pickerRows=handoverUi.options.filter(item=>(!handoverUi.oppFilter.aircraft||(item.aircraftNo||"").toUpperCase().includes(handoverUi.oppFilter.aircraft.toUpperCase()))&&(!handoverUi.oppFilter.kind||handoverUi.oppFilter.kind==="全部"||item.workKind===handoverUi.oppFilter.kind)).map(item=>{const oppIndex=editor.opportunities.findIndex(o=>o.flightId===item.id);return handoverOpportunityCardHtml(item,{selectable:true,checked:oppIndex>=0,expanded:editor.pickerOpen.has(item.id),note:oppIndex>=0,noteIndex:oppIndex});}).join("");
+  const selectedCount=editor.opportunities.length;
+    const pendingHint=editor.status==="pending"?'<p class="status-line">该单已提交待接收：继续修改会记录变更历史（修改人、时间、前后值）。</p>':"";
   return `${handoverTabsHtml()}
   <section class="data-panel handover-card">
     <h3 style="margin:0 0 6px">发起交接 ${editor.status==="pending"?"<small>（待接收单）</small>":""}</h3>
@@ -5314,13 +5311,10 @@ function handoverEditorHtml(){
       <select class="handover-select" data-hov-add-recipient><option value="">添加接收人…</option>${addOptions}</select>
       <small class="handover-hint status-line">${editor.recipientBasis==="team_leader_position"?"★ 为接班班组的班组长（按组长职位与班组自动过滤）":"候选为全体班组长职位人员；换接班班组后自动更新推荐，可手动增删"}</small>
     </fieldset>
-    <fieldset class="handover-field"><legend>维修机会（可选 0~N 项）</legend>
-      <div>${pickedRows||'<p class="status-line">尚未勾选维修机会</p>'}</div>
-      <details class="handover-picker" ${editor.opportunities.length?"":"open"}><summary>从维修管控选择机会（按进港时间排序，当前显示${handoverUi.optionsScope==="unfinished"?"未完成":"全部"}）</summary>
+    <fieldset class="handover-field"><legend>维修机会（已选 ${selectedCount} 项，勾选即填交接说明，按进港时间排序）</legend>
         <div class="chips handover-scope"><button type="button" class="chip ${handoverUi.optionsScope==="unfinished"?"active":""}" data-hov-scope="unfinished">未完成</button><button type="button" class="chip ${handoverUi.optionsScope==="all"?"active":""}" data-hov-scope="all">全部</button></div>
         <div class="handover-filters"><label>机号 <input type="search" class="handover-inline-input" data-hov-opp-aircraft value="${escapeHtml(handoverUi.oppFilter.aircraft||"")}" placeholder="如 B-1234"></label><label>类别 <select class="handover-select" data-hov-opp-kind>${["全部",...handoverUi.oppKinds].map(kind=>`<option value="${escapeHtml(kind)}" ${handoverUi.oppFilter.kind===kind||(kind==="全部"&&!handoverUi.oppFilter.kind)?"selected":""}>${escapeHtml(kind)}</option>`).join("")}</select></label></div>
         <div>${pickerRows||'<p class="status-line">没有匹配的维修机会。</p>'}</div>
-      </details>
     </fieldset>
     <label class="handover-label">其他交接事项<textarea class="handover-textarea" rows="3" data-hov-other placeholder="没有维修机会时必须填写此处">${escapeHtml(editor.otherItems)}</textarea></label>
     <div class="handover-actions"><button type="button" class="btn secondary" data-hov-save>${editor.status==="pending"?"保存修改（记录变更）":"存草稿"}</button>${editor.status==="draft"?'<button type="button" class="btn" data-hov-submit>提交交接</button>':""}</div>
@@ -5343,7 +5337,7 @@ function handoverPendingHtml(){
   const section=(title,items,build)=>`<h3 style="margin:12px 0 4px">${title}</h3>${items.length?items.map(build).join(""):'<p class="status-line">暂无。</p>'}`;
   return `${handoverTabsHtml()}
   ${section("待我确认",pendingMine,item=>handoverListCardHtml(item,`<button type="button" class="btn" data-hov-open="${escapeHtml(item.id)}">查看并确认</button>`))}
-  ${section("我发起的待接收",outgoing,item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续修改</button><button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看</button>`))}`;
+  ${section("我发起的待接收",outgoing,item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看</button>`))}`;
 }
 function handoverHistoryHtml(){
   const canAll=hasRbac("handover.history.all");
@@ -5364,7 +5358,7 @@ function handoverDetailBodyHtml(){
   const detail=handoverUi.detail;if(!detail)return '<div class="status-line">正在载入交接单…</div>';
   const handover=detail.handover,me=state.user?.id;
   const isRecipient=detail.recipients.some(r=>r.user_id===me);
-  const canEdit=handover.status!=="accepted"&&(handover.createdBy===me||hasRbac("handover.create"));
+  const canEdit=handover.status==="draft"&&(handover.createdBy===me||hasRbac("handover.create"));
   const recipientChips=detail.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}</span>`).join("");
   const opportunities=detail.opportunities.map(entry=>{
     const live=entry.live;
@@ -5383,14 +5377,12 @@ function handoverDetailBodyHtml(){
         ${handoverOpportunityBodyHtml(live||merged)}
         <p class="handover-meta"><strong>交接说明（原始）：</strong>${entry.note?escapeHtml(entry.note):"—"}</p>
         ${entry.removedAt?`<p class="handover-meta">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</p>`:""}
-        <button type="button" class="btn secondary" data-hov-changes="opp:${escapeHtml(entry.id)}">修改记录</button>
       </div>`:""}
     </article>`;
   }).join("");
   const actionButtons=[];
   if(handover.status==="pending"&&isRecipient)actionButtons.push(`<button type="button" class="btn" data-hov-confirm="${escapeHtml(handover.id)}">确认接收（整单完成）</button>`);
   if(canEdit)actionButtons.push(`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(handover.id)}">编辑</button>`);
-  actionButtons.push(`<button type="button" class="btn secondary" data-hov-changes="all">全部变更</button>`);
   actionButtons.push(`<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(handover.id)}">导出 Excel</button>`);
   actionButtons.push(`<button type="button" class="btn secondary" data-hov-back>返回</button>`);
   return `${handoverTabsHtml()}
@@ -5402,7 +5394,6 @@ function handoverDetailBodyHtml(){
     ${opportunities||'<p class="status-line">本单未勾选维修机会。</p>'}
     <h4 style="margin:12px 0 4px">其他交接事项</h4>
     <p style="white-space:pre-wrap;margin:4px 0 0">${escapeHtml(handover.otherItems||"—")}</p>
-    ${handoverChangesBlockHtml()}
     <div class="handover-actions">${actionButtons.join("")}</div>
   </section>`;
 }
@@ -5442,8 +5433,8 @@ async function submitHandover(){
     const current=handoverUi.editor;
     if(!saved||!current?.id){handoverRepaint();return;}
     const result=await apiRequest(`/handover/${encodeURIComponent(current.id)}/submit`,{method:"POST",body:{expectedVersion:current.version}});
-    handoverUi.editor={...current,version:result.handover.version,status:result.handover.status,message:"已提交待接收。"};
-    handoverRepaint();
+    handoverUi.editor=null;
+    renderHandover();
   }catch(error){handoverUi.editor.message=`提交失败：${error.message}`;handoverRepaint();}
 }
 async function gotoHandoverMaintenance(flightId,snapshot){

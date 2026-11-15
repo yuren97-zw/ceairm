@@ -75,29 +75,17 @@ test('submit enforces recipients, to-team and non-empty content',()=>{
  assert.equal(submitted.handover.status,'pending');
  assert.ok(submitted.handover.submittedAt);
 });
-test('pending edits are tracked in change log with version bumps and CAS',()=>{
+test('submitted handovers are locked: no edits, no recipient changes',()=>{
  const {service,user}=fixture();
  const creator=user('u1');
  const created=service.create(creator,draftPayload);
  const submitted=service.submit(creator,created.handover.id,{expectedVersion:created.handover.version});
  const version=submitted.handover.version;
- assert.throws(()=>service.update(creator,created.handover.id,{otherItems:'过期编辑',expectedVersion:1}),/已被他人修改/,'过期版本必须被拒绝');
- const updated=service.update(creator,created.handover.id,{toTeamId:'TEAM-LINE-3',opportunities:[{flightId:'f1',note:'新说明'},{flightId:'f2'}],expectedVersion:version});
- assert.equal(updated.handover.version,version+1);
- const entities=updated.changes.map(c=>c.entityType+':'+c.action);
- assert.ok(entities.includes('to_team:update'));
- assert.ok(entities.includes('opportunity_note:update'));
- assert.ok(entities.includes('opportunity:add'));
- const noteChange=updated.changes.find(c=>c.entityType==='opportunity_note');
- assert.equal(noteChange.old.text,'航后检查注意右发振动','旧说明留痕');
- assert.equal(noteChange.new.text,'新说明');
- const removed=updated.opportunities.find(o=>o.flightId==='f1'&&o.removedAt);
- assert.ok(!removed,'仍被勾选的机会不因编辑被移除');
- const second=service.update(creator,created.handover.id,{opportunities:[{flightId:'f2',note:'短停注意除冰'}],expectedVersion:updated.handover.version});
- const removedRow=second.opportunities.find(o=>o.flightId==='f1');
- assert.ok(removedRow.removedAt,'取消勾选为逻辑删除');
- assert.equal(removedRow.note,'新说明','被移除机会的说明仍可追溯');
- assert.ok(second.changes.some(c=>c.entityType==='opportunity'&&c.action==='remove'&&c.old.note==='新说明'));
+ assert.throws(()=>service.update(creator,created.handover.id,{otherItems:'试图改',expectedVersion:version}),/交接单已提交，不可修改/,'待接收单不可再修改');
+ assert.throws(()=>service.update(creator,created.handover.id,{recipients:[{userId:'u2'}],expectedVersion:version}),/交接单已提交，不可修改/,'接收人名单提交后固定');
+ assert.throws(()=>service.update(creator,created.handover.id,{otherItems:'x',expectedVersion:1}),/交接单已提交，不可修改/,'提交后一切编辑都被拒绝');
+ const detail=service.detail(creator,created.handover.id);
+ assert.deepEqual(detail.changes,[],'提交后无修改留痕需求');
 });
 test('confirm is recipient-only, atomic and final',()=>{
  const {service,user,db}=fixture();
@@ -111,7 +99,7 @@ test('confirm is recipient-only, atomic and final',()=>{
  assert.equal(confirmed.handover.confirmedByName,'王五');
  assert.throws(()=>service.confirm(user('u3'),created.handover.id),/已被确认/,'重复确认必须失败且不产生第二个确认人');
  assert.equal(db.prepare('select confirmed_by,confirmed_by_name from handover where id=?').get(created.handover.id).confirmed_by,'u3','唯一确认人落库');
- assert.throws(()=>service.update(creator,created.handover.id,{otherItems:'x',expectedVersion:confirmed.handover.version}),/已接收锁定/,'确认后任何编辑都被拒绝');
+ assert.throws(()=>service.update(creator,created.handover.id,{otherItems:'x',expectedVersion:confirmed.handover.version}),/交接单已提交，不可修改/,'确认后任何编辑都被拒绝');
  assert.throws(()=>service.submit(creator,created.handover.id,{}),/仅草稿/);
 });
 test('list scopes separate pending, drafts and full history with permissions',()=>{
@@ -160,11 +148,8 @@ test('action tasks follow recipients through submit, edit and confirm',()=>{
  assert.equal(listed.sourceModule,'handover');
  assert.equal(listed.target.action,'handover','点击跳转班组交接');
  assert.match(listed.title,/一组 → 二组/);
- const updated=service.update(creator,created.handover.id,{recipients:[{userId:'u3'},{userId:'u1'}],expectedVersion:submitted.handover.version});
- assert.equal(tasks.count({id:'u2'}).count,0,'被移除接收人的待办失效');
- assert.equal(tasks.count({id:'u1'}).count,1,'新增接收人获得待办');
+ assert.throws(()=>service.update(creator,created.handover.id,{recipients:[{userId:'u1'}],expectedVersion:submitted.handover.version}),/交接单已提交，不可修改/,'提交后改人被拒绝');
  service.confirm(user('u3'),created.handover.id);
  assert.equal(tasks.count({id:'u3'}).count,0,'一人确认后全部待办终结');
  assert.equal(tasks.count({id:'u1'}).count,0);
- assert.ok(updated);
 });
