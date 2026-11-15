@@ -1893,6 +1893,7 @@ function renderShell() {
   $$(".page").forEach(section => section.classList.toggle("active", section.id === state.activePage));
   $$(".subpage").forEach(section => section.classList.toggle("active", section.id === state.activeSubpage));
   $("#pager").hidden = state.activePage !== "infoPage" || state.activeSubpage !== "infoListSubpage";
+  updateBottomReserve();
   $("#infoFilters").hidden = state.activeSubpage !== "infoListSubpage";
   closeSubpageMenu();
 }
@@ -4875,6 +4876,16 @@ async function loadActivePageData({ force = true } = {}) {
   }
 }
 
+function updateBottomReserve() {
+  const nav = $("#bottomNav"), pager = $("#pager");
+  const navH = nav && !nav.hidden ? nav.offsetHeight : 0;
+  const pagerH = pager && !pager.hidden ? pager.offsetHeight : 0;
+  const root = document.documentElement.style;
+  root.setProperty("--bottom-nav-h", `${navH}px`);
+  root.setProperty("--app-bottom-reserve", `${navH + pagerH}px`);
+}
+const bottomReserveObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => updateBottomReserve()) : null;
+
 function renderActivePage() {
   renderShell();
   renderEntryOptions();
@@ -5052,7 +5063,7 @@ document.addEventListener("touchcancel", () => {
   if (pullRefreshGesture.tracking && !pullRefreshGesture.refreshing) settlePullRefresh();
 }, { passive: true });
 
-const BOTTOM_NAV_PAGES = ["homePage", "maintenancePage", "personnelPage", "attendancePage"];
+const BOTTOM_NAV_PAGES = ["homePage", "infoPage", "maintenancePage", "personnelPage", "attendancePage"];
 
 function bottomMorePages() {
   return $$(".top-tab").map(tab => tab.dataset.page)
@@ -9008,6 +9019,13 @@ async function performLogout() {
 
 $$(".top-tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
 $$(".subtab").forEach(tab => tab.addEventListener("click", () => showSubpage(tab.dataset.subpage)));
+if (bottomReserveObserver) {
+ const navEl = $("#bottomNav"), pagerEl = $("#pager");
+ if (navEl) bottomReserveObserver.observe(navEl);
+ if (pagerEl) bottomReserveObserver.observe(pagerEl);
+}
+window.addEventListener("resize", updateBottomReserve);
+window.addEventListener("orientationchange", updateBottomReserve);
 $$("#bottomNav .bottom-nav-item").forEach(item => item.addEventListener("click", () => {
   if (item.dataset.page === "__more__") {
     openBottomMoreSheet();
