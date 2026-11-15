@@ -6404,12 +6404,134 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
   $("#maintenanceDispatchDialog").showModal();
 }
 
+// All roles come from the current opportunity's existing menu keys, not a fixed
+// four-role list. Future menu roles inherit this interaction without new branches.
+function maintenanceWorkUsesPicker(draft) {
+  return ["routine", "nonroutine-create"].includes(draft?.reportType);
+}
+
+function maintenancePickerRoles(draft, work = false) {
+  const scope = work ? maintenanceWorkActiveContext()?.key : "dispatch";
+  const available = work ? maintenanceWorkActiveContext()?.roles || [] : draft.availableRoles;
+  if (draft.pickerScope !== scope) { draft.pickerScope = scope; draft.pickerRoles = [draft.activeRole]; }
+  draft.pickerRoles = (draft.pickerRoles || [draft.activeRole]).filter(role => available.includes(role));
+  if (!draft.pickerRoles.length && available.length) draft.pickerRoles = [available.includes(draft.activeRole) ? draft.activeRole : available[0]];
+  return draft.pickerRoles;
+}
+
+function maintenancePickerChoose(draft, role, toggle, work = false) {
+  const roles = maintenancePickerRoles(draft, work);
+  draft.pickerRoles = !toggle ? [role] : roles.includes(role) ? (roles.length > 1 ? roles.filter(item => item !== role) : roles) : [...roles, role];
+  draft.activeRole = draft.pickerRoles[0];
+}
+
+function maintenancePickerPersonState(draft, id, work = false) {
+  const roles = maintenancePickerRoles(draft, work);
+  const n = roles.filter(role => draft.selections.get(work ? maintenanceWorkSelectionKey(role) : role)?.has(id)).length;
+  return { full: n > 0 && n === roles.length, partial: n > 0 && n < roles.length };
+}
+
+function maintenancePickerApply(draft, id, work = false) {
+  const roles = maintenancePickerRoles(draft, work);
+  // Validate the whole batch before mutating any association. Original server
+  // qualification checks remain authoritative at the original save boundary.
+  if (roles.some(role => work ? !maintenanceWorkRoleEditable(role) : draft.lockedRoles?.has(role))) {
+    alert("所选工种包含已锁定或不可编辑内容，请先调整工种选择。");
+    return;
+  }
+  const remove = maintenancePickerPersonState(draft, id, work).full;
+  for (const role of roles) {
+    const key = work ? maintenanceWorkSelectionKey(role) : role;
+    if (!draft.selections.has(key) || !draft.selectionOrder.has(key)) return;
+  }
+  for (const role of roles) {
+    const key = work ? maintenanceWorkSelectionKey(role) : role;
+    const selected = draft.selections.get(key), order = draft.selectionOrder.get(key);
+    if (remove) { selected.delete(id); order.delete(id); }
+    else if (!selected.has(id)) {
+      if (role === "放行") { selected.clear(); order.clear(); }
+      selected.add(id); order.set(id, draft.nextOrder++);
+    }
+  }
+}
+
+// Keep original association order; measure complete candidates including the
+// hidden-person count before choosing how many names to show.
+function maintenancePickerFitNames(names, width, measure) {
+  if (!names.length) return { text: "未分配", suffix: "" };
+  const full = names.join("、");
+  if (measure(full) <= width) return { text: full, suffix: "" };
+  for (let count = names.length - 1; count >= 1; count--) {
+    const text = names.slice(0, count).join("、"), suffix = `+${names.length - count}`;
+    if (measure(text + suffix) <= width) return { text, suffix };
+  }
+  // CSS may ellipsize this first name, while the count stays a separate,
+  // non-shrinking item. A single long name has no hidden-person count.
+  return { text: names[0], suffix: names.length > 1 ? `+${names.length - 1}` : "" };
+}
+
+function syncMaintenancePickerNames() {
+  let layout = syncMaintenancePickerNames.layout;
+  if (!layout) {
+    const probe = document.createElement("span");
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText = "position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;white-space:pre;width:max-content;";
+    document.body.append(probe);
+    layout = { probe, targets: new Set(), frame: 0 };
+    syncMaintenancePickerNames.layout = layout;
+    layout.update = () => {
+      layout.frame = 0;
+      for (const target of layout.targets) {
+        if (!target.isConnected) { layout.observer?.unobserve(target); layout.targets.delete(target); continue; }
+        const width = target.getBoundingClientRect().width;
+        if (!width) continue; // Closed dialogs are measured when they become visible.
+        const style = getComputedStyle(target);
+        for (const key of ["font", "letterSpacing", "fontKerning", "fontVariationSettings", "fontFeatureSettings"]) layout.probe.style[key] = style[key];
+        const names = JSON.parse(target.dataset.maintPickerNames);
+        const fitted = maintenancePickerFitNames(names, width, text => {
+          layout.probe.textContent = text;
+          return layout.probe.getBoundingClientRect().width;
+        });
+        target.querySelector(".maintenance-picker-name-text").textContent = fitted.text;
+        target.querySelector(".maintenance-picker-name-count").textContent = fitted.suffix;
+      }
+    };
+    layout.schedule = () => { if (!layout.frame) layout.frame = requestAnimationFrame(layout.update); };
+    layout.observer = new ResizeObserver(layout.schedule);
+    document.fonts?.ready.then(layout.schedule);
+    document.fonts?.addEventListener("loadingdone", layout.schedule);
+  }
+  // Each render replaces nodes. Release detached targets and share one observer
+  // across dispatch, routine reporting and new nonroutine reporting.
+  for (const target of layout.targets) {
+    if (!target.isConnected) { layout.observer.unobserve(target); layout.targets.delete(target); }
+  }
+  for (const target of document.querySelectorAll("[data-maint-picker-names]")) {
+    if (!layout.targets.has(target)) { layout.targets.add(target); layout.observer.observe(target); }
+  }
+  layout.schedule();
+}
+
+function maintenancePickerCard(draft, role, ids, peopleById, work = false, locked = false) {
+  const active = maintenancePickerRoles(draft, work).includes(role);
+  const names = ids.map(id => peopleById.get(id)?.name || id);
+  const attr = work ? "data-maint-work-role" : "data-maint-role-group";
+  return `<div class="maintenance-picker-card ${active ? "active" : ""} ${locked ? "locked" : ""}"><button type="button" class="maintenance-picker-main" ${attr}="${escapeHtml(role)}" aria-pressed="${active}" title="${escapeHtml(role + (locked ? '（已锁定）' : '') + '：' + names.join('、'))}"><strong>${escapeHtml(role)}</strong><small>${ids.length} 人</small><em data-maint-picker-names="${escapeHtml(JSON.stringify(names))}" title="${escapeHtml(names.join('、'))}"><span class="maintenance-picker-name-text">${escapeHtml(names[0] || "未分配")}</span><span class="maintenance-picker-name-count">${names.length > 1 ? `+${names.length - 1}` : ""}</span></em></button><button type="button" class="maintenance-picker-toggle" data-maint-picker-toggle="${escapeHtml(role)}" data-picker-work="${work}" aria-pressed="${active}" aria-label="${escapeHtml(active ? '从多选中移除' + role : '将' + role + '加入多选')}" ${active && maintenancePickerRoles(draft, work).length === 1 ? 'disabled' : ''}>${active ? '✓' : '＋'}</button></div>`;
+}
+
+function maintenancePickerIndeterminate(container, draft, work = false) {
+  container?.querySelectorAll(work ? '[data-maint-work-person]' : '[data-maint-person]').forEach(input => {
+    input.indeterminate = maintenancePickerPersonState(draft, work ? input.dataset.maintWorkPerson : input.dataset.maintPerson, work).partial;
+  });
+}
+
 function maintenanceDispatchPersonRow(person, selected) {
   const draft = state.maintenanceDispatchDraft;
   const role = draft?.activeRole || "";
+  selected = maintenancePickerPersonState(draft, person.id).full;
   const inputId = `maint-person-${role}-${person.id}`;
   const department = person.department && person.department !== "未设置" ? person.department : (person.team || "未设置");
-  const inputType = role === "放行" ? "radio" : "checkbox";
+  const inputType = "checkbox";
   const inputName = role === "放行" ? ' name="maintenance-release-person"' : "";
   const locked = draft?.lockedRoles?.has(role);
   return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${locked ? "locked" : ""}"><input id="${escapeHtml(inputId)}" type="${inputType}"${inputName} data-maint-person="${escapeHtml(person.id)}" data-maint-role-category="${escapeHtml(role)}" ${selected ? "checked" : ""} ${locked ? "disabled" : ""}><label class="maintenance-person-info" for="${escapeHtml(inputId)}"><strong>${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}</strong><small>${escapeHtml(department)}</small></label><span class="maintenance-person-role">${locked ? "已提报" : escapeHtml(role)}</span></div>`;
@@ -6423,11 +6545,9 @@ function renderMaintenanceDispatchRoleGroups() {
   container.innerHTML = draft.availableRoles.map(role => {
     const selectedIds = [...(draft.selections.get(role) || [])];
     const names = selectedIds.map(id => peopleById.get(id)?.name).filter(Boolean);
-    const preview = names.slice(0, 3).join("、");
-    const extra = names.length > 3 ? ` +${names.length - 3}` : "";
-    const locked = draft.lockedRoles?.has(role);
-    return `<div class="maintenance-role-group ${draft.activeRole === role ? "active" : ""} ${locked ? "locked" : ""}"><button type="button" data-maint-role-group="${escapeHtml(role)}"><span><strong>${escapeHtml(role)}</strong><small>${locked ? "已提报 · " : ""}${selectedIds.length} 人</small></span><em>${escapeHtml(preview)}${escapeHtml(extra)}</em></button>${selectedIds.length && !locked ? `<button class="maintenance-role-clear" type="button" data-maint-clear-role="${escapeHtml(role)}">清除</button>` : ""}</div>`;
+    return maintenancePickerCard(draft, role, selectedIds, peopleById, false, draft.lockedRoles?.has(role));
   }).join("");
+  syncMaintenancePickerNames();
 }
 
 function renderMaintenanceDispatchPicker() {
@@ -6452,6 +6572,7 @@ function renderMaintenanceDispatchPicker() {
   const total = draft.availableRoles.reduce((sum, role) => sum + (draft.selections.get(role)?.size || 0), 0);
   if (count) count.textContent = `已选 ${total} 人次`;
   renderMaintenanceDispatchRoleGroups();
+  maintenancePickerIndeterminate(picker, draft);
 }
 
 function maintenanceAssignmentsFromForm() {
@@ -6630,24 +6751,27 @@ function maintenanceWorkReportRoleGroups() {
     const names = ids.map(id => peopleById.get(id)?.name).filter(Boolean);
     const submitted = draft.report.routine?.roleStatuses?.[role] === "已提报";
     const submittedClass = submitted ? `submitted ${role === "放行" ? "release" : "routine"}` : "";
+    if (maintenanceWorkUsesPicker(draft)) return maintenancePickerCard(draft, role, ids, peopleById, true, !maintenanceWorkRoleEditable(role));
     return `<button class="maintenance-work-role ${draft.activeRole === role ? "active" : ""} ${submittedClass}" type="button" data-maint-work-role="${escapeHtml(role)}"><span><strong>${escapeHtml(role)}</strong><small>${submitted ? "已提报" : `${ids.length} 人`}</small></span><em>${escapeHtml(names.slice(0, 3).join("、"))}${names.length > 3 ? ` +${names.length - 3}` : ""}</em></button>`;
   }).join("");
 }
 
-function maintenanceWorkRoleEditable() {
+function maintenanceWorkRoleEditable(role = state.maintenanceWorkReportDraft?.activeRole) {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft) return false;
-  if (draft.reportType === "finalize" && draft.activeRole === "放行") return false;
-  if (draft.reportType === "routine" && draft.activeRole === "放行") return draft.releaseEditable;
+  if (draft.reportType === "finalize" && role === "放行") return false;
+  if (draft.reportType === "routine" && draft.report.routine?.roleStatuses?.[role] === "已提报") return false;
+  if (draft.reportType === "routine" && role === "放行") return draft.releaseEditable;
   return true;
 }
 
 function maintenanceWorkReportPersonRow(person, selected) {
   const draft = state.maintenanceWorkReportDraft;
   const role = draft?.activeRole || "";
+  if (maintenanceWorkUsesPicker(draft)) selected = maintenancePickerPersonState(draft, person.id, true).full;
   const contextId = String(draft?.activeContextKey || "context").replace(/[^a-zA-Z0-9_-]/g, "-");
   const id = `maint-work-person-${contextId}-${role}-${person.id}`;
-  const isRelease = role === "放行";
+  const isRelease = !maintenanceWorkUsesPicker(draft) && role === "放行";
   const editable = maintenanceWorkRoleEditable();
   return `<div class="maintenance-person-row ${selected ? "selected" : ""} ${editable ? "" : "locked"}"><input id="${escapeHtml(id)}" type="${isRelease ? "radio" : "checkbox"}" ${isRelease ? `name="maint-final-release-${escapeHtml(contextId)}"` : ""} data-maint-work-person="${escapeHtml(person.id)}" ${selected ? "checked" : ""} ${editable ? "" : "disabled"}><label class="maintenance-person-info" for="${escapeHtml(id)}"><strong>${escapeHtml(person.name)}${personnelCadreBadgeHtml(person)}</strong><small>${escapeHtml(isCadrePerson(person) ? person.department || "未设置" : personnelSelectionLabel(person))}</small></label><span class="maintenance-person-role">${escapeHtml(role)}</span></div>`;
 }
@@ -6676,6 +6800,7 @@ function renderMaintenanceWorkReportPicker() {
 function refreshMaintenanceWorkReportPicker() {
   const picker = $("#maintenanceWorkReportPicker");
   if (picker) picker.innerHTML = renderMaintenanceWorkReportPicker();
+  if (maintenanceWorkUsesPicker(state.maintenanceWorkReportDraft)) maintenancePickerIndeterminate(picker, state.maintenanceWorkReportDraft, true);
 }
 
 function renderMaintenanceWorkReportDialog() {
@@ -6721,6 +6846,10 @@ function renderMaintenanceWorkReportDialog() {
       <div class="maintenance-review-message ${draft.message ? "show" : ""}">${escapeHtml(draft.message)}</div>
 <div class="form-actions maintenance-work-report-actions">${isCreateNonroutine && Number(draft.draftVersion || 0) > 0 && hasRbac("maintenance.nonroutine.delete.own") ? `<button class="btn danger secondary" type="button" data-maint-work-delete-draft ${draft.busy ? "disabled" : ""}>删除草稿</button>` : ""}<button class="btn secondary" type="button" data-close="maintenanceWorkReportDialog">取消</button>${isCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-work-save-draft ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "routine" ? `<button class="btn secondary" type="button" data-maint-work-save-routine ${draft.busy ? "disabled" : ""}>暂存</button>` : draft.reportType === "nonroutine" ? `<button class="btn secondary" type="button" data-maint-work-save-nonroutine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "finalize" ? `<button class="btn secondary" type="button" data-maint-work-save-confirmation ${draft.busy ? "disabled" : ""}>保存</button>` : ""}<button class="btn" type="button" data-maint-work-submit ${draft.busy ? "disabled" : ""}>${draft.reportType === "finalize" ? "确认并提交复核" : draft.reportType === "routine" ? "提交" : "提交并锁定"}</button></div>
     </form>`;
+  if (maintenanceWorkUsesPicker(draft)) {
+    maintenancePickerIndeterminate($("#maintenanceWorkReportPicker"), draft, true);
+    syncMaintenancePickerNames();
+  }
 }
 
 function maintenanceWorkReportEntries(context = maintenanceWorkActiveContext(), { includeRelease = false } = {}) {
@@ -8107,9 +8236,21 @@ document.addEventListener("click", async event => {
     renderMaintenanceWorkReportDialog();
     return;
   }
+  const pickerToggle = event.target.closest("[data-maint-picker-toggle]");
+  if (pickerToggle) {
+    event.stopPropagation();
+    const work = pickerToggle.dataset.pickerWork === "true";
+    const draft = work ? state.maintenanceWorkReportDraft : state.maintenanceDispatchDraft;
+    if (draft) {
+      maintenancePickerChoose(draft, pickerToggle.dataset.maintPickerToggle, true, work);
+      if (work) renderMaintenanceWorkReportDialog(); else renderMaintenanceDispatchPicker();
+    }
+    return;
+  }
   const workRoleButton = event.target.closest("[data-maint-work-role]");
   if (workRoleButton && state.maintenanceWorkReportDraft) {
-    state.maintenanceWorkReportDraft.activeRole = workRoleButton.dataset.maintWorkRole;
+    if (maintenanceWorkUsesPicker(state.maintenanceWorkReportDraft)) maintenancePickerChoose(state.maintenanceWorkReportDraft, workRoleButton.dataset.maintWorkRole, false, true);
+    else state.maintenanceWorkReportDraft.activeRole = workRoleButton.dataset.maintWorkRole;
     renderMaintenanceWorkReportDialog();
     return;
   }
@@ -8190,7 +8331,7 @@ document.addEventListener("click", async event => {
   }
   const maintenanceRoleGroup = event.target.closest("[data-maint-role-group]");
   if (maintenanceRoleGroup && state.maintenanceDispatchDraft) {
-    state.maintenanceDispatchDraft.activeRole = maintenanceRoleGroup.dataset.maintRoleGroup;
+    maintenancePickerChoose(state.maintenanceDispatchDraft, maintenanceRoleGroup.dataset.maintRoleGroup, false);
     renderMaintenanceDispatchPicker();
     return;
   }
@@ -9560,6 +9701,11 @@ document.addEventListener("change", async event => {
   if (workReportPerson) {
     const draft = state.maintenanceWorkReportDraft;
     if (!draft) return;
+    if (maintenanceWorkUsesPicker(draft)) {
+      maintenancePickerApply(draft, workReportPerson.dataset.maintWorkPerson, true);
+      renderMaintenanceWorkReportDialog();
+      return;
+    }
     const key = maintenanceWorkSelectionKey();
     const selected = draft.selections.get(key);
     const order = draft.selectionOrder.get(key);
@@ -9611,23 +9757,7 @@ document.addEventListener("change", async event => {
   if (maintenancePerson) {
     const draft = state.maintenanceDispatchDraft;
     if (!draft) return;
-    const userId = maintenancePerson.dataset.maintPerson;
-    const role = maintenancePerson.dataset.maintRoleCategory || draft.activeRole;
-    if (draft.lockedRoles?.has(role)) return;
-    const selectedIds = draft.selections.get(role);
-    const order = draft.selectionOrder.get(role);
-    if (!selectedIds || !order) return;
-    if (maintenancePerson.checked) {
-      if (role === "放行") {
-        selectedIds.clear();
-        order.clear();
-      }
-      selectedIds.add(userId);
-      if (!order.has(userId)) order.set(userId, draft.nextOrder++);
-    } else {
-      selectedIds.delete(userId);
-      order.delete(userId);
-    }
+    maintenancePickerApply(draft, maintenancePerson.dataset.maintPerson);
     renderMaintenanceDispatchPicker();
     return;
   }
