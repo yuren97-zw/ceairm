@@ -891,6 +891,45 @@
     .execute-nonroutine-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px;min-width:0}
     .execute-nonroutine-title{min-width:0;color:var(--ink);font-size:13px;font-weight:800;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
     .execute-nonroutine-people{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 12px;min-width:0}
+/* 班组交接：复用执行页卡片类，仅补交接自有元素 */
+.handover-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.handover-tabs .chip{border-radius:999px;padding:6px 14px}
+.handover-card{padding:12px;margin:10px 0;border-radius:12px}
+.handover-card-head{display:flex;justify-content:space-between;gap:8px;align-items:center;min-width:0}
+.handover-card-title{display:flex;align-items:center;gap:8px;min-width:0;font-weight:700}
+.handover-meta{margin:6px 0 0;font-size:12px;color:var(--muted)}
+.handover-field{border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:10px;min-width:0;background:var(--panel)}
+.handover-field legend{font-size:13px;font-weight:700;padding:0 4px}
+.handover-label{display:block;margin:10px 0 0;font-size:13px;font-weight:700}
+.handover-select,.handover-textarea{padding:8px 10px;border:1px solid #d0d6dd;border-radius:10px;font:inherit;background:#fff;outline:none;max-width:100%}
+.handover-select{min-width:140px}
+.handover-textarea{width:100%;resize:vertical;margin-top:4px}
+.handover-recipients{margin:6px 0}
+.handover-recipient-chip{display:inline-flex;align-items:center;gap:4px}
+.handover-recipient-remove{border:0;background:none;cursor:pointer;color:var(--muted);padding:0 2px;font:inherit;line-height:1}
+.handover-recipient-remove:hover{color:var(--danger)}
+.handover-opp{display:flex;gap:8px;align-items:flex-start;min-width:0;margin:8px 0}
+.handover-opp-check{margin-top:16px;flex:none;width:16px;height:16px}
+.handover-opp-main{flex:1;min-width:0}
+.handover-opp-note{display:block;margin-top:8px;font-size:12px;color:var(--muted);min-width:0}
+.handover-opp-note .handover-textarea{margin-top:4px;font-size:14px;color:var(--ink)}
+.handover-picker{margin-top:8px}
+.handover-picker summary{cursor:pointer;color:var(--brand);font-size:13px}
+.handover-scope{margin:8px 0}
+.handover-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.handover-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:13px;color:var(--muted)}
+.handover-filters label{display:inline-flex;align-items:center;gap:4px}
+.handover-inline-input{width:120px;padding:6px 8px;border:1px solid #d0d6dd;border-radius:8px;font:inherit;background:#fff;outline:none}
+.handover-input-date{padding:6px 8px;border:1px solid #d0d6dd;border-radius:8px;font:inherit;background:#fff}
+.handover-baseline{margin-top:12px}
+.handover-baseline summary{cursor:pointer;color:var(--brand);font-size:13px}
+.handover-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+.handover-table th,.handover-table td{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+.handover-changes{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}
+.handover-changes ul{margin:0;padding-left:18px;font-size:13px}
+.handover-changes li{margin:4px 0}
+.handover-opp-remark{margin:6px 0 0;font-size:12px;color:var(--muted);white-space:pre-wrap}
+.handover-hint{display:block;margin-top:6px}
     .execute-nonroutine-person-group{display:inline-flex;align-items:baseline;max-width:100%;min-width:0}
     .execute-nonroutine-person-group strong{flex:0 0 auto;color:#52657A;font-size:11px;white-space:nowrap}
     .execute-nonroutine-person-group span{min-width:0;color:#1F2937;font-size:12px;font-weight:650;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}

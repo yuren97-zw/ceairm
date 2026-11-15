@@ -8,8 +8,10 @@ function fixture({withTasks=false}={}){
  const db=new DatabaseSync(':memory:');
  db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
  db.exec("create table users(id text primary key,person_id text,status text default 'active')");
- db.exec("create table maintenance_flights(id text primary key,date text,aircraft_no text,flight_no text,work_kind text,stand text,planned_arrival text,status text default '未派工',archived_at text)");
- db.exec("create table maintenance_subtasks(id text primary key,flight_id text,title text,status text default '未派工')");
+ db.exec("create table maintenance_flights(id text primary key,date text,aircraft_no text,flight_no text,aircraft_type text,work_kind text,stand text,planned_arrival text,planned_departure text,departure_flight_no text,location_id text,remark text default '',status text default '未派工',archived_at text)");
+ db.exec("create table maintenance_subtasks(id text primary key,flight_id text,title text,category text,standard_hours real default 0,status text default '未派工',created_at text)");
+ db.exec("create table maintenance_work_locations(id text primary key,name text,status text default 'active')");
+ db.exec("create table maintenance_assignments(id text primary key,owner_type text,owner_id text,role text,user_name text,assigned_at text)");
  const people=[['p1','u1','10001','张三','TEAM-LINE-1'],['p2','u2','10002','李四','TEAM-LINE-1'],['p3','u3','10003','王五','TEAM-LINE-2'],['p9','u9','10009','赵干','TEAM-LINE-1'],['p10','u10','10010','孙六','TEAM-LINE-2']];
  for(const [pid,uid,eno,name,team] of people){
   db.prepare('insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)').run(pid,eno,name,eno==='10001'?'班组长':'组员',team);
@@ -19,6 +21,8 @@ function fixture({withTasks=false}={}){
  const flights=[['f1','2026-11-14','B-1234','MU5117','航后','桥位3','2026-11-14 12:30:00','未派工',null],['f2','2026-11-14','B-5678','MU2201','短停','桥位5','2026-11-14 15:10:00','已派工',null],['f3','2026-11-13','B-9999','MU0001','航前','桥位1','2026-11-13 06:30:00','已确认','2026-11-13T12:00:00.000Z']];
  for(const flight of flights)db.prepare('insert into maintenance_flights(id,date,aircraft_no,flight_no,work_kind,stand,planned_arrival,status,archived_at) values(?,?,?,?,?,?,?,?,?)').run(...flight);
  db.prepare('insert into maintenance_subtasks(id,flight_id,title) values(?,?,?)').run('s1','f1');
+ db.prepare('insert into maintenance_assignments(id,owner_type,owner_id,role,user_name,assigned_at) values(?,?,?,?,?,?)').run('a1','flight','f1','机长','张三','2026-11-14T01:00:00.000Z');
+ db.prepare('insert into maintenance_assignments(id,owner_type,owner_id,role,user_name,assigned_at) values(?,?,?,?,?,?)').run('a2','subtask','s1','主做','李四','2026-11-14T01:00:00.000Z');
  const allPerms=['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all'];
  const user=(id,perms=['handover.view','handover.create','handover.baseline.manage','handover.export','handover.history.all'])=>({id,permissions:perms});
  let tasks=null;
@@ -127,7 +131,8 @@ test('maintenance options default to unfinished and support full view',()=>{
  const {service,user}=fixture();
  const options=service.maintenanceOptions(user('u1'),{});
  assert.deepEqual(options.items.map(i=>i.id),['f2','f1'],'未完成机会优先，排除已归档');
- assert.equal(options.items.find(i=>i.id==='f1').subtaskCount,1);
+ assert.equal(options.items.find(i=>i.id==='f1').subtasks.length,1,'附加工作随机会装配');
+ assert.equal(options.items.find(i=>i.id==='f1').assignments.length,1);
  const all=service.maintenanceOptions(user('u1'),{scope:'all'});
  assert.equal(all.items.length,3);
  const byDate=service.maintenanceOptions(user('u1'),{date:'2026-11-13',scope:'all'});

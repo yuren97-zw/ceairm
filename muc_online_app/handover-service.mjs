@@ -93,7 +93,12 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   return db.prepare('select * from handover_shift_baseline').all();
  }
  const phaseOf=(row,date)=>((Number(row.anchor_phase)+dayDiff(date,row.anchor_date))%4+4)%4;
- const teamName=teamId=>HANDOVER_TEAMS.find(t=>t.id===teamId)?.name||teamId;
+ const teamName=teamId=>{
+  if(!teamId)return '';
+  const fixed=HANDOVER_TEAMS.find(t=>t.id===teamId)?.name;
+  if(fixed)return fixed;
+  return db.prepare('select name from organization_units where id=? or code=?').get(teamId,teamId)?.name||teamId;
+ };
  function recommendRecipients(rows,toTeam){
   const row=toTeam&&rows.find(r=>r.team_id===toTeam.id);
   if(row?.leader_person_id){const account=accountOfPerson(row.leader_person_id);if(account)return {recipients:[account],basis:'baseline_leader'};}
@@ -176,9 +181,35 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   return ids.map(id=>found.get(id));
  };
  const flightSnapshot=flightId=>{
-  const row=db.prepare('select id,date,aircraft_no,flight_no,work_kind,stand,planned_arrival,status,archived_at from maintenance_flights where id=?').get(String(flightId||'').trim());
+  const row=db.prepare('select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where f.id=?').get(String(flightId||'').trim());
   if(!row)throw failure('维修机会不存在：'+flightId);
-  return {id:row.id,date:row.date,aircraftNo:row.aircraft_no,flightNo:row.flight_no,workKind:row.work_kind,stand:row.stand,plannedArrival:row.planned_arrival,status:row.status,archived:!!row.archived_at};
+  return {id:row.id,date:row.date,aircraftNo:row.aircraft_no,flightNo:row.flight_no,aircraftType:row.aircraft_type,workKind:row.work_kind,stand:row.stand,plannedArrival:row.planned_arrival,plannedDeparture:row.planned_departure,departureFlightNo:row.departure_flight_no,locationName:row.locationName||'青岛',status:row.status,archived:!!row.archived_at};
+ };
+ // 派工树只读装配：与维修管控执行页同口径（机会级人员 + 非例行及其人员），交接模块不写维修数据。
+ const flightTree=flightIds=>{
+  const tree=new Map(flightIds.map(id=>[id,{assignments:[],subtasks:[]}]));
+  if(!flightIds.length)return tree;
+  const marks=flightIds.map(()=>'?').join(',');
+  for(const row of db.prepare(`select a.owner_id,a.role,a.user_name from maintenance_assignments a where a.owner_type='flight' and a.owner_id in (${marks}) order by a.assigned_at,a.id`).all(...flightIds)){
+   const entry=tree.get(row.owner_id);if(entry)entry.assignments.push({role:row.role,userName:row.user_name});
+  }
+  const subtaskIds=[],byId=new Map();
+  for(const row of db.prepare(`select s.id,s.flight_id,s.title,s.category,s.standard_hours,s.status from maintenance_subtasks s where s.flight_id in (${marks}) order by s.created_at,s.id`).all(...flightIds)){
+   const entry=tree.get(row.flight_id);if(!entry)continue;
+   const sub={id:row.id,title:row.title,category:row.category,standardHours:row.standard_hours,status:row.status,assignments:[]};
+   entry.subtasks.push(sub);byId.set(row.id,sub);subtaskIds.push(row.id);
+  }
+  if(subtaskIds.length){
+   const sMarks=subtaskIds.map(()=>'?').join(',');
+   for(const row of db.prepare(`select a.owner_id,a.role,a.user_name from maintenance_assignments a where a.owner_type='subtask' and a.owner_id in (${sMarks}) order by a.assigned_at,a.id`).all(...subtaskIds)){
+    const sub=byId.get(row.owner_id);if(sub)sub.assignments.push({role:row.role,userName:row.user_name});
+   }
+  }
+  return tree;
+ };
+ const flightView=(row,entry)=>{
+  const base={id:row.id,date:row.date,aircraftNo:row.aircraft_no,flightNo:row.flight_no,aircraftType:row.aircraft_type,workKind:row.work_kind,stand:row.stand,plannedArrival:row.planned_arrival,plannedDeparture:row.planned_departure,departureFlightNo:row.departure_flight_no,locationName:row.locationName||'青岛',status:row.status,archived:!!row.archived_at,remark:row.remark||''};
+  return entry?{...base,assignments:entry.assignments||[],subtasks:entry.subtasks||[]}:base;
  };
  function writeChanges(handoverId,version,user,entries){
   for(const entry of entries)db.prepare('insert into handover_change_log(id,handover_id,version,entity_type,entity_id,action,old_value_json,new_value_json,changed_by,changed_by_name,changed_at) values(?,?,?,?,?,?,?,?,?,?,?)').run(uid('hdoc'),handoverId,version,entry.entityType,entry.entityId||null,entry.action,entry.old===undefined?null:JSON.stringify(entry.old),entry.new===undefined?null:JSON.stringify(entry.new),user.id,user.name||'',now());
@@ -374,9 +405,15 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
  function handoverFull(id,generatedAt){
   const handover=loadHandover(id);
   const recipients=db.prepare('select user_id,user_name,added_by,added_at from handover_recipient where handover_id=? order by added_at').all(id);
-  const opportunities=db.prepare('select * from handover_opportunity where handover_id=? order by display_order,id').all(id).map(r=>{
-   const live=db.prepare('select status,archived_at from maintenance_flights where id=?').get(r.maintenance_flight_id);
-   return {id:r.id,flightId:r.maintenance_flight_id,note:r.handover_note,snapshot:parse(r.snapshot_json,{}),displayOrder:r.display_order,removedAt:r.removed_at,removedBy:r.removed_by,liveStatus:live?(live.archived_at?'已确认（归档）':live.status):'（机会已不存在）'};
+  const oppRows=db.prepare('select * from handover_opportunity where handover_id=? order by display_order,id').all(id);
+  const oppTree=flightTree(oppRows.map(r=>r.maintenance_flight_id));
+  const liveMark=oppRows.map(()=>'?').join(',')||"''";
+  const liveRows=new Map(db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.remark,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where f.id in (${liveMark})`).all(...oppRows.map(r=>r.maintenance_flight_id)).map(r=>[r.id,r]));
+  const opportunities=oppRows.map(r=>{
+   const liveRow=liveRows.get(r.maintenance_flight_id);
+   const live=liveRow?flightView(liveRow,oppTree.get(liveRow.id)):null;
+   const liveStatus=live?(live.archived?'已确认（归档）':live.status):'（机会已不存在）';
+   return {id:r.id,flightId:r.maintenance_flight_id,note:r.handover_note,snapshot:parse(r.snapshot_json,{}),displayOrder:r.display_order,removedAt:r.removed_at,removedBy:r.removed_by,live,liveStatus};
   });
   const changes=db.prepare('select * from handover_change_log where handover_id=? order by version,id limit 1000').all(id).map(r=>({id:r.id,version:r.version,entityType:r.entity_type,entityId:r.entity_id,action:r.action,old:parse(r.old_value_json),new:parse(r.new_value_json),changedBy:r.changed_by,changedByName:r.changed_by_name,changedAt:r.changed_at}));
   return {handover:{...listRow(handover),version:handover.version},recipients,opportunities,changes,generatedAt};
@@ -404,8 +441,9 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const clauses=['1=1'],args=[];
   if(scope!=='all')clauses.push('f.archived_at is null');
   if(/^\d{4}-\d{2}-\d{2}$/.test(date)){clauses.push('f.date=?');args.push(date);}
-  const rows=db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.work_kind,f.stand,f.planned_arrival,f.status,f.archived_at,(select count(*) from maintenance_subtasks s where s.flight_id=f.id) as subtaskCount from maintenance_flights f where ${clauses.join(' and ')} order by f.date desc,f.id desc limit 200`).all(...args);
-  return {items:rows.map(r=>({id:r.id,date:r.date,aircraftNo:r.aircraft_no,flightNo:r.flight_no,workKind:r.work_kind,stand:r.stand,plannedArrival:r.planned_arrival,status:r.status,archived:!!r.archived_at,subtaskCount:Number(r.subtaskCount)}))};
+  const rows=db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.remark,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where ${clauses.join(' and ')} order by f.date desc,f.id desc limit 200`).all(...args);
+  const tree=flightTree(rows.map(r=>r.id));
+  return {items:rows.map(r=>flightView(r,tree.get(r.id)))};
  }
  // 接收人候选：在职账号花名册（交接场景需要跨班组选人，不走人员数据范围过滤）；推荐=接班班组固定班组长，缺失时按职位兜底。
  function recipientOptions(user,filters={}){
