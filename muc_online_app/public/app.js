@@ -5199,11 +5199,24 @@ function renderHandover(){
   refreshHandoverView();
 }
 function handoverRepaint(){paintHandover();}
-function refreshHandoverView(){
-  const token=++handoverUi.listEpoch;
+function refreshHandoverView(options={}){
+  const {fromDispatch=false}=options||{};
+  const token=handoverBegin();
   (async()=>{
     if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id){
-      try{const detail=await apiRequest(`/handover/${encodeURIComponent(handoverUi.detail.handover.id)}`);if(handoverValid(token)){handoverUi.detail=detail;handoverRepaint();}}catch{}
+      const id=handoverUi.detail.handover.id;
+      const scrollY=window.scrollY;
+      try{
+        const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+        if(!handoverValid(token)||handoverUi.view.mode!=="detail"||handoverUi.detail?.handover?.id!==id)return;
+        handoverUi.refreshError="";
+        handoverUi.detail=detail;
+        handoverRepaint();
+        window.scrollTo({top:scrollY,behavior:"instant"});
+      }catch(error){
+        if(!handoverValid(token))return;
+        if(fromDispatch){handoverUi.refreshError=`派工已保存，详情刷新失败：${error.message}`;handoverRepaint();}
+      }
       return;
     }
     if(handoverUi.tab==="drafts"){
@@ -5275,9 +5288,7 @@ function handoverOpportunityBodyHtml(flight){
   const roster=handoverRosterHtml(flight);
   const nonroutine=handoverNonroutineListHtml(flight);
   const remark=String(flight.remark||"").trim()?`<p class="handover-opp-remark">报工说明：${escapeHtml(flight.remark)}</p>`:"";
-  const hasRoster=!roster.includes("尚未派工");
-  if(!hasRoster&&!nonroutine&&!remark)return "";
-  return `${hasRoster?`<section class="execute-main-work">${roster}</section>`:""}${nonroutine}${remark}`;
+  return `<section class="execute-main-work">${roster}</section>${nonroutine}${remark}`;
 }
 function handoverOpportunityCardHtml(entry,{selectable=false,checked=false,expanded=false,note=false,noteIndex=null,expandKey=null,snapshotBadge=""}={}){
   const open=Boolean(expanded);
@@ -5428,6 +5439,7 @@ function handoverDetailBodyHtml(){
     ${opportunities||'<p class="status-line">本单未勾选维修机会。</p>'}
     <h4 style="margin:12px 0 4px">其他交接事项</h4>
     ${handover.otherItems?`<div class="handover-note-box">${escapeHtml(handover.otherItems)}</div>`:'<p class="status-line">—</p>'}
+    ${handoverUi.refreshError?`<div class="handover-refresh-error" role="alert">派工已保存，详情刷新失败<button type="button" class="btn secondary" data-hov-retry-refresh>重试</button></div>`:""}
     <div class="handover-actions">${actionButtons.join("")}</div>
   </section>`;
 }
@@ -5486,7 +5498,7 @@ async function gotoHandoverMaintenance(flightId,snapshot){
 const handoverPanelElement=document.getElementById("handoverPanel");
 if(handoverPanelElement){
  handoverPanelElement.addEventListener("click",async event=>{
-  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete],[data-hov-dispatch]");
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete],[data-hov-retry-refresh]");
   if(!target)return;
   const editor=handoverUi.editor;
   if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
@@ -5523,6 +5535,7 @@ if(handoverPanelElement){
    }catch(error){alert(`打开派工失败：${error.message}`);}
    return;
   }
+  if(target.dataset?.hovRetryRefresh!==undefined){handoverUi.refreshError="";handoverRepaint();refreshHandoverView({fromDispatch:true});return;}
   if(target.dataset.hovBack!==undefined){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
   if(target.dataset.hovChanges!==undefined){handoverUi.changesOpen=target.dataset.hovChanges;handoverRepaint();return;}
   if(target.dataset.hovExpandDetail){handoverUi.changesOpen=handoverUi.changesOpen===`opp:${target.dataset.hovExpandDetail}`?"":`opp:${target.dataset.hovExpandDetail}`;handoverRepaint();return;}
@@ -6661,7 +6674,7 @@ function ensureMaintenanceDialogs() {
   }
   if (!$("#maintenanceDispatchDialog")) {
     document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceDispatchDialog"><div id="maintenanceDispatchDialogBody" class="dialog-body"></div></dialog>`);
-    $("#maintenanceDispatchDialog").addEventListener("close", () => { state.maintenanceDispatchDraft = null; flushMaintenancePendingRefresh(); });
+    $("#maintenanceDispatchDialog").addEventListener("close", () => { state.maintenanceDispatchDraft = null; flushMaintenancePendingRefresh(); if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.status==="pending")refreshHandoverView({fromDispatch:true}); });
   }
   if (!$("#maintenanceReviewDialog")) {
     document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceReviewDialog" class="maintenance-review-dialog"><div id="maintenanceReviewDialogBody" class="dialog-body"></div></dialog>`);
@@ -8562,7 +8575,11 @@ document.addEventListener("click", async event => {
   const dispatchButton = event.target.closest("[data-maint-dispatch]");
   if (dispatchButton) {
     const [ownerType, ownerId] = dispatchButton.dataset.maintDispatch.split(":");
-    openMaintenanceDispatchDialog(ownerType, ownerId);
+    (async () => {
+      try { if (ownerType === "flight") await hydrateMaintenanceFlight(ownerId); } catch {}
+      openMaintenanceDispatchDialog(ownerType, ownerId);
+      if (ownerType === "flight" && !findMaintenanceFlight(ownerId)) alert("该维修机会不在你的派工管理范围。");
+    })();
     return;
   }
   const reviewButton = event.target.closest("[data-maint-review]");
