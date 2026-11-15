@@ -1611,10 +1611,13 @@
     }
     @media(max-width:760px){
       input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
-      select,
+      select:not(#pageSizeSelect),
       textarea,
       [contenteditable="true"]{font-size:16px!important}
     }
+    /* 分页条每页条数下拉豁免 16px 防缩放，字号对齐页码按钮 */
+    .pager #pageSizeSelect{font-size:12px!important}
+    @media(max-width:520px){.pager #pageSizeSelect{font-size:11px!important}}
     .settings-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
     #personnelAreaNav{padding-bottom:2px}
     #capabilityHost,#personnelAuthorizationWrap,#personnelMasterWrap{padding-top:2px}
