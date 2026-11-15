@@ -5377,8 +5377,8 @@ function handoverDetailBodyHtml(){
    const statusBadge=maintenanceStatusBadge(liveStatus,dispatchable?`flight:${escapeHtml(entry.flightId)}`:"","","",live);
    const dispatchButton=dispatchable?`<button class="btn secondary" type="button" data-maint-dispatch="flight:${escapeHtml(entry.flightId)}">派工调整人员</button>`:"";
    return `<article class="handover-note-card${entry.removedAt?" removed":""}">
+      <div class="handover-opp-summary">${summaryToggle}${statusBadge}<span class="handover-summary-chevron" aria-hidden="true">${open?"▴":"▾"}</span></div>
       ${noteBody}
-      <div class="handover-opp-summary">${summaryToggle}${statusBadge}${dispatchButton}<span class="handover-summary-more">${open?"收起 ▴":"维修详情 ▾"}</span></div>
       ${entry.removedAt?`<small class="handover-meta">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</small>`:""}
       ${open?`<div class="execute-flight-body">
         <small class="handover-meta">${live?"以下为维修管控实时状态（派工人员与附加工作）；上方交接说明为交接原始记录。":"该维修机会已不在维修管控中，以下为提交时快照。"}</small>
@@ -6545,6 +6545,9 @@ async function refreshMaintenanceFromSync(version = 0) {
   if (maintenanceHasOpenEditor()) {
     state.maintenanceRefreshPending = true;
     return;
+  }
+  if (typeof handoverUi !== "undefined" && handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.status === "pending") {
+    refreshHandoverView();
   }
   if (state.activePage !== "maintenancePage") {
     if (state.loadedData instanceof Set) {
