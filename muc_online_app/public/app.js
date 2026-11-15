@@ -5228,7 +5228,7 @@ function refreshHandoverView(options={}){
     if(handoverUi.tab==="drafts"){
       try{
         const drafts=await apiRequest("/handover?scope=drafts");
-        if(token!==handoverUi.listEpoch)return;
+        if(!handoverValid(token))return;
         handoverUi.lists.drafts=drafts.items||[];
         if(handoverActive()&&handoverUi.tab==="drafts"&&handoverUi.view.mode==="list")panelRenderHandover();
       }catch{}
@@ -5237,7 +5237,7 @@ function refreshHandoverView(options={}){
     if(handoverUi.tab==="pending"){
       try{
         const [pending,drafts,mine]=await Promise.all([apiRequest("/handover?scope=pending"),apiRequest("/handover?scope=drafts"),apiRequest("/handover?scope=mine")]);
-        if(token!==handoverUi.listEpoch)return;
+        if(!handoverValid(token))return;
         handoverUi.lists={pending:pending.items||[],drafts:drafts.items||[],history:mine.items||[]};
         if(handoverUi.tab==="pending"&&handoverUi.view.mode==="list")panelRenderHandover();
       }catch{}
@@ -5253,7 +5253,7 @@ function refreshHandoverView(options={}){
         if(handoverUi.historyFilter.aircraft)query.set("aircraft",handoverUi.historyFilter.aircraft);
         if(handoverUi.historyFilter.q)query.set("q",handoverUi.historyFilter.q);
         const data=await apiRequest(`/handover?${query}`);
-        if(token!==handoverUi.listEpoch)return;
+        if(!handoverValid(token))return;
         handoverUi.lists.history=data.items||[];
         if(handoverUi.tab==="history"&&handoverUi.view.mode==="list")panelRenderHandover();
       }catch{}
