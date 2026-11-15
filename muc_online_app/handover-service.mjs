@@ -298,6 +298,21 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   }catch(error){db.exec('rollback');throw error;}
   return detail(user,id);
  }
+ function deleteDraft(user,id){
+  const handover=loadHandover(id);
+  if(handover.status!=='draft')throw failure('仅草稿可以删除',409);
+  if(handover.created_by!==user.id&&!canEditHandover(user,handover))throw failure('只有交班班组可以删除草稿',403);
+  db.exec('begin immediate');
+  try{
+   db.prepare('delete from handover_opportunity where handover_id=?').run(id);
+   db.prepare('delete from handover_recipient where handover_id=?').run(id);
+   db.prepare('delete from handover_change_log where handover_id=?').run(id);
+   db.prepare('delete from handover where id=?').run(id);
+   db.exec('commit');
+  }catch(error){db.exec('rollback');throw error;}
+  audit(user,'handover_delete_draft','handover',id,JSON.stringify({}));
+  return {ok:true};
+ }
  function submit(user,id,payload={}){
   const handover=loadHandover(id);
   if(handover.status!=='draft')throw failure('仅草稿可以提交',409);
@@ -417,5 +432,5 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const recommended=team?items.filter(i=>i.teamName===team.name).map(i=>({userId:i.userId,user_name:i.name})):[];
   return {items,recommended,recipientBasis:recommended.length?'team_leader_position':'none'};
  }
- return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,teamMembers,create,update,submit,confirm,list,detail,exportData,maintenanceOptions,recipientOptions,canSeeHandover,loadHandover};
+ return {now,STATUSES:HANDOVER_STATUSES,BASELINE_STATUSES:HANDOVER_BASELINE_STATUSES,shiftContext,baselineOverview,confirmBaseline,teamMembers,create,update,submit,confirm,deleteDraft,list,detail,exportData,maintenanceOptions,recipientOptions,canSeeHandover,loadHandover};
 }

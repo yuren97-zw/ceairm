@@ -54,6 +54,18 @@ test('teamless operators must explicitly choose the from team',()=>{
  const created=service.create(user('u-none'),{fromTeamId:'TEAM-LINE-2',otherItems:'手动选择交班班组'});
  assert.equal(created.handover.fromTeamId,'TEAM-LINE-2');
 });
+test('drafts can be deleted by the creator only while still drafts',()=>{
+ const {service,user}=fixture();
+ const creator=user('u1');
+ const draft=service.create(creator,draftPayload);
+ assert.throws(()=>service.deleteDraft(user('u3'),draft.handover.id),/只有交班班组可以删除草稿/);
+ assert.equal(service.deleteDraft(creator,draft.handover.id).ok,true);
+ assert.throws(()=>service.detail(creator,draft.handover.id),/交接单不存在/);
+ assert.equal(service.list(creator,{scope:'drafts'}).items.length,0);
+ const second=service.create(creator,draftPayload);
+ service.submit(creator,second.handover.id,{expectedVersion:second.handover.version});
+ assert.throws(()=>service.deleteDraft(creator,second.handover.id),/仅草稿可以删除/);
+});
 test('create rejects unknown flights and disabled recipient accounts atomically',()=>{
  const {service,user,db}=fixture();
  assert.throws(()=>service.create(user('u1'),{...draftPayload,opportunities:[{flightId:'nope'}]}),/维修机会不存在/);

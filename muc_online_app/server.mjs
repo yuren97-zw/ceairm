@@ -7044,6 +7044,7 @@ async function routeRequest(req, res) {
       if(seg.length===1&&seg[0]){
         if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
         if(method==='PUT')return send(res,200,handoverService.update(actor,seg[0],await bodyJson(req)));
+        if(method==='DELETE')return send(res,200,handoverService.deleteDraft(actor,seg[0]));
       }
       if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='submit')return send(res,200,handoverService.submit(actor,seg[0],await bodyJson(req)));
       if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='confirm')return send(res,200,handoverService.confirm(actor,seg[0]));

@@ -273,6 +273,7 @@ function showLoginRoute(message = "", replace = false) {
 }
 
 async function showDashboardRoute(replace = false) {
+  window.__t&&window.__t.push('showDashboardRoute @'+new Error().stack.split('\n')[2]);
   setRoute(ROUTES.dashboard, replace);
   state.activePage = "homePage";
   state.activeSubpage = "infoListSubpage";
@@ -292,6 +293,7 @@ async function ensureAuthenticated() {
 }
 
 async function guardRoute(message = "") {
+  window.__t&&window.__t.push('guardRoute @'+new Error().stack.split('\n')[2]);
   const route = currentRoute();
   if (route === ROUTES.dashboard) {
     const ok = await ensureAuthenticated();
@@ -311,6 +313,7 @@ async function guardRoute(message = "") {
 }
 
 async function navigate(path, options = {}) {
+  window.__t&&window.__t.push('navigate('+path+') @'+new Error().stack.split('\n')[2]);
   const target = path === ROUTES.dashboard ? ROUTES.dashboard : ROUTES.login;
   setRoute(target, !!options.replace);
   return guardRoute(options.message || "");
@@ -5301,6 +5304,7 @@ function handoverEditorHtml(){
   const selectedCount=editor.opportunities.length;
     const pendingHint=editor.status==="pending"?'<p class="status-line">该单已提交待接收：继续修改会记录变更历史（修改人、时间、前后值）。</p>':"";
   return `${handoverTabsHtml()}
+  <div class="handover-layout">
   <section class="data-panel handover-card">
     <h3 style="margin:0 0 6px">发起交接 ${editor.status==="pending"?"<small>（待接收单）</small>":""}</h3>
     ${pendingHint}
@@ -5320,7 +5324,13 @@ function handoverEditorHtml(){
     <div class="handover-actions"><button type="button" class="btn secondary" data-hov-save>${editor.status==="pending"?"保存修改（记录变更）":"存草稿"}</button>${editor.status==="draft"?'<button type="button" class="btn" data-hov-submit>提交交接</button>':""}</div>
     ${editor.message?`<p class="status-line" role="status">${escapeHtml(editor.message)}</p>`:""}
   </section>
-  ${(handoverUi.lists.drafts||[]).length?`<h3 style="margin:14px 0 4px">继续填写草稿</h3>${handoverUi.lists.drafts.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续填写</button>`,{exportable:false})).join("")}`:""}`;
+  </section>
+  <aside class="data-panel handover-draft-panel">
+    <h3 style="margin:0 0 6px">草稿（${(handoverUi.lists.drafts||[]).length}）</h3>
+    ${(handoverUi.lists.drafts||[]).length?handoverUi.lists.drafts.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续填写</button><button type="button" class="btn secondary" data-hov-delete="${escapeHtml(item.id)}">删除</button>`,{exportable:false})).join(""):'<p class="status-line">暂无草稿。</p>'}
+    <small class="status-line">草稿可继续填写或删除；删除后不可恢复。</small>
+  </aside>
+  </div>`;
 }
 function handoverListCardHtml(item,actions,{exportable=true}={}){
   return `<article class="data-panel handover-card">
@@ -5451,7 +5461,7 @@ async function gotoHandoverMaintenance(flightId,snapshot){
 const handoverPanelElement=document.getElementById("handoverPanel");
 if(handoverPanelElement){
  handoverPanelElement.addEventListener("click",async event=>{
-  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id]");
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete]");
   if(!target)return;
   const editor=handoverUi.editor;
   if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
@@ -5470,6 +5480,12 @@ if(handoverPanelElement){
    if(target.dataset.hovExportId)params.set("id",target.dataset.hovExportId);
    else{const f=handoverUi.historyFilter;if(f.from)params.set("from",f.from);if(f.to)params.set("to",f.to);if(f.teamId)params.set("teamId",f.teamId);if(f.aircraft)params.set("aircraft",f.aircraft);if(f.q)params.set("q",f.q);}
    window.open(`${API_BASE_URL}/handover/export.xlsx?${params}`);
+   return;
+  }
+  if(target.dataset.hovDelete){
+   const id=target.dataset.hovDelete;
+   if(!confirm("确定删除该草稿？删除后不可恢复。"))return;
+   try{await apiRequest(`/handover/${encodeURIComponent(id)}`,{method:"DELETE"});refreshHandoverView();if(handoverUi.editor?.id===id){handoverUi.editor=null;renderHandover();}}catch(error){alert(`删除失败：${error.message}`);}
    return;
   }
   if(target.dataset.hovBack!==undefined){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
@@ -10335,6 +10351,7 @@ setupDrop($("#recordDrop"), $("#recordFiles"), state.recordFiles, $("#recordPend
 setupDrop($("#fixedDrop"), $("#fixedFiles"), state.fixedFiles, $("#fixedPending"));
 renderFixedAtaOptions();
 window.addEventListener("popstate", () => {
+  if(Date.now()<(window.__suppressRouteGuard||0))return;
   guardRoute().catch(error => {
     document.body.innerHTML = `<main class="wrap" style="padding:24px"><div class="data-panel"><h1>页面切换失败</h1><p class="status-line">${escapeHtml(error.message)}</p></div></main>`;
   });
