@@ -46,6 +46,14 @@ test('create draft auto-fills from team, resolves recipients and snapshots oppor
  assert.equal(opportunity.snapshot.aircraftNo,'B-1234','提交前快照现读维修机会字段');
  assert.equal(opportunity.snapshot.workKind,'航后');
 });
+test('teamless operators must explicitly choose the from team',()=>{
+ const {service,db,user}=fixture();
+ db.prepare("insert into personnel(id,employee_no,name,administrative_team_id) values('p-none','19990002','无班组',NULL)");
+ db.prepare("insert into users(id,person_id) values('u-none','p-none')");
+ assert.throws(()=>service.create(user('u-none'),{otherItems:'x'}),/请选择交班班组/);
+ const created=service.create(user('u-none'),{fromTeamId:'TEAM-LINE-2',otherItems:'手动选择交班班组'});
+ assert.equal(created.handover.fromTeamId,'TEAM-LINE-2');
+});
 test('create rejects unknown flights and disabled recipient accounts atomically',()=>{
  const {service,user,db}=fixture();
  assert.throws(()=>service.create(user('u1'),{...draftPayload,opportunities:[{flightId:'nope'}]}),/维修机会不存在/);

@@ -35,9 +35,9 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   return db.prepare('select name from organization_units where id=? or code=?').get(teamId,teamId)?.name||teamId;
  };
  // 班组校验：接受固定代码或组织表行 id（personnel.administrative_team_id 存行 id）。
- const validateTeam=(teamId,{allowEmpty=false}={})=>{
+ const validateTeam=(teamId,{allowEmpty=false,label='接班班组'}={})=>{
   const value=String(teamId||'').trim();
-  if(!value){if(allowEmpty)return null;throw failure('请选择接班班组');}
+  if(!value){if(allowEmpty)return null;throw failure(`请选择${label}`);}
   const fixed=HANDOVER_TEAMS.find(t=>t.id===value);
   if(fixed)return {id:fixed.id,name:fixed.name};
   const row=db.prepare('select code,name from organization_units where id=?').get(value);
@@ -260,7 +260,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   requirePermission(user,'handover.create');
   const person=personOf(user);
   // 交班班组：默认提交人所在班组，可下拉修改（接受组织行 id 或固定代码）。
-  const fromTeam=validateTeam(payload?.fromTeamId||person?.teamId);
+  const fromTeam=validateTeam(payload?.fromTeamId||person?.teamId,{label:'交班班组'});
   const toTeam=validateTeam(payload?.toTeamId,{allowEmpty:true});
   const recipients=resolveRecipients(payload?.recipients);
   const id=uid('hdo');
