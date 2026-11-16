@@ -23,7 +23,7 @@ const bjHour=ts=>Math.floor(((ts+BJ)%86400000)/3600000);
 const addDays=(date,n)=>new Date(Date.parse(date+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
 const dayDiff=(a,b)=>Math.round((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const uid=prefix=>`${prefix}-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}`;
-export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=null,actionTask=null}={}){
+export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=null,actionTask=null,loadNonroutineDrafts=()=>new Map(),loadRoutineReports=()=>new Map()}={}){
  if(!db)throw failure('缺少数据库连接');
  db.exec(fs.readFileSync(new URL('./migrations/035_team_handover.sql',import.meta.url),'utf8'));
  const now=()=>new Date(clock()).toISOString();
@@ -83,11 +83,14 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
     const sub=byId.get(row.owner_id);if(sub)sub.assignments.push({role:row.role,userName:row.user_name});
    }
   }
+  const drafts=loadNonroutineDrafts([...tree.keys()]);
+  const routineReports=loadRoutineReports([...tree.keys()]);
+  for(const [id,entry] of tree){entry.nonroutineDraft=drafts.get(id)||null;entry.routineReport=routineReports.get(id)||null;}
   return tree;
  };
  const flightView=(row,entry)=>{
   const base={id:row.id,date:row.date,aircraftNo:row.aircraft_no,flightNo:row.flight_no,aircraftType:row.aircraft_type,workKind:row.work_kind,stand:row.stand,plannedArrival:row.planned_arrival,plannedDeparture:row.planned_departure,departureFlightNo:row.departure_flight_no,locationName:row.locationName||'青岛',status:row.status,archived:!!row.archived_at,remark:row.remark||''};
-  return entry?{...base,assignments:entry.assignments||[],subtasks:entry.subtasks||[]}:base;
+  return entry?{...base,assignments:entry.assignments||[],subtasks:entry.subtasks||[],nonroutineDraft:entry.nonroutineDraft??null,routineReport:entry.routineReport??null}:base;
  };
  const upsertBaseline=row=>{
   db.prepare('insert into handover_shift_baseline(team_id,team_name,cycle_json,anchor_date,anchor_phase,evidence_json,status,updated_at) values(?,?,?,?,?,?,?,?) on conflict(team_id) do update set anchor_date=excluded.anchor_date,anchor_phase=excluded.anchor_phase,evidence_json=excluded.evidence_json,updated_at=excluded.updated_at,version=handover_shift_baseline.version+1').run(row.teamId,row.teamName,JSON.stringify(HANDOVER_CYCLE),row.anchorDate,row.anchorPhase,JSON.stringify(row.evidence),'confirmed',now());

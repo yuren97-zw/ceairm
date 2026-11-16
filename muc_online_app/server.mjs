@@ -2756,6 +2756,38 @@ function maintenanceReportProgress(flightId) {
   };
 }
 
+function maintenanceNonroutineDraftSummary(draftRow, people, {includeExplanation=false}={}) {
+  let nonroutineDraft = null;
+  if (draftRow) {
+    let payload = {};
+    try { payload = JSON.parse(draftRow.payload_json || "{}"); } catch {}
+    nonroutineDraft = {
+      id: draftRow.id,
+      flightId: draftRow.flight_id,
+      reportType: draftRow.report_type,
+      items: (Array.isArray(payload.items) ? payload.items : []).map(item => ({
+        id: String(item?.id || ""),
+        chapter: String(item?.chapter || item?.cardNo || ""),
+        title: String(item?.title || ""),
+        category: maintenanceNonroutineCategories.includes(String(item?.category || "")) ? String(item.category) : "其他",
+        standardHours: Number(item?.standardHours || 0),
+        reportExplanation: includeExplanation?String(item?.reportExplanation||item?.content||""):"",
+        entries: (item?.entries || []).map(entry => ({
+          role: String(entry?.role || ""),
+          personId: String(entry?.personId || ""),
+          userName: people.get(entry.personId)?.name || "",
+          team: people.get(entry.personId)?.team || "未设置"
+        }))
+      })),
+      version: Number(draftRow.version || 1),
+      updatedBy: draftRow.updated_by || "",
+      updatedByName: draftRow.updated_by_name || "",
+      updatedAt: draftRow.updated_at || ""
+    };
+  }
+  return nonroutineDraft;
+}
+
 function publicMaintenanceNonroutineDraft(flightId) {
   const draft = maintenanceReportDraft(flightId, "nonroutine");
   if (!draft) return null;
@@ -2931,34 +2963,7 @@ function publicMaintenanceBatch(rows, scope, user) {
     const flightBatches = (batchesByFlight.get(row.id) || []).map(publicBatch);
     const batchMap = new Map(flightBatches.map(batch => [batch.reportType, batch]));
     const draftRow = draftsByFlight.get(row.id);
-    let nonroutineDraft = null;
-    if (draftRow) {
-      let payload = {};
-      try { payload = JSON.parse(draftRow.payload_json || "{}"); } catch {}
-      nonroutineDraft = {
-        id: draftRow.id,
-        flightId: draftRow.flight_id,
-        reportType: draftRow.report_type,
-        items: (Array.isArray(payload.items) ? payload.items : []).map(item => ({
-          id: String(item?.id || ""),
-          chapter: String(item?.chapter || item?.cardNo || ""),
-          title: String(item?.title || ""),
-          category: maintenanceNonroutineCategories.includes(String(item?.category || "")) ? String(item.category) : "其他",
-          standardHours: Number(item?.standardHours || 0),
-          reportExplanation: "",
-          entries: (item?.entries || []).map(entry => ({
-            role: String(entry?.role || ""),
-            personId: String(entry?.personId || ""),
-            userName: people.get(entry.personId)?.name || "",
-            team: people.get(entry.personId)?.team || "未设置"
-          }))
-        })),
-        version: Number(draftRow.version || 1),
-        updatedBy: draftRow.updated_by || "",
-        updatedByName: draftRow.updated_by_name || "",
-        updatedAt: draftRow.updated_at || ""
-      };
-    }
+    const nonroutineDraft = maintenanceNonroutineDraftSummary(draftRow, people);
     const hasFormalNonroutine = flightSubtasks.length > 0;
     const hasNonroutineDraft = Boolean(nonroutineDraft?.items?.length);
     const hasNonroutine = hasFormalNonroutine || hasNonroutineDraft;
@@ -8218,6 +8223,12 @@ async function routeRequest(req, res) {
       bumpMaintenanceVersion(assignment.flight_id, "maintenance.release.submitted");
       return send(res, 200, { flight });
     }
+    if (method === "GET" && url.pathname === "/api/maintenance/nonroutine-options") {
+      const actor = requireLogin(req, res);
+      if (!actor) return;
+      if (!hasRbac(actor,"maintenance.content.manage")) return send(res,403,{error:"当前账号没有维护工作内容权限"});
+      return send(res,200,{towDefaultHours:maintenanceTowDefaultHours()});
+    }
     if (method === "GET" && url.pathname === "/api/maintenance/rules") {
       const login = requireLogin(req, res);
       if (!login) return;
@@ -9156,7 +9167,28 @@ const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id
 
 const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
 
-const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,actionTask:offsetService.tasks});
+const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,actionTask:offsetService.tasks,
+  loadRoutineReports(flightIds){
+    if(!flightIds.length)return new Map();
+    const marks=flightIds.map(()=>'?').join(',');
+    const batches=new Map(db.prepare(`select flight_id,feedback,status from maintenance_report_batches where report_type='routine' and flight_id in (${marks})`).all(...flightIds).map(row=>[row.flight_id,row]));
+    const drafts=new Map(db.prepare(`select flight_id,payload_json from maintenance_report_drafts where report_type='routine' and flight_id in (${marks})`).all(...flightIds).map(row=>[row.flight_id,row]));
+    return new Map(flightIds.map(id=>{
+      const batch=batches.get(id),draft=drafts.get(id);
+      let payload={};try{payload=JSON.parse(draft?.payload_json||"{}");}catch{}
+      // Match the execution report's nullish precedence, including an explicitly cleared batch feedback.
+      const fromBatch=batch?.feedback!==null&&batch?.feedback!==undefined;
+      return [id,{feedback:batch?.feedback??String(payload.feedback||""),source:fromBatch?"report":draft?"draft":"none",status:fromBatch?batch.status:draft?"草稿":""}];
+    }));
+  },
+  loadNonroutineDrafts(flightIds){
+    if(!flightIds.length)return new Map();
+    const rows=db.prepare(`select * from maintenance_report_drafts where report_type='nonroutine' and flight_id in (${flightIds.map(()=>'?').join(',')})`).all(...flightIds);
+    if(!rows.length)return new Map();
+    const people=new Map(allPeople().map(person=>[person.id,person]));
+    return new Map(rows.map(row=>[row.flight_id,maintenanceNonroutineDraftSummary(row,people,{includeExplanation:true})]));
+  }
+});
 
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
