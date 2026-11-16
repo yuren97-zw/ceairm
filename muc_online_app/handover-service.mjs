@@ -373,7 +373,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   historyClauses(filters,clauses,args);
   const where=clauses.length?'where '+clauses.join(' and '):'';
   const limit=scope==='all'?200:100;
-  return {items:db.prepare(`select distinct h.* from handover h ${where} order by coalesce(h.submitted_at,h.created_at) desc limit ${limit}`).all(...args).map(row=>{const item=listRow(row);const aircraft=matchedAircraftOf(row.id,filters);if(aircraft)item.matchedAircraft=aircraft;return item;})};
+  return {items:db.prepare(`select h.* from handover h ${where} order by coalesce(h.submitted_at,h.created_at) desc limit ${limit}`).all(...args).map(row=>{const item=listRow(row);const aircraft=matchedAircraftOf(row.id,filters);if(aircraft)item.matchedAircraft=aircraft;return item;})};
  }
  function detail(user,id){
   const handover=loadHandover(id);
