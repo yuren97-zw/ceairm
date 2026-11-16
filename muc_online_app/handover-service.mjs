@@ -424,14 +424,13 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const generatedAt=now();
   return {generatedAt,handovers:ids.map(id=>handoverFull(id,generatedAt))};
  }
- // 交接单维修机会候选：按进港时间排序（先后按日期），未完成优先，可切换全部；只读不改维修模块。
+ // 交接单维修机会候选：北京时间当日和前一日，仅展示三种可交接状态。
  function maintenanceOptions(user,filters={}){
   requirePermission(user,'handover.create');
-  const scope=String(filters.scope||'unfinished'),date=String(filters.date||'').trim();
-  const clauses=['1=1'],args=[];
-  if(scope!=='all')clauses.push('f.archived_at is null');
+  const date=String(filters.date||'').trim(),today=bjDate(clock());
+  const clauses=['f.archived_at is null',"f.status in ('未派工','已派工','已提报')",'f.date>=?','f.date<=?'],args=[addDays(today,-1),today];
   if(/^\d{4}-\d{2}-\d{2}$/.test(date)){clauses.push('f.date=?');args.push(date);}
-  const rows=db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.remark,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where ${clauses.join(' and ')} order by f.date asc,f.planned_arrival asc,f.id asc limit 200`).all(...args);
+  const rows=db.prepare(`select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.remark,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where ${clauses.join(' and ')} order by f.date asc,case when nullif(trim(f.planned_arrival),'') is null then 1 else 0 end asc,coalesce(trim(f.planned_arrival),'') asc,case when nullif(trim(f.planned_departure),'') is null then 1 else 0 end asc,trim(f.planned_departure) asc,f.id asc limit 200`).all(...args);
   const tree=flightTree(rows.map(r=>r.id));
   return {items:rows.map(r=>flightView(r,tree.get(r.id)))};
  }

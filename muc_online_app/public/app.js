@@ -5110,7 +5110,7 @@ async function showPage(page) {
 }
 
 // ===== 班组交接（信息传达左上角菜单第三项）=====
-const handoverUi={tab:"create",epoch:0,listEpoch:0,optionsError:"",successMessage:"",successTimer:null,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],optionsScope:"unfinished",recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+const handoverUi={tab:"create",epoch:0,listEpoch:0,optionsError:"",successMessage:"",successTimer:null,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
 function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
 function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
 function handoverTime(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});}
@@ -5178,8 +5178,7 @@ async function handoverLoadRecipientOptions(teamId,token){
 }
 async function handoverLoadOptions(token){
   try{
-    const query=new URLSearchParams({scope:handoverUi.optionsScope});
-    const data=await apiRequest(`/handover/maintenance-options?${query}`);
+    const data=await apiRequest("/handover/maintenance-options");
     if(!handoverValid(token??handoverUi.epoch))return;
     handoverUi.options=data.items||[];
     handoverUi.oppKinds=[...new Set(handoverUi.options.map(o=>o.workKind).filter(Boolean))];
@@ -5223,6 +5222,11 @@ function refreshHandoverView(options={}){
         if(!handoverValid(token))return;
         if(fromDispatch){handoverUi.refreshError=`派工已保存，详情刷新失败：${error.message}`;handoverRepaint();}
       }
+      return;
+    }
+    if(handoverUi.tab==="create"&&handoverUi.editor&&!handoverUi.editor.needsInit){
+      await handoverLoadOptions(token);
+      if(handoverValid(token)&&handoverUi.tab==="create"&&handoverUi.view.mode==="list")handoverRepaint();
       return;
     }
     if(handoverUi.tab==="drafts"){
@@ -5349,8 +5353,7 @@ function handoverEditorHtml(){
     </fieldset>
     <fieldset class="handover-field"><legend>维修机会（已选 ${editor.opportunities.length} 项，勾选即填交接说明）</legend>
       <div class="handover-filters">
-        <div class="chips handover-scope"><button type="button" class="chip ${handoverUi.optionsScope==="unfinished"?"active":""}" data-hov-scope="unfinished">未完成</button><button type="button" class="chip ${handoverUi.optionsScope==="all"?"active":""}" data-hov-scope="all">全部</button></div>
-        <label>机号 <input type="search" class="handover-inline-input" data-hov-opp-aircraft value="${escapeHtml(handoverUi.oppFilter.aircraft||"")}" placeholder="如 B-1234"></label>
+        <label>机号 <input type="search" class="handover-inline-input" data-hov-opp-aircraft value="${escapeHtml(handoverUi.oppFilter.aircraft||"")}" placeholder="6587"></label>
         <label>类别 <select class="handover-select" data-hov-opp-kind>${["全部",...handoverUi.oppKinds].map(kind=>`<option value="${escapeHtml(kind)}" ${handoverUi.oppFilter.kind===kind||(kind==="全部"&&!handoverUi.oppFilter.kind)?"selected":""}>${escapeHtml(kind)}</option>`).join("")}</select></label>
       </div>
       <div>${pickerRows||`<p class="status-line">没有匹配的维修机会（服务端候选 ${handoverUi.options.length} 项${handoverUi.optionsError?`；加载失败：${escapeHtml(handoverUi.optionsError)}`:""}）。</p>`}</div>
@@ -5504,7 +5507,7 @@ async function gotoHandoverMaintenance(flightId,snapshot){
 const handoverPanelElement=document.getElementById("handoverPanel");
 if(handoverPanelElement){
  handoverPanelElement.addEventListener("click",async event=>{
-  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-scope],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete],[data-hov-retry-refresh]");
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete],[data-hov-retry-refresh]");
   if(!target)return;
   const editor=handoverUi.editor;
   if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
@@ -5515,7 +5518,6 @@ if(handoverPanelElement){
   if(target.dataset.hovSubmit!==undefined)return submitHandover();
   if(target.dataset.hovPick){const flightId=target.dataset.hovPick;const editor2=handoverUi.editor;if(!editor2)return;const existing=editor2.opportunities.find(o=>o.flightId===flightId);if(existing)editor2.opportunities=editor2.opportunities.filter(o=>o.flightId!==flightId);else{const option=handoverUi.options.find(o=>o.id===flightId);editor2.opportunities.push({flightId,note:"",snapshot:option?{date:option.date,aircraftNo:option.aircraftNo,flightNo:option.flightNo,workKind:option.workKind,stand:option.stand,plannedArrival:option.plannedArrival,status:option.status}:{}});}handoverRepaint();return;}
   if(target.dataset.hovExpand){const set=editor?.pickerOpen;if(!set)return;const id=target.dataset.hovExpand;set.has(id)?set.delete(id):set.add(id);handoverRepaint();return;}
-  if(target.dataset.hovScope){handoverUi.optionsScope=target.dataset.hovScope;await handoverLoadOptions();handoverRepaint();return;}
   if(target.dataset.hovRemoveRecipient){editor.recipients=editor.recipients.filter(r=>r.userId!==target.dataset.hovRemoveRecipient);handoverRepaint();return;}
   if(target.dataset.hovRemoveOpp){editor.opportunities.splice(Number(target.dataset.hovRemoveOpp),1);handoverRepaint();return;}
   if(target.dataset.hovExportId!==undefined||target.dataset.hovExport!==undefined){
@@ -6589,7 +6591,7 @@ async function refreshMaintenanceFromSync(version = 0) {
   }
   if (nextVersion && nextVersion <= Number(state.maintenanceSyncVersion || 0)) return;
   if (nextVersion) state.maintenanceSyncVersion = nextVersion;
-  if (typeof handoverUi !== "undefined" && handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.status === "pending") {
+  if (typeof handoverUi !== "undefined" && handoverActive() && ((handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.status === "pending") || (handoverUi.view.mode === "list" && handoverUi.tab === "create" && handoverUi.editor && !handoverUi.editor.needsInit))) {
     refreshHandoverView();
   }
   if (maintenanceHasOpenEditor()) {
