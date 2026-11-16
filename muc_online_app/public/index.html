@@ -954,6 +954,27 @@
 .handover-note-box.muted strong{color:var(--muted)}
 .handover-note-card{display:grid;gap:6px;min-width:0;margin:8px 0;padding:0;border:0;background:transparent}
 .handover-note-card.removed{opacity:.55}
+.handover-note-card.handover-opportunity-set{margin:12px 0;padding:10px;border:1px solid #E6EBEF;border-radius:8px;background:#FAFBFC;box-shadow:none;max-width:100%;overflow-wrap:anywhere}
+.handover-opportunity-set>.handover-note-box{margin:4px 0 0;padding:8px;border:1px solid #DDE9ED;border-radius:6px;background:#F0F6F7}
+.handover-opportunity-set>.handover-note-box.muted{border-color:#E6EBEF;background:#F4F6F8}
+.handover-opportunity-set>.execute-flight-body{margin-top:4px;min-width:0}
+.handover-opp-summary>.maintenance-remark-indicator{position:relative;inset:auto;flex:0 0 32px;width:32px;height:32px;transform:none}
+.handover-opp-summary>.maintenance-remark-indicator::after{inset:0;pointer-events:none}
+.handover-detail-summary{flex-wrap:wrap;gap:3px 5px;line-height:1.6;overflow-wrap:anywhere}
+.handover-detail-summary>span{max-width:100%;white-space:normal}
+.handover-detail-summary .handover-summary-count{white-space:nowrap}
+.handover-detail-summary .draft-count{color:#8B6508}
+.handover-note-card>.handover-opp-summary{align-items:flex-start}
+.handover-note-card .handover-summary-dot{color:#98A2B3}
+.handover-flight-times{display:flex;flex-wrap:wrap;gap:3px 5px;margin:2px 0 10px;font-size:12px;line-height:1.65;color:var(--ink);overflow-wrap:anywhere}
+.handover-time-label,.handover-time-separator{color:var(--muted)}
+.handover-routine-explanation{display:grid;gap:4px;margin:8px 0 10px;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+.handover-routine-explanation strong{font-weight:600;color:var(--ink)}
+.handover-draft-work{min-width:0}
+.handover-draft-state{margin:4px 0}
+.handover-draft-explanation{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.handover-submitted-message{font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+
 .handover-opp-summary{display:flex;align-items:center;gap:8px;min-width:0}
 .handover-summary-toggle{flex:1;display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border:0;background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:left;font:inherit;font-size:12px;color:var(--muted)}
 .handover-summary-toggle:hover{background:var(--brand-soft);border-radius:8px}

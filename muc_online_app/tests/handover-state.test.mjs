@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHandoverService} from '../handover-service.mjs';
 import {createActionTaskService} from '../action-task-service.mjs';
 const CLOCK=Date.parse('2026-11-14T09:00:00+08:00');
-function fixture({withTasks=false,clock=CLOCK}={}){
+function fixture({withTasks=false,clock=CLOCK,loadNonroutineDrafts,loadRoutineReports}={}){
  const db=new DatabaseSync(':memory:');
  db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
  db.exec("create table users(id text primary key,person_id text,status text default 'active')");
@@ -30,7 +30,7 @@ function fixture({withTasks=false,clock=CLOCK}={}){
   db.exec("create table if not exists action_tasks(id text primary key,source_module text not null,source_type text not null,source_id text not null,action_type text not null,assignee_user_id text not null,title text not null,status text not null,target_json text not null,created_at text not null,updated_at text not null,unique(source_module,source_type,source_id,action_type,assignee_user_id))");
   tasks=createActionTaskService({db,canAct:()=>true});
  }
- const service=createHandoverService({db,clock:()=>clock,hasRbac:(u,code)=>!!u?.permissions?.includes(code),actionTask:tasks});
+ const service=createHandoverService({db,clock:()=>clock,hasRbac:(u,code)=>!!u?.permissions?.includes(code),actionTask:tasks,loadNonroutineDrafts,loadRoutineReports});
  return {db,service,user,allPerms,tasks};
 }
 const draftPayload={toTeamId:'TEAM-LINE-2',recipients:[{userId:'u3'}],opportunities:[{flightId:'f1',note:'航后检查注意右发振动'}],otherItems:'工具间钥匙已交接'};
@@ -212,4 +212,38 @@ test('maintenance candidates sort by date, arrival then missing-arrival departur
  assert.deepEqual(service.maintenanceOptions(user('u1')).items.map(item=>item.id),[
   'yesterday-no-arrival','early-arrival','f1','f2','null-arrival','empty-arrival','space-arrival','both-empty'
  ]);
+});
+
+test('handover detail reloads formal and draft work independently through draft conversion',()=>{
+ let drafts=new Map([['f1',{items:[{title:'共享工作',entries:[]}],version:1}]]);
+ const batches=[];
+ const {db,service,user}=fixture({loadNonroutineDrafts:ids=>{batches.push(ids);return drafts;}});
+ const created=service.create(user('u1'),draftPayload);
+ assert.equal(created.opportunities[0].live.subtasks.length,1);
+ assert.equal(created.opportunities[0].live.nonroutineDraft.items.length,1);
+ const before=created.opportunities[0].snapshot;
+ drafts=new Map();
+ db.prepare('insert into maintenance_subtasks(id,flight_id,title,category,created_at) values(?,?,?,?,?)').run('converted','f1','共享工作','其他','2026-11-14T02:00:00Z');
+ const updated=service.detail(user('u1'),created.handover.id);
+ assert.equal(updated.opportunities[0].live.subtasks.length,2);
+ assert.equal(updated.opportunities[0].live.nonroutineDraft,null);
+ assert.deepEqual(updated.opportunities[0].snapshot,before);
+ assert.equal(updated.opportunities[0].note,draftPayload.opportunities[0].note);
+ assert.ok(batches.every(ids=>ids.includes('f1')));
+});
+
+test('routine explanation updates live without rewriting handover notes or snapshots',()=>{
+ let reports=new Map([['f1',{feedback:'例行草稿',source:'draft',status:'草稿'}]]);
+ const {service,user}=fixture({loadRoutineReports:()=>reports});
+ const created=service.create(user('u1'),draftPayload);
+ assert.equal(created.opportunities[0].live.routineReport.feedback,'例行草稿');
+ const snapshot=created.opportunities[0].snapshot;
+ reports=new Map([['f1',{feedback:'正式说明',source:'report',status:'已提报'}]]);
+ const submitted=service.detail(user('u1'),created.handover.id);
+ assert.equal(submitted.opportunities[0].live.routineReport.source,'report');
+ assert.equal(submitted.opportunities[0].live.routineReport.feedback,'正式说明');
+ assert.equal(submitted.opportunities[0].note,draftPayload.opportunities[0].note);
+ assert.deepEqual(submitted.opportunities[0].snapshot,snapshot);
+ reports=new Map([['f1',{feedback:'',source:'report',status:'已提报'}]]);
+ assert.equal(service.detail(user('u1'),created.handover.id).opportunities[0].live.routineReport.feedback,'');
 });
