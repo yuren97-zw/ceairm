@@ -21,6 +21,14 @@ if grep -q '^APP_VERSION=' "$ENV_FILE"; then
 else
   printf '\nAPP_VERSION=%s\n' "$VERSION" >> "$ENV_FILE"
 fi
+BUILD_SHA="${VERSION#production-}"
+if [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  if grep -q '^MUC_BUILD_SHA=' "$ENV_FILE"; then
+    sed -i "s/^MUC_BUILD_SHA=.*/MUC_BUILD_SHA=$BUILD_SHA/" "$ENV_FILE"
+  else
+    printf '\nMUC_BUILD_SHA=%s\n' "$BUILD_SHA" >> "$ENV_FILE"
+  fi
+fi
 ln -sfn "$TARGET" "$CURRENT"
 systemctl restart "$SERVICE_NAME"
 "$HEALTH_CHECK" "$VERSION"

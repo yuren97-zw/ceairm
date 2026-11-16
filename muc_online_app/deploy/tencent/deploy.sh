@@ -19,6 +19,14 @@ set_app_version() {
   else
     printf '\nAPP_VERSION=%s\n' "$version" >> "$ENV_FILE"
   fi
+  local build_sha="${version#production-}"
+  if [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    if grep -q '^MUC_BUILD_SHA=' "$ENV_FILE"; then
+      sed -i "s/^MUC_BUILD_SHA=.*/MUC_BUILD_SHA=$build_sha/" "$ENV_FILE"
+    else
+      printf '\nMUC_BUILD_SHA=%s\n' "$build_sha" >> "$ENV_FILE"
+    fi
+  fi
 }
 
 [[ -f "$ARCHIVE" ]] || { echo "Release archive not found: $ARCHIVE" >&2; exit 1; }
