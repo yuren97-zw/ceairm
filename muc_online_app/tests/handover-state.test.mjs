@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHandoverService} from '../handover-service.mjs';
 import {createActionTaskService} from '../action-task-service.mjs';
 const CLOCK=Date.parse('2026-11-14T09:00:00+08:00');
-function fixture({withTasks=false}={}){
+function fixture({withTasks=false,clock=CLOCK}={}){
  const db=new DatabaseSync(':memory:');
  db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
  db.exec("create table users(id text primary key,person_id text,status text default 'active')");
@@ -30,7 +30,7 @@ function fixture({withTasks=false}={}){
   db.exec("create table if not exists action_tasks(id text primary key,source_module text not null,source_type text not null,source_id text not null,action_type text not null,assignee_user_id text not null,title text not null,status text not null,target_json text not null,created_at text not null,updated_at text not null,unique(source_module,source_type,source_id,action_type,assignee_user_id))");
   tasks=createActionTaskService({db,canAct:()=>true});
  }
- const service=createHandoverService({db,clock:()=>CLOCK,hasRbac:(u,code)=>!!u?.permissions?.includes(code),actionTask:tasks});
+ const service=createHandoverService({db,clock:()=>clock,hasRbac:(u,code)=>!!u?.permissions?.includes(code),actionTask:tasks});
  return {db,service,user,allPerms,tasks};
 }
 const draftPayload={toTeamId:'TEAM-LINE-2',recipients:[{userId:'u3'}],opportunities:[{flightId:'f1',note:'航后检查注意右发振动'}],otherItems:'工具间钥匙已交接'};
@@ -152,17 +152,25 @@ test('detail visibility follows creator, recipient, team and history permission'
  assert.doesNotThrow(()=>service.detail(user('u9',['handover.view','handover.history.all']),created.handover.id),'history 权限可见');
  assert.throws(()=>service.detail(user('u10',['handover.view']),created.handover.id),/没有查看该交接单的权限/,'无关系且无全量权限者不可见');
 });
-test('maintenance options default to unfinished and support full view',()=>{
- const {service,user}=fixture();
+test('maintenance options restrict dates and statuses even for legacy all scope',()=>{
+ const {db,service,user}=fixture();
+ const insert=db.prepare('insert into maintenance_flights(id,date,aircraft_no,status,archived_at) values(?,?,?,?,?)');
+ for(const [id,date,status,archived] of [
+  ['yesterday','2026-11-13','已提报',null],
+  ['old','2026-11-12','未派工',null],
+  ['future','2026-11-15','已派工',null],
+  ['review','2026-11-14','待复核',null],
+  ['confirmed','2026-11-14','已确认',null],
+  ['archived','2026-11-14','已提报','2026-11-14T00:00:00Z']
+ ])insert.run(id,date,'B-6587',status,archived);
  const options=service.maintenanceOptions(user('u1'),{});
- assert.deepEqual(options.items.map(i=>i.id),['f1','f2'],'按进港时间升序，排除已归档');
- assert.equal(options.items.find(i=>i.id==='f1').subtasks.length,1,'附加工作随机会装配');
+ assert.deepEqual(options.items.map(i=>i.id),['yesterday','f1','f2']);
+ assert.equal(options.items.find(i=>i.id==='f1').subtasks.length,1);
  assert.equal(options.items.find(i=>i.id==='f1').assignments.length,1);
- assert.equal(options.items.find(i=>i.id==='f1').subtasks[0].content,'按手册 72-00 检查','报工说明随附加工作装配');
- const all=service.maintenanceOptions(user('u1'),{scope:'all'});
- assert.deepEqual(all.items.map(i=>i.id),['f3','f1','f2'],'全部按进港时间升序');
- const byDate=service.maintenanceOptions(user('u1'),{date:'2026-11-13',scope:'all'});
- assert.deepEqual(byDate.items.map(i=>i.id),['f3']);
+ assert.equal(options.items.find(i=>i.id==='f1').subtasks[0].content,'按手册 72-00 检查');
+ assert.deepEqual(service.maintenanceOptions(user('u1'),{scope:'all'}).items.map(i=>i.id),['yesterday','f1','f2']);
+ assert.deepEqual(service.maintenanceOptions(user('u1'),{date:'2026-11-13'}).items.map(i=>i.id),['yesterday']);
+ assert.deepEqual(service.maintenanceOptions(user('u1'),{date:'2026-11-12',scope:'all'}).items,[]);
 });
 
 test('action tasks follow recipients through submit, edit and confirm',()=>{
@@ -181,4 +189,27 @@ test('action tasks follow recipients through submit, edit and confirm',()=>{
  service.confirm(user('u3'),created.handover.id);
  assert.equal(tasks.count({id:'u3'}).count,0,'一人确认后全部待办终结');
  assert.equal(tasks.count({id:'u1'}).count,0);
+});
+
+ test('maintenance option date window uses Beijing midnight',()=>{
+ const before=fixture({clock:Date.parse('2026-11-14T15:59:59Z')});
+ assert.deepEqual(before.service.maintenanceOptions(before.user('u1')).items.map(i=>i.id),['f1','f2']);
+ const after=fixture({clock:Date.parse('2026-11-15T16:00:00Z')});
+ assert.deepEqual(after.service.maintenanceOptions(after.user('u1')).items,[]);
+ });
+
+test('maintenance candidates sort by date, arrival then missing-arrival departure',()=>{
+ const {db,service,user}=fixture();
+ const insert=db.prepare('insert into maintenance_flights(id,date,aircraft_no,status,planned_arrival,planned_departure) values(?,?,?,?,?,?)');
+ for(const [id,date,arrival,departure] of [
+  ['yesterday-no-arrival','2026-11-13',null,'2026-11-13 23:00:00'],
+  ['early-arrival','2026-11-14','2026-11-14 08:00:00',null],
+  ['null-arrival','2026-11-14',null,'2026-11-14 06:00:00'],
+  ['empty-arrival','2026-11-14','','2026-11-14 10:00:00'],
+  ['space-arrival','2026-11-14','  ','2026-11-14 12:00:00'],
+  ['both-empty','2026-11-14','',null]
+ ])insert.run(id,date,'6587','未派工',arrival,departure);
+ assert.deepEqual(service.maintenanceOptions(user('u1')).items.map(item=>item.id),[
+  'yesterday-no-arrival','early-arrival','f1','f2','null-arrival','empty-arrival','space-arrival','both-empty'
+ ]);
 });
