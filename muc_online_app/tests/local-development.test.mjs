@@ -45,7 +45,7 @@ test('server still refuses legacy 8787 startup and rejects unsafe profiles befor
 });
 test('unknown branches cannot bypass binding and LAN requires an explicit opt-in',()=>{
  assert.throws(()=>requireDevelopmentBranch('codex/unregistered','maintenance-personnel'),/未知/);
- assert.throws(()=>requireDevelopmentBranch('codex/info-rbac','maintenance-personnel'),/不一致/);
+ assert.throws(()=>requireDevelopmentBranch('codex/team-handover','maintenance-personnel'),/不一致/);
  const interfaces={en0:[{family:'IPv4',internal:false,address:'192.168.1.2'}]};
  const env=localDevelopmentEnvironment(app,'maintenance-personnel',{MUC_DEV_LAN:'true'},interfaces);assert.equal(env.HOST,'0.0.0.0');assert.equal(env.APP_ORIGIN,'http://192.168.1.2:8788');assert.ok(approvedLocalDevelopment(app,env));
  assert.throws(()=>selectDevelopmentLanAddress('8.8.8.8',interfaces));

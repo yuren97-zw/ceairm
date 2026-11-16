@@ -1,8 +1,10 @@
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
+import {createHandoverService} from './handover-service.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
 import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
+import {handoverXlsx} from './handover-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
 import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
@@ -7014,6 +7016,40 @@ async function routeRequest(req, res) {
       if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
       return send(res,404,{error:'接口不存在'});
     }
+    if(url.pathname==='/api/handover'||url.pathname.startsWith('/api/handover/')){
+      const actor=requireLogin(req,res);if(!actor)return;
+      if(!requireRbacPermission(req,res,'handover.view'))return;
+      if(method==='POST'&&url.pathname==='/api/handover')return send(res,200,handoverService.create(actor,await bodyJson(req)));
+      if(method==='GET'&&url.pathname==='/api/handover')return send(res,200,handoverService.list(actor,{scope:url.searchParams.get('scope'),teamId:url.searchParams.get('teamId'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')}));
+      if(method==='GET'&&url.pathname==='/api/handover/shift-context')return send(res,200,handoverService.shiftContext(actor));
+      if(url.pathname.startsWith('/api/handover/shift-baseline')){
+        if(!requireRbacPermission(req,res,'handover.baseline.manage'))return;
+        if(method==='GET'&&url.pathname==='/api/handover/shift-baseline')return send(res,200,handoverService.baselineOverview(actor));
+        if(method==='POST'&&url.pathname==='/api/handover/shift-baseline/confirm')return send(res,200,handoverService.confirmBaseline(actor,await bodyJson(req)));
+        return send(res,404,{error:'接口不存在'});
+      }
+      if(method==='GET'&&url.pathname==='/api/handover/maintenance-options')return send(res,200,handoverService.maintenanceOptions(actor,{scope:url.searchParams.get('scope'),date:url.searchParams.get('date')}));
+      if(method==='GET'&&url.pathname==='/api/handover/recipient-options')return send(res,200,handoverService.recipientOptions(actor,{teamId:url.searchParams.get('teamId')}));
+      if(method==='GET'&&url.pathname==='/api/handover/export.xlsx'){
+        if(!hasRbac(actor,'handover.export')){audit(actor,'permission_denied','handover','export',JSON.stringify({}));return send(res,403,{error:'没有导出交接记录的权限'});}
+        const filters={id:url.searchParams.get('id'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),teamId:url.searchParams.get('teamId'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')};
+        const data=handoverService.exportData(actor,filters);
+        if(!data.handovers.length)return send(res,404,{error:'没有匹配的交接单'});
+        const body=handoverXlsx(data.handovers);
+        const name=filters.id?`handover-${filters.id}`:`handover-${filters.from||'all'}-${filters.to||'all'}`;
+        audit(actor,'handover_export','handover',name,JSON.stringify({handovers:data.handovers.length}));
+        return sendBinary(res,200,body,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',{'Content-Disposition':`attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}.xlsx`,'Cache-Control':'no-store'});
+      }
+      const seg=url.pathname.slice('/api/handover/'.length).split('/');
+      if(seg.length===1&&seg[0]){
+        if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
+        if(method==='PUT')return send(res,200,handoverService.update(actor,seg[0],await bodyJson(req)));
+        if(method==='DELETE')return send(res,200,handoverService.deleteDraft(actor,seg[0]));
+      }
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='submit')return send(res,200,handoverService.submit(actor,seg[0],await bodyJson(req)));
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='confirm')return send(res,200,handoverService.confirm(actor,seg[0]));
+      return send(res,404,{error:'接口不存在'});
+    }
     if(url.pathname.startsWith('/api/attendance/offsets')){
       let actor=requireLogin(req,res);if(!actor)return;
       const path=url.pathname.slice('/api/attendance/offsets'.length),month=url.searchParams.get('month')||new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,7);
@@ -9119,6 +9155,8 @@ function currentOffsetActor(user){
 const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
 
 const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
+
+const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,actionTask:offsetService.tasks});
 
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
