@@ -89,3 +89,15 @@
 .offset-sheet .home-personal-table .home-punch-date,.offset-sheet .home-personal-table .home-punch-time{display:block;white-space:nowrap}
 .offset-sheet .home-personal-table .home-punch-date{font-size:12px;color:#65758a}
 .offset-sheet .home-personal-table small{font-size:12px;line-height:1.45}
+
+/* Home schedule and accumulation fit the drawer; other attendance tables keep their layout. */
+.offset-sheet .home-att-table.home-att-fit{box-sizing:border-box;max-width:100%;overflow:visible}
+.offset-sheet .home-att-fit table.home-personal-table{min-width:0;width:100%;table-layout:fixed}
+.offset-sheet .home-att-fit .home-personal-table th:nth-child(n){width:auto}
+.offset-sheet .home-att-fit .home-personal-table th:nth-child(1){width:13%}
+.offset-sheet .home-att-fit .home-personal-table th:nth-child(2){width:15%}
+.offset-sheet .home-att-fit .home-personal-table th:nth-child(5),.offset-sheet .home-att-fit .home-personal-table th:nth-child(6){width:17%}
+.offset-sheet .home-att-fit .home-personal-table td:nth-child(n),.offset-sheet .home-att-fit .home-punch-date,.offset-sheet .home-att-fit .home-punch-time{min-width:0;white-space:normal;overflow-wrap:anywhere}
+.offset-sheet .home-att-fit [data-open-day]{box-sizing:border-box;min-width:0;width:100%;max-width:100%;padding:0}
+.offset-sheet .home-att-fit .att-tag.att-tone{box-sizing:content-box;max-width:min(4em,calc(100% - 10px));padding:3px 4px;white-space:normal;overflow-wrap:anywhere;word-break:break-all;vertical-align:top}
+@media(max-width:600px){.offset-sheet .home-att-fit .home-personal-table th,.offset-sheet .home-att-fit .home-personal-table td{padding:6px 2px;font-size:12px}.offset-sheet .home-att-fit .home-personal-table small,.offset-sheet .home-att-fit .home-punch-date{font-size:11px}}
