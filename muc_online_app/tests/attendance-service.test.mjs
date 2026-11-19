@@ -201,3 +201,14 @@ test('V1.4 home schedule uses trusted plan on a missing-punch day and exposes th
 test('R13 personal seven-day range crosses December/January in both directions without a monthly cutoff',()=>{
  for(const date of ['2026-12-31','2027-01-01']){const f=fixture(),service=createAttendanceService({...f.deps,clock:()=>Date.parse(date+'T12:00:00+08:00')}),result=service.selfDetails(reader,'schedule');assert.equal(result.dates.length,7);assert.equal(result.days.length,7);assert.ok(result.dates.some(d=>d.startsWith('2026-12')));assert.ok(result.dates.some(d=>d.startsWith('2027-01')));service.stop();f.service.stop();f.db.close();}
 });
+
+test('historical morning rest reads prior month night schedule consistently in detail summary and export',async()=>{
+ const {exportTables}=await import('../attendance-export.mjs');const f=fixture();
+ const prev={date:'2026-08-31',covered:true,points:[{type:'OnDuty',planned:Date.parse('2026-08-31T19:40:00+08:00')},{type:'OffDuty',planned:Date.parse('2026-09-01T08:30:00+08:00')}],punches:[],approvals:[]};
+ const rest={date:'2026-09-01',covered:true,rest:true,scheduleConflict:true,scheduleRestFlags:['N','Y'],points:[{type:'OnDuty',planned:Date.parse('2026-09-01T08:51:16+08:00'),shiftId:'',shiftVersion:''}],punches:[{type:'OnDuty',actual:Date.parse('2026-09-01T08:51:16+08:00'),source:'USER'}],approvals:[]};
+ for(const day of [prev,rest])f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',day.date,JSON.stringify(day),JSON.stringify({category:'待核对'}),'unchanged','2026-09-02T00:00:00Z','fixture');
+ const stored=f.db.prepare('select * from attendance_days').all();
+ const full=f.service.snapshot(reader,{month:'2026-09',personId:'p1'}),compact=f.service.snapshot(reader,{month:'2026-09',personId:'p1'},'attendance.read',{detailLevel:'compact'}),summary=f.service.snapshot(admin,{month:'2026-09'},'attendance.stats.read',{detailLevel:'summary'});
+ for(const result of [full,compact])assert.equal(result.people[0].days[0].category,'休息');assert.equal(summary.people.find(p=>p.personId==='p1').counts['休息'],1);
+ const matrix=exportTables(full).find(([name])=>name==='逐日明细（横版）')[1];assert.equal(matrix[1][3],'休息');assert.equal(f.calls,0);assert.deepEqual(f.db.prepare('select * from attendance_days').all(),stored);f.service.stop();f.db.close();
+});

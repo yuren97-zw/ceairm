@@ -185,3 +185,18 @@ test('directory exclusions have a separate escaped informational section, not a 
 });
 
 test('extended 2025 public leave is permanently excluded from discovery and choices',async()=>{const {attendanceCategoryAllowed,attendanceFixedCategoryOrder,attendanceOrderedCategories}=await import('../public/attendance-presentation.mjs');const {leaveGroup}=await import('../public/attendance-leave-model.mjs');const name='公休假（2025年度延长）';assert.equal(attendanceCategoryAllowed(name),false);assert.equal(attendanceFixedCategoryOrder.includes(name),false);assert.deepEqual(attendanceOrderedCategories([name,'公休假','新冠关爱假']),['公休假']);assert.equal(leaveGroup(name),null);assert.equal(leaveGroup('固定班制公休假'),'公休假');});
+
+test('work plan echo on a rest day appears only in the actual punch column',async()=>{
+ const {classifyDay}=await import('../attendance-rules.mjs');
+ const date='2026-11-09',actual=Date.parse(date+'T08:51:16+08:00'),now=Date.parse('2026-11-19T12:00:00+08:00');
+ const input={date,covered:true,rest:true,scheduleConflict:true,scheduleRestFlags:['N','Y'],points:[{type:'OnDuty',planned:actual,shiftId:'',shiftVersion:''}],punches:[{type:'OnDuty',actual,source:'USER'}],approvals:[]};
+ const previous={date:'2026-11-08',covered:true,points:[{type:'OnDuty',planned:Date.parse('2026-11-08T19:40:00+08:00')},{type:'OffDuty',planned:Date.parse(date+'T08:30:00+08:00')}]};
+ const day={...classifyDay(input,now,null,{previousWorkDays:[previous]}),input};
+ const data={people:[{personId:'p',name:'测试',employeeNo:'001',days:[day],counts:{休息:1},overtimeSeconds:null}],dates:[date],categories:['休息'],month:'2026-11',generatedAt:new Date(now).toISOString()};
+ const s=setup({data});await s.listeners.get('click')({target:s.button({day:`p|${date}`})});
+ const row=s.modal.innerHTML.match(/<tr[^>]*aria-current="date"[^>]*>(.*?)<\/tr>/s)?.[1];
+ const cells=[...(row||'').matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map(match=>match[1]);
+ assert.equal(cells[2],'休息');
+ assert.match(cells[3],/上班 2026-11-09 08:51:16<small>有效打卡（无排班）/);
+ s.view.destroy();
+});

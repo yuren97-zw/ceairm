@@ -1,6 +1,6 @@
 import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';
 // Canonical attendance model: timestamps are milliseconds, work dates are Asia/Shanghai.
-export const RULE_VERSION = 'attendance-api-1.3';
+export const RULE_VERSION = 'attendance-api-1.4';
 const workDateFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'});
 export const dayOf=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'Invalid Date':workDateFormatter.format(date);};
 export const stamp = value => {
@@ -78,11 +78,34 @@ export function calculateOvertime(input, now=Date.now()) {
   const actual = actuals[0];
   return {seconds:Math.max(0,Math.floor((actual-planned)/1000)),status:'已计算',reason:'归属工作日末次计划下班点与对应有效实际打卡的差额',planned,actual};
 }
+function restAfterNightMorning(input,context){
+  const start=Date.parse(input.date+'T00:00:00+08:00'),valid=(input.punches||[]).filter(validPunch);
+  const previous=(context.previousWorkDays||[]).find(d=>d.date===dayOf(start-86400000));
+  return input.covered&&input.rest&&!input.identityIssue&&valid.length>0
+    &&valid.every(p=>p.type==='OnDuty'&&stamp(p.actual)>=start&&stamp(p.actual)<start+12*3600000)
+    &&previous?.covered&&!previous.rest&&!previous.scheduleConflict&&!previous.identityIssue&&plannedShift(previous.points)==='夜班';
+}
+function restPunchPlanEvidence(input,context){
+  if(!input.scheduleConflict||!restAfterNightMorning(input,context))return null;
+  const points=input.points||[],flags=input.scheduleRestFlags||[],valid=(input.punches||[]).filter(validPunch);
+  // Require explicit rest plus complete, shiftless start rows matching real punches exactly.
+  // A real shift, an off-duty plan, or an unrepresented work row remains a conflict.
+  if(!points.length||!flags.includes('Y')||flags.some(f=>!['Y','N'].includes(f))||flags.filter(f=>f==='N').length!==points.length)return null;
+  if(!points.every(p=>p.type==='OnDuty'&&Object.hasOwn(p,'shiftId')&&Object.hasOwn(p,'shiftVersion')&&!p.shiftId&&!p.shiftVersion
+    &&valid.some(v=>stamp(v.actual)===stamp(p.planned))))return null;
+  return {kind:'rest_morning_punch_not_work_schedule',reason:'明确休息排班中的无班次上班点与实际打卡完全一致，按打卡依据保留，不作为工作排班',ignoredPlanPoints:points.map(p=>({...p}))};
+}
 export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}) {
+  const scheduleInterpretation=restPunchPlanEvidence(input,context);
+  if(scheduleInterpretation)input={...input,points:[],scheduleConflict:false};
   const {date, points=[], punches=[], approvals=[]} = input;
   input = {...input,points,punches,approvals};
   const issues=[];
   const result={date,category:'待核对',shift:null,purposes:[],issues,reason:'',punchDetails:context.includePunchDetails===false?[]:describePunches(input,now),overtime:calculateOvertime(input,now),ruleVersion:RULE_VERSION};
+  if(scheduleInterpretation){
+    result.scheduleInterpretation=scheduleInterpretation;
+    result.punchDetails=result.punchDetails.map(p=>p.actual?{...p,planned:null,status:'有效打卡（无排班）',reason:scheduleInterpretation.reason}:{...p,planned:null});
+  }
   const finish=(category,reason)=>({...result,category:attendanceCategoryAllowed(category)?category:'待核对',reason:attendanceCategoryAllowed(category)?reason:'关联已忽略的假种，不归入该类别；原始依据保留，考勤待核对'});
   if (date>dayOf(now)) return finish('未来日期','日期尚未发生');
   if (!input.covered) return finish('未同步',input.syncError || '接口尚未成功完整覆盖该日');
@@ -156,6 +179,7 @@ export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}
   if(kinds.length>1) {issues.push('多个审批考勤类别并存');return finish('待核对','同日审批产生多个类别');}
   if(kinds.length===1)return finish(kinds[0],kinds[0]==='跟班'?'有效外出审批的外出事由命中跟班；本日只计跟班，不重复计外出':'根据有效审批及出差事由确定类别');
   if(input.rest && !punches.some(validPunch)) return finish('休息',carry.size?'排班明确休息；外出审批跨夜部分归前一工作日，不重复计入本日':'排班明确标记休息');
+  if(restAfterNightMorning(input,context))return finish('休息','当日排班休息，仅有12:00前的有效上班打卡，前一日排班为夜班，按休息处理');
   if(input.rest && punches.some(validPunch)){issues.push('休息日存在有效打卡');return finish('待核对','休息与打卡并存，不能推断为出勤');}
   if(!points.length && !punches.length) return finish('无记录','接口查询成功，但未返回排班、打卡或有效审批');
   issues.push('数据不足以确定唯一类别');
