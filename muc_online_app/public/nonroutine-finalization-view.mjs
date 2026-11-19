@@ -1,4 +1,5 @@
 const categories=['工卡指令','单项工作','拖机','三方附加','试车','其他','人工除冰','联合除冰'];
+const mobileInputStyle="input,select,textarea{font-size:16px}";
 const labels={category:'类别',chapter:'ATA',title:'工作名称',workScope:'内容及范围',recognizedHours:'认定工时'};
 const channelLabels={WAITING_REVIEW:'待评议',APPROVED_PENDING_SYNC:'已认定待同步',NEEDS_ATTENTION:'已认定，待处理',MERGED_CLOSED:'已合并到原阶段结果',ADJUSTED_CLOSED:'已追加确认补记',CANCELLED_CLOSED:'通道已取消'};
 export function finalizationStatus(finalization){return channelLabels[finalization?.channel?.state]||'尚未认定';}
