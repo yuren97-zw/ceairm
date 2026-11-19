@@ -1,0 +1,976 @@
+{
+  "stage": "original-manual-postflight-lifecycle",
+  "date": "2026-11-14",
+  "testName": "original manual postflight lifecycle keeps drafts and partial reports separate and confirms each result once",
+  "sourceSha256": {
+    "server.mjs": "0e3c4bd7f508faac42bd9058a4db51a0ad751495958e52544e9135b393d522d1",
+    "tests/server.test.mjs": "a1315edbb2487c4e2ee3586077b75862bf882eda3c8637030d2f411e75f04eab"
+  },
+  "sqliteDefaultPassed": 781,
+  "postgresStatus": "passed",
+  "scope": {
+    "transport": "measuredRoute in-process request adapter; no browser or network socket for this new test",
+    "fixture": "explicit 5h routine-hours snapshot only; business statuses, assignments, batches, results and confirmations use original routes",
+    "scenario": "one active root person, A320 postflight, November2026, paper signatures, 5hours/1release sortie"
+  },
+  "limitations": [
+    "No all-role/scope/category matrix",
+    "No new browser, physical device, PWA or Linux package verification",
+    "Confirmed-state ordinary edit rejection checks business facts; no rejection-audit assertion",
+    "No all-flight/result correction or independent cancellation authority acceptance"
+  ],
+  "acceptancePromotion": "partial only; no verified case",
+  "sqliteCoordinatorEnabledPassed": 781,
+  "postgresPassed": 81,
+  "finalRun": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-eVYil3",
+    "port": 15432,
+    "fixtureOnly": false,
+    "coordinatorEnabled": true,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 146,
+      "rows": 4816,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "547e788610fa4abd0dddf3c778f65475681862c0068d726e64533feda15d37d3"
+    },
+    "stopped": true,
+    "concurrency": {
+      "syntheticOnly": true,
+      "processes": [
+        {
+          "port": 18890,
+          "backendPid": 65164,
+          "processId": 65163
+        },
+        {
+          "port": 18891,
+          "backendPid": 65171,
+          "processId": 65165
+        },
+        {
+          "port": 18892,
+          "backendPid": 65176,
+          "processId": 65175
+        },
+        {
+          "port": 18893,
+          "backendPid": 65178,
+          "processId": 65177
+        },
+        {
+          "port": 18894,
+          "backendPid": 65180,
+          "processId": 65179
+        },
+        {
+          "port": 18895,
+          "backendPid": 65182,
+          "processId": 65181
+        },
+        {
+          "port": 18896,
+          "backendPid": 65184,
+          "processId": 65183
+        },
+        {
+          "port": 18897,
+          "backendPid": 65186,
+          "processId": 65185
+        },
+        {
+          "port": 18898,
+          "backendPid": 65188,
+          "processId": 65187
+        },
+        {
+          "port": 18899,
+          "backendPid": 65190,
+          "processId": 65189
+        },
+        {
+          "port": 18900,
+          "backendPid": 65192,
+          "processId": 65191
+        },
+        {
+          "port": 18901,
+          "backendPid": 65196,
+          "processId": 65195
+        }
+      ],
+      "overlaps": [
+        {
+          "label": "routine-first-draft-same-version",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:56.917Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:56.953Z"
+            }
+          ],
+          "firstCommand": "first-draft",
+          "secondCommand": "stale-draft",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "DUPLICATE:last-opinion",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.783Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.812Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "duplicate-finalization",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.872Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.902Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "FINALIZE:last-opinion",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:58.530Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:58.558Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "finalize-first",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:58.611Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:58.641Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "confirm-opportunity",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "CONFIRM:last-opinion",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.202Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.230Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "confirm-first",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.282Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.311Z"
+            }
+          ],
+          "firstCommand": "confirm-opportunity",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "confirmed-adjustment-finalization-retries",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.386Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:59.414Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "twelve-distinct-reviewers",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.558Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.560Z"
+            },
+            {
+              "pid": 65176,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65178,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65180,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65182,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65184,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65186,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.561Z"
+            },
+            {
+              "pid": 65188,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.562Z"
+            },
+            {
+              "pid": 65190,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.562Z"
+            },
+            {
+              "pid": 65192,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.563Z"
+            },
+            {
+              "pid": 65196,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:04.564Z"
+            }
+          ],
+          "commands": [
+            {
+              "port": 18890,
+              "accountId": "v101-race-reviewer-0"
+            },
+            {
+              "port": 18891,
+              "accountId": "v101-race-reviewer-1"
+            },
+            {
+              "port": 18892,
+              "accountId": "v101-race-reviewer-2"
+            },
+            {
+              "port": 18893,
+              "accountId": "v101-race-reviewer-3"
+            },
+            {
+              "port": 18894,
+              "accountId": "v101-race-reviewer-4"
+            },
+            {
+              "port": 18895,
+              "accountId": "v101-race-reviewer-5"
+            },
+            {
+              "port": 18896,
+              "accountId": "v101-race-reviewer-6"
+            },
+            {
+              "port": 18897,
+              "accountId": "v101-race-reviewer-7"
+            },
+            {
+              "port": 18898,
+              "accountId": "v101-race-reviewer-8"
+            },
+            {
+              "port": 18899,
+              "accountId": "v101-race-reviewer-9"
+            },
+            {
+              "port": 18900,
+              "accountId": "v101-race-reviewer-10"
+            },
+            {
+              "port": 18901,
+              "accountId": "v101-race-reviewer-11"
+            }
+          ],
+          "releasedOnlyAfterAllTwelveWaiting": true,
+          "responseStatuses": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ]
+        },
+        {
+          "label": "EARLY:last-opinion",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.352Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.380Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "ordinary-opportunity-explicit-version",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.451Z"
+            },
+            {
+              "pid": 65171,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.480Z"
+            }
+          ],
+          "firstCommand": "first-versioned-edit",
+          "secondCommand": "stale-versioned-edit",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "label": "duplicate-finalization",
+          "opportunityId": "mtnf-1794619077011-708a928826c5",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "d597fcc034fd0dc1ed3ea9aa4fdc7c145e43bfa287de27ef15c7a45f8d2fbce5"
+        },
+        {
+          "label": "finalize-first",
+          "opportunityId": "mtnf-1794619078032-2ab09b26ffa1",
+          "caseId": "nrc-1794619078129-1e2fd7f59ceb",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "e862832c9ee188e0bc511faedf47d04d6dee28ddad49973278a7edb619a481da"
+        },
+        {
+          "label": "confirm-first",
+          "opportunityId": "mtnf-1794619078731-5e9b4ae1cfdd",
+          "caseId": "nrc-1794619078824-2bf596f5bf87",
+          "channelState": "ADJUSTED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "6671e9efcb6e15b050033f4d4170be0140838fef846808899615b6089e67650d"
+        },
+        {
+          "label": "twelve-distinct-reviewers",
+          "opportunityId": "mtnf-1794619084243-62886fa76d9c",
+          "caseId": "nrc-1794619084317-e56315a5bc9d",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "0155dbe1999b3760135dcc24c9b65316dde0285d018ee4f4b25b20b9c14bc871"
+        },
+        {
+          "label": "early-recognition-date-protected",
+          "opportunityId": "mtnf-1794619084866-8548bb5f2cff",
+          "caseId": "nrc-1794619084938-8655925fe08a",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "44f3f91e5a2cd6f543e1e3ea7082696179d3d714773607758087e3f7947d90a2"
+        }
+      ],
+      "workersStopped": true,
+      "month": "2026-11",
+      "routineDraftRace": {
+        "flightId": "mtnf-1794619076880-7e91c85ad4a9",
+        "statuses": [
+          200,
+          409
+        ],
+        "version": 1,
+        "feedback": "FIRST",
+        "formalHours": 0
+      },
+      "revokedAcceptances": [
+        {
+          "purpose": "WORK",
+          "action": "accept",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "role-revoked",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.311Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "WORK",
+          "action": "accept",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "scope-shrunk",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.346Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "WORK",
+          "action": "accept",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "person-suspended",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.387Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "WORK",
+          "action": "seats",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "role-revoked",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.494Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "WORK",
+          "action": "seats",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "scope-shrunk",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.533Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "WORK",
+          "action": "seats",
+          "caseId": "nrc-1794619077111-f7df5cf7d760",
+          "scenario": "person-suspended",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:17:57.576Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "accept",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "role-revoked",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.763Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "accept",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "scope-shrunk",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.798Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "accept",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "person-suspended",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.835Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "seats",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "role-revoked",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.936Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "seats",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "scope-shrunk",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:05.971Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        },
+        {
+          "purpose": "STANDARD",
+          "action": "seats",
+          "caseId": "stdreview-1794619085749-6703976fe94a",
+          "scenario": "person-suspended",
+          "waiting": [
+            {
+              "pid": 65164,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-14T01:18:06.008Z"
+            }
+          ],
+          "status": 404,
+          "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+          "reviewFactsUnchanged": true
+        }
+      ],
+      "concurrentRound": {
+        "caseId": "nrc-1794619084317-e56315a5bc9d",
+        "distinctAccounts": 12,
+        "distinctBackendPids": 12,
+        "progressCounts": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "sealedEvents": 1,
+        "statistics": {
+          "trimmedMean": 2.6,
+          "median": 2.5
+        },
+        "privateOpinionsOnly": true,
+        "sealedRetryStatuses": [
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409,
+          409
+        ],
+        "thirteenthStatus": 409,
+        "sealedRoundFactsUnchanged": true,
+        "finalSnapshotVerified": true
+      },
+      "opportunityVersionRace": {
+        "statuses": [
+          200,
+          409
+        ],
+        "staleEditDidNotOverwrite": true
+      },
+      "earlyRecognitionDate": {
+        "opportunityId": "mtnf-1794619084866-8548bb5f2cff",
+        "caseId": "nrc-1794619084938-8655925fe08a",
+        "status": 409,
+        "beforeDate": "2026-11-10",
+        "afterDate": "2026-11-10",
+        "receipt": {
+          "work_month": "2026-11",
+          "statistical_month": "2026-11"
+        },
+        "sourceMonthMetrics": {
+          "todayHours": 5,
+          "pendingTodayHours": 0,
+          "weekHours": 13,
+          "pendingWeekHours": 2,
+          "monthHours": 13,
+          "pendingMonthHours": 2,
+          "monthSorties": 6,
+          "pendingMonthSorties": 1
+        },
+        "targetMonthMetrics": {
+          "todayHours": 5,
+          "pendingTodayHours": 0,
+          "weekHours": 13,
+          "pendingWeekHours": 2,
+          "monthHours": 0,
+          "pendingMonthHours": 0,
+          "monthSorties": 0,
+          "pendingMonthSorties": 0
+        }
+      },
+      "standardDraftAuthority": {
+        "waiting": [
+          {
+            "pid": 65164,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-14T01:18:05.695Z"
+          }
+        ],
+        "status": 403,
+        "before": {
+          "standards": "13",
+          "versions": "14",
+          "events": "14"
+        },
+        "after": {
+          "standards": "13",
+          "versions": "14",
+          "events": "14"
+        }
+      },
+      "standardAuthority": {
+        "caseId": "stdreview-1794619085749-6703976fe94a",
+        "standardId": "mst-1794619085732-8cfe2ea7a01d",
+        "versionId": "msv-1794619085732-9671db62eeaa",
+        "state": "IN_REVIEW",
+        "revision": 3,
+        "seats": 12,
+        "replacementAccountId": "v101-race-reviewer-12",
+        "removedAccountId": "v101-race-reviewer-11",
+        "removedMemberStatus": 404,
+        "workAndFinancialFactsUnchanged": true
+      },
+      "publicationScopeAuthority": {
+        "standardId": "mst-1794619086091-46a90e3daf34",
+        "waiting": [
+          {
+            "pid": 65164,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-14T01:18:06.369Z"
+          }
+        ],
+        "status": 403,
+        "before": {
+          "n": "0"
+        },
+        "after": {
+          "n": "0"
+        }
+      },
+      "personalMetrics": {
+        "before": {
+          "todayHours": 5,
+          "pendingTodayHours": 0,
+          "weekHours": 5,
+          "pendingWeekHours": 0,
+          "monthHours": 5,
+          "pendingMonthHours": 0,
+          "monthSorties": 2,
+          "pendingMonthSorties": 0
+        },
+        "after": {
+          "todayHours": 5,
+          "pendingTodayHours": 0,
+          "weekHours": 15,
+          "pendingWeekHours": 0,
+          "monthHours": 15,
+          "pendingMonthHours": 0,
+          "monthSorties": 7,
+          "pendingMonthSorties": 0
+        },
+        "addedHours": 10,
+        "addedSorties": 5,
+        "pendingHoursUnchanged": true
+      },
+      "workersCleanExit": true,
+      "observationObjectsRemoved": true
+    }
+  }
+}

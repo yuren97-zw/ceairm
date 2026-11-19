@@ -1,0 +1,102 @@
+{
+  "driverVersion": "page-evidence-r1",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "p139": {
+      "ok": true,
+      "facts": {
+        "fieldCount": 12,
+        "names": [
+          "finalRoleSet_0_0",
+          "finalRoleSet_0_1",
+          "finalRoleSet_0_2",
+          "final_admissionDecision",
+          "final_category",
+          "final_chapter",
+          "final_participantsVerified",
+          "final_reason",
+          "final_recognizedHours",
+          "final_roleVerificationReason",
+          "final_title",
+          "final_workScope"
+        ],
+        "numberFields": [
+          "final_recognizedHours"
+        ],
+        "checkboxFields": [
+          "finalRoleSet_0_0",
+          "finalRoleSet_0_1",
+          "finalRoleSet_0_2",
+          "final_participantsVerified"
+        ],
+        "selectFields": [
+          "final_admissionDecision",
+          "final_category"
+        ],
+        "ratioFieldMatch": [],
+        "ratioLabelMatch": [],
+        "noRatioEditText": true,
+        "participantsLockedText": true
+      }
+    },
+    "p84": {
+      "ok": true,
+      "switch": {
+        "from": "单项工作",
+        "to": "工卡指令"
+      },
+      "rolesBefore": [
+        [
+          "finalRoleSet_0_0",
+          true
+        ],
+        [
+          "finalRoleSet_0_1",
+          false
+        ],
+        [
+          "finalRoleSet_0_2",
+          false
+        ]
+      ],
+      "repickPrompt": false,
+      "previewExcerpt": "只读预览，尚未入账分配版本沿用正式提报快照；后台新比例仅用于新提报。策略 ROLE_COMBINATION · 版本 4af70e80c3084afb2c267a23df1e16281b8dacfbb5c848cb8e8306636bcb17a2完整策略有变化；参与角色无变化类别：单项工作 → 工卡指令认定工时：2 → 2.5\n    赵威 · 核算角色 主做 · 2.5 小时原账期 2023-06 · 未确认输入或策略变化后须重新核对，预览不是入账凭据。"
+    },
+    "p132": {
+      "ok": true,
+      "renderedInputs": 75,
+      "groups": [
+        "nonroutine:主做+检验+辅助",
+        "nonroutine:主做+检验",
+        "nonroutine:主做+辅助",
+        "nonroutine:检验+辅助",
+        "nonroutine:主做",
+        "nonroutine:检验",
+        "nonroutine:辅助"
+      ],
+      "mismatches": [],
+      "combinationSums": {
+        "主做+检验+辅助": 1,
+        "主做+检验": 1,
+        "主做+辅助": 1,
+        "检验+辅助": 1,
+        "主做": 1,
+        "检验": 1,
+        "辅助": 1
+      }
+    }
+  },
+  "screenshots": [
+    "p139-final-form-no-ratio.png",
+    "p84-category-switch-preview.png",
+    "p132-hours-seven-groups.png"
+  ],
+  "servicesStopped": true,
+  "settlementUnchanged": true,
+  "browserApiWrites": 7,
+  "caseState": "SEALED"
+}

@@ -1,0 +1,26 @@
+{
+  "scope": "homepage current pending maintenance opportunities and exact execution navigation",
+  "userDecision": "仅当前待办机会（沿用现有口径）",
+  "sqlite": {
+    "tests": 652,
+    "pass": 652,
+    "fail": 0
+  },
+  "targetedTests": 4,
+  "validated": [
+    "501 opportunity full pagination",
+    "cross-page identity deduplication",
+    "home independent of execution location filter",
+    "page failure and cursor cycle handling",
+    "revoked opportunity reauthorization failure",
+    "fresh exact identity navigation and target location reload"
+  ],
+  "remaining": [
+    "browser back and scroll restoration acceptance",
+    "concurrent additions/removals during offset pagination"
+  ],
+  "sourceSha256": {
+    "public/app.js": "5effe2bbe91e567f7568763ffe95ec2e04bba295639005f9fc974a60ae941fef",
+    "tests/maintenance-home-navigation.test.mjs": "8a2285c41f7841acf7b5b50fa6779f4c06d787da5a709f9efcf091cf45e401cf"
+  }
+}

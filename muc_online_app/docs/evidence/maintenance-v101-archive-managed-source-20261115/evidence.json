@@ -1,0 +1,122 @@
+{
+  "baselineCommit": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sqlite": {
+    "default": 844,
+    "coordinator": 844,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 111,
+    "serviceRunFixtureOnly": false,
+    "newArchiveSourceOverlaps": [
+      {
+        "label": "archive-source-archive-first",
+        "waiting": [
+          {
+            "pid": 52035,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-15T15:57:33.231Z"
+          },
+          {
+            "pid": 52037,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-15T15:57:33.260Z"
+          }
+        ],
+        "firstCommand": "archive-managed-source-copy",
+        "secondCommand": "finalize-review",
+        "releasedOnlyAfterBothWaiting": true,
+        "responseStatuses": [
+          409,
+          200
+        ]
+      },
+      {
+        "label": "archive-source-finalize-first",
+        "waiting": [
+          {
+            "pid": 52035,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-15T15:57:33.985Z"
+          },
+          {
+            "pid": 52037,
+            "state": "active",
+            "wait_event_type": "Lock",
+            "wait_event": "advisory",
+            "xact_start": "2026-11-15T15:57:34.014Z"
+          }
+        ],
+        "firstCommand": "finalize-review",
+        "secondCommand": "archive-managed-source-copy",
+        "releasedOnlyAfterBothWaiting": true,
+        "responseStatuses": [
+          200,
+          409
+        ]
+      }
+    ],
+    "newArchiveSourceCases": [
+      {
+        "flightId": "mtnf-1794758252574-44904d9fe7a3",
+        "caseId": "nrc-1794758252670-8e8395a64fb3",
+        "subtaskId": "mtns-1794758252658-cc0c1ba6e7d1",
+        "first": "archive",
+        "archiveStatus": 409,
+        "finalizeStatus": 200,
+        "subtasks": 1,
+        "effectiveRows": 1,
+        "effectiveHours": 2,
+        "originalSourceUnchanged": true
+      },
+      {
+        "flightId": "mtnf-1794758253346-a146ba1c8270",
+        "caseId": "nrc-1794758253440-1cff383d72eb",
+        "subtaskId": "mtns-1794758253429-a2af633f5c59",
+        "first": "finalize",
+        "archiveStatus": 409,
+        "finalizeStatus": 200,
+        "subtasks": 1,
+        "effectiveRows": 1,
+        "effectiveHours": 2,
+        "originalSourceUnchanged": true
+      }
+    ],
+    "workersCleanExit": true,
+    "serviceClusterStopped": true,
+    "latestRestoreFixtureOnly": true,
+    "latestRestoreRepeatsServiceTests": false,
+    "restore": {
+      "tables": 147,
+      "rows": 8360,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "1d8d7791abafba28a9ddef93e45c82bcfca8217ffcc41ee00f5f995f1ae9b4a7"
+    },
+    "restoreClusterStopped": true
+  },
+  "sourceSha256": {
+    "server.mjs": "f3ba359da2d1ffe84ba1253dc15bbcb3de883863214f2a6fabbfbd37453b2b78",
+    "tests/server.test.mjs": "68d7ac29858bb14a6821b85e62505374f75583e21e32ccb56a219ba35e3e736f",
+    "scripts/check-maintenance-v101-concurrency.mjs": "1bcc44511a7ef129bb677579c97a7ede8751575645291590c5a58f990cdcc5a9",
+    "scripts/check-maintenance-v101-restored.mjs": "5ade33df9d91ea575bfb9c63ffdb8e0ecabfcc4cc6ec258f0ea2ed9bed1ed024"
+  },
+  "browserVerifiedThisPhase": false,
+  "mergedOrDeployed": false,
+  "finishedDateAsiaShanghai": "2026-11-16"
+}

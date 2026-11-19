@@ -1,0 +1,90 @@
+{
+  "date": "2026-11-15",
+  "sqlite": {
+    "focused": 1,
+    "renderer": 1,
+    "defaultFull": 820,
+    "coordinatorFull": 820
+  },
+  "postgres": {
+    "state": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-0oabmp",
+    "serviceTests": 104,
+    "restore": {
+      "tables": 147,
+      "rows": 7286,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "746634a68acfcd830a9afc0241ef2038c2a658a3a2ca2cd57477ced734d7105d"
+    },
+    "workersCleanExit": true,
+    "workersStopped": true,
+    "clusterStopped": true,
+    "restoredChecks": [
+      {
+        "restoredMixedCancellationVerified": true,
+        "items": 4,
+        "missingHoursRemainNull": true,
+        "legitimateZeroPreserved": true,
+        "positiveHours": 2,
+        "bothSortDirectionsNullLast": true,
+        "cancelledReviewHoursNull": true,
+        "onlyUncancelledReviewInEstimates": true
+      },
+      {
+        "restoredReportSourceJournalVerified": true,
+        "snapshots": 195,
+        "replays": 2,
+        "fixtureOnly": true
+      }
+    ],
+    "cancellationAuthorityCases": 4,
+    "cancellationOverlaps": 5
+  },
+  "browser": "No new actual mixed-report browser evidence in this phase; previous independent cancellation UI proof remains separate",
+  "verifiedScope": [
+    "One shared original batch with four actual managed work items: cancelled, in review, recognized zero, recognized two hours",
+    "Original cancellation preserves sibling cases, assessment snapshots and batch entries",
+    "Original report confirmation and task-tree confirm accept pending/cancelled work without posting their hours",
+    "Two effective rows only: one legitimate zero and one two-hour result; personal confirmed total increases by two hours and one sortie",
+    "Original audit/detail and task-tree source distinguish missing null from valid zero",
+    "Actual XLSX worksheet cells preserve missing standard hours, numeric zero and two-hour cells, plus explicit recognition status",
+    "Both actual-hours sort directions put missing results last",
+    "Corrupt cancelled-case/open-channel pair returns409"
+  ],
+  "sha256": {
+    "server.mjs": "d0b6e40ef6b0f795f7a9b27f6e64ac23bf1781653fb319a4b9b38e3fe7bb0e48",
+    "public/app.js": "ccabbb4c7f08cee6cb446c0e9fcd647c7b2ab55ba988de69db9f0f421ae0c51e",
+    "public/index.html": "6d8bef2cf157379be127f30d2d07efeed56be3311090e1a725654e0dd26de036",
+    "public/sw.js": "ae004d329aef5d4f377a7fd81f60ddb1a764dd2a03b12eeb0f6bb04dd6528fd0",
+    "tests/server.test.mjs": "1775f97663a1e73c56e81ed8b49f2bfaff22240f61c7c0d46bc94620056dcda1",
+    "tests/nonroutine-delivery.test.mjs": "4ad5755fa4e0b9c64523c5b2c1dba1e8d67da50686035583fe3c0b46a84f35c0",
+    "tests/maintenance-nonroutine-recognition-display.test.mjs": "e0895bc58a1be88fac02aefaadaa756e5250a296ca7de3c7b8afea0ac4e03329",
+    "scripts/check-maintenance-v101-restored.mjs": "5564e271363e9f6a279a15b34d25fd2195b3a50ab4f051977455623c21f65c14"
+  },
+  "artifactSha256": {
+    "restored-application.log": "a8a01137eb098b8a49a7d0a483bc26c6dc4c4be394527f271ae4db7e6fbb6145",
+    "full-test.log": "aef5db822d631b08176289161c88e88adcb2d5f18501a28f9c22babc693c5cfb",
+    "restore-proof.json": "6ef7b5e36cb53be7f86404a8642bfa25f0c851e70e35f0d22774dbd8b23a3ade",
+    "ui-test.log": "83dcf1dee05e483aac899a8019044dfb3dcae18b4bf023b4200ed0d8af1cab7b",
+    "coordinator-test.log": "803b11934f3a688a70080e300e4220d55be5a4beae692adba821b57bd0107ffe",
+    "traceability.md": "abcfbc3cfef42be1eb5c22bdf6eec1be4ead47523d331bf5f6d9742a31b7510e",
+    "focused-test.log": "10bee816331b7e5311a9d6dfde3ae6e84ce5d1afca0019ff8313fece6072305e",
+    "README.md": "8f5dd00107cc1618a559978e2d5c3751ca11c73aa480221fd23ab7d79e58b211",
+    "traceability.json": "ab73df88a968a9d83960bc169d739bf2dc571a4d9e4c05f3914a5120edba296b",
+    "concurrency-proof.json": "29ff15b7b7d6b82562851d749c46c54aae30039db6e612196c9674dad29778b7",
+    "check.log": "2eaf08695ff0332ef65032b2ba5ce66c263ccd84b26c80113fd501593e17259d",
+    "server-tests.log": "9bd98b514e3718983933bb455cb1b60ccde345c502d733320ab7d8ef6b7890c3",
+    "before-fix.log": "dd5b1b173dfc3a0c90689d8304aec495b27da0abc3c2b21b2794cde589aae8d5",
+    "next-source-check.md": "c258dfc12a40fe6ba988608b20ef7b1b743f4426ac47e54e1e787b3e63571811",
+    "postgres-summary.json": "d9e55508895870c3a3e5c8a31831a6e387b347bf597b311b2495182ce86a691c"
+  }
+}

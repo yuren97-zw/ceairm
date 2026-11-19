@@ -1,0 +1,97 @@
+{
+  "date": "2026-11-15",
+  "applicationChanged": false,
+  "unchangedApplicationAndTestFiles": {
+    "server.mjs": true,
+    "rbac-policy.mjs": true,
+    "nonroutine-review.mjs": true,
+    "nonroutine-source-cancellation.mjs": true,
+    "public/app.js": true,
+    "public/nonroutine-review-workbench.mjs": true,
+    "public/index.html": true,
+    "public/sw.js": true,
+    "tests/server.test.mjs": true,
+    "tests/nonroutine-source-cancellation.test.mjs": true,
+    "tests/nonroutine-review-workbench.test.mjs": true
+  },
+  "sqliteBaseline": {
+    "default": 818,
+    "coordinator": 818,
+    "notRerunThisPhase": true,
+    "basis": "Prior evidence hashes unchanged"
+  },
+  "postgres": {
+    "serviceTests": 103,
+    "restore": {
+      "tables": 147,
+      "rows": 6915,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "b2a31dfbde00ef473472adaea4833c28d09afd27ee2fd7e9326098e3f952716f"
+    },
+    "stopped": true,
+    "workers": 12,
+    "workersStopped": true,
+    "workersCleanExit": true,
+    "originalOverlaps": 14,
+    "newCancellationOverlaps": 5,
+    "newCancellationRevocations": 4,
+    "newCases": 5,
+    "recoveredCancellationReplays": 6,
+    "sourceJournalObservations": 192,
+    "internalJournalReplays": 2
+  },
+  "browser": {
+    "desktopWidth": 1280,
+    "mobileViewportWidth": 390,
+    "screenshotsViewed": [
+      "desktop-confirm.png",
+      "desktop-lost-response.png",
+      "mobile-confirm.png",
+      "mobile-revoked-cleared.png"
+    ],
+    "exactLostSuccessfulResponseRetry": true,
+    "revokedAccessClearsDetail": true,
+    "sourceAndLedgerUnchanged": true,
+    "chromeExit": 130,
+    "serverExit": 0,
+    "physicalDeviceVerified": false
+  },
+  "firstAttempt": {
+    "stopped": true,
+    "invalidPostingFixture": "Recognition had already posted before the attempted posting overlap, so cancellation correctly returned 409. Not a cancellation-first race proof. Replaced by actual unknown-period pending recognition followed by explicit period opening and original sync requests."
+  },
+  "changedVerifierSha256": {
+    "scripts/check-maintenance-v101-concurrency.mjs": "61efb4774cdb71aebaae43fb2b75b2c31f66c63469765fac5e478fc6838f08c4",
+    "scripts/check-maintenance-v101-restored.mjs": "520f2331897154d9d9955b7f88a72226f926334677a01e9892ec7aaded1b11b6"
+  },
+  "artifactSha256": {
+    "seed.mjs": "de05fb9a17513018e3474a16ff8dc1fd0b4635343816ae9dffcd1db5ce3b8b53",
+    "restored-application.log": "fb7493c2845f27b6713d1550a031b3c187d84bfc096c295155ceabc08a007bfc",
+    "restore-proof.json": "6d9aa30ca41bbb4cabb992a575d6022bc14dee71e5b034d1930e7a4084cb196f",
+    "first-attempt-summary.json": "44c13577faa39b2ce8d58952d65df128ee375e159dacddc86c538e5a7d58bdec",
+    "browser.mjs": "8ade755810b00f3533ecb989d47c5d91f243300982af435b4bcd25927405a396",
+    "traceability.md": "77c131b0e7704557dce7c92917de1c493f8e2735ae067d9c1d8709f4148ea272",
+    "browser-final.log": "05a5e1900460a9af16a635535702585c4ce2c7dea1baa1612b38c5ea3f903fd2",
+    "desktop-confirm.png": "3051e316c96613859337793183584effa8f88f66f1593ad1f59eaf6b83d39a8d",
+    "traceability.json": "b8d2270b04d67cca3a588d61bce99f3c2edf363f234d5b8b286e00c106c543b3",
+    "mobile-revoked-cleared.png": "fbed379abc5511a2fee05310a9c0dfa8135d3d892183189531fc4cc12fda4861",
+    "concurrency-proof.json": "8de3d1d2f533ff26a409fbd793870af587ac1ff0e95b2001d7f2111b2a382dd6",
+    "mobile-confirm.png": "6f9b11ae818f11463a0ef0a400d0c8bc29ce0d93d6514fc2d0aac8ea721ec744",
+    "server-tests.log": "5601996a5ad5f8ca1f617968767c6f78cc3005e2029bb04417d0ac3cce876acb",
+    "desktop-lost-response.png": "97738054c5cbfc636425619265f4c0d3b59b10a4cb910eecb484376127929047",
+    "browser-proof.json": "4f0f7ca0338c255c9ad6660378aad0a956b659d6da7f9d60113a9a93e1423fb9",
+    "next-source-check.md": "76c8e8e6feb22682acba0e5d9cf9e97d83b00b1372264ade686db060f16343a5",
+    "postgres-summary.json": "7081e5a964dd02af289c86257d249b3be7307e6b4ac4d4c34635ecc4a6a13c9a",
+    "first-attempt-concurrency-proof.json": "c0735429b5d625a9294a3a10370cd027e14fee081975eaacc6807a96509633f8"
+  }
+}

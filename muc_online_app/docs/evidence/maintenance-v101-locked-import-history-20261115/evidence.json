@@ -1,0 +1,51 @@
+{
+  "baselineCommit": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sqlite": {
+    "default": 833,
+    "coordinator": 833,
+    "failed": 0,
+    "laterAdditionalReadOnlyUiTest": "focused-ui-test.log:11/11 including final additional UI test; full runs preceded that test-only addition"
+  },
+  "apiTests": 106,
+  "sourceSha256": {
+    "maintenance-import-preview.mjs": "5f90465b0ee9a49dd59e893361fe0bf27ace4f6e7e604798d2d6ea79515be459",
+    "maintenance-import-batches.mjs": "8fea0b2f313223049f5b50c80c2681b0f785f3c40a5e5e39c68c3820650ad67e",
+    "server.mjs": "d0b6e40ef6b0f795f7a9b27f6e64ac23bf1781653fb319a4b9b38e3fe7bb0e48",
+    "public/maintenance-import-workbench.mjs": "c3d55751357360dda69b732168c8cfcbd4de9f99f66bd11d486cb82213d39dd8",
+    "tests/server.test.mjs": "a178b62fab1a5c1a9e8c1079b6d0dffd7d11595d4e07868681414a784150f913",
+    "tests/maintenance-import-preview.test.mjs": "18c78dcaaf4a911da1c26fe782ab7cfac1726ba2142a38d359b98918101ad431",
+    "tests/maintenance-import-workbench.test.mjs": "dd9774f38fdb1f80d6628fb59a62dcb843a9634f564477456ea9bc4bc2315c1a",
+    "scripts/check-maintenance-v101-restored.mjs": "2eb5e5df45d8d72cbc8b1431b99b1a30979e230c0a08f238ea3adc0a07b570d7"
+  },
+  "postgres": {
+    "serverTests": 106,
+    "fixtureOnly": false,
+    "restore": {
+      "tables": 147,
+      "rows": 7681,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "8b4384a63fe744cd0552e9ff9040d40f39859ad1dae9530bee179a90bb9c3b4e"
+    },
+    "workersCleanExit": true,
+    "clusterStopped": true,
+    "restoredImportBatches": {
+      "submittedReadOnly": 4,
+      "blocked": 4,
+      "reviewCases": 1,
+      "effectiveHourRows": 0
+    }
+  },
+  "browserVerified": false,
+  "productionChanged": false,
+  "mergedOrDeployed": false
+}

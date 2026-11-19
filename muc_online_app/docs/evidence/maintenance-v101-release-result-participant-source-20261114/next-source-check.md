@@ -1,0 +1,7 @@
+# 后续整体确认与复核的独立结果身份
+
+saveMaintenanceReportConfirmation锁定原releaseBatch.submittedBy及personId，但仍要求当前正式releaseAssignment同人，并按assignment_id=releaseAssignment.id更新maintenance_sortie_results。未来停止改写正式派工时，实际结果可能采用报工条目来源身份，确认应按权威来源推进，不能继续只按旧派工ID。当前原一致性门槛仍保留，未声称派工分歧可完成最终确认。
+
+任务树复核另走reconcileMaintenanceReviewAssignments和rebuildMaintenanceReviewResults；读取/比较/写入仍以当前正式关联为实际人员。例行复核保留原提报批次，授权复核后有效参与事实不能被原锁定批次回推。下一步先固定“实际结果/提报来源与正式派工不同”的原复核读回和确认回归，明确原报工人签署、当前资格、结果来源优先级和既有身份重试，然后一起调整结果推进与实际人员读写。
+
+非例行批次写入/认定/冻结角色/唯一通道/补记先后不同，不能直接套用例行及放行的来源读取。各阶段未完成前不停止原正式提交的关联更新，不迁移或修复历史数据，不发布新模式。

@@ -1,0 +1,8 @@
+{
+  "syntheticOnly": true,
+  "anonymousWrite": 401,
+  "authenticatedRead": 410,
+  "authenticatedFinalize": 410,
+  "maintenanceTablesCompared": 65,
+  "allMaintenanceFactsUnchanged": true
+}

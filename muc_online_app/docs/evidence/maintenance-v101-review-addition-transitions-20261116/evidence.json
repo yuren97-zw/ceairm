@@ -1,0 +1,59 @@
+{
+  "baselineCommit": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sqlite": {
+    "default": 851,
+    "coordinator": 851,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 114,
+    "failed": 0,
+    "fixtureOnly": false,
+    "upgradePassed": true,
+    "repeatedMigrationPassed": true,
+    "populatedLegacyRefused": true,
+    "restore": {
+      "tables": 148,
+      "rows": 8498,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "4ffe1c0d50c151cd01ee9f8090e4701255be9b246e28208f3665984bfcce2b1b"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "server.mjs": "35bb1b222a96571cd1d80cb144f8072ec8204cfd6afe6a471cfec2c6f9d8024e",
+    "tests/server.test.mjs": "70175679dca26f07c9d62541825d035625d2809b7aaeab11bf9c12d60b6c218f",
+    "scripts/check-maintenance-v101-restored.mjs": "cda670cf4a74ed1162ea08155f4ad6558fc5122449611de889531ebb8106190a"
+  },
+  "browserVerifiedThisPhase": false,
+  "mergedOrDeployed": false,
+  "syntaxCheckPassed": true,
+  "concurrency": {
+    "originalOverlaps": 14,
+    "originalCases": 5,
+    "archiveSourceOverlaps": 2,
+    "archiveAdditionIdentityOverlaps": 1,
+    "workersCleanExit": true
+  },
+  "restoredDeletedSources": {
+    "retainedSources": 2,
+    "deletionAudits": 2,
+    "rejectedReplays": 2,
+    "effectiveHours": 0
+  },
+  "restoredCurrentScope": {
+    "cases": 2,
+    "rejectedOutOfScopeRetriesPerCase": 2,
+    "ownHoursPerCase": 1
+  }
+}

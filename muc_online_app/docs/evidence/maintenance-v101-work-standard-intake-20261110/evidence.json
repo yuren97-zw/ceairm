@@ -1,0 +1,74 @@
+{
+  "scope": "typed original WORK final recognition to standard draft, separate admission/publication, independent business publisher",
+  "userDecision": "单独授权标准发布负责人",
+  "defaultEnabled": false,
+  "actualUserAssignmentsOutsideSyntheticTests": false,
+  "sqlite": {
+    "tests": 620,
+    "pass": 620,
+    "fail": 0,
+    "skipped": 0
+  },
+  "domainTests": 15,
+  "workbenchTests": 5,
+  "realAccountApiTests": 66,
+  "browser": {
+    "syntheticOnly": true,
+    "desktopWidth": 1440,
+    "mobileWidth": 390,
+    "scrollWidth": 390,
+    "inputFont": "16px",
+    "explicitAircraft": true,
+    "unadmittedDraftFirst": true,
+    "separateAdmissionThenPublication": true,
+    "privateOpinionsAbsent": true,
+    "realDeviceOrPWA": false,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 66,
+    "pass": 66,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-050",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 131,
+      "rows": 2964,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "8a9227e4d15bbb25108b0c898ba886812ae93a8198ba4944d2cc6307bbca7fb6"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-work-standard-intake.mjs": "789d23cf4670c18445cad159910f7f24ce645902141e1de6f2bf4e8aa0dcd0b2",
+    "maintenance-work-recognition-source.mjs": "50b79d62832810bd471a19fb8627cad9688a0c78ee425faccb33e237826b5ad6",
+    "maintenance-standard-publication.mjs": "ab33d2aac73e701a0505a4d9ccaaf6643e89f33f6c2cae511447bb8a3d278651",
+    "public/maintenance-standard-publication-workbench.mjs": "9855609e1b54c77b90eb9f845d64929e0b810624d7f66dc224a1917017ef15a0",
+    "migrations/050_work_standard_intake.sql": "37a09cb50aa25b7f913a89633dd6dcc81b51adcdd8ae0dc2ca4bce4a2bfa374e",
+    "server.mjs": "5feb468dab79da62c9cb446a3e27891ed6a8744341e7f7482874977ecf5703b0",
+    "scripts/migrate-sqlite-to-postgres.mjs": "fd9c4e1496b2dd6221bf10b4c6c6a87b7c980072f544622864764c908b7431cc",
+    "scripts/check-maintenance-v101-restored.mjs": "9d93fb32ec7c4722078866f7d98cee2977e00be38e374fbb986d17fd0e93c38e",
+    "tests/maintenance-work-standard-intake.test.mjs": "c35562c2e25304a1e8a9ff143d94f47b463c3bd39d504ba40455d5794216d9c4",
+    "tests/maintenance-standard-publication-workbench.test.mjs": "b667559c853c7b2506642a99c5c42584ff343bc09db324f11d45456c4aec23b2",
+    "tests/server.test.mjs": "280dfa5e8776040f4337ec5c692b3dd2e2a7fc732753b66dac878287e0cbc869"
+  },
+  "limitations": [
+    "generic applicability independent approval not configured",
+    "published revision full API/UI acceptance and concurrency remain open",
+    "complete 210 business acceptance cases remain pending or partial",
+    "no actual user role grant, live 8788 database change or deployment"
+  ]
+}

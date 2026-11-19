@@ -1,0 +1,87 @@
+{
+  "baseline": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sqlite": {
+    "default": 831,
+    "coordinator": 831,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 105,
+    "latestRestoreFixtureOnly": true,
+    "tables": 147,
+    "rows": 7625
+  },
+  "browser": {
+    "actualOriginalBrowser": true,
+    "syntheticOnly": true,
+    "viewports": [
+      {
+        "width": 1280,
+        "caseId": "nrc-1794752116644-bcf7c5326984",
+        "originalTaskState": "PENDING_AUTHORIZATION",
+        "historicalRecognitionVisible": true,
+        "privateOpinionsAuthorized": true,
+        "finalizeAbsent": true,
+        "syncAbsent": true,
+        "noHorizontalOverflow": true
+      },
+      {
+        "width": 390,
+        "caseId": "nrc-1794752116744-b69409f88c44",
+        "originalTaskState": "AUTHORIZED",
+        "historicalRecognitionVisible": true,
+        "privateOpinionsAuthorized": true,
+        "finalizeAbsent": true,
+        "syncAbsent": true,
+        "noHorizontalOverflow": true
+      }
+    ],
+    "privateReads": [
+      {
+        "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116744-b69409f88c44/finalization",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116744-b69409f88c44/finalization",
+        "status": 200
+      }
+    ],
+    "boundedSuccessAlsoClearsPrivateHistory": true,
+    "midReadRevocationClearsPrivateHistory": true,
+    "authorizedRequeryAfterRegrant": true,
+    "logoutDestroysPrivateWorkbench": true,
+    "beforeSha256": "7790bca45831992a7b0b4dd3a940d3a1d1cd8b592da436ffb0fef56500bcd053",
+    "afterSha256": "7790bca45831992a7b0b4dd3a940d3a1d1cd8b592da436ffb0fef56500bcd053",
+    "originalSourceHistoryAndLedgerUnchanged": true,
+    "physicalDeviceVerified": false,
+    "originalSyntheticRoleRestored": true
+  },
+  "sourceSha256": {
+    "nonroutine-review.mjs": "17838126cf851f079a5a0097edd4d1ca32543cd89453b77daf7f8bd7a7e1fbfa",
+    "nonroutine-finalization.mjs": "3bf32538ffcf67adbb4e98180edf50ad67061cc365ca36e01c38b577d75dbbaf",
+    "public/nonroutine-finalization-view.mjs": "2fd42b7ad42129f31d71fd43941b889610f2f99b9aeb16ac32c527c918c913d4",
+    "public/nonroutine-review-workbench.mjs": "f459c06f07854f284086b681a4c1ef84045ef3d09e11ed259a262b710e093ece",
+    "public/app.js": "80a919fc72cc5d31b6f9a9b4648edc372819369a260ecc5911480a88b0e2c605",
+    "public/index.html": "23430965a58aa9350fc4ebec0fb6c8697fb731f9623eaf4a3693e2e7edb658dc",
+    "public/sw.js": "8eede5d1c227fd4b369a18869d3a4d90608f934f11597d54bd1f61afff9f3347",
+    "tests/server.test.mjs": "60fb56e73f85369fc8a52a023857b2b86854ccb03cc32834fb350176aa8cfc07",
+    "tests/nonroutine-source-cancellation.test.mjs": "4f4cbb57ec9da2d4eac0f5b8ff6a63f85295e6647f239347c808f6fc937313c3",
+    "tests/nonroutine-finalization-view.test.mjs": "0b0d1c70f64aac9a5540efd14dde06a59d05f3570ce9a55f34929b204d045311",
+    "tests/nonroutine-review-workbench.test.mjs": "b198bfa79f53a803e59b179635ba78a485308d8afaed01f456c0f1234ed7faa0",
+    "scripts/check-maintenance-v101-restored.mjs": "eacb314cbbc03b2734043366703811b8926bd27e85483abc6d4dbc12cfbaa81d"
+  },
+  "fullAcceptanceVerified": false,
+  "mergedOrDeployed": false
+}

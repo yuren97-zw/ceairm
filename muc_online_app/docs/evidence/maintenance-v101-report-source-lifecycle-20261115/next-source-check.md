@@ -1,0 +1,7 @@
+# 下一阶段源码核对边界
+
+方案§4.2要求执行选人不暗改正式派工；§4.3要求正式批次锁定实际参与事实。现server.mjs正式routine、nonroutine及整体确认仍调用replaceMaintenanceAssignmentsFromEntries，routine还调用applyMaintenanceReleaseSelection，不能视为已分离。
+
+移除桥接前必须同时处理：maintenanceReviewTask从maintenanceAssignments投影复核人员；maintenanceReviewTaskPayloads及后续reconcile/rebuild服务按正式关联处理；整体确认仍核对正式放行与锁定实际放行；状态推导与执行可见性仍依正式关联。仅删除replace调用会破坏后续状态/复核。原无批次历史必须保留，不把当前派工伪造历史实际来源。原批次来源与授权复核后的有效事实必须分别承载，不能重新读取原提报批次覆盖已批准复核。
+
+本阶段只保留已形成来源档案；尚无这些完整分离的行为证明。下一阶段须先用真实原API链复现不同正式派工/实际提报人，覆盖原整体完成、任务树读取/修改/确认及重复请求，再联动调整。非例行另有认定与评议策略快照，不能套用例行分配器。现210项仍124 partial、86 pending、0 verified；traceability仅核对链接，不证明业务完成。

@@ -1,0 +1,7 @@
+[
+  {
+    "t": 1795044671018,
+    "type": "exception",
+    "text": "{\"exceptionId\":1,\"text\":\"Uncaught (in promise)\",\"lineNumber\":0,\"columnNumber\":0,\"scriptId\":\"1\",\"url\":\"http://127.0.0.1:18888/login\",\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"className\":\"DOMException\",\"description\":\"InvalidStateError: Failed to update a ServiceWorker for scope ('http://127.0.0.1:18888/') with script ('Unknown'): The object is in an invalid state.\",\"objectId\":\"-2729065436283310413.3.1\",\"preview\":{\"type\":\"object\",\"subtype\":\"error\",\"description\":\"InvalidStateError: Failed to update a ServiceWorker for scope ('http://127.0.0.1:18888/') with script ('Unknown'): The object is in an invalid state.\",\"overflow\":false,\"properties\":[{\"name\":\"code\",\"type\":\"number\",\"value\":\"11\"},{\"name\":\"name\",\"type\":\"string\",\"value\":\"InvalidStateError\"},{\"name\":\"message\",\"type\":\"string\",\"value\":\"Failed to update a ServiceWorker for scope ('http:…t ('Unknown'): The object is in an invalid state.\"}]}},\"executionContextId\":3}"
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "syntheticOnly": true,
+  "originalMonths": "2026-09",
+  "handlingMonth": "2026-11",
+  "periodWorkbenchEnabled": false,
+  "explicitZero": true,
+  "pendingThenPosted": true,
+  "ownerRedacted": true,
+  "layout": {
+    "width": 390,
+    "scrollWidth": 390,
+    "formWidth": 308
+  },
+  "stopped": true,
+  "originalFactsUnchanged": true,
+  "netHours": 0.0,
+  "roleChangesResetVerification": true,
+  "browserCacheBypassed": true
+}

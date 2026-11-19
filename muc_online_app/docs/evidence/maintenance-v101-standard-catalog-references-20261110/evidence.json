@@ -1,0 +1,138 @@
+{
+  "scope": "standard catalog filters, work-identity reference aggregation and live no-work guards for draft update/withdraw/review request",
+  "sqlite": {
+    "tests": 644,
+    "pass": 644,
+    "fail": 0,
+    "skipped": 0
+  },
+  "serverTests": {
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "skipped": 0
+  },
+  "referenceTests": 7,
+  "workbenchTests": 8,
+  "behavior": {
+    "draftAndSourceAndAssessmentDeduplicate": true,
+    "deletedTechnicalTraceNotActiveWork": true,
+    "zeroHoursStillCountsAsAWorkReference": true,
+    "unknownNeverEqualsZero": true,
+    "resolvableBadReferenceOnlyProtectsRelatedStandard": true,
+    "unownedMalformedReferenceFailsClosed": true,
+    "sourceTracesSeparateFromWorkCount": true,
+    "filtersApplyToSameVersion": true,
+    "referenceFilterIsStandardAggregate": true,
+    "standardCursorPagination": true,
+    "mutationRechecksReferenceFacts": true,
+    "withdrawAuditFailureRollsBack": true,
+    "publishedStandardsDisableOnly": true,
+    "noHardDeletionRoute": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "ordinaryManager": true,
+    "combinedFilters": true,
+    "exactModelA321Excluded": true,
+    "sourceAndDraftDeduplicateToOne": true,
+    "technicalTraceSeparate": true,
+    "referenceDetailsNoWorkIdentityLeak": true,
+    "explicitDisableRetainsReferences": true,
+    "explicitZeroReferenceWithdrawal": true,
+    "mutationRefreshRespectsFilters": true,
+    "mobile": {
+      "width": 390,
+      "scrollWidth": 390,
+      "font": "16px"
+    },
+    "disabled": {
+      "id": "qa-manual-standard-0",
+      "status": "DISABLED",
+      "references": {
+        "available": true,
+        "workItems": 1,
+        "draftWorkItems": 1,
+        "formalWorkItems": 0,
+        "sourceTraces": 1,
+        "standardImportRows": 0,
+        "originWorkRecognitions": 0
+      }
+    },
+    "withdrawn": {
+      "id": "qa-unreferenced-standard",
+      "status": "WITHDRAWN"
+    },
+    "desktopWidth": 1440,
+    "realDeviceOrPWA": false,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true
+  },
+  "databaseProof": {
+    "syntheticOnly": true,
+    "protectedTables": [
+      "maintenance_flights",
+      "maintenance_subtasks",
+      "maintenance_assignments",
+      "maintenance_report_batches",
+      "maintenance_report_entries",
+      "maintenance_hour_results",
+      "maintenance_nonroutine_review_cases",
+      "maintenance_standard_review_cases",
+      "maintenance_standard_review_finals",
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications",
+      "maintenance_nonroutine_manual_sources",
+      "maintenance_report_drafts"
+    ],
+    "workAndReferenceSnapshotsUnchanged": true,
+    "publishedVersionDefinitionsUnchanged": true,
+    "standardParentsAndVersionsNotDeleted": true,
+    "draftWithdrawnWithHistory": true
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-051",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 135,
+      "rows": 3153,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "503838f207845f8fc27c3edeaeb8269962a9abba0b67887b6165ece646cc62f8"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-standard-references.mjs": "ec0ccc827678cd4091114b533a43458d8a535443bb880e4054aed99f8ae31974",
+    "maintenance-standard-management.mjs": "192a02964f336e5df955bfd298913ce18e1cc4a3b29c70bda11e909f61583351",
+    "maintenance-standard-review.mjs": "14cb3b5b330e9590ad326c53f5db48918cb34dfa7db908419c31f698ba1e02e4",
+    "maintenance-standard-import.mjs": "f4e076405fff02f992b0252e5dac49b9dd92a2313e491c6f30669a070955b092",
+    "server.mjs": "96df086a60d895145a1458e271245384c8611fafa937863e45d0e7f29a647375",
+    "public/maintenance-standard-management-workbench.mjs": "870bda5e131ccec61ace15fb36b4b2e1180212151a86acae2ab90857a9fa2b2b",
+    "tests/maintenance-standard-references.test.mjs": "c9d821105c50c0d88eb3a8a76304539effaebf4dc29de234965542c5378d0bcf",
+    "tests/maintenance-standard-management-workbench.test.mjs": "cdbbf791295c27b12e715986de661b79bb1f744aaab31d50fccfc0fdd306ed5d",
+    "tests/server.test.mjs": "0478a9b9d79df18b4a036f391e0c2eb404600db9d850375e904d272e7778d410"
+  },
+  "limitations": [
+    "no automatic repair or reassignment of dangling legacy references",
+    "pending-review changes/cancellation still require approved rules; no new bypass provided",
+    "all cross-process concurrency, physical devices/PWA and Linux release remain open",
+    "full 210 business-case acceptance not completed",
+    "no actual user role grant, live 8788 modification or deployment"
+  ],
+  "diagnosticHistory": "Initial reference projection globally blocked unrelated standards because an earlier synthetic test deleted commit-known-standard but retained source snapshots. The final projection isolates identifiable dangling references to the related standard and preserves a warning; malformed unowned data remains unknown. Final full regressions passed."
+}

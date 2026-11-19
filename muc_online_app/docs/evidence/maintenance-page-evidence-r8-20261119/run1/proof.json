@@ -1,0 +1,69 @@
+{
+  "driverVersion": "page-evidence-r8",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "reportViews": {
+      "ok": true,
+      "facts": {
+        "views": [
+          "看板",
+          "人员清单",
+          "维修机会清单",
+          "非例行清单"
+        ],
+        "dashboard": true,
+        "units": {
+          "hours": true,
+          "sorties": true,
+          "opportunities": true
+        }
+      }
+    },
+    "reportPeopleDual": {
+      "ok": true,
+      "rows": [
+        "赵威未设置5h0h5h1 架次1 项"
+      ],
+      "dbHours": 5,
+      "dbSorties": 1
+    },
+    "reportOpportunities": {
+      "ok": true,
+      "row": "2023-06-10 · R8-RPT-QAB-R8R · A320 · 青岛航后B-R8R · A320 · 青岛 · 航后赵威5h例 5 / 非 01 架次赵威例行签署： -· 非例行签署： 不适用已提报"
+    },
+    "reportExportDialog": {
+      "ok": true,
+      "facts": {
+        "sections": [
+          "people",
+          "hours",
+          "signatures",
+          "sorties",
+          "teams",
+          "opportunities",
+          "nonroutine"
+        ],
+        "checked": 1,
+        "range": "2023-06-01 至 2023-06-30",
+        "submit": true
+      }
+    },
+    "reportExportFile": {
+      "ok": true,
+      "file": "维修管控综合报表_2023-06-01_2023-06-30.xlsx",
+      "bytes": 3321
+    }
+  },
+  "screenshots": [
+    "r8-report-dashboard.png",
+    "r8-report-people.png",
+    "r8-report-opportunities.png",
+    "r8-export-dialog.png",
+    "r8-export-done.png"
+  ],
+  "servicesStopped": true
+}

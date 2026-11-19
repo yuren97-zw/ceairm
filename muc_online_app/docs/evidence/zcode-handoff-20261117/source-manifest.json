@@ -1,0 +1,2346 @@
+{
+  "headOnlyDoesNotContainWip": true,
+  "scope": "Git-known and nonignored untracked files excluding docs/evidence and handoff itself; no ignored databases, secrets or node_modules copied",
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 2274,
+      "sha256": "6e3d54507a8e46b6c0719a7f808f79048c7c3ab44fb4641a46be9db8896aa376"
+    },
+    {
+      "path": ".github/workflows/release-production.yml",
+      "bytes": 3771,
+      "sha256": "b2ba8706444f9680bf3da1f2fc3412748d40ace59b46add5f73d7c6501f3d5a2"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 736,
+      "sha256": "c9b1d344cfba51b8287a50de2608ac70b5eb35a8837b00c82420344e506c0867"
+    },
+    {
+      "path": "muc_online_app/.env.example",
+      "bytes": 562,
+      "sha256": "532d7c5c21a6af5bbcb7dcaf6b34f66e7027fc6783fcb0217c0ebef039d1efa7"
+    },
+    {
+      "path": "muc_online_app/ATTENDANCE_SETUP.md",
+      "bytes": 7842,
+      "sha256": "7f3dd1851bf4514e481afd22bcd41d39d27ba9a35b76d38fd9a4af122818760e"
+    },
+    {
+      "path": "muc_online_app/AUTHORIZATION_NINE_FIELD_IMPLEMENTATION.md",
+      "bytes": 3132,
+      "sha256": "530fe8d83c4468e78a04502c9049e7f4008dd450edeaa29f7d2f4915cbc06fdd"
+    },
+    {
+      "path": "muc_online_app/AUTHORIZATION_PROJECT_SETTINGS.md",
+      "bytes": 5391,
+      "sha256": "eb3806f9e567974a4eb73e8beefe92f85b99751c71c60bad79c531cd4648ea02"
+    },
+    {
+      "path": "muc_online_app/CAPABILITY_INTEGRATION_REPORT.md",
+      "bytes": 4309,
+      "sha256": "c7ce4148cd71e2b3573d9560384ddafd186eefb2755dec5d76de463ddb020d98"
+    },
+    {
+      "path": "muc_online_app/DEPLOY_TENCENT_LIGHTHOUSE.md",
+      "bytes": 11491,
+      "sha256": "1a1d54215b44298815dcf00ac9b792bc916a17caed31f0019a06d615d85c6a8d"
+    },
+    {
+      "path": "muc_online_app/IMPORT_WORKSPACE_IMPLEMENTATION.md",
+      "bytes": 2427,
+      "sha256": "14122bdc04f701cd32a7d4ea5f40242bf3a22ce67fe3720971d83dc1d0f04105"
+    },
+    {
+      "path": "muc_online_app/LOCAL_DEPLOY.md",
+      "bytes": 1658,
+      "sha256": "aa9f93f95786fddca40049abf1ffabebc7a87785c15d5651d418388599abcfdc"
+    },
+    {
+      "path": "muc_online_app/ORGANIZATION_MAINTENANCE_IMPLEMENTATION.md",
+      "bytes": 2822,
+      "sha256": "cfe267f3ce62dfb2b85c7a61f17f02aaa77568f12d3a0285e315eb08dc8eebe9"
+    },
+    {
+      "path": "muc_online_app/PERSONNEL_IDENTITY_SCOPE_IMPLEMENTATION.md",
+      "bytes": 8043,
+      "sha256": "f947a05570f99f8f157beffb60951cbfc5cc704788fba88ac79f402c7ff5b667"
+    },
+    {
+      "path": "muc_online_app/PERSONNEL_SAFE_DELETE.md",
+      "bytes": 3852,
+      "sha256": "31f4e867431b13d00c40b6d27b42c29308d65997f64219cfd14629fb6860eb8a"
+    },
+    {
+      "path": "muc_online_app/PROJECT_DEVELOPMENT_RULES.md",
+      "bytes": 7737,
+      "sha256": "89b67a41ea09ca9273aaf24a46f36af65e2453e82bba37f787fb3bdf6aef3cf8"
+    },
+    {
+      "path": "muc_online_app/RBAC_AND_PERSONNEL_MASTER_REFACTOR_PLAN.md",
+      "bytes": 30924,
+      "sha256": "99b05d133cd4cda3e2a7d8c4dcc3bfbf312ea448dbbbf2cb7fda662cbce567c8"
+    },
+    {
+      "path": "muc_online_app/allocation-areas.mjs",
+      "bytes": 533,
+      "sha256": "936779d4677300192d88318a032e405ac7981a9aa1ec55564c68cece82802d1f"
+    },
+    {
+      "path": "muc_online_app/attachment-policy.mjs",
+      "bytes": 3451,
+      "sha256": "a235d48e0c568211e8cdc59382c8138f03f242d86573b377c38ce4359bb1b6d8"
+    },
+    {
+      "path": "muc_online_app/attendance-approval-plans.mjs",
+      "bytes": 31044,
+      "sha256": "a591e2478b6a32574c3b1c3aea9a64066188180952d87a2060167b00fd963b5d"
+    },
+    {
+      "path": "muc_online_app/attendance-approval-reasons.mjs",
+      "bytes": 3276,
+      "sha256": "8dbc143e0bef0808e83143436110828bcceee72e3ef871c9db928824e95cde0f"
+    },
+    {
+      "path": "muc_online_app/attendance-dingtalk.mjs",
+      "bytes": 18686,
+      "sha256": "a8a691159e2ae4ee4bc39cb0a31ec7c6e8685f9e504d6faf9a30b6805d983bd0"
+    },
+    {
+      "path": "muc_online_app/attendance-event-directory.mjs",
+      "bytes": 1464,
+      "sha256": "326e3503f5cf62d93d0166e8b1a2d01d0847dc6acc0d8caada45d1a5581d21d3"
+    },
+    {
+      "path": "muc_online_app/attendance-export.mjs",
+      "bytes": 15753,
+      "sha256": "8dc5b8608ae1aadd295280ceb71f3ef5bf51d7c44f0b4810ef1ccb08c0fb52b5"
+    },
+    {
+      "path": "muc_online_app/attendance-hybrid.mjs",
+      "bytes": 22972,
+      "sha256": "3029edd4b0f28b983327369924a3def02535afa03107d3494eb0bff22e5f9b53"
+    },
+    {
+      "path": "muc_online_app/attendance-leave-export.mjs",
+      "bytes": 4867,
+      "sha256": "1894d4aa59ba23cd87f38af820ba00bb9f3d727f2f8d4bac325f4a9cbef41662"
+    },
+    {
+      "path": "muc_online_app/attendance-leave-service.mjs",
+      "bytes": 12710,
+      "sha256": "a25ff40dfdda1f426cf404b1d57b965d1783fd3b7772101729901f6468f1702a"
+    },
+    {
+      "path": "muc_online_app/attendance-response-policy.mjs",
+      "bytes": 415,
+      "sha256": "c5c03f359045f2892fd9a99d88d29f097bf6b21500f19db845a95dfd8af3d3d1"
+    },
+    {
+      "path": "muc_online_app/attendance-response-validation.mjs",
+      "bytes": 2338,
+      "sha256": "9ae7df93a2bae196defe2df92e2b6d25fd77144779482d54f9d2a47f94f93f57"
+    },
+    {
+      "path": "muc_online_app/attendance-rules.mjs",
+      "bytes": 14567,
+      "sha256": "01ecce3c7802cef8725cc4f62e00d0fa437378b26fbb9c56d3d6ba0849b3cfbb"
+    },
+    {
+      "path": "muc_online_app/attendance-service.mjs",
+      "bytes": 64951,
+      "sha256": "c9b40e33bba0887efa2babdf29e460016fff9206e7cbd5aabe494f2f168432fb"
+    },
+    {
+      "path": "muc_online_app/attendance-stage-import.mjs",
+      "bytes": 10361,
+      "sha256": "319d19b7114b5455b265146f1c4b33b5e30e4353db4a9e5150ec7e93776ff84b"
+    },
+    {
+      "path": "muc_online_app/attendance-stream.mjs",
+      "bytes": 6072,
+      "sha256": "3acd0eb93a87b66491ee54c840c1c128a1951879e664481665b45f23dbd3957f"
+    },
+    {
+      "path": "muc_online_app/authorization-import.mjs",
+      "bytes": 8726,
+      "sha256": "9141879f89435649c9b8ce08e1bfd476380a6f4b27ce1afb9a798bd9dfb1a5ca"
+    },
+    {
+      "path": "muc_online_app/authorization-projects.mjs",
+      "bytes": 19464,
+      "sha256": "3913ce74acfd12ddcacec38e901d4c79d4d853597c4ae2071c2bb2a87c56773a"
+    },
+    {
+      "path": "muc_online_app/backup-cos.mjs",
+      "bytes": 3376,
+      "sha256": "5870ddaa4dc497c16c11976bd3b533fba267d722dd7299b75b3e8114f30b1c93"
+    },
+    {
+      "path": "muc_online_app/backup-envelope.mjs",
+      "bytes": 5641,
+      "sha256": "1b8271d661e38ac61852e182d0c155493eca1e8159c9ff97e955cb83c5a5d156"
+    },
+    {
+      "path": "muc_online_app/capability-core.mjs",
+      "bytes": 4523,
+      "sha256": "0dcd2307b11281fa77c0fbae8e8c0e4464f968a8376947dfd118d5b810bde965"
+    },
+    {
+      "path": "muc_online_app/capability-integrity.mjs",
+      "bytes": 5906,
+      "sha256": "2cc8493958f9eb18e74befbd400f0b002fc74de5eba6478d95cfb7354c75c482"
+    },
+    {
+      "path": "muc_online_app/capability-service.mjs",
+      "bytes": 86823,
+      "sha256": "6bc2d97778878826cc0b8365a37f6bf5cf71e2b63b9ec19e81eeed051f6b6837"
+    },
+    {
+      "path": "muc_online_app/capability-ui/Center.jsx",
+      "bytes": 85031,
+      "sha256": "ff72c33473351bce1b032e274490aac144c5148724207c1796169f12578b01b2"
+    },
+    {
+      "path": "muc_online_app/capability-ui/PaneSplitter.jsx",
+      "bytes": 1688,
+      "sha256": "c1ef44b2eb1ca612559d0b38b97af687c919a14f3bafc693c0e8d318d9620e65"
+    },
+    {
+      "path": "muc_online_app/capability-ui/PeopleNameList.jsx",
+      "bytes": 1118,
+      "sha256": "7722e81e99b24cd0f3679d7aa101c550d38d68067153931e749402797bfa00b7"
+    },
+    {
+      "path": "muc_online_app/capability-ui/PriorityProjectSettings.jsx",
+      "bytes": 7129,
+      "sha256": "3226d308fc4e37f2ceb128b4bde12662c78bee1bfca1875f2baf356fad8a7875"
+    },
+    {
+      "path": "muc_online_app/capability-ui/StaffPersonCard.jsx",
+      "bytes": 12565,
+      "sha256": "0061b2867ad55f0781b67346c5930c05223c70566cfb222db7b5046e1960d0a4"
+    },
+    {
+      "path": "muc_online_app/capability-ui/StatusPeoplePool.jsx",
+      "bytes": 3064,
+      "sha256": "7786c1ef300e22b430b97555243eb4415a4708b2eb208ef536f063345d29c998"
+    },
+    {
+      "path": "muc_online_app/capability-ui/ThirdPartyAuthorizationGroups.jsx",
+      "bytes": 1811,
+      "sha256": "175dca100a6099f12549bfa2d6127e8a90049c93312a80509206aa5aa29b35d5"
+    },
+    {
+      "path": "muc_online_app/capability-ui/capability-display.js",
+      "bytes": 3931,
+      "sha256": "fc9681fc85c1185a4d60adddb506d3c5a44916846bc98bccc1f30a9038fc61fa"
+    },
+    {
+      "path": "muc_online_app/capability-ui/card-labels.js",
+      "bytes": 840,
+      "sha256": "ebc6ccd83aaf46ba2ee99f2b2dd1a2b12248c6663be9672c9fca04b0fe9769bd"
+    },
+    {
+      "path": "muc_online_app/capability-ui/center.css",
+      "bytes": 54529,
+      "sha256": "c987a1d3f5be568babb376c43985f9a80ce7bdcfe00ac98d4e56a968b08c56b0"
+    },
+    {
+      "path": "muc_online_app/capability-ui/people-list.js",
+      "bytes": 820,
+      "sha256": "97d42841771f600f6061961694f486bf2e357256eda6f5ef9711c493abb7dbaf"
+    },
+    {
+      "path": "muc_online_app/capability-ui/person-search.js",
+      "bytes": 315,
+      "sha256": "611976e5b6d47925e6f89f505123b494013bef7bd2b561bd5a8c538903e039d3"
+    },
+    {
+      "path": "muc_online_app/capability-ui/priority-projects.js",
+      "bytes": 878,
+      "sha256": "94eb1e38803b131456ff76426d03576c0c202ac27c05bd72c527e28bc39db117"
+    },
+    {
+      "path": "muc_online_app/capability-ui/request-id.js",
+      "bytes": 1052,
+      "sha256": "e6545713dc6bd596d75ccd595402560e3c61b97815ea2731439a6e03b09dadaf"
+    },
+    {
+      "path": "muc_online_app/capability-ui/snapshot-refresh.js",
+      "bytes": 2282,
+      "sha256": "2f136f46f15981f49830a5ec6eeab4cce7970e9eb8c36cb2dc8975db2a5732d3"
+    },
+    {
+      "path": "muc_online_app/capability-ui/special-pool-order.js",
+      "bytes": 429,
+      "sha256": "0e338c94684b6dce8547fae9e17334a8ff27e42fcac169ade639852804854531"
+    },
+    {
+      "path": "muc_online_app/capability-ui/status-dialog-viewport.js",
+      "bytes": 1515,
+      "sha256": "2a0a7e88efb0876f5056865ab412e75fe8182677c9a33a15f2bd74a32aa8d7f0"
+    },
+    {
+      "path": "muc_online_app/capability-ui/status-people.js",
+      "bytes": 2312,
+      "sha256": "24dbc2e99298a1a8feb1d78b056fd89a9f17c0258dcbb92e87e64de854e83dbf"
+    },
+    {
+      "path": "muc_online_app/capability-ui/status-phase-filter.js",
+      "bytes": 462,
+      "sha256": "ea7dc0bdae86ca76ccc7ccde9351249073e05a3f37370f8ea9929ee9debe9d70"
+    },
+    {
+      "path": "muc_online_app/db.mjs",
+      "bytes": 13632,
+      "sha256": "82c03daac877139f651bbeda128fcf7e531b9eacc7253369256a596d549cf75f"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/COS_ATTACHMENTS.md",
+      "bytes": 1313,
+      "sha256": "0abe14b1817d70b20b41f09f5b4fac29e2943b0809b274adba214147ae3ecf65"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/PRODUCTION_RESET.md",
+      "bytes": 4518,
+      "sha256": "6520ca5f19374014d7e8f8654aee1f6371e26373ef57da83e846968834ad7f5d"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/airline-operations-center-backup.service",
+      "bytes": 668,
+      "sha256": "e3dd3867094058bd2dfaa3d510d2304cf72ea6a548af5edede9055fc2d11e9c5"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/airline-operations-center-backup.timer",
+      "bytes": 226,
+      "sha256": "370e07de215a1da256f9afe95651a4d04affd544faa0eda01f0ab019ede0bbb2"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/airline-operations-center-deploy.service",
+      "bytes": 274,
+      "sha256": "b8083e31064d3cb048557971f3856cc186f567dfd1579a052b7ce05ff419be96"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/airline-operations-center-deploy.timer",
+      "bytes": 191,
+      "sha256": "7c401fc461b34d5917f677ef7e82fa1de076ca467b560747145cc3a199013181"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/airline-operations-center.service",
+      "bytes": 693,
+      "sha256": "f31b32ef15b5cdedcc08a10d3338144a49d60fa14441a51c3642faf4ec3ec51e"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/apply-nginx-config.sh",
+      "bytes": 584,
+      "sha256": "09c36f7b9aa85917651da992d403bb2a0dd94bbcfd4a325dd4f77939a46fd097"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/backup-airline-operations-center.sh",
+      "bytes": 927,
+      "sha256": "aef7f64e89c7a904a7bfbdd64a6347739c3d5fe50eca3c146e1448ddf6148490"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/backup-object-access-policy.example.json",
+      "bytes": 324,
+      "sha256": "32f664fe73946382dc2bbc4521e1b49b98ae96ac4fde56dba970cacc6bc1e16e"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/bootstrap.sh",
+      "bytes": 1975,
+      "sha256": "91998101f21037085983e5e6027749cc4f198bd0c16d79f6fc4fc25687645886"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/build-release.sh",
+      "bytes": 1046,
+      "sha256": "2fa4421699d25c27508a805ceb21a1531f70c0e155c549a64ea11d6c6429de4c"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/cos-object-access-policy.json",
+      "bytes": 336,
+      "sha256": "1d806b92aed91acd0c431fad73f973c06edd9717d8e530c5f66984aa191517aa"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/deploy.sh",
+      "bytes": 2758,
+      "sha256": "a801e2d3a8b602c49cdc9c9bb588b234c25c1a679aa44136953e7a2bc67a67d1"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/health-check.sh",
+      "bytes": 876,
+      "sha256": "322a7ce7107d6cacf7d02f7b1f6033044fc4e04597c844d1c4050859081345e4"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/install-deploy-agent.sh",
+      "bytes": 1750,
+      "sha256": "36121566ecbc89f3e9534f2c51a85bac7ede4a1a9c3a03ffe5bc17288dfa2dab"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/logrotate-airline-operations-center",
+      "bytes": 178,
+      "sha256": "8ade465ec529bc3c830d613d9a637084aadec8a493136dcbd591f2f805fb7872"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/migrate.sh",
+      "bytes": 280,
+      "sha256": "1e19d6f668beb49f41bc389b2b88ad131142e0dee5e4c31456ce918e56fb1967"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/nginx-airline-operations-center.conf",
+      "bytes": 5047,
+      "sha256": "9d3fe7f17655e0557cf16e6764abe4a58d4132e6118a10689102e1662e3841fa"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/release-poller.sh",
+      "bytes": 4311,
+      "sha256": "02e3f2a0ffcf3b884deb6e76a4862a65e4a0f52f893db517b8bd14bff5733db7"
+    },
+    {
+      "path": "muc_online_app/deploy/tencent/rollback.sh",
+      "bytes": 624,
+      "sha256": "1a753f196ac2b128f594058a15cc3c4b8299b4fadd96ffbab77762c0233b4f16"
+    },
+    {
+      "path": "muc_online_app/deployment-handover.mjs",
+      "bytes": 615,
+      "sha256": "51f0739f01576620ac2683e0a81074f7141a3173be8678f2254e825f28bd65f3"
+    },
+    {
+      "path": "muc_online_app/docs/ALLOCATION_AREAS_2026-10-22.md",
+      "bytes": 3182,
+      "sha256": "913e174e3bcdcb03d882d0d326ed3dd09be6461904bdf400227610e1340ecdbe"
+    },
+    {
+      "path": "muc_online_app/docs/ATTACHMENT_VIEWER_ACCEPTANCE_2026-10-11.md",
+      "bytes": 2990,
+      "sha256": "628df57e579b03bf33ee93d18fea0f0da77eaa8844cff2fc9d3788ba711a5f24"
+    },
+    {
+      "path": "muc_online_app/docs/ATTENDANCE_CORRECTION_RECHECK_2026-10-30.md",
+      "bytes": 3677,
+      "sha256": "a69d6201884cd2eeb49a1ac66a285991b8a0767a5b755a60ba1cac58a2454ce9"
+    },
+    {
+      "path": "muc_online_app/docs/ATTENDANCE_STAGE_IMPORT.md",
+      "bytes": 3929,
+      "sha256": "ceb5eae8a3e5e0fa86df56b808eb26d0a3df73cf4913d6810ac38eadebea262d"
+    },
+    {
+      "path": "muc_online_app/docs/DEPLOYMENT_HANDOVER_2026-10-27.md",
+      "bytes": 2150,
+      "sha256": "b9382b437623b02d3b85124e58425fb91c4a354b7e33b0c5c550adc4708c3ccc"
+    },
+    {
+      "path": "muc_online_app/docs/DEVELOPMENT_LINES_AUDIT_2026-10-30.md",
+      "bytes": 3040,
+      "sha256": "a9d28b269753a6c1ebb95809bceea7fd9e96d78d52b47c22fac2a55ce090049b"
+    },
+    {
+      "path": "muc_online_app/docs/ENCRYPTED_OFFSITE_BACKUP.md",
+      "bytes": 6424,
+      "sha256": "904dd40b57010ba80ac4e33bd49262141abf096aeae4c417c25cde9363567da4"
+    },
+    {
+      "path": "muc_online_app/docs/FIXED_STATUS_DOCK_2026-10-18.md",
+      "bytes": 2260,
+      "sha256": "e46214b02cc74b353e42194b39cda81ebaa3a5e5efad0c9767e3b71c71f43b47"
+    },
+    {
+      "path": "muc_online_app/docs/INFO_ENTRY_DIALOG_2026-10-10.md",
+      "bytes": 1625,
+      "sha256": "9d4e767cdf83f65695e5251dc43a9e829497d7fcc1f3ed3c9bedf75bd1174a87"
+    },
+    {
+      "path": "muc_online_app/docs/INFO_REALTIME_ACCEPTANCE_2026-10-09.md",
+      "bytes": 7213,
+      "sha256": "ccb406bc6d871717bce2c54b57a97d4a03bb51f87b623982b8906e8b82ad43cf"
+    },
+    {
+      "path": "muc_online_app/docs/INTEGRATION_ACCEPTANCE.md",
+      "bytes": 3939,
+      "sha256": "0be0075414948f9e53f0072ccd2be4bacce536ed0525cd509d571627693a95ce"
+    },
+    {
+      "path": "muc_online_app/docs/LOCAL_DEVELOPMENT_WORKTREES.md",
+      "bytes": 3583,
+      "sha256": "7c7c9402fed943f02ef6bccb8e4d88e480e78a7e253c508d986725df94af02aa"
+    },
+    {
+      "path": "muc_online_app/docs/MAINTENANCE_CONTROL_STATE_MAP_2026-11-08.md",
+      "bytes": 45939,
+      "sha256": "8c8b63fc79169ce153845321ddd1febff3b9dc0217986be74c4e17c2e27b5bf8"
+    },
+    {
+      "path": "muc_online_app/docs/MAINTENANCE_V10_1_ACCEPTANCE.json",
+      "bytes": 198863,
+      "sha256": "3faa88d63f444bf648d408ee3ce606375b72854b1d43e6ad16e5563a351eb83c"
+    },
+    {
+      "path": "muc_online_app/docs/MAINTENANCE_V10_1_IMPLEMENTATION_AUDIT.md",
+      "bytes": 308739,
+      "sha256": "3e34af2f10d032791debdc433cddb3a1d5a5836c5dfeda849e46075a85ce7a22"
+    },
+    {
+      "path": "muc_online_app/docs/MAINTENANCE_V10_1_RECOVERY.md",
+      "bytes": 47015,
+      "sha256": "4de51a347451de72f017157a7de6fca91b09422e81ae7375659f2c331fae1468"
+    },
+    {
+      "path": "muc_online_app/docs/PPTX_PREVIEW_ACCEPTANCE_2026-10-12.md",
+      "bytes": 2866,
+      "sha256": "e8362acd8f5e9ca318015073ada0debe5b21f55fccc3ee199f6314af17e04175"
+    },
+    {
+      "path": "muc_online_app/docs/PRODUCTION_CUTOVER_CHECKLIST.md",
+      "bytes": 3535,
+      "sha256": "6e5b4cbc4c256cd01a8e72ca0896640a33c82a05f6bf1e487de621017841a30d"
+    },
+    {
+      "path": "muc_online_app/docs/REVIEW_VERSION_FIX_2026-10-12.md",
+      "bytes": 1540,
+      "sha256": "59351e701ba0d7c748ac63c1b807435cbc6690eed4c3b815635f1e4806d73427"
+    },
+    {
+      "path": "muc_online_app/docs/ROUTINE_AUTO_CONFIRMATION_2026-10-12.md",
+      "bytes": 2261,
+      "sha256": "1e3c0aa99f395d7c213af5f3ad83b05227d2aebca346bfc9d616d84648bbb9f3"
+    },
+    {
+      "path": "muc_online_app/docs/SANDBOX_SEARCH_MATRIX_HEADCOUNT_2026-10-22.md",
+      "bytes": 1541,
+      "sha256": "5a79dffad711c1345486dae27d112a9fd4dde9dbb72f52712417c729f11a2379"
+    },
+    {
+      "path": "muc_online_app/docs/STATUS_COMPACT_2026-10-18.md",
+      "bytes": 1245,
+      "sha256": "31bc34337d20e644a868f6008ec0d064be5c53dd488026e5dbbec43d67dba7eb"
+    },
+    {
+      "path": "muc_online_app/docs/STATUS_DIALOG_MOBILE_2026-10-14.md",
+      "bytes": 1966,
+      "sha256": "286913d0c21077ed9b300aee590c44a0559a202b973ebfb77aa4d1486ed7be6a"
+    },
+    {
+      "path": "muc_online_app/docs/STATUS_HEIGHT_2026-10-18.md",
+      "bytes": 990,
+      "sha256": "5fc59d13b96aedce4deb4e45db424c01a45b38248f4902493da520681f809f53"
+    },
+    {
+      "path": "muc_online_app/docs/STATUS_PEOPLE_COLUMNS_2026-10-18.md",
+      "bytes": 2352,
+      "sha256": "727a4208c9a1476309af019fd8f9b66632b46700441e7bd734a1b64ed8100e83"
+    },
+    {
+      "path": "muc_online_app/docs/additional-work-import-20261011.md",
+      "bytes": 1511,
+      "sha256": "787b79e9ae88b34284614c811b87075d5dc9dfe1ba52f923c6c89abc6005ace5"
+    },
+    {
+      "path": "muc_online_app/docs/dispatch-import-20261009.md",
+      "bytes": 2646,
+      "sha256": "303e6e370879d124377db9baeee6f9fba8c3bf2bdc5662dfbad790dc8f1e783c"
+    },
+    {
+      "path": "muc_online_app/docs/maintenance-aircraft-hours.md",
+      "bytes": 3214,
+      "sha256": "1c2811d56d62d0016f46362865d6225bf5b967ab716042e5b3b1cede9592f302"
+    },
+    {
+      "path": "muc_online_app/docs/maintenance-personnel-v1.3-delivery.md",
+      "bytes": 6638,
+      "sha256": "92570c0bb3083efe766c05100735b1d07912df08f259b506b560d1383f441ad9"
+    },
+    {
+      "path": "muc_online_app/docs/routine-dispatch-import-20261011.md",
+      "bytes": 1576,
+      "sha256": "e6a64254723f802f59aded980ae406cf153b46edb9199ea64848c6bec266cc23"
+    },
+    {
+      "path": "muc_online_app/docs/special-pool-order-20261012.md",
+      "bytes": 1127,
+      "sha256": "35b7a3e27e42a8418862aaf6d7a3fb9816d8585c472ff9ae7d4950536d1e2bbb"
+    },
+    {
+      "path": "muc_online_app/docs/status-return-verification-20261027.md",
+      "bytes": 2047,
+      "sha256": "11234b6b2b29579446ab4fb29cdaa547e4338fa47abd859e38c6451b8eef7d06"
+    },
+    {
+      "path": "muc_online_app/import-workspace.mjs",
+      "bytes": 9873,
+      "sha256": "b0cb506dfeae08600c4e68947f527915cf744fab796bb97390f6ea98917ba3ec"
+    },
+    {
+      "path": "muc_online_app/info-sync.mjs",
+      "bytes": 4725,
+      "sha256": "dd099c337d4144d05dd8929e785bba84895356ab1989a806c5487ad98d01999b"
+    },
+    {
+      "path": "muc_online_app/integration-runtime.mjs",
+      "bytes": 2200,
+      "sha256": "ab28bb5eab320c4eff462e76b7564279239db4fceabd37c7ac32fe42730af7ae"
+    },
+    {
+      "path": "muc_online_app/local-development.mjs",
+      "bytes": 7484,
+      "sha256": "ca28af51ecf150cecfffd64041627d5ed7704e3d4ff2818f1ad489f7b0683368"
+    },
+    {
+      "path": "muc_online_app/login-protection.mjs",
+      "bytes": 2276,
+      "sha256": "447d4ffe31701a81a99871c6f49bf994d12ddf1cf912a098d795e02d4ef66288"
+    },
+    {
+      "path": "muc_online_app/maintenance-aircraft-hours.mjs",
+      "bytes": 2446,
+      "sha256": "b1bc2d6c5b373c9257db6a0b13556900b4033797c32532a31f94155161f38de0"
+    },
+    {
+      "path": "muc_online_app/maintenance-dispatch-import.mjs",
+      "bytes": 2889,
+      "sha256": "3671d960b511459cfd731ee7cdfab69f3303b42064da60945c2fb04739ca3c7c"
+    },
+    {
+      "path": "muc_online_app/maintenance-extension-modules.mjs",
+      "bytes": 5054,
+      "sha256": "be75bfa63afaf7a00809373c93088f10938a48fc603c170dd2108f92e535ed7c"
+    },
+    {
+      "path": "muc_online_app/maintenance-hour-periods.mjs",
+      "bytes": 5629,
+      "sha256": "4c2da9453730b0cd88acdc8450b698f0e9ae62fb1b04fe6d5a62eb848b234f2f"
+    },
+    {
+      "path": "muc_online_app/maintenance-import-batches.mjs",
+      "bytes": 18982,
+      "sha256": "e00efb18cb1160c93ed3dc8181caa14af19e81ebcf17c6124c0b098e8a7949eb"
+    },
+    {
+      "path": "muc_online_app/maintenance-import-file.mjs",
+      "bytes": 10651,
+      "sha256": "6e60aa68c0ed29bcb454d2bc262430db85cfbb5e497df67aef17726373278bb8"
+    },
+    {
+      "path": "muc_online_app/maintenance-import-preview.mjs",
+      "bytes": 6351,
+      "sha256": "39b10b68def39c60fac7e06c1905b7547440b4e1a2e858fbba76202a1f4460a4"
+    },
+    {
+      "path": "muc_online_app/maintenance-manual-sources.mjs",
+      "bytes": 4051,
+      "sha256": "5d84e185c1cfe09c0c8f8232c1cdf2b53c835dfcacc448b2442d6c9b03a7fdac"
+    },
+    {
+      "path": "muc_online_app/maintenance-module-instances.mjs",
+      "bytes": 8100,
+      "sha256": "28999f6581e9f455648c1efc5a95f6feebbddb749b3342599b09555457204045"
+    },
+    {
+      "path": "muc_online_app/maintenance-module-results.mjs",
+      "bytes": 1871,
+      "sha256": "1b40a078d8da010eacff039cb01a761818d77629fdfb92cb31565225b75adb37"
+    },
+    {
+      "path": "muc_online_app/maintenance-opportunity-modules.mjs",
+      "bytes": 9304,
+      "sha256": "f631486c3d16444073c91ffc239097ab3c4ef1b8efa9d49fe481eb8693bc530d"
+    },
+    {
+      "path": "muc_online_app/maintenance-report-participant-source.mjs",
+      "bytes": 3237,
+      "sha256": "bed3d3f30aaced9a9a8dc1f76c19542e01063cde082c10d89b5715a615e54d21"
+    },
+    {
+      "path": "muc_online_app/maintenance-report-source-journal.mjs",
+      "bytes": 3912,
+      "sha256": "5d87ea098431eec5e8cd5f8a76f0bd9e623d01ff55ae28562a9e049d78176a56"
+    },
+    {
+      "path": "muc_online_app/maintenance-result-dispatch.mjs",
+      "bytes": 1763,
+      "sha256": "ab9a70dcf9d23978f53704facabec9ce60370bfc17c8256b4e16675614ab1bc6"
+    },
+    {
+      "path": "muc_online_app/maintenance-review-addition-sources.mjs",
+      "bytes": 2819,
+      "sha256": "399ca636aedb217973015f19ff567903fca6ba8b24d1af6f62e1e63e3aa252ea"
+    },
+    {
+      "path": "muc_online_app/maintenance-rule-history.mjs",
+      "bytes": 5510,
+      "sha256": "a7d27b860bd14ef4c93b1dd73a00150890b992e0b4ae0b6f65ca321e29534fe8"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-import.mjs",
+      "bytes": 15440,
+      "sha256": "f4e076405fff02f992b0252e5dac49b9dd92a2313e491c6f30669a070955b092"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-management.mjs",
+      "bytes": 14724,
+      "sha256": "192a02964f336e5df955bfd298913ce18e1cc4a3b29c70bda11e909f61583351"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-notifications.mjs",
+      "bytes": 475,
+      "sha256": "a39726cbad278d25e816f3eae948a63337339116f2033c0d6e2244af8b75c9ce"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-publication-authority.mjs",
+      "bytes": 2550,
+      "sha256": "a0b5118269796976b485dda8765881eef59b013e6baef0186a99591a3ec19087"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-publication.mjs",
+      "bytes": 17162,
+      "sha256": "9339ba7ba84c1a05c7a87f481bf3f273bbdfaaaffac743d947ffe66e45f7c9a7"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-references.mjs",
+      "bytes": 5377,
+      "sha256": "ec0ccc827678cd4091114b533a43458d8a535443bb880e4054aed99f8ae31974"
+    },
+    {
+      "path": "muc_online_app/maintenance-standard-review.mjs",
+      "bytes": 13797,
+      "sha256": "14cb3b5b330e9590ad326c53f5db48918cb34dfa7db908419c31f698ba1e02e4"
+    },
+    {
+      "path": "muc_online_app/maintenance-standards.mjs",
+      "bytes": 8485,
+      "sha256": "e737baa393e41de5ff5e023bf423d00b2891eb2674c10fbb147d3a3772c9b04e"
+    },
+    {
+      "path": "muc_online_app/maintenance-tow-transition.mjs",
+      "bytes": 1498,
+      "sha256": "d51e3f46ea1efa97cea6e25634fe3d250cb583e0bf884eb8bedcccc141fd4a55"
+    },
+    {
+      "path": "muc_online_app/maintenance-work-recognition-source.mjs",
+      "bytes": 3512,
+      "sha256": "cf61a41773e9ae76207f5cd004fa665b48f0ea043ac16fee349a1be7a034e48f"
+    },
+    {
+      "path": "muc_online_app/maintenance-work-standard-intake.mjs",
+      "bytes": 6408,
+      "sha256": "789d23cf4670c18445cad159910f7f24ce645902141e1de6f2bf4e8aa0dcd0b2"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-actions.mjs",
+      "bytes": 11341,
+      "sha256": "6858f866f5442a4c37d19e5a99ee2f83dfd7e13cba7be70536bef627b73c1f78"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-audit.mjs",
+      "bytes": 5837,
+      "sha256": "42ec0beda4884c4570bcc4ee21a67beb839a779e3d784d69ee68088cc48b7ebc"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-contract.mjs",
+      "bytes": 1859,
+      "sha256": "bfa70dae2e78412dc439bd1fec3315bdc09eb7230166065867fe11f1bbdb1643"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-results.mjs",
+      "bytes": 9532,
+      "sha256": "3744d6567a2a135080dbfab42367616b1689935d64179221bf2a65c566357b37"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-tasks.mjs",
+      "bytes": 2272,
+      "sha256": "0dad82ee11166706d201f251b10323aab259d6ade49913e1a4c37e2a38356245"
+    },
+    {
+      "path": "muc_online_app/maintenance-workflow-templates.mjs",
+      "bytes": 910,
+      "sha256": "432d397f3ea035b1d7c78fbd081cf38f39dac77610ef62cf84b191397e505397"
+    },
+    {
+      "path": "muc_online_app/migration-data-guard.mjs",
+      "bytes": 3754,
+      "sha256": "4c28b96de5b6717151ae80f3a0570d438c87459b683c14432f40483f65e945bd"
+    },
+    {
+      "path": "muc_online_app/migrations/001_init_postgres.sql",
+      "bytes": 8973,
+      "sha256": "9ff4227251fa5fd90c9e47687537f665fd76b4344b9efe8874376fbed48e98f9"
+    },
+    {
+      "path": "muc_online_app/migrations/002_performance_indexes.sql",
+      "bytes": 1973,
+      "sha256": "57729e9f0c96363f46919eea8dabb0856e17b8df14ff92534ae7ab0a593267b0"
+    },
+    {
+      "path": "muc_online_app/migrations/003_review_electronic_signatures.sql",
+      "bytes": 187,
+      "sha256": "5ae20bc417e035c8458254917628f8f69051fd55f8c8a29defc4484c5add3bf0"
+    },
+    {
+      "path": "muc_online_app/migrations/004_departure_flight_no.sql",
+      "bytes": 83,
+      "sha256": "4b999dd01bbb664351aee446f9fb032187fa3877f7c8da07728a1102f0b69d7a"
+    },
+    {
+      "path": "muc_online_app/migrations/005_subtask_external_work_no.sql",
+      "bytes": 291,
+      "sha256": "e1f658f20d20bebdec4918a75e97d2451eadc8266ce039385fe893d7309d7419"
+    },
+    {
+      "path": "muc_online_app/migrations/006_personnel_rbac.sql",
+      "bytes": 7732,
+      "sha256": "acbc3e57db00d17a2fbae62a583784c382b6b36c584e667865d77a70b52395c4"
+    },
+    {
+      "path": "muc_online_app/migrations/007_personnel_identity_scopes.sql",
+      "bytes": 6908,
+      "sha256": "9c6f0fbddbd1e28ec4a502f372c760285b060b8f60a79161d22418b8ead003ce"
+    },
+    {
+      "path": "muc_online_app/migrations/008_capability_integration.sql",
+      "bytes": 4875,
+      "sha256": "5367eb6224e1634d5d55201aa2a6db93d439c1f2de65a400b15ccd02b266be44"
+    },
+    {
+      "path": "muc_online_app/migrations/009_four_level_organization.sql",
+      "bytes": 3086,
+      "sha256": "e974f121cc7e3e6b0dd65738accad270636068fafa8b75cdcff1589a376067cd"
+    },
+    {
+      "path": "muc_online_app/migrations/010_personnel_groups.sql",
+      "bytes": 3819,
+      "sha256": "034ea4b74bdc2a99e8d2b6f26cf599db80325b058b4c5622291cdc289aa804c0"
+    },
+    {
+      "path": "muc_online_app/migrations/011_authorization_nine_fields.sql",
+      "bytes": 1974,
+      "sha256": "111604be5f24fc728604e7d030a9352a6701e64bafa288386bb66ff45d80a121"
+    },
+    {
+      "path": "muc_online_app/migrations/012_import_workspace.sql",
+      "bytes": 232,
+      "sha256": "cc1e034595c7e790ed250152b9d2eb32c6546be9ffcf03442a71fa28d83a310e"
+    },
+    {
+      "path": "muc_online_app/migrations/013_authorization_project_categories.sql",
+      "bytes": 718,
+      "sha256": "c307a5a0819eee03387c3348686f3e0e3a023c7b9de21fb2850789500fdb6f5e"
+    },
+    {
+      "path": "muc_online_app/migrations/014_special_personnel_group.sql",
+      "bytes": 573,
+      "sha256": "b530f6a75b262343133a78ac27964402e1c06709f279b8a3d8e09c933adac957"
+    },
+    {
+      "path": "muc_online_app/migrations/015_scheduled_capability_scenarios.sql",
+      "bytes": 530,
+      "sha256": "cd8c9ec6fad0d5f5e03a9ab35ed16f82fd0812df75d8c860d1f2a544be33b248"
+    },
+    {
+      "path": "muc_online_app/migrations/016_other_status_catalog.sql",
+      "bytes": 1557,
+      "sha256": "bfaa7458b10cd31af94d058e9649771049141cb1bf954d9988be077a43e19d41"
+    },
+    {
+      "path": "muc_online_app/migrations/017_aircraft_hours_snapshot.sql",
+      "bytes": 86,
+      "sha256": "815b7424ab4b673f3caf19e7441671175a983a5cff47dc57935dc1793701ff23"
+    },
+    {
+      "path": "muc_online_app/migrations/018_maintenance_work_locations.sql",
+      "bytes": 999,
+      "sha256": "f5b7d94d621d334f281d883e0dd62906932f82398e7ef2983c99dccb933d0615"
+    },
+    {
+      "path": "muc_online_app/migrations/019_backfill_maintenance_work_location.sql",
+      "bytes": 370,
+      "sha256": "4c7db0f39230b8f1d545743608310f457b0617ad5b743a01e7c6d6cf236f3b65"
+    },
+    {
+      "path": "muc_online_app/migrations/020_info_realtime.sql",
+      "bytes": 2117,
+      "sha256": "44e991e4c09d61300562ce5a08b9a7466b34deede30de48e73afe31dcef38d06"
+    },
+    {
+      "path": "muc_online_app/migrations/021_routine_auto_confirmation.sql",
+      "bytes": 85,
+      "sha256": "f3fabfe567fae231bbc56f3c3bc647fa53c7bda7a323e9db46ea4ed1d29bd99b"
+    },
+    {
+      "path": "muc_online_app/migrations/022_attendance.sql",
+      "bytes": 2275,
+      "sha256": "8975fcfbc4cb695eee7480bd8d19914139eeacbb02c5420c069eac3fca695658"
+    },
+    {
+      "path": "muc_online_app/migrations/023_attendance_leave_catalog.sql",
+      "bytes": 142,
+      "sha256": "823e3715c91b7d2f314450c93203a3e14b7fb08304837f1db614802be2520cb5"
+    },
+    {
+      "path": "muc_online_app/migrations/024_capability_status_return_target.sql",
+      "bytes": 271,
+      "sha256": "9351ec03ebe6eaab42acc21d43676c6e04108e4ca03b7ea6733ee786591f07c5"
+    },
+    {
+      "path": "muc_online_app/migrations/025_deployment_handover_days.sql",
+      "bytes": 231,
+      "sha256": "b34f71e16dfca0fbfa9e0d36abe8e77cc0da51ddf7aaab70b2c98ef2c674d457"
+    },
+    {
+      "path": "muc_online_app/migrations/026_capability_allocation_pools.sql",
+      "bytes": 579,
+      "sha256": "04f8c356902235d5dd933fd0c2c995cc481e663c2b12e54ba8ca8525873a08ff"
+    },
+    {
+      "path": "muc_online_app/migrations/027_attendance_hybrid.sql",
+      "bytes": 2823,
+      "sha256": "f3c03e26e9275e768fef8f3528ab4c673f8a68c5c2cc1b1c1723dc9bbf792b8d"
+    },
+    {
+      "path": "muc_online_app/migrations/028_attendance_leave_balances.sql",
+      "bytes": 756,
+      "sha256": "0262cbf57668755c710cde4272dd31d85d27efa05fe18880c14a159c248682c8"
+    },
+    {
+      "path": "muc_online_app/migrations/029_attendance_approval_plans.sql",
+      "bytes": 1114,
+      "sha256": "904a5f6d17827528e2a635dc56d82fef0587199ee48147c855781ec7fade0ae7"
+    },
+    {
+      "path": "muc_online_app/migrations/030_attendance_approval_indexes.sql",
+      "bytes": 404,
+      "sha256": "89e11f94a0fd6687f0713c054e2bd45ff74373f1a35f4330f58058745b1a3ab2"
+    },
+    {
+      "path": "muc_online_app/migrations/031_attendance_event_instance_index.sql",
+      "bytes": 340,
+      "sha256": "aed169fa152ec6534abec9ade9ec365239fdcdff6e30b1d3c4c3bad8cdfc651e"
+    },
+    {
+      "path": "muc_online_app/migrations/032_maintenance_standards.sql",
+      "bytes": 1326,
+      "sha256": "d2007f49cda9385e84774c6ba5342ed3641b6b6716ed579a16bd3a582cca3d83"
+    },
+    {
+      "path": "muc_online_app/migrations/033_maintenance_draft_versions.sql",
+      "bytes": 675,
+      "sha256": "8dba58df42442704a257215af414a7779d3c3be1ade2baa7f7e3bbb054dbc3f4"
+    },
+    {
+      "path": "muc_online_app/migrations/034_maintenance_import_provenance.sql",
+      "bytes": 1906,
+      "sha256": "095b24f2cb9cc1a39904c077ae923ea2e347fda2ab423d5222fae9d0d3142753"
+    },
+    {
+      "path": "muc_online_app/migrations/035_nonroutine_review.sql",
+      "bytes": 2898,
+      "sha256": "e2d202eb39cea379a6bfd8762410579cfa554bcdbf7247a3334dbf45b18e0a66"
+    },
+    {
+      "path": "muc_online_app/migrations/036_nonroutine_review_suggestions.sql",
+      "bytes": 633,
+      "sha256": "c751c611aa0602efb29d55f39b1839d4dd54295fe9f69a9f07f415f94b182574"
+    },
+    {
+      "path": "muc_online_app/migrations/037_nonroutine_assessment.sql",
+      "bytes": 1302,
+      "sha256": "fe35ce4e7a3e980d4930bdad927fa73d077f2a03c9a461c3fd236831eef3862e"
+    },
+    {
+      "path": "muc_online_app/migrations/038_nonroutine_finalization.sql",
+      "bytes": 943,
+      "sha256": "d1547de5824808530df7dc3811b537a49f0e4fb72167f06650e6c27dc2f76740"
+    },
+    {
+      "path": "muc_online_app/migrations/039_maintenance_hour_periods.sql",
+      "bytes": 742,
+      "sha256": "45a1d76e5744e0d50dd047ce42d4b1da4d5dcd10ff22ef1de89417e42fbc3e49"
+    },
+    {
+      "path": "muc_online_app/migrations/040_nonroutine_adjustments.sql",
+      "bytes": 1546,
+      "sha256": "f3b9d8b484c3552d4290a9c0d9a918f7d4ca9bb5da762fc83945dc4e4cdff97f"
+    },
+    {
+      "path": "muc_online_app/migrations/041_nonroutine_cross_period.sql",
+      "bytes": 1019,
+      "sha256": "ed5af413a435e2bbe1ddf544c9db7a52a5815eb0878f80a81f57cd669f5c7b27"
+    },
+    {
+      "path": "muc_online_app/migrations/042_nonroutine_notifications.sql",
+      "bytes": 555,
+      "sha256": "9ceedc8efa8e1668040355bbe718508a926e582a4646e92476aa6cf21e9dc2c9"
+    },
+    {
+      "path": "muc_online_app/migrations/043_nonroutine_posting_receipts.sql",
+      "bytes": 633,
+      "sha256": "8df122b7f4caa6ffa296022c35dc00e0913d9d8ae7d5c115804e2d5ac44bfbce"
+    },
+    {
+      "path": "muc_online_app/migrations/044_maintenance_standard_management.sql",
+      "bytes": 814,
+      "sha256": "1594588ad9aedba86356891b27867990d64c1f042f5b348ecc56f07e2f6b926d"
+    },
+    {
+      "path": "muc_online_app/migrations/045_nonroutine_role_results.sql",
+      "bytes": 1791,
+      "sha256": "495754ac20ac1ab687f069b53108f1c146295a84ccd417bc6beab0e2958c4be6"
+    },
+    {
+      "path": "muc_online_app/migrations/046_maintenance_standard_review.sql",
+      "bytes": 4218,
+      "sha256": "ff992dc5c1b35cc2bf1b718c47033c4604502c49c9a3c512f9ced118e20e1b04"
+    },
+    {
+      "path": "muc_online_app/migrations/047_maintenance_standard_notifications.sql",
+      "bytes": 546,
+      "sha256": "e2ff620b85a3c89734bf8188572852b5ad01bac113f6f033cce3384d22fb12be"
+    },
+    {
+      "path": "muc_online_app/migrations/048_maintenance_standard_publication.sql",
+      "bytes": 1616,
+      "sha256": "d56487f64f1c479412ce5a7ea8cd0e2a8e772a9e977902577b5e1b5b9620d3c9"
+    },
+    {
+      "path": "muc_online_app/migrations/049_maintenance_manual_sources.sql",
+      "bytes": 571,
+      "sha256": "e7aae2a6ef614f07964719dc7c15d84ca931d2dc37cea014e45ec8898f6b17d3"
+    },
+    {
+      "path": "muc_online_app/migrations/050_work_standard_intake.sql",
+      "bytes": 2253,
+      "sha256": "37a09cb50aa25b7f913a89633dd6dcc81b51adcdd8ae0dc2ca4bce4a2bfa374e"
+    },
+    {
+      "path": "muc_online_app/migrations/051_maintenance_standard_import.sql",
+      "bytes": 1504,
+      "sha256": "95fba5cfac57bd5551b0bcb5b036e17289944c97721a0b9bc1065f4609dae823"
+    },
+    {
+      "path": "muc_online_app/migrations/052_maintenance_module_instances.sql",
+      "bytes": 1644,
+      "sha256": "dcb51703dbf9868da7e5075901077b35b4b1603c5da4b9c463a2ab584b11dae3"
+    },
+    {
+      "path": "muc_online_app/migrations/053_nonroutine_corrections.sql",
+      "bytes": 4055,
+      "sha256": "31360f123505cda0d514399931e486af81ec82c5152e2700d417f9bc0303c189"
+    },
+    {
+      "path": "muc_online_app/migrations/054_maintenance_workflow_tasks.sql",
+      "bytes": 2219,
+      "sha256": "17e4d535a3805eeb2319c021c8359cc8270bcc40eba4f03d9dbbde2e62a5605e"
+    },
+    {
+      "path": "muc_online_app/migrations/055_maintenance_rule_history.sql",
+      "bytes": 661,
+      "sha256": "3fa72d5bb830bf12ed79151a6df3492fe4c41eb79daa4822457bf0600e5a77c0"
+    },
+    {
+      "path": "muc_online_app/migrations/056_maintenance_report_source_journal.sql",
+      "bytes": 665,
+      "sha256": "7e04f19531f90cd841dc99ecbbabb7e3c5a55223b0af187251a8c50740cf8a70"
+    },
+    {
+      "path": "muc_online_app/migrations/057_maintenance_review_addition_sources.sql",
+      "bytes": 557,
+      "sha256": "aa5684f3e6589616bf989f130137dda454c9d5e52c16da6910e99506b4962661"
+    },
+    {
+      "path": "muc_online_app/nonroutine-assessment.mjs",
+      "bytes": 1434,
+      "sha256": "6bffdd9bc25bdbfe01bb36dfb6ec15544f0ec06a336083847788cd453860e50d"
+    },
+    {
+      "path": "muc_online_app/nonroutine-correction-service.mjs",
+      "bytes": 22292,
+      "sha256": "598f78aedb66539e040f1ae56cc491dc31a4dd20132f5182172c69ca29ac4ee5"
+    },
+    {
+      "path": "muc_online_app/nonroutine-corrections.mjs",
+      "bytes": 7703,
+      "sha256": "df48132d809385ed66f15b98ec578dd998a3d11a6f37dcefaa14b4646eeb525d"
+    },
+    {
+      "path": "muc_online_app/nonroutine-cross-period.mjs",
+      "bytes": 11653,
+      "sha256": "52589aa85c70cecf008f1d40c4684714ee4a554168dc264c683875ea482233d7"
+    },
+    {
+      "path": "muc_online_app/nonroutine-delivery.mjs",
+      "bytes": 9396,
+      "sha256": "b0f7e278740d143283c9bdbb97266836280af1251bf66aa9e14cf1a8c44833e4"
+    },
+    {
+      "path": "muc_online_app/nonroutine-finalization.mjs",
+      "bytes": 14797,
+      "sha256": "3bf32538ffcf67adbb4e98180edf50ad67061cc365ca36e01c38b577d75dbbaf"
+    },
+    {
+      "path": "muc_online_app/nonroutine-frozen-policy.mjs",
+      "bytes": 2008,
+      "sha256": "b295b48edf86516a9c3305721310e972ad6391e42a1017479a3ec0e8cb1789b0"
+    },
+    {
+      "path": "muc_online_app/nonroutine-notifications.mjs",
+      "bytes": 6409,
+      "sha256": "7c96874ac6a02cc89c63aa9346a69a33fe6f40d305e2f2384e166f19f6de1ca4"
+    },
+    {
+      "path": "muc_online_app/nonroutine-review.mjs",
+      "bytes": 27589,
+      "sha256": "17838126cf851f079a5a0097edd4d1ca32543cd89453b77daf7f8bd7a7e1fbfa"
+    },
+    {
+      "path": "muc_online_app/nonroutine-role-results.mjs",
+      "bytes": 4797,
+      "sha256": "1f28a4a5d80f4063d373a8962b7c479f64f32e865e5292ab9d4b81980995666e"
+    },
+    {
+      "path": "muc_online_app/nonroutine-source-cancellation.mjs",
+      "bytes": 7323,
+      "sha256": "069f5a2122466c482459b0248ef6c2cf3f259a5198fdc490bf4814868856ad50"
+    },
+    {
+      "path": "muc_online_app/nonroutine-source-facts.mjs",
+      "bytes": 6544,
+      "sha256": "0bf2ae8a760f6d158763811e7d43ccdf64ab00cfe79f03d996141ffcfb214ceb"
+    },
+    {
+      "path": "muc_online_app/organization-lanes.mjs",
+      "bytes": 1380,
+      "sha256": "be30a656f0585302a040191e00db1b077b8603050c8f6bd35c43f0b2074d9fc7"
+    },
+    {
+      "path": "muc_online_app/package-lock.json",
+      "bytes": 58491,
+      "sha256": "2126eb3bc23dfdb9bb14ff473b5004452c7718636b0cbe301ae144e7a8537bae"
+    },
+    {
+      "path": "muc_online_app/package.json",
+      "bytes": 4609,
+      "sha256": "4ae71ae47dac861aa1477d88d8e3e6ae90fae7dbd00fef716c838fbdcc8e954e"
+    },
+    {
+      "path": "muc_online_app/personnel-access.mjs",
+      "bytes": 32049,
+      "sha256": "dd4c6518988cc05dabc62f5d6684448694f4a4d0bf1d2dcf377fce0b417ebc9d"
+    },
+    {
+      "path": "muc_online_app/personnel-deletion.mjs",
+      "bytes": 8201,
+      "sha256": "05ee819d4972e24e33a7f4c7f2f36338d562304ceb895b2dd03f39ed154e88e9"
+    },
+    {
+      "path": "muc_online_app/personnel-identity.mjs",
+      "bytes": 7258,
+      "sha256": "18287bc5248bc705b1c149af77236da9dcb09a7a7b19c73caed80971a05db0e4"
+    },
+    {
+      "path": "muc_online_app/personnel-import-history.mjs",
+      "bytes": 1109,
+      "sha256": "08d264b77daae728064409e234986af80aa966f865243712a7f2c3d3ded0ba75"
+    },
+    {
+      "path": "muc_online_app/postgres-connection.mjs",
+      "bytes": 1196,
+      "sha256": "0553eb875233516ade073cc868aefb3c699aac1b2e6a8eede143b7747c0b7120"
+    },
+    {
+      "path": "muc_online_app/public/app.js",
+      "bytes": 659457,
+      "sha256": "404030abb32348fe3cd44c150f7a6e4d5cd602cfe80de83ad48b84313700a445"
+    },
+    {
+      "path": "muc_online_app/public/attachment-viewer.css",
+      "bytes": 3984,
+      "sha256": "6f27a5a200e64dac3d490094d1385720b4d6fef228c65ec1ce1b311f73811d63"
+    },
+    {
+      "path": "muc_online_app/public/attachment-viewer.mjs",
+      "bytes": 13805,
+      "sha256": "86d63c5e93fd3371126b89e60d54806966773940c18ad9d96a17b7f14ade1242"
+    },
+    {
+      "path": "muc_online_app/public/attendance-approval-plan-view.mjs",
+      "bytes": 2616,
+      "sha256": "50d44a6e2b43672f273079ba4cc3a431d92d59fd941d266d2bf7fd1cb05a5f32"
+    },
+    {
+      "path": "muc_online_app/public/attendance-leave-model.mjs",
+      "bytes": 5339,
+      "sha256": "a765e3c061fee545e75a438878ef3f03dc64d82d8dc0b18743b705904e3c12ea"
+    },
+    {
+      "path": "muc_online_app/public/attendance-leave-view.mjs",
+      "bytes": 9667,
+      "sha256": "e43532389b86c404756a6e3bcaedd8321f9050cfd8d3fd917b70bda7ae2e0a1c"
+    },
+    {
+      "path": "muc_online_app/public/attendance-presentation.mjs",
+      "bytes": 7194,
+      "sha256": "7d6f18c612e375c7b93692482e90f01c415cd274bb8c3af15b7ee4290a4d7eeb"
+    },
+    {
+      "path": "muc_online_app/public/attendance-view.mjs",
+      "bytes": 35874,
+      "sha256": "79aa23a2e6fbfdfcb8216b18fc4d3bb46b0e167d3ec7b8eb25361f053c161193"
+    },
+    {
+      "path": "muc_online_app/public/attendance.css",
+      "bytes": 11024,
+      "sha256": "82edf8bfacb5447594cee25ef36797c185b59ebf4eebe6c7b19be0c136dd7e73"
+    },
+    {
+      "path": "muc_online_app/public/attendance.mjs",
+      "bytes": 7019,
+      "sha256": "8f10652ea552a3c112d08ead289455c21766792254a36817f96ff3d734147908"
+    },
+    {
+      "path": "muc_online_app/public/capability/module.js",
+      "bytes": 362318,
+      "sha256": "e7f02e27840f8c99ebe1dff428db6c6fb323a748e444685bad0ebd7892526fa6"
+    },
+    {
+      "path": "muc_online_app/public/config.js",
+      "bytes": 57,
+      "sha256": "f477d8778580aa9362a6089aa326ed32c9026f4f5517bf13cc4c0d8808e10b93"
+    },
+    {
+      "path": "muc_online_app/public/icons/apple-touch-icon.png",
+      "bytes": 9965,
+      "sha256": "d6de5fa7db2670ec83c606694f7b92f3e5c7e514ce67bc4944fe1ad043b230e7"
+    },
+    {
+      "path": "muc_online_app/public/icons/icon-192.png",
+      "bytes": 10895,
+      "sha256": "06f260212b4f591d772aa8e47e431883f2ad2ea482510328f6f800ff9054a35f"
+    },
+    {
+      "path": "muc_online_app/public/icons/icon-512.png",
+      "bytes": 31115,
+      "sha256": "d5b78b3a4cadecc26637d2b30b932118fbace5be296d089c3084051648cb7e8b"
+    },
+    {
+      "path": "muc_online_app/public/icons/icon-maskable-512.png",
+      "bytes": 25565,
+      "sha256": "85d1dac8d63e36f4239c8fab7f6053c2d1c9794825e5d5724c041a3f5f4ab1f8"
+    },
+    {
+      "path": "muc_online_app/public/import-workspace.js",
+      "bytes": 13330,
+      "sha256": "4699ff92aa2f48a11fc740fdf4dedb73db1b0b0c2506ff22aabacd8014d55bec"
+    },
+    {
+      "path": "muc_online_app/public/index.html",
+      "bytes": 202685,
+      "sha256": "89ff0851cfc5e00023f77712ac081062e8f4b14f827ae96dab33f0df6a3c90de"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-cross-period-workbench.mjs",
+      "bytes": 9124,
+      "sha256": "f76517e365d209e0841971251f19257b23813f758de51fb43f4297c1859a6f26"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-import-workbench.mjs",
+      "bytes": 13655,
+      "sha256": "281a7bdfdd99a494fc817b39c6deab2c7b5fa8b6e22be0fd429c8f35bb74a472"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-period-workbench.mjs",
+      "bytes": 8512,
+      "sha256": "7c6ed73d5bf9302da4e170ecb6940fbc6301cafcd00e23a653817a466510edd6"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-rule-history-view.mjs",
+      "bytes": 3127,
+      "sha256": "75defa70a509ccf1c108b3657e2f89e01cb75c8d6275087e89425fb9e6a5af37"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-standard-finalization-view.mjs",
+      "bytes": 4525,
+      "sha256": "15ad4e92297a03cee9c46d90636d6f7c2afa438f7a866e015c1ef7f1d5b10445"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-standard-import-workbench.mjs",
+      "bytes": 12267,
+      "sha256": "32a60a31b911ca3077cf2a562febef6ffba1eebe7fc1403dd305946abf4c6888"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-standard-management-workbench.mjs",
+      "bytes": 18599,
+      "sha256": "dd1188dffb962ad34d59f456c84f74c2bf152f295bd01108489f43e8c2e7fc19"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-standard-picker.mjs",
+      "bytes": 7040,
+      "sha256": "f867d456b3e5b1fa7e5f27c47c78a8a3399ffb4d2e4aa79187ef950a1bd6823f"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-standard-publication-workbench.mjs",
+      "bytes": 17441,
+      "sha256": "a391e07d510b0a46bf31268ed31d813c4a0e431464a847e5d998e89d2ccf08d8"
+    },
+    {
+      "path": "muc_online_app/public/maintenance-workflow-workbench.mjs",
+      "bytes": 21897,
+      "sha256": "0578fec7ef52b8ae2ba36f4b06c1105758a06795b1dc905df622652456feaec6"
+    },
+    {
+      "path": "muc_online_app/public/manifest.webmanifest",
+      "bytes": 816,
+      "sha256": "ee247cdbf034cf012941fa41c114bb9c36d8ef6a3c08c9a040979200dbf3d45d"
+    },
+    {
+      "path": "muc_online_app/public/nonroutine-correction-workbench.mjs",
+      "bytes": 23620,
+      "sha256": "98866fd3cb497c98fc24aad281209bbdece37fc523063ae797c31d2f76cfec46"
+    },
+    {
+      "path": "muc_online_app/public/nonroutine-finalization-view.mjs",
+      "bytes": 9373,
+      "sha256": "2fd42b7ad42129f31d71fd43941b889610f2f99b9aeb16ac32c527c918c913d4"
+    },
+    {
+      "path": "muc_online_app/public/nonroutine-notification-view.mjs",
+      "bytes": 1335,
+      "sha256": "7eec54a6785d53a241c432780d12aa8faf7e12afacd5d53d8249526ed64a8090"
+    },
+    {
+      "path": "muc_online_app/public/nonroutine-review-workbench.mjs",
+      "bytes": 34783,
+      "sha256": "af26505890e362ea3c472ecd20d66f34588e9bb4ccb08b83794c19e0e4904c8e"
+    },
+    {
+      "path": "muc_online_app/public/pptx-preview.mjs",
+      "bytes": 11359,
+      "sha256": "7aa52146ea6ea98cbc35dca37270db7672b2eb6359e19aee4fa6e861282013e6"
+    },
+    {
+      "path": "muc_online_app/public/pptx-worker.mjs",
+      "bytes": 778,
+      "sha256": "d2022d65d247f6629f0076f33c60e744b8ec47edf17f88103266aaa485d59745"
+    },
+    {
+      "path": "muc_online_app/public/pptx-zip.mjs",
+      "bytes": 7584,
+      "sha256": "7ea413e72a8d3ec335367680ced27dc81c783e8e0c596e98458b5bc79465b19b"
+    },
+    {
+      "path": "muc_online_app/public/sw.js",
+      "bytes": 1827,
+      "sha256": "2e863459dbd1518ee985bd2151f8099dce401628305f1ed83af6488b858740cb"
+    },
+    {
+      "path": "muc_online_app/public/templates/additional-work.xlsx",
+      "bytes": 77273,
+      "sha256": "ba8577b361702222165e0d6c0b162a0bd1b108860a4bc95a50e9381efa5fdd9a"
+    },
+    {
+      "path": "muc_online_app/public/templates/authorization-project-import-template.xlsx",
+      "bytes": 12100,
+      "sha256": "faa7981a12a219f6246770e0f527da717f845df41c98997c7150bee7f9647efa"
+    },
+    {
+      "path": "muc_online_app/public/templates/flight-plan.xlsx",
+      "bytes": 11689,
+      "sha256": "b162798a0cdb26f26a89cd60ebadd98f80399e3b32d94ee7f45736b7c0d0ce37"
+    },
+    {
+      "path": "muc_online_app/public/templates/routine-dispatch.xlsx",
+      "bytes": 67700,
+      "sha256": "6179922b7783958ee292745217e107ead5bef04402980502a54fd0c75adfb01f"
+    },
+    {
+      "path": "muc_online_app/rbac-policy.mjs",
+      "bytes": 24096,
+      "sha256": "8cf28be370702b8d68fce4b6bf806e4e7ceccec2e352fc593ca016fc9458a880"
+    },
+    {
+      "path": "muc_online_app/review-storage.mjs",
+      "bytes": 486,
+      "sha256": "88112340a0daa88bdae8f01ad9e728a74a1894ffaffadd43b5c651c0a0e521b9"
+    },
+    {
+      "path": "muc_online_app/scenario-intents.mjs",
+      "bytes": 4696,
+      "sha256": "14c66217c1abd6c1758358629fb3e9ff53bea56bf4a54b31af75c30155452c99"
+    },
+    {
+      "path": "muc_online_app/scripts/attendance-postgres-check-isolated.mjs",
+      "bytes": 1444,
+      "sha256": "7054e16a8340998e557a2ef41629177c4b12283ab5c4b292b45328190f1a91a6"
+    },
+    {
+      "path": "muc_online_app/scripts/attendance-postgres-check.mjs",
+      "bytes": 10188,
+      "sha256": "7558333c8d398f74eb16f48e595ef37519112b8b2fba03c20eef9826001859a2"
+    },
+    {
+      "path": "muc_online_app/scripts/authorization-projects-tests.mjs",
+      "bytes": 17586,
+      "sha256": "cdc08a24116aa075ade34fcea52497daf530c8589a42c382f093c32e0072300a"
+    },
+    {
+      "path": "muc_online_app/scripts/authorization-replacement-tests.mjs",
+      "bytes": 6963,
+      "sha256": "5ba58372840b956b9e9cf5caca92c0425cb05547f78c928606a9433872980cf4"
+    },
+    {
+      "path": "muc_online_app/scripts/authorization-test-rows.mjs",
+      "bytes": 479,
+      "sha256": "f8e54d4573835ce016ee0808f4337ccc05340a5cdd94af58c55a4ac3df696e37"
+    },
+    {
+      "path": "muc_online_app/scripts/benchmark-attendance-loading.mjs",
+      "bytes": 2543,
+      "sha256": "4d7f71cad082b9d0fe3b52cba25a37195edbff2bd2600fa4a8ee6fff3d33109e"
+    },
+    {
+      "path": "muc_online_app/scripts/build-capability.mjs",
+      "bytes": 902,
+      "sha256": "4416d743cc6433b2334683cd731f0b0b9a04aae2f9f979b54d370315517c6a85"
+    },
+    {
+      "path": "muc_online_app/scripts/build-encrypted-backup.mjs",
+      "bytes": 1634,
+      "sha256": "4d3458b860120b2af1d981b72a0ce91f8f4f2275b95ab308b15e3e87b2a4bb0c"
+    },
+    {
+      "path": "muc_online_app/scripts/build-web-assets.mjs",
+      "bytes": 2278,
+      "sha256": "6a752916393a27492e4732cb78c4a83458fc805b43a7baf1d3504d00b87f9fa1"
+    },
+    {
+      "path": "muc_online_app/scripts/capability-fixture.mjs",
+      "bytes": 4240,
+      "sha256": "b080603ef979ee0c6c8cbf1bbbda10275d1030ab9ee89132e6b45fcc52ff493d"
+    },
+    {
+      "path": "muc_online_app/scripts/capability-preview.mjs",
+      "bytes": 1137,
+      "sha256": "8063145943d36c83ad9632d986e02eaa91b27e37a2735151894d6fe2dd4eadf9"
+    },
+    {
+      "path": "muc_online_app/scripts/capability-scheduling-tests.mjs",
+      "bytes": 8786,
+      "sha256": "15e1eee8e91a4abf56fc2d81ec8db8209c84a6e214ca6d84793fda9b36f4735a"
+    },
+    {
+      "path": "muc_online_app/scripts/capability-tests.mjs",
+      "bytes": 39445,
+      "sha256": "82af12fd884e547c95f94d18da94520b1b851246d02ff961481f530bbadd5083"
+    },
+    {
+      "path": "muc_online_app/scripts/capability-ui-tests.mjs",
+      "bytes": 21911,
+      "sha256": "8db516d8f200551ffb5020e1e50f5294784068a6915c11d6063deaf504164ea4"
+    },
+    {
+      "path": "muc_online_app/scripts/check-integration-package.mjs",
+      "bytes": 7464,
+      "sha256": "7076e9243198a0aeb675a8281c70613d5e114f08fd82c7b94fe7586f51f65dec"
+    },
+    {
+      "path": "muc_online_app/scripts/check-integration-restore.mjs",
+      "bytes": 4358,
+      "sha256": "aca7aa1b5e2b5bb519e00fdddf9542636f11ebd64468f3d2214fc00dcd443b08"
+    },
+    {
+      "path": "muc_online_app/scripts/check-local-postgres.mjs",
+      "bytes": 3862,
+      "sha256": "ced356e2934b30a061898d4742ad74139dbf6d552fc60bb9bb475ef1b3e6de3d"
+    },
+    {
+      "path": "muc_online_app/scripts/check-maintenance-package.mjs",
+      "bytes": 3725,
+      "sha256": "d0436a348f37fe48873a48900abe53516901edae1ad7f96d2ae851ffb61508c3"
+    },
+    {
+      "path": "muc_online_app/scripts/check-maintenance-v101-concurrency.mjs",
+      "bytes": 80703,
+      "sha256": "e028d703b30319200f3d4dbd58c97971f91f4b4a0a43c807fab44fe1fb77ff31"
+    },
+    {
+      "path": "muc_online_app/scripts/check-maintenance-v101-postgres.mjs",
+      "bytes": 13727,
+      "sha256": "53a96e63011126157f6656de990ec0e95252683ce24d6277ec7f95ad2e59ff93"
+    },
+    {
+      "path": "muc_online_app/scripts/check-maintenance-v101-restored.mjs",
+      "bytes": 96265,
+      "sha256": "a443f4db7af93d0d8b415240265d37b4862475118bee97dfdd02e6dfcf1fd511"
+    },
+    {
+      "path": "muc_online_app/scripts/check-maintenance-v101-traceability.mjs",
+      "bytes": 4182,
+      "sha256": "8f85e07283dad4444cd743d69af9c7c8936d549fe8ce71df69e5b14e809c60e4"
+    },
+    {
+      "path": "muc_online_app/scripts/check-migration-policy.mjs",
+      "bytes": 1007,
+      "sha256": "86e43a3b1034448b72e9eda445f439031a9c9dbda9f58e97b3abcbc21ca287c4"
+    },
+    {
+      "path": "muc_online_app/scripts/create-encrypted-backup.mjs",
+      "bytes": 5572,
+      "sha256": "62247903531cb3ab84239fe35377a4279e0790a9e0718ea3bebfdf9c4c85681a"
+    },
+    {
+      "path": "muc_online_app/scripts/handover-tests.mjs",
+      "bytes": 4482,
+      "sha256": "8d25350580ad6e5e70a086683281a4a737ea84e62127f1965fe06550135f9722"
+    },
+    {
+      "path": "muc_online_app/scripts/handover-ui-preview.mjs",
+      "bytes": 1086,
+      "sha256": "a1d8b17dee536be3d7777bdc3addc53ebd5f1ef964dfe5aea7157fe23a8982c8"
+    },
+    {
+      "path": "muc_online_app/scripts/import-workspace-tests.mjs",
+      "bytes": 4465,
+      "sha256": "b51cdd01cfcd9de6f58ad669c6b0890bc4a18ced8ce3d32432c6f6848920ed1e"
+    },
+    {
+      "path": "muc_online_app/scripts/info-network-check.mjs",
+      "bytes": 9624,
+      "sha256": "1474cb1812fce56b1e6d0db3ad207bb3df74d31a069b103f8474e9fc694b4fa1"
+    },
+    {
+      "path": "muc_online_app/scripts/info-package-check.mjs",
+      "bytes": 2328,
+      "sha256": "15aa7d93c6ec5197c40e5d604a763ad8d2c62670f0b1931af3f1d30ac074706d"
+    },
+    {
+      "path": "muc_online_app/scripts/info-postgres-check.mjs",
+      "bytes": 6806,
+      "sha256": "cd8154f9ad2635c2c33f12768aa8388467c0fc7a8be92b1f96dea36a80af2491"
+    },
+    {
+      "path": "muc_online_app/scripts/info-upload-network-check.mjs",
+      "bytes": 4039,
+      "sha256": "98b821a19b7428f1797f336e0b374522a7912fb52b665cd093815f41c08a9388"
+    },
+    {
+      "path": "muc_online_app/scripts/initialize-capability-baseline.mjs",
+      "bytes": 2300,
+      "sha256": "eea225832241759be5c7fb8f502389fe0b1b300da0af25e9a6769d913abfc89d"
+    },
+    {
+      "path": "muc_online_app/scripts/integration-package-postgres-check.mjs",
+      "bytes": 2235,
+      "sha256": "c473ea656aa45b557832f13722c2bac19be6747fa35d1ca5e1cac0c3165ff14a"
+    },
+    {
+      "path": "muc_online_app/scripts/maintenance-postgres-fingerprint.mjs",
+      "bytes": 2215,
+      "sha256": "de130ee0271c9ac6d86b303fc240d641df410116dd88fc0706cefdac2bdf1ccf"
+    },
+    {
+      "path": "muc_online_app/scripts/migrate-attachments-to-cos.mjs",
+      "bytes": 2087,
+      "sha256": "78969e5f51ac2d296a4859cd113ecd5f9b8a7ed665448dfc9d614166e38c8042"
+    },
+    {
+      "path": "muc_online_app/scripts/migrate-attendance-to-postgres-stage.mjs",
+      "bytes": 8399,
+      "sha256": "4bf4b067a8764307e6f7c27151c44e0aa5bc4017e0deba9f21e786313a5f175d"
+    },
+    {
+      "path": "muc_online_app/scripts/migrate-sqlite-to-postgres.mjs",
+      "bytes": 11522,
+      "sha256": "181923e1038e6907175a57500f0c3857f9d982ab72bb2e03f6adaffa71646614"
+    },
+    {
+      "path": "muc_online_app/scripts/migrate-super-account-auth.mjs",
+      "bytes": 5093,
+      "sha256": "b5d1e83cc21e1a60774e4a1062cc8d614bf18cc6e86582fcae35828cecd898a4"
+    },
+    {
+      "path": "muc_online_app/scripts/organization-maintenance-tests.mjs",
+      "bytes": 4842,
+      "sha256": "f47b9ee4fe76ece9c62896036b994c23d12fe8bb28fceb707422fa97beb8d935"
+    },
+    {
+      "path": "muc_online_app/scripts/personnel-access-tests.mjs",
+      "bytes": 21571,
+      "sha256": "fd049efc91e637c07284d6aa5196bf73d743ca2a67c70834f4480574b28b348c"
+    },
+    {
+      "path": "muc_online_app/scripts/personnel-deletion-tests.mjs",
+      "bytes": 14995,
+      "sha256": "e317160c82a10ce25ae83774314b9c35acfedb2d426cf289df41ee689259d6dc"
+    },
+    {
+      "path": "muc_online_app/scripts/postgres-report-stress.mjs",
+      "bytes": 5903,
+      "sha256": "4ecc99bb511467afa1cc75c9d8f52769d3667e2066097513cc07971afd5fe0b9"
+    },
+    {
+      "path": "muc_online_app/scripts/preflight-personnel.mjs",
+      "bytes": 1675,
+      "sha256": "482fd708e60eb2a48cbbe99a489bf65d674f487fffedb9773653d3ddb2d49c9c"
+    },
+    {
+      "path": "muc_online_app/scripts/prepare-pdf-assets.mjs",
+      "bytes": 868,
+      "sha256": "50875ac85d76d32d5f8e6e201aadfa311e807dccc550b423a0442dbdda56054b"
+    },
+    {
+      "path": "muc_online_app/scripts/rbac-permission-matrix-tests.mjs",
+      "bytes": 4692,
+      "sha256": "ae38980252a929ef03a5d6fa16e06752fa5b0d5f3fe3f39049d5196fb2f9743d"
+    },
+    {
+      "path": "muc_online_app/scripts/rbac-personnel-smoke.mjs",
+      "bytes": 23998,
+      "sha256": "440e67d6fdc7534bffdba7298aad75a0d2cbbc6af8453187209bc129112d5d4a"
+    },
+    {
+      "path": "muc_online_app/scripts/reset-8788-test-data.mjs",
+      "bytes": 7710,
+      "sha256": "32ab0200e18f8185033c04d34946d6ee5c92eb6e77c018794a518ea7c2c96af1"
+    },
+    {
+      "path": "muc_online_app/scripts/reset-production-data.mjs",
+      "bytes": 15149,
+      "sha256": "cb51891fce6625fc61c8c226e38484103bbaa18fcf7aae7ccf31b6d8c736b48b"
+    },
+    {
+      "path": "muc_online_app/scripts/run-postgres-migrations.mjs",
+      "bytes": 2651,
+      "sha256": "245678e0ed3e06fe72c081ed01a65d7ca58045622a117f2b201676b5c71356ee"
+    },
+    {
+      "path": "muc_online_app/scripts/seed-report-stress.mjs",
+      "bytes": 4151,
+      "sha256": "64a81dee6b16aaebd7cbc312a9654fd779eb47883f0bdfe1908090582afae03e"
+    },
+    {
+      "path": "muc_online_app/scripts/setup-local-integration.mjs",
+      "bytes": 4079,
+      "sha256": "09f4840b1f100c2c8bc8e72954544d8aa06d18f8e49f1d1e82f8d8ea2a8b861a"
+    },
+    {
+      "path": "muc_online_app/scripts/start-attendance-8792.mjs",
+      "bytes": 1309,
+      "sha256": "693f58beb3f7b9179cccc88c36210d9dbeea09fd34ec89411cb99efd28119885"
+    },
+    {
+      "path": "muc_online_app/scripts/start-attendance-preview.mjs",
+      "bytes": 239,
+      "sha256": "9037c1eb5921c59e7478e0c0e9aedf5818a55a2f628488e665fed8e543e0f31e"
+    },
+    {
+      "path": "muc_online_app/scripts/start-local-development.mjs",
+      "bytes": 3112,
+      "sha256": "5c860d87a491cfcf74ec627bf974baa4839683aff06738868f4e6869b55c7317"
+    },
+    {
+      "path": "muc_online_app/scripts/start-worktree.mjs",
+      "bytes": 124,
+      "sha256": "8461e25aa7301cb05c4254c36cb940c28264521579dc8d28f5cd8ce760049290"
+    },
+    {
+      "path": "muc_online_app/scripts/status-return-tests.mjs",
+      "bytes": 10600,
+      "sha256": "5e5e57bc615edff4847cbd5d0a91e4d50d386f290e9e3deb6bc2e54a3c3e017c"
+    },
+    {
+      "path": "muc_online_app/scripts/sync-authorization-catalog.mjs",
+      "bytes": 6824,
+      "sha256": "b2844fb2a6c5eb17d5088d2667c689c1d45b347cf6fbeaa6f8f5db75944a6129"
+    },
+    {
+      "path": "muc_online_app/scripts/sync-authorization-project-categories.mjs",
+      "bytes": 5512,
+      "sha256": "b43ceadc419f022de72e628b3b1459035cd03dc570c0888ba3938d21abb43736"
+    },
+    {
+      "path": "muc_online_app/scripts/verify-encrypted-backup.mjs",
+      "bytes": 1665,
+      "sha256": "4901c1084035b54c92ff4ac2e2d7c435d1ef88faab2658c80e13c808cb24e21b"
+    },
+    {
+      "path": "muc_online_app/server.mjs",
+      "bytes": 760733,
+      "sha256": "6531f3766abb69a708249e9b9e772085ff638b4c3a994d78cccbbcea497209ba"
+    },
+    {
+      "path": "muc_online_app/start-local.command",
+      "bytes": 1547,
+      "sha256": "993eb1284ceca6443fe0c8123c29a7c4f12ce59c9fe4b3a2f7aba1ef1de69d30"
+    },
+    {
+      "path": "muc_online_app/tests/allocation-areas.test.mjs",
+      "bytes": 2378,
+      "sha256": "534d7662f5b65fec2efb78bd6ca9221ba8c5275ce7379590004ebdd408d3b0bf"
+    },
+    {
+      "path": "muc_online_app/tests/attachment-viewer.test.mjs",
+      "bytes": 3464,
+      "sha256": "6611e40ffc274ec61bbaac75af93dac02f95ae03757054c4efe0af6a1581ae69"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-approval-plans.test.mjs",
+      "bytes": 32246,
+      "sha256": "6802db325b4d2e6e4e385ae642c75b8a8d8add45324e61abd52ac1dedbbd9139"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-approval-reasons.test.mjs",
+      "bytes": 4173,
+      "sha256": "d0ad36b7636a4949d830533de159ffab5cb5c92e58c9f3de4786dbe586616682"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-client.test.mjs",
+      "bytes": 7228,
+      "sha256": "5400a6c7b08997d873469e4ffc1fd7d6d0da720110a5b8345afe8cdebf347d7f"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-db-lock.test.mjs",
+      "bytes": 1211,
+      "sha256": "6f5db1e76ffe360f75199c785d45b097e38d0aff25fe8d8b0442b1b238eb25fe"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-export.test.mjs",
+      "bytes": 7623,
+      "sha256": "4982d512e87af2bb1c7eb168441463149069076d0687e52869df5ea9f3bbaa3c"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-hybrid.test.mjs",
+      "bytes": 54343,
+      "sha256": "8f0914e4eb51aff044b60e1ff2056d496f053d1d0276b7aa812aee24ef74c841"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-integration.test.mjs",
+      "bytes": 939,
+      "sha256": "91569ee11609dd83e69a18b648ff423136a6a3c92a90e9d6995014c9668c4582"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-leave.test.mjs",
+      "bytes": 14077,
+      "sha256": "74d266a5789b67971b732c0570b25d5435d8a0b5199cd323c3189335163081d7"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-loading-compatibility.test.mjs",
+      "bytes": 1244,
+      "sha256": "28b64596643f769e71b329f470b50dfdae908bd6aef3423eaa6fb3b8354e265f"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-query-count.test.mjs",
+      "bytes": 3605,
+      "sha256": "9cf34f7ef16660aebfd70ba1f7aada0c50cf2d46e46496d54c80dd4ceff34f6f"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-response-policy.test.mjs",
+      "bytes": 1172,
+      "sha256": "de91fcc3f75ff48d168dbd787adc1c7df22f59328cd2d6edad427a5e31f130de"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-rules.test.mjs",
+      "bytes": 17743,
+      "sha256": "af1f3509c0573fa427d91dd44c1001fb247e16eb2d4792ee343904fc881728d3"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-service.test.mjs",
+      "bytes": 25617,
+      "sha256": "83c37ba2f5d5b1074dd2429b2c72adc6bfa0e700581e46d5ffe04e067925b988"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-stage-import.test.mjs",
+      "bytes": 5981,
+      "sha256": "10942c46183bb819107f8883c408bb8860f71b6c3b72c1fde58464ae0d4b82ca"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-stream-status.test.mjs",
+      "bytes": 2702,
+      "sha256": "64d737c74f83af0241846c9c2fb4d612644938bc733cf864bb01459c6b126c44"
+    },
+    {
+      "path": "muc_online_app/tests/attendance-view.test.mjs",
+      "bytes": 25966,
+      "sha256": "aac33cfbacbf8f3f319b17066f934d61d7c676866b32e6677c3c26e019d895f5"
+    },
+    {
+      "path": "muc_online_app/tests/backup-envelope.test.mjs",
+      "bytes": 3645,
+      "sha256": "c2ee8f68f4624fb41f55231f748de58dca869353e5ad48d73c431eae1f76d3e4"
+    },
+    {
+      "path": "muc_online_app/tests/backup-runtime.test.mjs",
+      "bytes": 2605,
+      "sha256": "ef5aeb1b8163cc85e66e8d964700c8ccdcb42a3123e183f93c035b5ccef68fe3"
+    },
+    {
+      "path": "muc_online_app/tests/backup-workflow.test.mjs",
+      "bytes": 4908,
+      "sha256": "0ffddb3c3a9fa8028017f7cde68222e88fd76673c583d5840a3111bd8df2e502"
+    },
+    {
+      "path": "muc_online_app/tests/capability-command-feedback.test.mjs",
+      "bytes": 3617,
+      "sha256": "db16bdc54a2c50cccdf7c1caa11b51321a0c457b243951e8725005e4f6ad91c5"
+    },
+    {
+      "path": "muc_online_app/tests/capability-refresh.test.mjs",
+      "bytes": 4008,
+      "sha256": "1ff20f4dfb9a585b83e2b7a3667b2195aad3e278d3705366780beec7fc1eddee"
+    },
+    {
+      "path": "muc_online_app/tests/deployment-handover.test.mjs",
+      "bytes": 632,
+      "sha256": "6bed8547afd37080368d7d032d503a3bb470b12bba66c9f92baec901f229b69f"
+    },
+    {
+      "path": "muc_online_app/tests/dialog-close-ui.test.mjs",
+      "bytes": 1260,
+      "sha256": "5406fcd2cf5ec6335da216184ab481ab373c09654de0a05ed4c13ad0c205d1d2"
+    },
+    {
+      "path": "muc_online_app/tests/dispatch-import-feedback.test.mjs",
+      "bytes": 3532,
+      "sha256": "730eb5f312ff7cd50439c060ebef58be18917a8f5e776a2dbea3cdb2223f72b3"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/additional-work-errors.csv",
+      "bytes": 314,
+      "sha256": "649f99547638faa869fcace7a69c53090b8f9509a105e7d3caf1c20b3dfbe734"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/attachment-viewer-qa.html",
+      "bytes": 3505,
+      "sha256": "7570b5ef673926ddd8126837987fb2cbf48fba07d262278495a162469d11e00b"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/attendance-api-shapes.json",
+      "bytes": 1904,
+      "sha256": "0787242853ae83e1a0028c9d0353eb39adf5197ae54ccf4f50c35411122157c5"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/flight-plan-errors.csv",
+      "bytes": 258,
+      "sha256": "281b33c11443c0c451e9567bd608f854d315e1a3eb3fa7b7e0692dc77e48327c"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/handover-ui.html",
+      "bytes": 313,
+      "sha256": "51971871b9b6310c6c611b4f19ae869c93a14b303146bc4449338b80a65d1abd"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/handover-ui.jsx",
+      "bytes": 1093,
+      "sha256": "4390b4e516f20c17a1bc36bf85752af0060e5985162de4a63805a0d87dc15419"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/maintenance-standard-publication.mjs",
+      "bytes": 5188,
+      "sha256": "36b0dcd8e29200eba27de9908aecd7c649eb1bd9361095d62150f97a26f7dd3a"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/pptx-fixture.mjs",
+      "bytes": 4380,
+      "sha256": "9b8130dd658ce63e800cc279e394a4f8818fe87452a3ff1cb4b0babadb8ef5ba"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/pptx-qa.html",
+      "bytes": 5796,
+      "sha256": "b1d204ba9902e35c2b8021219c913031b4c99979fef4b6fc564cb23be18a0f41"
+    },
+    {
+      "path": "muc_online_app/tests/fixtures/routine-dispatch-errors.csv",
+      "bytes": 266,
+      "sha256": "58ad8c8741fac7177fbe545b434b92d2807161a642d1f99ec75790225b159f2f"
+    },
+    {
+      "path": "muc_online_app/tests/flight-import-feedback.test.mjs",
+      "bytes": 2249,
+      "sha256": "27aba6c8841098e552659aaf4c8bbc1784c00e508df8494d88d639546c10d93a"
+    },
+    {
+      "path": "muc_online_app/tests/group-metrics-font.test.mjs",
+      "bytes": 2126,
+      "sha256": "ebf3ce24fd8ced805596a98dd5dfcab5f2a3e5163719d045ee847fadbc0d90af"
+    },
+    {
+      "path": "muc_online_app/tests/info-entry-dialog.test.mjs",
+      "bytes": 7343,
+      "sha256": "f631ac67f8d72578077adf2921eb2b57c78954c9523fb8c70f2e5832073b561c"
+    },
+    {
+      "path": "muc_online_app/tests/info-month-filter.test.mjs",
+      "bytes": 916,
+      "sha256": "c477e062bc97363f05072ddd77cdeabaf1183d0e7c2e03a16727f2d21de8f57d"
+    },
+    {
+      "path": "muc_online_app/tests/info-realtime-ui.test.mjs",
+      "bytes": 5046,
+      "sha256": "82a9b6c9527526c7da712312c569d0fe5707beccf5f7dc80351532fcf51e29e3"
+    },
+    {
+      "path": "muc_online_app/tests/info-sync.test.mjs",
+      "bytes": 3209,
+      "sha256": "196263a51f21638f6e8c525fe6603e7a9cf0f9a3317f2d8a790a6ffd00ea28ce"
+    },
+    {
+      "path": "muc_online_app/tests/integration-runtime.test.mjs",
+      "bytes": 1623,
+      "sha256": "84cac2ab1ecc52bbd2e63c92cde8a0e9a438bd65fee6aaed3be92149ae8e91f0"
+    },
+    {
+      "path": "muc_online_app/tests/integration-security.test.mjs",
+      "bytes": 2579,
+      "sha256": "fbc8e6a2885a7dade3b1df59048622a66afe363ef035282c325d9cfb93a9ddd4"
+    },
+    {
+      "path": "muc_online_app/tests/local-development.test.mjs",
+      "bytes": 8400,
+      "sha256": "189029e7c156b4f3e00fd79e6ce811724f76c31471d51e93f25147fd141bd451"
+    },
+    {
+      "path": "muc_online_app/tests/login-protection.test.mjs",
+      "bytes": 2093,
+      "sha256": "e21d4a4bdbd7731e9f33e25ab504ec31c36fc6b54f7d72eb6440c6d5e99cd8d7"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-aircraft-hours.test.mjs",
+      "bytes": 2604,
+      "sha256": "d59045d74735f63912e313162e735d1c44b8b318e4fc17aeefbfc52abcfcc786"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-card-layout.test.mjs",
+      "bytes": 2291,
+      "sha256": "fcd0f82462117a38a3eaaf346b5619a7989f5e3c11bb7386167b0eedba6b9e1a"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-cross-period-workbench.test.mjs",
+      "bytes": 4787,
+      "sha256": "78e1d56f09d6c5cac1b36b16f825645319696aa5e69b69bf4b721bc0b4d2808a"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-dispatch-import.test.mjs",
+      "bytes": 2806,
+      "sha256": "e67f0772174be414c62d93fe0ceeb7f29f84a7f20e495b0ff2790b38339e01a4"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-draft-migration.test.mjs",
+      "bytes": 1350,
+      "sha256": "76cc2c69b12267ef5d5f12ac306547ca6a1b6bb1c3fd90d736798a4500093eee"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-extension-modules.test.mjs",
+      "bytes": 4365,
+      "sha256": "7f985c90bf31581318bc7c88724cdbb3dc3a19c4a636dfc506725318c6d8072b"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-home-navigation.test.mjs",
+      "bytes": 7003,
+      "sha256": "c7ef1d6f81114829432e54f4ddeef8ce43bcdb60c43e265edbe7e5d0646bce71"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-hour-periods.test.mjs",
+      "bytes": 5515,
+      "sha256": "e99ae17f0afbf536028792698428cb78879c955d4dcdbc34feaf0e514fb5869e"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-hours-rounding.test.mjs",
+      "bytes": 7692,
+      "sha256": "32c784c28caded63661088b27e86324fb20380c1ad808355a940e41eb2567760"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-import-batches.test.mjs",
+      "bytes": 16814,
+      "sha256": "598a95bafdce37dfdac27b6a5d50eda9cfa2022256ca36fe1c89739dbabe4ad4"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-import-file.test.mjs",
+      "bytes": 5584,
+      "sha256": "6ce994a9ebe1dc294928be846db16efb8249889cde59a7057a53a65580618330"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-import-preview.test.mjs",
+      "bytes": 5312,
+      "sha256": "18c78dcaaf4a911da1c26fe782ab7cfac1726ba2142a38d359b98918101ad431"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-import-workbench.test.mjs",
+      "bytes": 6536,
+      "sha256": "2584c14367ccf85a68894c8d60b86470b904b10c2f955f9c149fb2b5d1ecbc65"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-import.test.mjs",
+      "bytes": 7439,
+      "sha256": "42b8115ad2928088664b8754f6d22142b0a3be7908058fba432dd174605ebda8"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-imported-draft-ui.test.mjs",
+      "bytes": 10310,
+      "sha256": "b903349429f70bc6c731654e227a832419bfdb4f68a60bb0cbb4077b7cced813"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-location-columns.test.mjs",
+      "bytes": 2773,
+      "sha256": "e8f48d61c4817da77c1f14daf40186f1d76f09a3202ad0aea3feb5224fbb72ab"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-manual-sources.test.mjs",
+      "bytes": 4645,
+      "sha256": "df281ecfc2ccff7fead4629942c960b7d828412651fef15f0bf052d02246879f"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-module-instances.test.mjs",
+      "bytes": 5433,
+      "sha256": "86f6ba84b4d54db3e8f7402bd9fa99f22260c51576599dbdff288de5f9422741"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-module-results.test.mjs",
+      "bytes": 1474,
+      "sha256": "451175c6d046d17c537006c35b4281caae361e0aacba2bfecb9d02e0b0482645"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-nonroutine-recognition-display.test.mjs",
+      "bytes": 2508,
+      "sha256": "e0895bc58a1be88fac02aefaadaa756e5250a296ca7de3c7b8afea0ac4e03329"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-opportunity-modules.test.mjs",
+      "bytes": 8351,
+      "sha256": "f3bbdc7103d841f8dde1c652f8c4c09f806ef27284177f5bfa62eb88fe1bc4b6"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-package-guard.test.mjs",
+      "bytes": 1059,
+      "sha256": "690542093e3bca6f0198395be6246f4e4e6c329bdfff5152ad20233909b66613"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-period-workbench.test.mjs",
+      "bytes": 5223,
+      "sha256": "09e1efb8e2c336c44488abe072ad0f54d0c3813b141fc10d6a86b4ad6c6dc6a7"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-personal-review-estimates.test.mjs",
+      "bytes": 1957,
+      "sha256": "6795d1e96ac8b5ca2b2f0004104c91287092bd6dba41050db8bf876c216595ef"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-personnel-picker.test.mjs",
+      "bytes": 3818,
+      "sha256": "3cde961536ad8a5c63b03fd9b88a4ef9212b5393cfb8b9593e80b36604443678"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-picker-names.test.mjs",
+      "bytes": 4232,
+      "sha256": "45d68a0d97711fedcb16ed97354d1f7314b2ff41c5468e942f817c8b1431cfe2"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-report-current-access.test.mjs",
+      "bytes": 6431,
+      "sha256": "35ecaa4e9418f68c5450eb0e858cf02ab988ef95cbf72abc423b02eb42290150"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-report-participant-source.test.mjs",
+      "bytes": 2971,
+      "sha256": "2a947a5c8fda6089dba375dfb648ed76095c294a9fe25f14c2bc14823b96d292"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-report-source-journal.test.mjs",
+      "bytes": 4777,
+      "sha256": "394be1b400638e544df5c9fccf42216b01d090b1422f64e77ada3c32777603e2"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-result-dispatch.test.mjs",
+      "bytes": 2640,
+      "sha256": "0c102e647928ff93fd55f5360b790aa2d0377dfd23d89f0a2602303689c0e484"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-review-addition-sources.test.mjs",
+      "bytes": 4195,
+      "sha256": "8f8d2d064d9c7209673b7104e199db7efcff5beac390600629a056a14cea7271"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-rule-history-view.test.mjs",
+      "bytes": 2823,
+      "sha256": "1211e27d25bd690fd0d9e55948444d428e1b67b08dafadfbb05f1d46af24ddf2"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-rule-history.test.mjs",
+      "bytes": 6332,
+      "sha256": "d0882cb54b86666a2d1395505c9dda2d072817daa068ca99f5f203c3236340e1"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-import-workbench.test.mjs",
+      "bytes": 6259,
+      "sha256": "9ce0dd85fab21606a57d0e32e524851d5b29c3e3449d28215121c1d625e9d568"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-import.test.mjs",
+      "bytes": 10601,
+      "sha256": "ebbb8e4a4e88eb0307ac7fac0d769a3e338692ddb96418c2ed1b7ee42ec719bb"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-management-workbench.test.mjs",
+      "bytes": 14636,
+      "sha256": "c2e4e3e4a076bc3e80c35bd186008adafe0609b2a9cda43b1a63893446802df4"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-management.test.mjs",
+      "bytes": 7348,
+      "sha256": "c9d986cb2a1327e90fca671a24f2b5681bc8bb62002679aae98de7298b714258"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-notifications.test.mjs",
+      "bytes": 8550,
+      "sha256": "a6df2ef07d171d86c2b2cb014d469057aab83130f10ef262485e9cb1ac128028"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-picker.test.mjs",
+      "bytes": 3085,
+      "sha256": "9a00c09c6d236a6fec08a06e80513abc744ecd1c31ec772b9ed32db50ead8c9c"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-publication-authority.test.mjs",
+      "bytes": 4241,
+      "sha256": "02cf23fe132ee1dcac380d7f966cfcfc88bb6a19655bfae1830b004b711d9ccf"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-publication-workbench.test.mjs",
+      "bytes": 10843,
+      "sha256": "f3c2686e53490f06cf2fc3aabce31199bdbb0506e4b4dd62fa38306149b99aa8"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-publication.test.mjs",
+      "bytes": 10786,
+      "sha256": "e492132f22e48edf170d5ea365cad5eae11fbdce88a86739af16f2dbdf2e9792"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-references.test.mjs",
+      "bytes": 10336,
+      "sha256": "c9d821105c50c0d88eb3a8a76304539effaebf4dc29de234965542c5378d0bcf"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-review-workbench.test.mjs",
+      "bytes": 9640,
+      "sha256": "104fb5fdb34014380c5348479b68d98c46e5374998f88f18e36fcfd8826aaa86"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standard-review.test.mjs",
+      "bytes": 10755,
+      "sha256": "f1a91ceb83872caf8cee660bdab9069e5d22c7414b5dc123277d02cc926ce056"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-standards.test.mjs",
+      "bytes": 6191,
+      "sha256": "a005c8f1a9770e34ce9d4b16ff8eed774788ddcb57ebc6c1d5e5f2f7d759970f"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-tow-transition.test.mjs",
+      "bytes": 5046,
+      "sha256": "75954d1e6cacfe2c151d42fc0a86e4935d8a3f0674dbef01d3f026b438621b90"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-trend.test.mjs",
+      "bytes": 1870,
+      "sha256": "36c2ea6704bfa7534bfe16355486137de37bf2f2beb52505c10dc0f5a3eb448d"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-work-standard-intake.test.mjs",
+      "bytes": 8420,
+      "sha256": "c35562c2e25304a1e8a9ff143d94f47b463c3bd39d504ba40455d5794216d9c4"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-workflow-actions.test.mjs",
+      "bytes": 10561,
+      "sha256": "095370c885469d856a4fbf2dc9a9576176badce72ab0176671745d4805b4a5c8"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-workflow-audit.test.mjs",
+      "bytes": 7060,
+      "sha256": "b777d497c21fb31d937a17e41500f3eef042249b5597e993cf5cfd0f23b70b61"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-workflow-results.test.mjs",
+      "bytes": 7963,
+      "sha256": "74848a519831619a2a3000575e491f3584d37fb4baf14f75efda4f99b859ea53"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-workflow-tasks.test.mjs",
+      "bytes": 2956,
+      "sha256": "1ca5f89ec13bfef9e2b87cba6129d183b1bbc2776d16e33d7452a955820eded4"
+    },
+    {
+      "path": "muc_online_app/tests/maintenance-workflow-workbench.test.mjs",
+      "bytes": 10897,
+      "sha256": "168205ca22f79ca4852bfc458e28ea230647f8dd13bb6d18077cf9351588a0a3"
+    },
+    {
+      "path": "muc_online_app/tests/migration-data-guard.test.mjs",
+      "bytes": 1287,
+      "sha256": "a8eb83b15b764a816c62a00c4930c367eb338214a5445bb14f49234a0c0bd52f"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-assessment-migration.test.mjs",
+      "bytes": 2378,
+      "sha256": "4912d30367ea8d8bd0a63efe8e8f1e88bc9e673ae244cec9b7995b6088679b8e"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-correction-service.test.mjs",
+      "bytes": 12474,
+      "sha256": "035e860fce553102d5521776582cf49317316ff304774568dc0d1d5ccffd75d9"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-correction-workbench.test.mjs",
+      "bytes": 8161,
+      "sha256": "9133997611847de4114657094077543b13afbf888ecfbf918283010d19de3634"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-corrections.test.mjs",
+      "bytes": 6992,
+      "sha256": "5665ae16ba19edcd5f1f8aff1472593f071eaec148d1dce886d88a0c478724ce"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-cross-period.test.mjs",
+      "bytes": 9952,
+      "sha256": "be1cbf5fad955918f70a980fcb6857b55480351a6b17a53d83771d15d9aee689"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-delivery.test.mjs",
+      "bytes": 18546,
+      "sha256": "4ad5755fa4e0b9c64523c5b2c1dba1e8d67da50686035583fe3c0b46a84f35c0"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-finalization-view.test.mjs",
+      "bytes": 5119,
+      "sha256": "0b0d1c70f64aac9a5540efd14dde06a59d05f3570ce9a55f34929b204d045311"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-finalization.test.mjs",
+      "bytes": 13015,
+      "sha256": "9c6df0aceede3e41061e6fe2cf963b875758c6fb8764b7be313f40d36b562e82"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-frozen-policy.test.mjs",
+      "bytes": 2582,
+      "sha256": "fd3d728be5c8100840bd0aefa7887a0a6af0fe31d0990627cddd006e08780974"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-notification-view.test.mjs",
+      "bytes": 3387,
+      "sha256": "49fee88fef50036207dca9c8cc3ca5be265e695af89f8201802549ed52ec91d1"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-notifications.test.mjs",
+      "bytes": 6710,
+      "sha256": "506deeddd17cb44b626f9c7725cb74b9c7a1d472ac68cb4ef1128b781bda9298"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-review-workbench.test.mjs",
+      "bytes": 29865,
+      "sha256": "45806b6063457a0027ab5b05c76a6278262aaf6e3c5211a3046a28ad534a76c8"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-review.test.mjs",
+      "bytes": 18159,
+      "sha256": "5b1362198863ffd33bf94a1152bf9798c624c42952ee99b9ec2ac18967323e5b"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-source-cancellation.test.mjs",
+      "bytes": 15632,
+      "sha256": "4f4cbb57ec9da2d4eac0f5b8ff6a63f85295e6647f239347c808f6fc937313c3"
+    },
+    {
+      "path": "muc_online_app/tests/nonroutine-source-facts.test.mjs",
+      "bytes": 7902,
+      "sha256": "1654f626064ee648affea7ef870e0094fc4a6544a011d303ab01b94fb2d025d1"
+    },
+    {
+      "path": "muc_online_app/tests/people-list.test.mjs",
+      "bytes": 3251,
+      "sha256": "201bc13288f54642d655a345530006ad91fdd8a0c5aedd15df4e1995f5c85814"
+    },
+    {
+      "path": "muc_online_app/tests/person-search.test.mjs",
+      "bytes": 3469,
+      "sha256": "7d729563d0ce5b218f09e96d23bbcc1f1ab80461bd753d792404033eab922385"
+    },
+    {
+      "path": "muc_online_app/tests/personnel-loading.test.mjs",
+      "bytes": 3151,
+      "sha256": "36e9379f6947328f5216caa8048a6b41c8a140769ddcf48b7cac5f0cc178ee2a"
+    },
+    {
+      "path": "muc_online_app/tests/personnel-selection.test.mjs",
+      "bytes": 3018,
+      "sha256": "07e5663fa65d3eec672bdc57c15628f2d808aabd96e1ae49e503d371f9d05439"
+    },
+    {
+      "path": "muc_online_app/tests/pptx-preview.test.mjs",
+      "bytes": 5042,
+      "sha256": "0a0b109770579a755468fb97d04792aafc3f9e6c7eed13189089c2baa9ce9919"
+    },
+    {
+      "path": "muc_online_app/tests/production-reset.test.mjs",
+      "bytes": 8163,
+      "sha256": "bd1320ee10cc3d1bc9bce92a0dd4dda5e9f22f7117b5c79290493f23069d1b8d"
+    },
+    {
+      "path": "muc_online_app/tests/release-gate.test.mjs",
+      "bytes": 1873,
+      "sha256": "3fde06a366eb3a49aad0a6d881f2daeb7d4035ae931f686d2d402ccc11713bf3"
+    },
+    {
+      "path": "muc_online_app/tests/release-poller.test.mjs",
+      "bytes": 5873,
+      "sha256": "3bb358333611739562b689662cfd77f62e22dd210e712bfd00bf361e69f03b60"
+    },
+    {
+      "path": "muc_online_app/tests/routine-confirmation-ui.test.mjs",
+      "bytes": 2862,
+      "sha256": "0bd8ed7ab4db3f1102593ff733497db48ce00dd5f4c2fd65523e98d9a552ab34"
+    },
+    {
+      "path": "muc_online_app/tests/scenario-intents.test.mjs",
+      "bytes": 3649,
+      "sha256": "3191a62aee59d4f7e887b9a47fd4531bf87ba98af40e64e409e2ba887cf4f78c"
+    },
+    {
+      "path": "muc_online_app/tests/server.test.mjs",
+      "bytes": 655223,
+      "sha256": "1c7ec2fd7600ac1024e2e8bc0f9095c6ebaa7a1081475fff7cfce80b4109d428"
+    },
+    {
+      "path": "muc_online_app/tests/special-pool-order.test.mjs",
+      "bytes": 3236,
+      "sha256": "3f70c12bec3ba68f14a859fb514fc97115214b168f523c07a244f1f8ee73c837"
+    },
+    {
+      "path": "muc_online_app/tests/status-dialog-viewport.test.mjs",
+      "bytes": 5074,
+      "sha256": "9f97077b8c6c393bdf5f553ee00308d527f50bbc6e53050d3c4ef2e01e876128"
+    },
+    {
+      "path": "muc_online_app/tests/status-people.test.mjs",
+      "bytes": 12174,
+      "sha256": "d45e58229726a5134730e1f183bdab60e87bcc9a1d97ed12f8a402c84bb7e492"
+    },
+    {
+      "path": "muc_online_app/tests/status-return-ui.test.mjs",
+      "bytes": 1820,
+      "sha256": "5e595baecad5e9a17b8c98a4dcb32739d09eeae10ecbdd2d30fcf8ed26959d65"
+    },
+    {
+      "path": "muc_online_app/tests/subtask-import-feedback.test.mjs",
+      "bytes": 2964,
+      "sha256": "fe6815f88e8c8ac2d0d4409061d75ab67243a1c0389550b045aacd3e297e7456"
+    },
+    {
+      "path": "muc_online_app/航班计划导入模板.csv",
+      "bytes": 177,
+      "sha256": "40025721b58cdb74c8d66058cbfa5639148cbaa81b528bcb49bf65acc9472293"
+    },
+    {
+      "path": "muc_online_app/附加工作导入模板.xlsx",
+      "bytes": 16949,
+      "sha256": "5ff1132f7d4a784ea2f21760da178ee526200a95aa8a561b4908006e53111ab8"
+    }
+  ]
+}

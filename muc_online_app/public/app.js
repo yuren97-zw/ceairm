@@ -128,6 +128,9 @@ const state = {
   maintenanceFlights: [],
   maintenanceNextCursor: "",
   maintenanceRules: [],
+  maintenanceRuleVersion: null,
+  maintenanceRulesDirty:false,
+  maintenanceRulesSaving:false,
   maintenanceAircraftHours: { version: 0, groups: [] },
   maintenanceAircraftHoursDraft: null,
   maintenanceStats: null,
@@ -138,6 +141,10 @@ const state = {
   maintenanceCompositionPeriod: "day",
   maintenanceDataChartView: "composition",
   maintenanceReport: null,
+  maintenanceReportLoading: false,
+  maintenanceReportError: "",
+  maintenanceReportRequestVersion: 0,
+  maintenanceReportPersonRequestVersion: 0,
   maintenanceReportOptions: { people: [], teams: [] },
   maintenanceReportView: "dashboard",
   maintenanceReportDateFrom: `${maintenanceLocalDateValue().slice(0, 7)}-01`,
@@ -300,6 +307,16 @@ async function navigate(path, options = {}) {
 }
 
 function showLoginPage(message = "") {
+  clearMaintenanceReportAccessState('',false,false);
+  clearTimeout(state.maintenanceReportSearchTimer);state.maintenanceReportSearch='';state.maintenanceReportTeam='';state.maintenanceReportUserId='';state.maintenanceReportSearchComposing=false;
+  state.maintenanceReportOpenNonroutineIds.clear();state.maintenanceReportOpenOpportunityIds.clear();
+  state.maintenanceRuleHistoryController?.destroy();state.maintenanceRuleHistoryController=null;state.maintenanceRuleVersion=null;state.maintenanceRulesDirty=false;state.maintenanceRulesSaving=false;
+  state.maintenanceReviewController?.destroy();state.maintenanceReviewController=null;state.maintenanceReviewControllerUser=null;state.maintenanceReviewControllerPurpose=null;
+  document.querySelector('[data-review-workbench]')?.remove();
+  state.maintenanceWorkflowController?.destroy();state.maintenanceWorkflowController=null;state.maintenanceWorkflowControllerUser=null;
+  document.querySelector('[data-workflow-workbench]')?.remove();
+  state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;state.maintenanceCorrectionControllerUser=null;
+  document.querySelector('[data-correction-workbench]')?.remove();
   state.user = emptyUser();
   setAppMode("locked");
   $("#loginPage").hidden = false;
@@ -502,6 +519,7 @@ function positionOpenMenu(wrap) {
 }
 
 async function handleAuthExpired(message = "登录状态已失效，请重新登录。") {
+  clearMaintenanceReportAccessState('',false,false);
   state.user = emptyUser();
   state.loadedData = new Set();
   state.activeSubpage = "infoListSubpage";
@@ -1145,25 +1163,59 @@ const maintenanceService = {
     if (!canView("maintenancePage")) {
       state.maintenanceFlights = [];
       state.maintenanceNextCursor = "";
-      state.maintenanceRules = [];
+      state.maintenanceRules = [];state.maintenanceRuleVersion=null;
       state.maintenanceStats = null;
       return;
     }
     state.maintenanceStats = null;
+    if(state.maintenanceReviewCapsUser!==state.user.id){
+      state.maintenanceReviewEnabled=false;
+      if(hasRbac('maintenance.nonroutine.review.view')){try{state.maintenanceReviewEnabled=(await apiRequest('/maintenance/nonroutine-review-capabilities')).enabled===true;}catch{}}
+      state.maintenanceReviewCapsUser=state.user.id;
+    }
+    if(state.maintenancePeriodCapsUser!==state.user.id){
+      state.maintenancePeriodsEnabled=false;
+      if(hasRbac('maintenance.hours.period.view')){try{state.maintenancePeriodsEnabled=(await apiRequest('/maintenance/hour-period-capabilities')).enabled===true;}catch{}}
+      state.maintenancePeriodCapsUser=state.user.id;
+    }
+    if(state.maintenanceStandardCapsUser!==state.user.id){
+      state.maintenanceStandardManagementEnabled=false;state.maintenanceStandardImportEnabled=false;
+      if(hasRbac('maintenance.standard.manage')){try{const caps=await apiRequest('/maintenance/standard-management-capabilities');state.maintenanceStandardManagementEnabled=caps.enabled===true;state.maintenanceStandardImportEnabled=caps.importEnabled===true;}catch{}}
+      state.maintenanceStandardCapsUser=state.user.id;
+    }
+    if(state.maintenanceStandardReviewCapsUser!==state.user.id){
+      state.maintenanceStandardReviewEnabled=false;state.maintenanceStandardNotificationsEnabled=false;
+      try{const caps=await apiRequest('/maintenance/standard-review-capabilities');state.maintenanceStandardReviewEnabled=caps.enabled===true;state.maintenanceStandardNotificationsEnabled=caps.notificationsEnabled===true;}catch{}
+      state.maintenanceStandardReviewCapsUser=state.user.id;
+    }
+    if(state.maintenancePublicationCapsUser!==state.user.id){
+      state.maintenancePublicationEnabled=false;
+      try{state.maintenancePublicationEnabled=(await apiRequest('/maintenance/standard-publication-capabilities')).enabled===true;}catch{}
+      state.maintenancePublicationCapsUser=state.user.id;
+    }
+    if(state.maintenanceCorrectionCapsUser!==state.user.id){
+      state.maintenanceCorrectionsEnabled=false;
+      try{const caps=await apiRequest('/maintenance/nonroutine-correction-capabilities');state.maintenanceCorrectionsEnabled=caps.enabled===true&&(caps.approve===true||caps.authorizePeriod===true);}catch{}
+      state.maintenanceCorrectionCapsUser=state.user.id;
+    }
+    state.maintenanceWorkflowEnabled=false;
+    if(hasRbac('maintenance.workflow.view')){try{const caps=await apiRequest('/maintenance/workflow-capabilities');state.maintenanceWorkflowEnabled=caps.enabled===true&&caps.simulationEnabled===true&&caps.view===true;}catch{}}
+    if(['reviews','standardReviews','periods','standards','publications','corrections','workflows'].includes(state.maintenanceTab))return;
     state.maintenanceLocations = (await apiRequest("/maintenance/locations")).locations || [];
     if (state.maintenanceTab === "hours") {
       state.maintenanceFlights = [];
       state.maintenanceNextCursor = "";
       state.maintenancePersonalStats = null;
       const rulesData = await apiRequest("/maintenance/rules");
-      state.maintenanceRules = rulesData.rules || [];
+      state.maintenanceTowTransition=rulesData.towTransition||null;state.maintenanceCategoryStrategies=rulesData.categoryStrategies||null;
+      state.maintenanceRules = rulesData.rules || [];state.maintenanceRuleVersion=rulesData.ruleVersion||null;
       state.maintenanceAircraftHours = rulesData.aircraftHours || { version: 0, groups: [] };
-      state.maintenanceAircraftHoursDraft = null;
+      state.maintenanceAircraftHoursDraft = null;state.maintenanceRulesDirty=false;
       return;
     }
     if (state.maintenanceTab === "data") {
       state.maintenanceFlights = [];
-      state.maintenanceRules = [];
+      state.maintenanceRules = [];state.maintenanceRuleVersion=null;
       const personalQuery = new URLSearchParams({
         month: state.maintenanceMonth || "",
         range: state.maintenanceDataRange || "half"
@@ -1174,9 +1226,9 @@ const maintenanceService = {
     if (state.maintenanceTab === "report") {
       state.maintenanceFlights = [];
       state.maintenanceNextCursor = "";
-      state.maintenanceRules = [];
+      state.maintenanceRules = [];state.maintenanceRuleVersion=null;
       state.maintenancePersonalStats = null;
-      [state.maintenanceReport, state.maintenanceReportOptions] = await Promise.all([this.getReport(), this.getReportOptions()]);
+      await loadMaintenanceReportFresh();
       return;
     }
     const query = this.taskListQuery();
@@ -1184,7 +1236,7 @@ const maintenanceService = {
     state.maintenanceFlights = tasksData.flights || [];
     state.maintenanceNextCursor = tasksData.nextCursor || "";
     state.maintenanceSyncVersion = Number(tasksData.version || state.maintenanceSyncVersion || 0);
-    state.maintenanceRules = [];
+    state.maintenanceRules = [];state.maintenanceRuleVersion=null;
   },
   async loadMore() {
     if (!state.maintenanceNextCursor || !["dispatch", "execute"].includes(state.maintenanceTab)) return;
@@ -1226,6 +1278,12 @@ const maintenanceService = {
   async dispatch(ownerType, ownerId, assignments, expectedUpdatedAt) {
     const path = ownerType === "flight" ? "flights" : "subtasks";
     return await apiRequest(`/maintenance/${path}/${encodeURIComponent(ownerId)}/dispatch`, { method: "POST", body: { assignments, expectedUpdatedAt } });
+  },
+  async previewAssignmentRemoval(id, expectedUpdatedAt) {
+    return await apiRequest(`/maintenance/assignments/${encodeURIComponent(id)}/removal-preview`, { method: "POST", body: { expectedUpdatedAt } });
+  },
+  async removeAssignment(id, payload) {
+    return await apiRequest(`/maintenance/assignments/${encodeURIComponent(id)}`, { method: "DELETE", body: payload });
   },
   async getReview(flightId) {
     return await apiRequest(`/maintenance/flights/${encodeURIComponent(flightId)}/review`);
@@ -2064,12 +2122,13 @@ const homeDataService = {
     state.homeMaintenanceState = "loading";
     renderHome();
     try {
-      const query = new URLSearchParams({ scope: "execute", view: "summary", limit: "100" });
-      if (state.maintenanceExecuteLocation) query.append("locationId", state.maintenanceExecuteLocation);
+      const query = new URLSearchParams({ scope: "execute", view: "summary" });
       const data = await apiRequest(`/maintenance/flights?${query.toString()}`);
       if (seq !== this.maintenanceSeq) return true;
-      state.homeMaintenanceFlights = data.flights || [];
-      state.homeMaintenanceNextCursor = data.nextCursor || "";
+      if (data.nextCursor) throw new Error("维修待办未完整返回，请刷新重试");
+      const flights = new Map((data.flights || []).map(flight => [flight.id, flight]));
+      state.homeMaintenanceFlights = [...flights.values()];
+      state.homeMaintenanceNextCursor = "";
       state.homeMaintenanceGroups = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights);
       state.homeMaintenanceState = "ready";
       this.maintenanceUser = state.user.id;
@@ -2228,7 +2287,7 @@ function renderHomeMaintenanceList(expanded) {
   list.innerHTML = items + moreNote;
 }
 
-async function gotoMaintenanceFromHome(flightId) {
+async function gotoMaintenanceFromHome(flightId, { recordHistory = true } = {}) {
   if (!canView("maintenancePage")) return;
   const group = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights || []).find(item => item.flight.id === flightId);
   if (!group) {
@@ -2238,11 +2297,23 @@ async function gotoMaintenanceFromHome(flightId) {
   }
   state.homeScrollY = window.scrollY;
   state.homeMaintenanceExpanded = true;
-  const flight = group.flight;
+  let flight;
+  try {
+    flight = await maintenanceService.getFlight(flightId, "execute");
+    if (!flight || flight.id !== flightId || !maintenanceAssignmentsForMeFrom([flight]).length) throw new Error("该机会的有效派工已调整，请刷新首页任务");
+  } catch (error) {
+    alert(error.message || "该维修机会当前不可访问");
+    homeDataService.loadMaintenance(true).catch(() => {});
+    return;
+  }
+  const locationChanged = Boolean(state.maintenanceExecuteLocation && state.maintenanceExecuteLocation !== flight.locationId);
+  if (locationChanged) {
+    state.maintenanceExecuteLocation = flight.locationId || "";
+  }
   state.maintenanceTab = "execute";
   const loadedData = state.loadedData instanceof Set ? state.loadedData : (state.loadedData = new Set());
   try {
-    if (!loadedData.has("maintenance:execute")) {
+    if (locationChanged || !loadedData.has("maintenance:execute")) {
       await maintenanceService.load();
       loadedData.add("maintenance:execute");
     }
@@ -2250,23 +2321,45 @@ async function gotoMaintenanceFromHome(flightId) {
     alert(`进入维修执行页面失败：${error.message}`);
     return;
   }
-  if (!maintenanceAssignmentsForMe().some(item => item.flight.id === flightId)) {
-    try { await hydrateMaintenanceFlight(flightId); } catch {}
-  }
+  const existing = state.maintenanceFlights.findIndex(item => item.id === flightId);
+  if (existing >= 0) state.maintenanceFlights.splice(existing, 1, flight);
+  else state.maintenanceFlights.push(flight);
   state.maintenanceExecuteOpenDate = flight.date || "__undated__";
   state.maintenanceExecuteOpenFlightId = flightId;
+  state.homeScrollRestorePending=true;
   await showPage("maintenancePage");
-  try {
-    await hydrateMaintenanceFlight(flightId);
-    renderMaintenance();
-  } catch {}
+  renderMaintenance();
   await new Promise(requestAnimationFrame);
   const target = document.querySelector(`[data-maint-execute-toggle="${cssEscapeValue(flightId)}"]`);
   if (!target) {
     alert("未能在执行页面定位到该维修机会，可能已撤销、失效或不在当前显示范围。你可正常浏览执行页面。");
     return;
   }
+  if(recordHistory)rememberHomeMaintenanceNavigation(flightId);
   target.scrollIntoView({ block: "center" });
+}
+
+function rememberHomeMaintenanceNavigation(flightId) {
+  if(!window.history||!state.user?.id)return;
+  const shared={accountId:state.user.id,flightId,scrollY:state.homeScrollY};
+  window.history.replaceState({mucHomeMaintenance:{...shared,kind:'home'}},'',window.location.href);
+  window.history.pushState({mucHomeMaintenance:{...shared,kind:'execute'}},'',window.location.href);
+}
+
+async function restoreHomeMaintenanceHistory(event) {
+  const entry=event.state?.mucHomeMaintenance;
+  if(!entry||!isLoggedIn()||entry.accountId!==state.user.id||currentRoute()!==ROUTES.dashboard)return false;
+  if(entry.kind==='home'){
+    state.homeScrollY=Number.isFinite(entry.scrollY)?Math.max(0,entry.scrollY):0;state.homeScrollRestorePending=true;
+    await showPage('homePage');
+    if(state.activePage!=='homePage')window.history.pushState({mucHomeMaintenance:{...entry,kind:'execute'}},'',window.location.href);
+    return true;
+  }
+  if(entry.kind==='execute'){
+    await gotoMaintenanceFromHome(entry.flightId,{recordHistory:false});
+    return true;
+  }
+  return false;
 }
 
 function statusPass(record) {
@@ -3454,7 +3547,14 @@ const maintenanceTabs = [
   ["execute", "执行"],
   ["data", "数据"],
   ["report", "报表"],
-  ["hours", "工时"]
+  ["hours", "工时"],
+  ["reviews", "工时评议"],
+  ["periods", "工时账期"],
+  ["corrections", "工时更正"],
+  ["workflows", "流程办理（模拟）"],
+  ["standards", "标准库管理"],
+  ["standardReviews", "标准评议"],
+  ["publications", "标准准入发布"]
 ];
 const aircraftTypes = ["A319", "A320", "A321", "A330", "B737", "B767", "B777", "B787", "ARJ21", "C919", "大机型", "小机型", "其他"];
 const maintenanceOpportunityOptions = ["航前", "航后", "航后/航前", "短停", "热备机", "停场", "附加", "其他", "三方短停", "三方航后", "三方航前"];
@@ -3480,15 +3580,23 @@ function maintenanceSubtaskRoles(category) {
   return category === "拖机" ? ["主做"] : maintenanceSubtaskRoleOptions;
 }
 
+function maintenanceTowStandardOnly() {
+  return state.maintenanceTowTransition?.mode==='STANDARD_ONLY';
+}
+function maintenanceLegacyCategories(existingCategory='') {
+  return subtaskCategories.filter(category=>category!=='拖机'||!maintenanceTowStandardOnly()||existingCategory==='拖机');
+}
+
 function maintenanceTowDefaultHours() {
   const rule = (state.maintenanceRules || []).find(item => item.rule_type === "nonroutineCategoryHours" && item.name === "拖机");
   return Number(rule?.value || 3);
 }
 
 async function ensureMaintenanceRules() {
-  if ((state.maintenanceRules || []).some(item => item.rule_type === "nonroutineCategoryHours" && item.name === "拖机")) return;
+  if (state.maintenanceRuleVersion && state.maintenanceTowTransition && (state.maintenanceRules || []).some(item => item.rule_type === "nonroutineCategoryHours" && item.name === "拖机")) return;
   const data = await apiRequest("/maintenance/rules");
-  state.maintenanceRules = data.rules || [];
+  state.maintenanceTowTransition=data.towTransition||null;state.maintenanceCategoryStrategies=data.categoryStrategies||null;
+  state.maintenanceRules = data.rules || [];state.maintenanceRuleVersion=data.ruleVersion||null;
   state.maintenanceAircraftHours = data.aircraftHours || { version: 0, groups: [] };
 }
 
@@ -3516,9 +3624,10 @@ function compareMaintenanceOptionalTime(left, right, direction = "asc") {
   return direction === "desc" ? -compared : compared;
 }
 
-function maintenanceStandardHoursLabel(value) {
+function maintenanceStandardHoursLabel(value,allowZero=false) {
+  if(value===null||value===undefined||value==='')return "未填写工时";
   const hours = Number(value);
-  return hours > 0 ? `${hours}h` : "未填写工时";
+  return Number.isFinite(hours)&&(hours > 0 || allowZero&&hours===0) ? `${hours}h` : "未填写工时";
 }
 
 function maintenanceRolesForOpportunity(value) {
@@ -3545,6 +3654,13 @@ function canManageMaintenance() {
 
 function maintenanceAllowedTabs() {
   return maintenanceTabs.filter(([key]) => key === "dispatch" ? canManageMaintenance()
+    : key === 'workflows' ? state.maintenanceWorkflowEnabled && hasRbac('maintenance.workflow.view')
+    : key === 'reviews' ? state.maintenanceReviewEnabled && hasRbac('maintenance.nonroutine.review.view')
+    : key === 'corrections' ? state.maintenanceCorrectionsEnabled && ['maintenance.archive.modify','maintenance.hours.period.cross_period.authorize'].some(hasRbac)
+    : key === 'publications' ? state.maintenancePublicationEnabled
+    : key === 'standardReviews' ? state.maintenanceStandardReviewEnabled
+    : key === 'periods' ? state.maintenancePeriodsEnabled && hasRbac('maintenance.hours.period.view')
+    : key === 'standards' ? state.maintenanceStandardManagementEnabled && hasRbac('maintenance.standard.manage')
     : ["execute", "data"].includes(key) ? hasRbac("maintenance.execute.view")
       : key === "report" ? canManageMaintenance() || hasRbac("maintenance.stats.manage.view")
       : key === "hours" && ["maintenance.rules.view", "maintenance.rules.manage"].some(hasRbac));
@@ -3679,7 +3795,7 @@ function maintenanceSubtaskCard(flight, item) {
   return `<article class="maintenance-subtask" ${hasRbac("maintenance.content.manage") ? `data-maint-edit-target="subtask:${escapeHtml(item.id)}" title="双击修改"` : ""}>
     <div class="maintenance-subtask-main">
       <strong>${escapeHtml(item.title || "未填写标题")}</strong>
-      <span>${escapeHtml(item.category || "-")} · ${escapeHtml(maintenanceStandardHoursLabel(item.standardHours))} · ${escapeHtml(maintenanceAssignees(item, "subtask"))}</span>
+      <span>${escapeHtml(item.category || "-")} · ${item.hourAssessment?.cancelled ? '评议已取消 · 未入账' : escapeHtml(maintenanceStandardHoursLabel(item.standardHours,Boolean(item.standardId||item.standardSnapshot||item.hourAssessment&&!item.hourAssessment.pending)))} · ${escapeHtml(maintenanceAssignees(item, "subtask"))}</span>
     </div>
     <div class="actions">
       ${maintenanceStatusBadge(item.status, `subtask:${item.id}`, flight.id, `subtask:${item.id}`, item)}
@@ -3994,7 +4110,7 @@ function renderMaintenanceExecute() {
         }).join("")
         : `<div class="execute-nonroutine-empty">尚未派工</div>`;
       return `<section class="execute-nonroutine-item ${item.draft ? "draft" : ""}">
-        <div class="execute-nonroutine-head"><strong class="execute-nonroutine-title">${escapeHtml(item.title || "未填写标题")}</strong><small class="execute-nonroutine-meta">${escapeHtml(item.category || "非例行")} · ${escapeHtml(maintenanceStandardHoursLabel(item.standardHours))}</small>${item.draft ? '<span class="execute-nonroutine-draft-badge">草稿</span>' : ""}</div>
+        <div class="execute-nonroutine-head"><strong class="execute-nonroutine-title">${escapeHtml(item.title || "未填写标题")}</strong><small class="execute-nonroutine-meta">${escapeHtml(item.category || "非例行")} · ${item.hourAssessment?.cancelled ? '评议已取消 · 未入账' : escapeHtml(maintenanceStandardHoursLabel(item.standardHours,Boolean(item.standardId||item.standardSnapshot||item.hourAssessment&&!item.hourAssessment.pending)))}</small>${item.draft ? '<span class="execute-nonroutine-draft-badge">草稿</span>' : ""}</div>
         <div class="execute-nonroutine-people">${peopleHtml}</div>
       </section>`;
     }).join("");
@@ -4016,7 +4132,8 @@ function renderMaintenanceExecute() {
     const release = mine.find(item => item.role === "放行");
     const canRoutine = canSubmitReport && progress.hasRoutine && !routineBatch;
     const canNonroutine = canSubmitReport && hasRbac("maintenance.nonroutine.update.own") && progress.hasFormalNonroutine && !progress.batches?.nonroutine;
-    const canCreateNonroutine = canSubmitReport && hasRbac("maintenance.nonroutine.create.own") && (!progress.hasNonroutineDraft || hasRbac("maintenance.nonroutine.update.own")) && !progress.hasFormalNonroutine && !progress.batches?.nonroutine && !["待复核", "已确认"].includes(flight.status);
+    const hasImportedDraft = (flight.nonroutineDraft?.items || []).some(item => item.sourceFingerprint);
+    const canCreateNonroutine = canSubmitReport && (hasRbac("maintenance.nonroutine.create.own") || hasImportedDraft && hasRbac("maintenance.nonroutine.update.own")) && (!progress.hasNonroutineDraft || hasRbac("maintenance.nonroutine.update.own")) && (!progress.hasFormalNonroutine || hasImportedDraft) && !progress.batches?.nonroutine && !["待复核", "已确认"].includes(flight.status);
     const finalizeBlockedByDraft = releaseBatch?.submittedBy === state.user.id && progress.hasNonroutineDraft && !flight.reportFinalizedAt;
     const canFinalize = canSubmitReport && releaseBatch?.submittedBy === state.user.id && progress.ready && !progress.hasNonroutineDraft && !flight.reportFinalizedAt;
     return `<section class="execute-main-work">
@@ -4028,7 +4145,7 @@ function renderMaintenanceExecute() {
       <div class="execute-main-actions">
         ${canRoutine ? `<button class="btn secondary" type="button" data-maint-report="${escapeHtml(flight.id)}" data-report-type="routine">例行报工</button>` : ""}
         ${canNonroutine ? `<button class="btn secondary" type="button" data-maint-report="${escapeHtml(flight.id)}" data-report-type="nonroutine">非例行报工</button>` : ""}
-        ${canCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-report="${escapeHtml(flight.id)}" data-report-type="nonroutine-create">新增非例行报工</button>` : ""}
+        ${canCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-report="${escapeHtml(flight.id)}" data-report-type="nonroutine-create">${hasImportedDraft ? "编辑非例行草稿" : "新增非例行报工"}</button>` : ""}
         ${canSubmitReport && release?.status === "已派工" && !releaseBatch ? `<button class="btn secondary" type="button" data-maint-release-confirm="${escapeHtml(release.id)}" data-maint-flight-id="${escapeHtml(flight.id)}">放行报工</button>` : releaseBatch ? `<span class="status-badge released">放行已提报</span>` : ""}
         ${finalizeBlockedByDraft ? `<button class="btn secondary" type="button" disabled title="存在未提交的非例行草稿，请先提交或删除草稿">报工确认</button><span class="execute-finalize-blocker">请先提交或删除非例行草稿</span>` : ""}
         ${canFinalize ? `<button class="btn" type="button" data-maint-report="${escapeHtml(flight.id)}" data-report-type="finalize">报工确认</button>` : ""}
@@ -4106,6 +4223,13 @@ function renderMaintenanceAircraftHours() {
   </div></div>`;
 }
 
+function renderMaintenanceCategoryStrategies() {
+  const strategies=state.maintenanceCategoryStrategies;
+  if(!strategies||Object.keys(strategies).length!==8)return '<section class="status-line" role="status">新标准流程的类别策略尚未读取，请刷新核对；不自动补用默认策略。</section>';
+  const labels={ROLE_COMBINATION:'角色组合分配',EQUAL:'有效参与人均分',UNDECIDED:'待业务确定'};
+  return `<details class="maintenance-rule-group" data-maint-category-strategies open><summary><strong>新标准流程：八类非例行策略</strong></summary><p>类别只选择原分配算法，不提供另一套比例配置。原有历史及旧“其他”的合法核算保留。</p><div class="maintenance-rule-category-list">${Object.entries(strategies).map(([category,strategy])=>`<section class="maintenance-rule-category"><p><strong>${escapeHtml(category)}</strong> · ${escapeHtml(labels[strategy]||'待核对')}</p><p>${strategy==='ROLE_COMBINATION'?'共用下方7组角色组合配置；在途沿用提报快照，新比例仅用于新提报。':strategy==='EQUAL'?'复用原有效参与人均分算法，金额来自有效标准或合法终审。':'新标准流程尚无已批准分配策略，不能默认均分、套用其他类别比例或直接入账。'}</p></section>`).join('')}</div></details>`;
+}
+
 function renderMaintenanceHours() {
   const rules = state.maintenanceRules || [];
   const canManageRules = hasRbac("maintenance.rules.manage");
@@ -4148,10 +4272,11 @@ function renderMaintenanceHours() {
     <summary><span><strong>非例行工种分配比例</strong><small>7 种组合</small></span></summary>
     <div class="maintenance-rule-category-list">${nonroutineCategories}</div>
   </details>`;
-  const groupHtml = `<details class="maintenance-rule-group" open><summary><strong>机型组 × 维修机会标准工时</strong></summary><p>同列机型共用标准工时；代码以空格、逗号或顿号分隔，精确匹配。空白表示未配置，不能提交例行工时。</p><div id="maintenanceAircraftMatrix">${renderMaintenanceAircraftHours()}</div></details>${routineGroup}${nonroutineGroup}${simpleGroup("towHours", "拖机工时规则", towRules, "小时")}`;
+  const groupHtml = `<details class="maintenance-rule-group" open><summary><strong>机型组 × 维修机会标准工时</strong></summary><p>同列机型共用标准工时；代码以空格、逗号或顿号分隔，精确匹配。空白表示未配置，不能提交例行工时。</p><div id="maintenanceAircraftMatrix">${renderMaintenanceAircraftHours()}</div></details>${routineGroup}${nonroutineGroup}${maintenanceTowStandardOnly()?`<details class="maintenance-rule-group" data-maint-tow-history><summary><strong>拖机旧默认金额（历史）</strong></summary><p>旧默认 ${escapeHtml(towRules[0]?.value??'未配置')} 小时，仅保留追溯，已停止维护。</p><p>新拖机工作在执行页选择有效标准；未收录工作提交评议。个人分配仍由原工时规则计算。</p></details>`:simpleGroup("towHours", "拖机工时规则", towRules, "小时")}`;
   return `<section class="data-panel maintenance-panel maintenance-rule-settings">
     <div class="panel-title"><div><strong>工时规则</strong><span>维护标准工时与人员分配比例。</span></div></div>
-    <div class="maintenance-rule-groups">${groupHtml}</div>
+    <div class="maintenance-rule-groups">${renderMaintenanceCategoryStrategies()}${groupHtml}</div>
+    <details class="maintenance-rule-group"><summary><strong>规则变更历史</strong></summary><div data-rule-history-workbench></div></details>
     ${canManageRules ? '<div class="actions maintenance-rule-save"><button class="btn" type="button" data-maint-save-rules>保存工时规则</button></div>' : ""}
   </section>`;
 }
@@ -4304,6 +4429,7 @@ function renderMaintenanceData() {
       <article class="personal-metric-card"><span>本月工时</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="all" data-detail-period="month"><strong>${maintenanceHoursLabel(metrics.monthHours)}<small>小时</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingHours(metrics.pendingMonthHours, { period: "month" })}</article>
       <article class="personal-metric-card"><span>月度放行架次</span><button class="personal-metric-main-action" type="button" data-maint-personal-detail data-detail-status="confirmed" data-detail-type="sortie"><strong>${escapeHtml(metrics.monthSorties || 0)}<small>架次</small></strong><em>${escapeHtml(monthText)}</em></button>${pendingSorties(metrics.pendingMonthSorties)}</article>
     </section>
+    ${personal.underReview?.count ? `<section class="maintenance-chart-card"><details data-personal-review-estimates><summary>审核中工时 · ${personal.underReview.count} 项 · ${personal.underReview.estimatedHours === null ? "暂估待分配" : maintenanceHoursLabel(personal.underReview.estimatedHours) + " 小时暂估"}</summary><p>个人申请暂估，仅参考。待分配 ${personal.underReview.unallocatedCount} 项。</p>${personal.underReview.items.map(item => `<article class="maintenance-detail-work-item"><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.date)} · ${escapeHtml(item.flightNo || "-")} · ${escapeHtml(item.aircraftNo || "-")}</span><span>评议 ${item.submittedOpinions}/${item.requiredOpinions} · ${escapeHtml({PENDING_ACCEPTANCE:"待受理",IN_REVIEW:"评议中",SEALED:"待终审"}[item.state] || item.state)}</span></div><div><b>${item.estimatedHours === null ? "待分配 / 暂无法估算" : maintenanceHoursLabel(item.estimatedHours) + " 小时暂估"}</b><small>原申请总工时 ${maintenanceHoursLabel(item.requestedHours)} 小时</small></div></article>`).join("")}</details></section>` : ""}
     <section class="maintenance-comparison-grid">${maintenanceDataComparisonCard("team", personal.teamComparison)}${maintenanceDataComparisonCard("department", personal.departmentComparison || personal.groupComparison)}${maintenanceDataComparisonCard("teamRanking", personal.teamRanking)}</section>
     <section class="maintenance-chart-card maintenance-insights-card">${chartTabs}${chartBody}</section>
   </section>`;
@@ -4377,36 +4503,51 @@ function maintenanceOpportunityAuditHtml(detail = {}) {
 }
 
 async function loadMaintenanceOpportunityAudit(id, target) {
+  const accountId=state.user?.id,version=state.maintenanceReportRequestVersion;
+  const current=()=>target.isConnected&&state.user?.id===accountId&&state.maintenanceReportRequestVersion===version&&state.maintenanceTab==='report'&&state.activePage==='maintenancePage';
   try {
     const { detail } = await maintenanceService.getOpportunityAudit(id);
-    if (!target.isConnected) return;
+    if (!current()) return;
     state.maintenanceReportOpportunityDetails.set(id, detail);
     target.innerHTML = maintenanceOpportunityAuditHtml(detail);
   } catch (error) {
+    if(!current())return;
+    if([401,403,404].includes(error.status)){clearMaintenanceReportAccessState('当前明细访问资格已变化，旧报表及明细已清除。');return;}
+    state.maintenanceReportOpportunityDetails.delete(id);
     if (target.isConnected) target.innerHTML = `<div class="status-line error">${escapeHtml(error.message)}</div>`;
   }
 }
 
+function maintenanceNonroutineStandardLabel(row) {
+  if(row.standardHours===null||row.standardHours===undefined||row.standardHours==='')return escapeHtml(row.recognitionStatusLabel||'未认定');
+  return `${maintenanceHoursLabel(row.standardHours)}h`;
+}
+
 function maintenanceNonroutineAuditHtml(detail = {}) {
-  return `<div class="maintenance-audit-summary"><span>章节 ${escapeHtml(detail.chapter || "-")} · ${escapeHtml(detail.category || "其他")}</span><span>标准总工时 <b>${maintenanceHoursLabel(detail.standardHours || 0)}h</b></span><span>实际总工时 <b>${detail.hasResults ? `${maintenanceHoursLabel(detail.actualHours)}h` : "尚无工时结果"}</b></span></div>
+  return `<div class="maintenance-audit-summary"><span>章节 ${escapeHtml(detail.chapter || "-")} · ${escapeHtml(detail.category || "其他")}</span><span>标准总工时 <b>${maintenanceNonroutineStandardLabel(detail)}</b></span><span>实际总工时 <b>${detail.hasResults ? `${maintenanceHoursLabel(detail.actualHours)}h` : "尚无工时结果"}</b></span></div>
     ${detail.reportExplanation ? `<p class="maintenance-audit-explanation">报工说明：${escapeHtml(detail.reportExplanation)}</p>` : ""}
-    <div class="maintenance-audit-people">${(detail.people || []).map(person => `<div class="maintenance-audit-person"><strong>${escapeHtml(person.userName)}<small>${escapeHtml(person.team)}</small></strong><span>${escapeHtml(person.role)} · ${escapeHtml(person.assignmentStatus)}</span><span>原始 ${person.resultHours == null ? "-" : `${maintenanceHoursLabel(person.resultHours)}h`}</span><span>调整 ${person.adjustedHours == null ? "-" : `${maintenanceHoursLabel(person.adjustedHours)}h`}</span><b>最终 ${person.finalHours == null ? "尚无结果" : `${maintenanceHoursLabel(person.finalHours)}h`}</b><em>${escapeHtml(person.resultStatus || "-")}</em></div>`).join("") || '<div class="maintenance-report-empty">尚未派工。</div>'}</div>`;
+    <div class="maintenance-audit-people">${(detail.people || []).map(person => `<div class="maintenance-audit-person"><strong>${escapeHtml(person.userName)}<small>${escapeHtml(person.team)}</small></strong><span>${person.assignmentRole&&person.assignmentRole!==person.role?`原施工 ${escapeHtml(person.assignmentRole)} · 核算 ${escapeHtml(person.role)}`:escapeHtml(person.role)} · ${escapeHtml(person.assignmentStatus)}</span><span>原始 ${person.resultHours == null ? "-" : `${maintenanceHoursLabel(person.resultHours)}h`}</span><span>调整 ${person.adjustedHours == null ? "-" : `${maintenanceHoursLabel(person.adjustedHours)}h`}</span><b>最终 ${person.finalHours == null ? "尚无结果" : `${maintenanceHoursLabel(person.finalHours)}h`}</b><em>${escapeHtml(person.resultStatus || "-")}</em></div>`).join("") || '<div class="maintenance-report-empty">尚未派工。</div>'}</div>`;
 }
 
 function maintenanceReportNonroutine(data) {
   return `<div class="maintenance-report-list nonroutine">
     <div class="maintenance-report-row head"><span>日期 / 航班</span><span>非例行工作</span><span>类别 / 章节</span><span>标准总工时</span><span>实际总工时</span><span>派工人数</span><span>状态</span></div>
-    ${(data.rows || []).map(row => `<div class="maintenance-report-nonroutine-entry"><button class="maintenance-report-row" type="button" data-maint-report-nonroutine="${escapeHtml(row.id)}" aria-expanded="${state.maintenanceReportOpenNonroutineIds.has(row.id)}"><span data-label="日期 / 航班"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flightNo)}</strong><small>${escapeHtml(row.aircraftNo)}</small></span><span data-label="非例行工作"><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.opportunity)}</small></span><span data-label="类别 / 章节">${escapeHtml(row.category)} · ${escapeHtml(row.chapter || "-")}</span><span data-label="标准总工时">${maintenanceHoursLabel(row.standardHours)}h</span><span data-label="实际总工时">${row.hasResults ? `${maintenanceHoursLabel(row.actualHours)}h` : "尚无工时结果"}</span><span data-label="派工人数">${escapeHtml(row.assignedCount)} 人</span><span data-label="状态">${escapeHtml(row.status)}</span></button>${state.maintenanceReportOpenNonroutineIds.has(row.id) ? `<div class="maintenance-report-nonroutine-detail" data-maint-audit-detail="${escapeHtml(row.id)}">${state.maintenanceReportNonroutineDetails.has(row.id) ? maintenanceNonroutineAuditHtml(state.maintenanceReportNonroutineDetails.get(row.id)) : "正在读取..."}</div>` : ""}</div>`).join("") || '<div class="maintenance-report-empty">没有符合条件的非例行工作。</div>'}
+    ${(data.rows || []).map(row => `<div class="maintenance-report-nonroutine-entry"><button class="maintenance-report-row" type="button" data-maint-report-nonroutine="${escapeHtml(row.id)}" aria-expanded="${state.maintenanceReportOpenNonroutineIds.has(row.id)}"><span data-label="日期 / 航班"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flightNo)}</strong><small>${escapeHtml(row.aircraftNo)}</small></span><span data-label="非例行工作"><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.opportunity)}</small></span><span data-label="类别 / 章节">${escapeHtml(row.category)} · ${escapeHtml(row.chapter || "-")}</span><span data-label="标准总工时">${maintenanceNonroutineStandardLabel(row)}</span><span data-label="实际总工时">${row.hasResults ? `${maintenanceHoursLabel(row.actualHours)}h` : "尚无工时结果"}</span><span data-label="派工人数">${escapeHtml(row.assignedCount)} 人</span><span data-label="状态">${escapeHtml(row.status)}${row.recognitionStatusLabel?`<small>${escapeHtml(row.recognitionStatusLabel)}</small>`:""}</span></button>${state.maintenanceReportOpenNonroutineIds.has(row.id) ? `<div class="maintenance-report-nonroutine-detail" data-maint-audit-detail="${escapeHtml(row.id)}">${state.maintenanceReportNonroutineDetails.has(row.id) ? maintenanceNonroutineAuditHtml(state.maintenanceReportNonroutineDetails.get(row.id)) : "正在读取..."}</div>` : ""}</div>`).join("") || '<div class="maintenance-report-empty">没有符合条件的非例行工作。</div>'}
   </div>${maintenanceReportPagination(data.pagination)}`;
 }
 
 async function loadMaintenanceNonroutineAudit(id, target) {
+  const accountId=state.user?.id,version=state.maintenanceReportRequestVersion;
+  const current=()=>target.isConnected&&state.user?.id===accountId&&state.maintenanceReportRequestVersion===version&&state.maintenanceTab==='report'&&state.activePage==='maintenancePage';
   try {
     const { detail } = await maintenanceService.getNonroutineAudit(id);
-    if (!target.isConnected) return;
+    if (!current()) return;
     state.maintenanceReportNonroutineDetails.set(id, detail);
     target.innerHTML = maintenanceNonroutineAuditHtml(detail);
   } catch (error) {
+    if(!current())return;
+    if([401,403,404].includes(error.status)){clearMaintenanceReportAccessState('当前明细访问资格已变化，旧报表及明细已清除。');return;}
+    state.maintenanceReportNonroutineDetails.delete(id);
     if (target.isConnected) target.innerHTML = `<div class="status-line error">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -4419,9 +4560,9 @@ function maintenanceReportPagination(pagination = {}) {
 function renderMaintenanceReport() {
   const data = state.maintenanceReport || { summary: {}, rows: [], pagination: {} };
   const view = state.maintenanceReportView || "dashboard";
-  const body = maintenanceReportBody(data, view);
+  const body = state.maintenanceReport ? maintenanceReportBody(data, view) : `<div class="maintenance-report-empty" role="status">${escapeHtml(state.maintenanceReportError||(state.maintenanceReportLoading?"正在核对当前报表访问范围…":"请查询当前可访问报表。"))}</div>`;
   return `<section class="maintenance-report-panel">
-    <div class="maintenance-report-head"><div class="maintenance-report-views" role="tablist">${[["dashboard", "看板"], ["people", "人员清单"], ["opportunities", "维修机会清单"], ["nonroutine", "非例行清单"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${view === key}" class="${view === key ? "active" : ""}" data-maint-report-view="${key}">${label}</button>`).join("")}</div><button class="btn secondary" type="button" data-maint-report-export>导出报表</button></div>
+    <div class="maintenance-report-head"><div class="maintenance-report-views" role="tablist">${[["dashboard", "看板"], ["people", "人员清单"], ["opportunities", "维修机会清单"], ["nonroutine", "非例行清单"]].map(([key, label]) => `<button type="button" role="tab" aria-selected="${view === key}" class="${view === key ? "active" : ""}" data-maint-report-view="${key}">${label}</button>`).join("")}</div><button class="btn secondary" type="button" data-maint-report-export ${!state.maintenanceReport||state.maintenanceReportLoading?"disabled":""}>导出报表</button></div>
     ${maintenanceReportFiltersHtml()}
     <div class="maintenance-report-content">${body}</div>
   </section>`;
@@ -4431,15 +4572,51 @@ function maintenanceReportBody(data = {}, view = state.maintenanceReportView) {
   return view === "people" ? maintenanceReportPeople(data) : view === "opportunities" ? maintenanceReportOpportunities(data) : view === "nonroutine" ? maintenanceReportNonroutine(data) : maintenanceReportDashboard(data);
 }
 
-async function refreshMaintenanceReportContent() {
-  state.maintenanceReport = await maintenanceService.getReport();
-  if (state.activePage !== "maintenancePage" || state.maintenanceTab !== "report") return;
-  const content = document.querySelector(".maintenance-report-content");
-  if (content) {
-    content.innerHTML = maintenanceReportBody(state.maintenanceReport, state.maintenanceReportView);
-    for (const target of content.querySelectorAll("[data-maint-audit-detail]")) loadMaintenanceNonroutineAudit(target.dataset.maintAuditDetail, target);
-    for (const target of content.querySelectorAll("[data-maint-opportunity-detail]")) loadMaintenanceOpportunityAudit(target.dataset.maintOpportunityDetail, target);
+function renderMaintenanceReportAccessState() {
+  if(state.activePage!=='maintenancePage'||state.maintenanceTab!=='report')return;
+  const focused=document.activeElement,search=focused?.id==='maintenanceReportSearch'?{start:focused.selectionStart,end:focused.selectionEnd}:null;
+  renderMaintenance();
+  if(search){const input=document.getElementById('maintenanceReportSearch');if(input){input.focus({preventScroll:true});input.setSelectionRange(search.start,search.end);}}
+}
+
+function clearMaintenanceReportAccessState(message='',loading=false,render=true) {
+  state.maintenanceReportRequestVersion=Number(state.maintenanceReportRequestVersion||0)+1;
+  state.maintenanceReportPersonRequestVersion=Number(state.maintenanceReportPersonRequestVersion||0)+1;
+  state.maintenanceReport=null;state.maintenanceReportOptions={people:[],teams:[]};
+  state.maintenanceReportNonroutineDetails.clear();state.maintenanceReportOpportunityDetails.clear();
+  state.maintenanceReportLoading=loading;state.maintenanceReportError=message;
+  for(const id of ['maintenanceDataDetailDialog','maintenanceReportExportDialog']){const dialog=document.querySelector('#'+id);if(dialog?.open)dialog.close();}
+  const body=document.querySelector('#maintenanceDataDetailDialogBody');if(body)body.textContent='';
+  if(render)renderMaintenanceReportAccessState();else document.querySelector('.maintenance-report-panel')?.remove();
+  return state.maintenanceReportRequestVersion;
+}
+
+async function loadMaintenanceReportFresh() {
+  const accountId=state.user?.id,page=state.activePage,tab=state.maintenanceTab;
+  const version=clearMaintenanceReportAccessState('',true);
+  const current=()=>state.user?.id===accountId&&state.activePage===page&&state.maintenanceTab===tab&&state.maintenanceReportRequestVersion===version;
+  if(!accountId)return false;
+  try{
+    const [report,options]=await Promise.all([maintenanceService.getReport(),maintenanceService.getReportOptions()]);
+    if(!current())return false;
+    state.maintenanceReport=report;state.maintenanceReportOptions=options;state.maintenanceReportLoading=false;state.maintenanceReportError='';
+    renderMaintenanceReportAccessState();
+    if(state.activePage==='maintenancePage'&&state.maintenanceTab==='report'){
+      const content=document.querySelector('.maintenance-report-content');
+      for(const target of content?.querySelectorAll('[data-maint-audit-detail]')||[])loadMaintenanceNonroutineAudit(target.dataset.maintAuditDetail,target);
+      for(const target of content?.querySelectorAll('[data-maint-opportunity-detail]')||[])loadMaintenanceOpportunityAudit(target.dataset.maintOpportunityDetail,target);
+    }
+    return true;
+  }catch(error){
+    if(!current())return false;
+    clearMaintenanceReportAccessState([401,403,404].includes(error.status)?'当前报表访问资格已变化，旧数据已清除，请重新查询。':`查询未完成：${error.message}。请重试，旧数据已清除。`);
+    if(error.status===401)await handleAuthExpired();
+    return false;
   }
+}
+
+async function refreshMaintenanceReportContent() {
+  return await loadMaintenanceReportFresh();
 }
 
 function maintenanceReportPersonGroups(hours = [], sorties = []) {
@@ -4504,6 +4681,9 @@ function maintenanceReportPersonGroupHtml(group) {
 }
 
 async function openMaintenanceReportPersonDetails(userId, personName) {
+  if(!state.maintenanceReport||state.maintenanceReportLoading)return;
+  const accountId=state.user?.id,version=state.maintenanceReportRequestVersion,request=Number(state.maintenanceReportPersonRequestVersion||0)+1;state.maintenanceReportPersonRequestVersion=request;
+  const current=()=>state.user?.id===accountId&&state.maintenanceReportRequestVersion===version&&state.maintenanceReportPersonRequestVersion===request&&state.maintenanceTab==='report'&&state.activePage==='maintenancePage';
   const dialog = ensureMaintenanceDataDetailDialog();
   const body = $("#maintenanceDataDetailDialogBody");
   body.innerHTML = `<div class="dialog-head"><h2>${escapeHtml(personName || "人员")} · 报表明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="maintenance-detail-loading">正在读取...</div>`;
@@ -4511,16 +4691,20 @@ async function openMaintenanceReportPersonDetails(userId, personName) {
   dialog.showModal();
   try {
     const result = await maintenanceService.getReport({ view: "personDetails", userId, page: "1" });
+    if(!current()||!dialog.open)return;
     const hours = result.hours || [];
     const sorties = result.sorties || [];
     const groups = maintenanceReportPersonGroups(hours, sorties);
     body.innerHTML = `<div class="dialog-head"><h2>${escapeHtml(personName || "人员")} · 报表明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="maintenance-detail-summary">工时 <strong>${maintenanceHoursLabel(hours.reduce((sum, row) => sum + Number(row.finalHours ?? row.hours ?? 0), 0))} 小时</strong> · 放行 <strong>${sorties.reduce((sum, row) => sum + Number(row.sorties || 1), 0)} 架次</strong></div><div class="maintenance-personal-detail-list">${groups.map(maintenanceReportPersonGroupHtml).join("") || '<div class="maintenance-chart-empty">没有对应记录。</div>'}</div>`;
   } catch (error) {
+    if(!current())return;
+    if([401,403,404].includes(error.status)){clearMaintenanceReportAccessState('当前人员明细访问资格已变化，旧报表及明细已清除。');return;}
     body.innerHTML = `<div class="dialog-head"><h2>报表明细</h2><button class="icon-btn" data-close="maintenanceDataDetailDialog" type="button">×</button></div><div class="status-line error">${escapeHtml(error.message)}</div>`;
   }
 }
 
 function openMaintenanceReportExportDialog() {
+  if(!state.maintenanceReport||state.maintenanceReportLoading)return;
   if ($("#maintenanceReportExportDialog")) return;
   const defaultSections = state.maintenanceReportView === "nonroutine" ? new Set(["nonroutine"]) : state.maintenanceReportView === "opportunities" ? new Set(["opportunities"]) : new Set(["people", "hours", "signatures", "sorties", "teams"]);
   document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceReportExportDialog" class="maintenance-report-export-dialog"><form class="dialog-body"><div class="dialog-head"><h2>导出综合报表</h2><button class="icon-btn" data-close="maintenanceReportExportDialog" type="button">×</button></div><p class="maintenance-report-export-range">${escapeHtml(state.maintenanceReportDateFrom)} 至 ${escapeHtml(state.maintenanceReportDateTo)}</p><div class="maintenance-report-export-options">${[["people", "人员汇总"], ["hours", "工时明细"], ["signatures", "签署明细"], ["sorties", "放行明细"], ["teams", "班组汇总"], ["opportunities", "维修机会核对"], ["nonroutine", "非例行核对"]].map(([key, label]) => `<label><input type="checkbox" name="section" value="${key}" ${defaultSections.has(key) ? "checked" : ""}><span>${label}</span></label>`).join("")}</div><div class="status-line error" role="alert"></div><div class="actions"><button class="btn secondary" type="button" data-close="maintenanceReportExportDialog">取消</button><button class="btn" type="submit">导出 Excel</button></div></form></dialog>`);
@@ -4528,6 +4712,7 @@ function openMaintenanceReportExportDialog() {
   dialog.addEventListener("close", () => dialog.remove());
   dialog.querySelector("form").addEventListener("submit", event => {
     event.preventDefault();
+    if(!state.maintenanceReport||state.maintenanceReportLoading){dialog.close();return;}
     const sections = [...dialog.querySelectorAll('input[name="section"]:checked')].map(input => input.value);
     const error = dialog.querySelector('[role="alert"]');
     if (!sections.length) {
@@ -4721,17 +4906,83 @@ async function openMaintenanceDataDetails(trigger) {
   }
 }
 
+async function openStandardReview(id){
+  const accountId=state.user.id;
+  const capability=await apiRequest('/maintenance/standard-review-capabilities');
+  if(state.user.id!==accountId)throw new Error('账户已切换，请重新打开标准评议');
+  if(!capability.enabled)throw new Error('标准评议尚未启用');
+  // Verify access before leaving the management form; failed navigation retains its inputs.
+  await apiRequest(`/maintenance/standard-reviews/${encodeURIComponent(id)}`);
+  if(state.user.id!==accountId)throw new Error('账户已切换，请重新打开标准评议');
+  state.maintenanceStandardReviewEnabled=true;state.maintenanceStandardNotificationsEnabled=capability.notificationsEnabled===true;state.maintenanceStandardReviewCapsUser=accountId;
+  state.maintenanceStandardReviewInitialId=id;state.maintenanceTab='standardReviews';
+  await refreshMaintenance();
+}
+
 function renderMaintenance() {
   const panel = $("#maintenancePanel");
   if (!panel) return;
   if (!canView("maintenancePage")) {
+    state.maintenanceWorkflowController?.destroy();state.maintenanceWorkflowController=null;
+    state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;
+    state.maintenanceReviewController?.destroy();state.maintenanceReviewController=null;
+    state.maintenancePeriodController?.destroy();state.maintenancePeriodController=null;
+    state.maintenancePublicationController?.destroy();state.maintenancePublicationController=null;
+    state.maintenanceStandardController?.destroy();state.maintenanceStandardController=null;
     panel.innerHTML = `<section class="data-panel"><div class="status-line">当前账号未授权维修管控模块。</div></section>`;
     return;
   }
   const tabs = maintenanceAllowedTabs();
   if (!tabs.some(([key]) => key === state.maintenanceTab)) state.maintenanceTab = tabs[0]?.[0] || "data";
-  const body = { dispatch: renderMaintenanceDispatch, execute: renderMaintenanceExecute, data: renderMaintenanceData, report: renderMaintenanceReport, hours: renderMaintenanceHours }[state.maintenanceTab]?.() || "";
+  if(['reviews','standardReviews'].includes(state.maintenanceTab) && panel.querySelector('[data-review-workbench]') && state.maintenanceReviewControllerUser===state.user.id&&state.maintenanceReviewControllerPurpose===(state.maintenanceTab==='standardReviews'?'STANDARD':'WORK'))return;
+  if(state.maintenanceTab==='periods' && panel.querySelector('[data-period-workbench]') && state.maintenancePeriodControllerUser===state.user.id)return;
+  if(state.maintenanceTab==='publications'&&panel.querySelector('[data-publication-workbench]')&&state.maintenancePublicationControllerUser===state.user.id)return;
+  if(state.maintenanceTab==='corrections'&&panel.querySelector('[data-correction-workbench]')&&state.maintenanceCorrectionControllerUser===state.user.id)return;
+  if(state.maintenanceTab==='workflows'&&panel.querySelector('[data-workflow-workbench]')&&state.maintenanceWorkflowControllerUser===state.user.id)return;
+  if(state.maintenanceTab==='standards' && panel.querySelector('[data-standard-workbench]') && state.maintenanceStandardControllerUser===state.user.id)return;
+  state.maintenanceReviewController?.destroy();state.maintenanceReviewController=null;
+  state.maintenancePeriodController?.destroy();state.maintenancePeriodController=null;
+  state.maintenanceStandardController?.destroy();state.maintenanceStandardController=null;
+  state.maintenancePublicationController?.destroy();state.maintenancePublicationController=null;
+  state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;
+  state.maintenanceWorkflowController?.destroy();state.maintenanceWorkflowController=null;
+  const body = state.maintenanceTab==='workflows'?'<section class="data-panel" data-workflow-workbench></section>':state.maintenanceTab==='corrections'?'<section class="data-panel" data-correction-workbench></section>':state.maintenanceTab==='publications'?'<section class="data-panel" data-publication-workbench></section>':state.maintenanceTab==='standards'?'<section class="data-panel" data-standard-workbench></section>':state.maintenanceTab==='periods'?'<section class="data-panel" data-period-workbench></section>':['reviews','standardReviews'].includes(state.maintenanceTab)?'<section class="data-panel" data-review-workbench></section>':{ dispatch: renderMaintenanceDispatch, execute: renderMaintenanceExecute, data: renderMaintenanceData, report: renderMaintenanceReport, hours: renderMaintenanceHours }[state.maintenanceTab]?.() || "";
   panel.innerHTML = `<div class="maintenance-tabs">${tabs.map(([key, label]) => `<button class="chip ${state.maintenanceTab === key ? "active" : ""}" type="button" data-maint-tab="${key}">${label}</button>`).join("")}</div>${body}`;
+  state.maintenanceRuleHistoryController?.destroy();state.maintenanceRuleHistoryController=null;
+  if(state.maintenanceTab==='hours'){const root=panel.querySelector('[data-rule-history-workbench]'),accountId=state.user.id;if(root)import('./maintenance-rule-history-view.mjs?v=20261113-1').then(module=>{if(root.isConnected&&state.user.id===accountId&&state.maintenanceTab==='hours')state.maintenanceRuleHistoryController=module.createRuleHistoryView({root,api:apiRequest,escapeHtml,accountId,currentAccount:()=>state.user.id});}).catch(error=>{if(root.isConnected&&state.user.id===accountId)root.textContent=error.message;});}
+  if(state.maintenanceTab==='workflows'){
+    const root=panel.querySelector('[data-workflow-workbench]'),accountId=state.user.id;state.maintenanceWorkflowControllerUser=accountId;
+    import('./maintenance-workflow-workbench.mjs?v=20261112-audit-1').then(module=>{if(root.isConnected&&state.maintenanceTab==='workflows'&&state.user.id===accountId)state.maintenanceWorkflowController=module.createWorkflowWorkbench({root,api:apiRequest,escapeHtml,accountId});}).catch(error=>{if(root.isConnected&&state.user.id===accountId)root.textContent=error.message;});
+  }
+  if(['reviews','standardReviews'].includes(state.maintenanceTab)){
+    const root=panel.querySelector('[data-review-workbench]'),tab=state.maintenanceTab,purpose=tab==='standardReviews'?'STANDARD':'WORK',accountId=state.user.id;
+    state.maintenanceReviewControllerUser=accountId;state.maintenanceReviewControllerPurpose=purpose;
+    const initialReviewId=purpose==='STANDARD'?state.maintenanceStandardReviewInitialId:null;
+    import('./nonroutine-review-workbench.mjs?v=20261116-queued-access').then(module=>{if(root.isConnected && state.maintenanceTab===tab&&state.user.id===accountId){
+      state.maintenanceReviewController=module.createReviewWorkbench({root,api:apiRequest,escapeHtml,accountId,purpose,initialReviewId,notificationsEnabled:purpose==='STANDARD'?state.maintenanceStandardNotificationsEnabled:true});
+      if(purpose==='STANDARD')state.maintenanceStandardReviewInitialId=null;
+    }}).catch(error=>{if(root.isConnected)root.textContent=error.message;});
+  }
+  if(state.maintenanceTab==='periods'){
+    const root=panel.querySelector('[data-period-workbench]');state.maintenancePeriodControllerUser=state.user.id;
+    Promise.all([import('./maintenance-period-workbench.mjs'),import('./maintenance-cross-period-workbench.mjs')]).then(([periods,cross])=>{if(root.isConnected && state.maintenanceTab==='periods'){
+      root.innerHTML='<div data-period-main></div><div data-period-cross></div>';
+      const controllers=[periods.createPeriodWorkbench({root:root.querySelector('[data-period-main]'),api:apiRequest,escapeHtml}),cross.createCrossPeriodWorkbench({root:root.querySelector('[data-period-cross]'),api:apiRequest,escapeHtml})];
+      state.maintenancePeriodController={refresh:async()=>{await Promise.all(controllers.map(item=>item.refresh()));},hasUnsaved:()=>controllers.some(item=>item.hasUnsaved()),isBusy:()=>controllers.some(item=>item.isBusy()),destroy:()=>controllers.forEach(item=>item.destroy())};
+    }}).catch(error=>{if(root.isConnected)root.textContent=error.message;});
+  }
+  if(state.maintenanceTab==='corrections'){
+    const root=panel.querySelector('[data-correction-workbench]'),accountId=state.user.id;state.maintenanceCorrectionControllerUser=accountId;
+    import('./nonroutine-correction-workbench.mjs?v=20261111-1').then(module=>{if(root.isConnected&&state.maintenanceTab==='corrections'&&state.user.id===accountId)state.maintenanceCorrectionController=module.createCorrectionWorkbench({root,api:apiRequest,escapeHtml});}).catch(error=>{if(root.isConnected&&state.user.id===accountId)root.textContent=error.message;});
+  }
+  if(state.maintenanceTab==='publications'){
+    const root=panel.querySelector('[data-publication-workbench]'),accountId=state.user.id;state.maintenancePublicationControllerUser=accountId;
+    import('./maintenance-standard-publication-workbench.mjs').then(module=>{if(root.isConnected&&state.maintenanceTab==='publications'&&state.user.id===accountId)state.maintenancePublicationController=module.createStandardPublicationWorkbench({root,api:apiRequest,escapeHtml});}).catch(error=>{if(root.isConnected)root.textContent=error.message;});
+  }
+  if(state.maintenanceTab==='standards'){
+    const root=panel.querySelector('[data-standard-workbench]');state.maintenanceStandardControllerUser=state.user.id;
+    import('./maintenance-standard-management-workbench.mjs').then(module=>{if(root.isConnected&&state.maintenanceTab==='standards')state.maintenanceStandardController=module.createStandardManagementWorkbench({root,api:apiRequest,escapeHtml,onReview:openStandardReview,importEnabled:state.maintenanceStandardImportEnabled,storageKey:`muc_standard_import_${state.user.id}`});}).catch(error=>{if(root.isConnected)root.textContent=error.message;});
+  }
 }
 
 function syncPeopleScopedState() {
@@ -4985,7 +5236,26 @@ function closeBottomMoreSheet() {
   if (sheet) sheet.hidden = true;
 }
 
+function canLeaveCorrectionWorkbench() {
+  if(state.maintenanceRulesSaving)return false;
+  if(state.maintenanceRulesDirty&&!confirm("离开会放弃尚未保存的工时规则，是否继续？"))return false;
+  const workflow=state.maintenanceWorkflowController;
+  if(workflow&&(workflow.isBusy()||workflow.hasUnsaved()&&!confirm('离开会放弃尚未提交的流程内容或待核对请求，是否继续？')))return false;
+  const controller=state.maintenanceCorrectionController;
+  if(controller?.isBusy())return false;
+  if(controller?.hasUnsaved()&&!confirm('离开会放弃尚未提交的工时更正内容，是否继续？'))return false;
+  state.maintenanceRulesDirty=false;
+  return true;
+}
+
 async function showPage(page) {
+  if(state.activePage==='maintenancePage'&&page!=='maintenancePage'){
+    if(!canLeaveCorrectionWorkbench())return;
+    state.maintenanceWorkflowController?.destroy();state.maintenanceWorkflowController=null;state.maintenanceWorkflowControllerUser=null;
+    document.querySelector('[data-workflow-workbench]')?.remove();
+    state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;state.maintenanceCorrectionControllerUser=null;
+    document.querySelector('[data-correction-workbench]')?.remove();
+  }
   state.activePage = canView(page) ? page : "homePage";
   if (state.activePage === "personnelPage") {
     const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
@@ -4995,9 +5265,9 @@ async function showPage(page) {
     }
   }
   await renderAll({ force: false });
-  if (state.activePage === "homePage" && state.homeScrollY) {
+  if (state.activePage === "homePage" && (state.homeScrollRestorePending || state.homeScrollY)) {
     const restoreY = state.homeScrollY;
-    state.homeScrollY = 0;
+    state.homeScrollY = 0;state.homeScrollRestorePending=false;
     await new Promise(requestAnimationFrame);
     window.scrollTo({ top: restoreY, behavior: "instant" });
   }
@@ -5892,6 +6162,38 @@ function maintenanceDispatchRowsFromRows(rows) {
 }
 
 let maintenanceImportSession = null;
+let maintenanceImportWorkbenchModule = null;
+async function configureMaintenanceImportWorkbench(session) {
+  session.capabilitiesPending = true;
+  session.capabilitiesError = false;
+  $('#maintenanceImportCheck').disabled = true;
+  try {
+    const capabilities = await apiRequest('/maintenance/import-capabilities');
+    if (maintenanceImportSession !== session) return;
+    if (['shadow','draft'].includes(capabilities.mode)) {
+      maintenanceImportWorkbenchModule ||= await import('/maintenance-import-workbench.mjs');
+      if (maintenanceImportSession !== session) return;
+      session.workbench = maintenanceImportWorkbenchModule.createMaintenanceImportWorkbench({
+        root: $('#maintenanceImportPreview'), api: apiRequest, escapeHtml, mode: capabilities.mode,
+        fileLimitBytes: capabilities.fileLimitBytes,
+        storageKey: `maintenance-import-batch:${state.user.id}`,
+        download: maintenanceImportDownload, refresh: refreshMaintenance,
+        onData: data => { session.rows = data.results; session.results = data.results; session.valid = true; },
+        setBusy: busy => { session.busy = busy; $('#maintenanceUnifiedImportDialog').querySelectorAll('button,input,select,textarea').forEach(control => { control.disabled = busy; }); }
+      });
+    }
+    maintenanceImportHelp();
+  } catch (error) {
+    if (maintenanceImportSession !== session) return;
+    if (error.status === 404) {maintenanceImportHelp();return;}
+    session.capabilitiesError = true;
+    $('#maintenanceImportProgress').textContent = `导入配置加载失败：${error.message}。点击检查预览重试。`;
+  } finally {
+    session.capabilitiesPending = false;
+    if (maintenanceImportSession === session) $('#maintenanceImportCheck').disabled = false;
+  }
+}
+
 function maintenanceImportDownload(rows,name,xlsx=false) {
   const blob = xlsx ? buildXlsxWorkbook([{name:'导入模板',rows}]) : new Blob(['\ufeff'+rows.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -5902,9 +6204,9 @@ function openMaintenanceImportDialog() {
     const dialog=$('#maintenanceUnifiedImportDialog');
     dialog.addEventListener('close',()=>flushMaintenancePendingRefresh());
     dialog.addEventListener('cancel',event=>{if(maintenanceImportSession?.busy)event.preventDefault();});
-    const invalidate=()=>{maintenanceImportSession.rows=null;maintenanceImportSession.results=null;maintenanceImportSession.summary=null;maintenanceImportSession.valid=false;maintenanceImportSession.done=false;maintenanceImportSession.requestId=`import_${Date.now()}_${Math.random().toString(36).slice(2)}`;$('#maintenanceImportConfirm').disabled=true;$('#maintenanceImportPreview').textContent='';$('#maintenanceImportProgress').textContent='选择文件 → 检查预览 → 确认导入 → 查看结果';};
+    const invalidate=()=>{maintenanceImportSession.workbench?.reset();maintenanceImportSession.rows=null;maintenanceImportSession.results=null;maintenanceImportSession.summary=null;maintenanceImportSession.valid=false;maintenanceImportSession.done=false;maintenanceImportSession.requestId=`import_${Date.now()}_${Math.random().toString(36).slice(2)}`;$('#maintenanceImportConfirm').disabled=true;$('#maintenanceImportPreview').textContent='';$('#maintenanceImportProgress').textContent='选择文件 → 检查预览 → 确认导入 → 查看结果';};
     $('#maintenanceImportType').addEventListener('change',()=>{if(maintenanceImportSession.rows && !confirm('切换类型将清除已校验结果，是否继续？')){$('#maintenanceImportType').value=maintenanceImportSession.type;return;}maintenanceImportSession.type=$('#maintenanceImportType').value;$('#maintenanceUnifiedImportFile').value='';invalidate();maintenanceImportHelp();});
-    $('#maintenanceUnifiedImportFile').addEventListener('change',invalidate);
+    $('#maintenanceUnifiedImportFile').addEventListener('change',()=>{invalidate();maintenanceImportHelp();});
     $('#maintenanceImportTemplate').addEventListener('click',()=>{
       const type=$('#maintenanceImportType').value;
       if(type==='flights') {const a=document.createElement('a');a.href='/templates/flight-plan.xlsx';a.download='航班计划导入模板.xlsx';a.click();return;}
@@ -5913,7 +6215,7 @@ function openMaintenanceImportDialog() {
       const rows=type==='dispatch' ? [['日期','航班号','维修机会','放行人员','维修人员','放行工号','维修工号'],['2026-10-09','MU1234/MU5678','短停','张三','李四,王五','','']] : type==='flights' ? [['日期','进港航班号','出港航班号','机号','机型','维修机会','作业地点']] : [['日期','进港航班号','出港航班号','机号','维修机会','章节','工作标题','非例行类别','标准工时']];
       maintenanceImportDownload(rows,`${type==='dispatch'?'例行派工':type==='flights'?'航班计划':'附加工作'}导入模板.xlsx`,true);
     });
-    $('#maintenanceImportErrors').addEventListener('click',()=>maintenanceImportDownload([['行号','结果','说明'],...(maintenanceImportSession.results||[]).map(r=>[r.rowNumber,r.ok?'成功/通过':'失败',r.error||''])],'导入结果.csv'));
+    $('#maintenanceImportErrors').addEventListener('click',()=>{if(maintenanceImportSession.type==='subtasks' && maintenanceImportSession.workbench){maintenanceImportSession.workbench.exportResults();return;}maintenanceImportDownload([['行号','结果','说明'],...(maintenanceImportSession.results||[]).map(r=>[r.rowNumber,r.ok?'成功/通过':'失败',r.error||''])],'导入结果.csv');});
     $('#maintenanceImportCheck').addEventListener('click',()=>runMaintenanceImport(false));
     $('#maintenanceImportConfirm').addEventListener('click',()=>runMaintenanceImport(true));
   }
@@ -5923,15 +6225,20 @@ function openMaintenanceImportDialog() {
   if(!options.length)return;
   $('#maintenanceImportType').innerHTML=options.map(([value,label])=>`<option value="${value}">${label}</option>`).join('');
   state.maintenanceImportNotice='';
+  maintenanceImportSession?.workbench?.dispose();
   maintenanceImportSession={type:options[0][0],rows:null,results:null,busy:false,done:false,valid:false,requestId:`import_${Date.now()}_${Math.random().toString(36).slice(2)}`};
   $('#maintenanceUnifiedImportFile').value='';$('#maintenanceImportPreview').textContent='';$('#maintenanceImportProgress').textContent='选择文件 → 检查预览 → 确认导入 → 查看结果';$('#maintenanceImportConfirm').textContent='确认导入';$('#maintenanceImportConfirm').disabled=true;
   maintenanceImportHelp();$('#maintenanceUnifiedImportDialog').showModal();
+  if(hasRbac('maintenance.opportunity.import'))configureMaintenanceImportWorkbench(maintenanceImportSession);
 }
 function maintenanceImportHelp() {
+  if(maintenanceImportSession?.type==='subtasks' && maintenanceImportSession.workbench){$('#maintenanceImportHelp').textContent=maintenanceImportSession.workbench.help;maintenanceImportSession.workbench.activate();return;}
   $('#maintenanceImportHelp').textContent=$('#maintenanceImportType').value==='dispatch' ? '仅导入未派工机会；放行必填一人，维修人员用逗号分隔。短停：进港/出港；航前：出港或/出港；航后：进港或/进港。放行与维修人员分别分工，成功条目保留，失败条目不修改。' : $('#maintenanceImportType').value==='subtasks' ? '新版模板在维修机会后增加作业地点列，未提供地点时默认按青岛匹配；左右地点筛选不会改变导入地点。章节每条必填。同一维修机会按章节、工作标题、非例行类别识别重复项目，重复上传不再次新增；工时不同时报错。检查不写入数据，确认时整批校验，不覆盖已有任务。' : '本类型独立处理，不清除已有派工。检查预览不写入数据，确认时再次校验。';
 }
 async function runMaintenanceImport(commit) {
-  const session=maintenanceImportSession;if(session.busy || session.done)return;
+  const session=maintenanceImportSession;if(session.busy || session.done || session.capabilitiesPending)return;
+  if(session.capabilitiesError){await configureMaintenanceImportWorkbench(session);if(session.capabilitiesError)return;}
+  if(session.type==='subtasks' && session.workbench)return session.workbench.run(commit);
   session.busy=true;
   const controls=[...$('#maintenanceUnifiedImportDialog').querySelectorAll('button,input,select')];controls.forEach(el=>el.disabled=true);
   try {
@@ -6003,9 +6310,20 @@ function maintenanceFlightImportFeedback(summary,errors,committed=false) {
 }
 
 async function refreshMaintenance() {
+  if(state.maintenanceWorkflowController&&state.maintenanceWorkflowControllerUser!==state.user.id){state.maintenanceWorkflowController.destroy();state.maintenanceWorkflowController=null;}
+  if(state.maintenanceTab==='workflows'&&state.maintenanceWorkflowController){await state.maintenanceWorkflowController.refresh();return;}
+  if(state.maintenanceCorrectionController&&state.maintenanceCorrectionControllerUser!==state.user.id){state.maintenanceCorrectionController.destroy();state.maintenanceCorrectionController=null;}
+  if(state.maintenanceTab==='corrections'&&state.maintenanceCorrectionController){await state.maintenanceCorrectionController.refresh();return;}
+  if(state.maintenancePublicationController&&state.maintenancePublicationControllerUser!==state.user.id){state.maintenancePublicationController.destroy();state.maintenancePublicationController=null;}
+  if(state.maintenanceTab==='publications'&&state.maintenancePublicationController){await state.maintenancePublicationController.refresh();return;}
+  if(state.maintenanceStandardController&&state.maintenanceStandardControllerUser!==state.user.id){state.maintenanceStandardController.destroy();state.maintenanceStandardController=null;}
+  if(state.maintenanceTab==='standards'&&state.maintenanceStandardController){await state.maintenanceStandardController.refresh();return;}
+  if(state.maintenancePeriodController && state.maintenancePeriodControllerUser!==state.user.id){state.maintenancePeriodController.destroy();state.maintenancePeriodController=null;}
+  if(state.maintenanceTab==='periods' && state.maintenancePeriodController){await state.maintenancePeriodController.refresh();return;}
+  if(state.maintenanceReviewController && state.maintenanceReviewControllerUser!==state.user.id){state.maintenanceReviewController.destroy();state.maintenanceReviewController=null;}
+  if(['reviews','standardReviews'].includes(state.maintenanceTab) && state.maintenanceReviewController&&state.maintenanceReviewControllerPurpose===(state.maintenanceTab==='standardReviews'?'STANDARD':'WORK')){await state.maintenanceReviewController.refresh();return;}
   if (state.maintenanceTab === "report") {
-    state.maintenanceReportNonroutineDetails.clear();
-    state.maintenanceReportOpportunityDetails.clear();
+    await loadMaintenanceReportFresh();return;
   }
   await maintenanceService.load();
   renderMaintenance();
@@ -6014,6 +6332,8 @@ async function refreshMaintenance() {
 }
 
 function maintenanceHasOpenEditor() {
+  if(state.maintenanceRulesDirty||state.maintenanceRulesSaving)return true;
+  if(state.maintenanceWorkflowController&&(state.maintenanceWorkflowController.isBusy()||state.maintenanceWorkflowController.hasUnsaved()))return true;
   return Boolean(state.maintenanceDispatchDraft || state.maintenanceReviewDraft || state.maintenanceArchiveDeleteDraft || state.maintenanceWorkReportDraft || state.maintenanceReleaseConfirmSubmitting || ["maintenanceUnifiedImportDialog", "maintenanceTaskDialog", "maintenanceDispatchDialog", "maintenanceReviewDialog", "maintenanceArchiveDeleteDialog", "maintenanceWorkReportDialog", "maintenanceReleaseConfirmDialog"].some(id => $( `#${id}` )?.open));
 }
 
@@ -6239,6 +6559,7 @@ function maintenanceFlightFormHtml(flight = {}) {
   return `<div class="dialog-head"><h2>${flight.id ? "修改维修机会" : "新建维修机会"}</h2><button class="icon-btn" data-close="maintenanceTaskDialog" type="button">×</button></div>
     <form id="maintenanceFlightForm" class="entry-grid">
       <input id="maintFlightId" type="hidden" value="${escapeHtml(flight.id || "")}">
+      <input id="maintFlightVersion" type="hidden" value="${escapeHtml(flight.updatedAt || flight.expectedUpdatedAt || "")}">
       <label class="maintenance-flight-date-field">日期<input id="maintDate" type="date" value="${escapeHtml(inputDateValue(flight.date || new Date()))}" required></label>
       <label>进港航班号<input id="maintFlightNo" value="${escapeHtml(flight.flightNo || "")}"></label>
       <label>出港航班号<input id="maintDepartureFlightNo" value="${escapeHtml(flight.departureFlightNo || "")}"></label>
@@ -6292,7 +6613,7 @@ function maintenanceSubtaskFormHtml(flight, subtask = {}) {
       <input id="maintSubRemark" type="hidden" value="${escapeHtml(subtask.remark || "")}">
       <label>章节<input id="maintSubChapter" value="${escapeHtml(defaultChapter)}"></label>
       <label>标题<input id="maintSubTitle" value="${escapeHtml(subtask.title || "")}" required></label>
-      <label>类别<select id="maintSubCategory">${optionList(subtaskCategories, category)}</select></label>
+      <label>类别<select id="maintSubCategory">${optionList(maintenanceLegacyCategories(subtask.category), category)}</select></label>${maintenanceTowStandardOnly()?'<p class="status-line">新拖机工作请由作业人员在执行页选择标准或新增未收录申请。</p>':''}
       <label>工时<input id="maintSubHours" type="number" min="0" step="0.1" value="${escapeHtml(defaultHours)}"></label>
       <label>报工说明<textarea id="maintSubExplanation" placeholder="对本项工作进行说明（非必填）">${escapeHtml(subtask.content || "")}</textarea></label>
       <div class="form-actions"><button class="btn secondary" type="button" data-close="maintenanceTaskDialog">取消</button><button class="btn" type="submit">保存</button></div>
@@ -6300,9 +6621,12 @@ function maintenanceSubtaskFormHtml(flight, subtask = {}) {
 }
 
 function maintenanceFlightPayloadFromForm(validateLocation = false) {
+  const editingId = $("#maintFlightId")?.value, expectedUpdatedAt = $("#maintFlightVersion")?.value;
+  if(editingId&&!expectedUpdatedAt)throw new Error("维修机会读取版本缺失，请重新打开后编辑");
   const locationId = $("#maintLocationId")?.value || "";
   if (validateLocation && !locationId) throw new Error("请选择列表中的有效作业地点");
   return {
+    ...(editingId?{expectedUpdatedAt}:{}),
     date: $("#maintDate").value,
     flightNo: $("#maintFlightNo").value.trim(),
     departureFlightNo: $("#maintDepartureFlightNo").value.trim(),
@@ -6379,6 +6703,7 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
     people,
     availableRoles,
     lockedRoles,
+    persistedKeys: new Set((item.assignments || []).map(row => `${row.role}\u0000${row.personId}`)),
     selections,
     selectionOrder,
     nextOrder,
@@ -6395,6 +6720,8 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
       <input id="maintDispatchOwnerId" type="hidden" value="${escapeHtml(ownerId)}">
       <input id="maintDispatchExpectedUpdatedAt" type="hidden" value="${escapeHtml(flight.updatedAt || "")}">
       <div id="maintenanceDispatchConflict" class="status-line error" hidden>航班已被其他人更新。<button class="link-btn" type="button" data-maint-dispatch-refresh>刷新最新派工</button></div>
+      <p class="status-line">勾选用于新增关联；取消勾选不会删除已保存派工。删除请使用下方独立操作，已提报类别请到复核调整。</p>
+      <div aria-label="已保存派工关联">${(item.assignments || []).map(row => `<div class="maintenance-person-row"><span>${escapeHtml(row.userName || row.name || row.personId)} · ${escapeHtml(row.role)}</span><button class="link-btn" type="button" data-maint-assignment-remove="${escapeHtml(row.id)}" ${lockedRoles.has(row.role) ? "disabled" : ""}>预览删除</button></div>`).join("") || '<span class="muted">暂无已保存关联</span>'}</div>
       <div id="maintenanceRoleGroups" class="maintenance-role-groups ${ownerType === "subtask" ? "subtask-role-groups" : ""}"></div>
       <div class="maintenance-picker-tools"><select id="maintDispatchTeam" aria-label="人员分类">${categoryOptions}</select><input id="maintDispatchSearch" class="search" type="search" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"><span id="maintDispatchSelectedCount" class="maintenance-selected-count">已选 0 人</span></div>
       <div id="maintenancePeoplePicker" class="maintenance-people-picker"></div>
@@ -6569,10 +6896,11 @@ function renderMaintenanceDispatchPicker() {
   }).sort((a, b) => (a.team || "").localeCompare(b.team || "", "zh-CN") || a.name.localeCompare(b.name, "zh-CN"));
   picker.innerHTML = [...selected.map(person => maintenanceDispatchPersonRow(person, true)), ...candidates.map(person => maintenanceDispatchPersonRow(person, false))].join("") || `<div class="status-line">${draft.people.length ? "没有匹配人员。" : "当前维修数据范围内没有可派工人员，请管理员检查维修数据范围及人员组织配置。"}</div>`;
   const count = $("#maintDispatchSelectedCount");
-  const total = draft.availableRoles.reduce((sum, role) => sum + (draft.selections.get(role)?.size || 0), 0);
-  if (count) count.textContent = `已选 ${total} 人次`;
-  renderMaintenanceDispatchRoleGroups();
+  const selectedPairs = draft.availableRoles.flatMap(role => [...(draft.selections.get(role) || [])].map(personId => ({ role, personId })));
+  const added = selectedPairs.filter(row => !draft.persistedKeys?.has(`${row.role}\u0000${row.personId}`)).length;
+  if (count) count.textContent = `已选 ${new Set(selectedPairs.map(row => row.personId)).size} 人 · ${new Set(selectedPairs.map(row => row.role)).size} 工种 · 待新增 ${added} 关联`;
   maintenancePickerIndeterminate(picker, draft);
+  renderMaintenanceDispatchRoleGroups();
 }
 
 function maintenanceAssignmentsFromForm() {
@@ -6595,7 +6923,11 @@ function maintenanceTemporaryReportContext(raw = {}, index = 0) {
     ownerId: "",
     chapter: String(raw.chapter || raw.cardNo || ""),
     label: String(raw.title || ""),
-    category: subtaskCategories.includes(raw.category) ? raw.category : "其他",
+    category: raw.sourceFingerprint || raw.manualManaged ? String(raw.category || "") : subtaskCategories.includes(raw.category) ? raw.category : "其他",
+    sourceFingerprint: raw.sourceFingerprint || "",
+    importedUnlisted: raw.importedUnlisted === true,
+    manualManaged:raw.manualManaged===true||raw.sourceKind==='MANUAL',sourceKind:raw.sourceKind||'',
+    standardSnapshot: raw.standardSnapshot || null,
     reportExplanation: String(raw.reportExplanation || raw.content || ""),
     roles: maintenanceSubtaskRoles(raw.category),
     entries: Array.isArray(raw.entries) ? raw.entries : [],
@@ -6657,25 +6989,28 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
       standardHours: 0
     });
   }
-  if (["nonroutine", "finalize"].includes(reportType)) (report.nonroutine.items || []).forEach(item => contexts.push({
+  if (["nonroutine", "finalize"].includes(reportType) || reportType === "nonroutine-create" && (report.nonroutine.manualDraftSubmissionReady || report.nonroutine.importedDraftSubmissionReady && report.nonroutine.draft?.items?.some(item=>item.sourceFingerprint))) (report.nonroutine.items || []).forEach(item => contexts.push({
     key: `subtask:${item.id}`,
     ownerType: "subtask",
     ownerId: item.id,
     chapter: item.chapter || "",
     label: item.title || "",
-    category: subtaskCategories.includes(item.category) ? item.category : "其他",
+    category: item.hourAssessment ? item.category : subtaskCategories.includes(item.category) ? item.category : "其他",
+    hourAssessment: item.hourAssessment || null,
+    standardSnapshot: item.hourAssessment?.standard || null,
     reportExplanation: item.reportExplanation || "",
     roles: maintenanceSubtaskRoles(item.category),
     entries: item.entries || [],
-    standardHours: Number(item.standardHours || 0) > 0 ? Number(item.standardHours) : "",
+    standardHours: item.hourAssessment?.syncPending ? item.hourAssessment.recognized.recognizedHours : item.hourAssessment?.pending ? item.hourAssessment.requestedHours : item.standardHours ?? "",
     temporary: false
   }));
-  if (reportType === "nonroutine-create") {
+  if (["nonroutine-create","nonroutine"].includes(reportType)) {
     (report.nonroutine.draft?.items || []).forEach((item, index) => contexts.push(maintenanceTemporaryReportContext(item, index)));
-    if (!contexts.length) contexts.push(maintenanceTemporaryReportContext({}, 0));
+    if (!contexts.length) contexts.push(maintenanceTemporaryReportContext(report.nonroutine.manualDraftSubmissionReady?{manualManaged:true,category:''}:{}, 0));
   }
   const { selections, selectionOrder, nextOrder } = initializeMaintenanceWorkSelections(contexts);
   const isCreateNonroutine = reportType === "nonroutine-create";
+  state.maintenanceTowTransition=report.defaults?.towTransition||state.maintenanceTowTransition||null;
   state.maintenanceWorkReportDraft = {
     report,
     reportType,
@@ -6692,7 +7027,7 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
     feedback: reportType === "nonroutine" || isCreateNonroutine ? "" : report.routine.feedback || "",
     draftVersion: reportType === "routine" ? report.routine.draft?.version ?? 0 : report.nonroutine.draft?.version ?? 0,
     nonroutineRevision: report.nonroutine?.revision || "",
-    releasePersonId: report.release?.personId || "",
+    releasePersonId: reportType === "routine" ? (report.routine.draft?.releasePersonId || report.release?.personId || "") : (report.release?.personId || ""),
     releaseEditable: reportType === "routine" && Boolean(report.releaseEditable),
     lockedRelease: report.progress?.batches?.release?.entries?.[0] || report.release || null,
     deletedSubtaskIds: new Set(),
@@ -6706,6 +7041,26 @@ async function openMaintenanceWorkReportDialog(flightId, reportType = "routine")
   syncMaintenanceWorkReportViewport();
 }
 
+async function openMaintenanceWorkStandardPicker(){
+  const draft=state.maintenanceWorkReportDraft,context=maintenanceWorkActiveContext();
+  if(!draft||draft.busy||!hasRbac('maintenance.standard.view')||!context?.temporary||!(context.manualManaged?draft.report.nonroutine.manualDraftSubmissionReady:context.sourceFingerprint&&draft.report.nonroutine.importedDraftSubmissionReady))return;
+  draft.busy=true;draft.message='正在读取标准…';renderMaintenanceWorkReportDialog();
+  try{const module=await import('./maintenance-standard-picker.mjs');
+    await module.openExecutionStandardPicker({parent:$('#maintenanceWorkReportDialog'),api:apiRequest,flightId:draft.report.flight.id,unlistedLabel:context.sourceFingerprint&&!context.manualManaged?'继续完善当前未收录草稿':undefined,original:{category:context.category,chapter:context.chapter,title:context.label,reportExplanation:context.reportExplanation},escapeHtml,
+      async onSelect(selected){if(state.maintenanceWorkReportDraft!==draft||!draft.contexts.includes(context))throw new Error('原报工上下文已变化，请重新打开');
+        const result=await apiRequest(`/maintenance/flights/${encodeURIComponent(draft.report.flight.id)}/standards/match`,{method:'POST',body:{standardId:selected.id,standardVersion:selected.version}});
+        if(result.status!=='MATCHED')throw new Error('该标准已失效或不适用于原维修机会机型；筛选不代表适用性审批，请核对或新增未收录申请。');
+        if(state.maintenanceWorkReportDraft!==draft||!draft.contexts.includes(context))return false;
+        const standard=result.standard,allowed=maintenanceSubtaskRoles(standard.category),removed=(context.roles||[]).filter(role=>!allowed.includes(role)).reduce((sum,role)=>sum+(draft.selections.get(`${context.key}|${role}`)?.size||0),0);if(removed&&!window.confirm(`所选标准的类别会移除不适用工种中的${removed}个人员选择，是否继续？`))return false;draft.activeContextKey=context.key;setMaintenanceWorkContextCategory(context,standard.category);Object.assign(context,{standardSnapshot:standard,chapter:standard.chapter,label:standard.title,reportExplanation:standard.workScope,standardHours:standard.standardHours});draft.message='已选择标准，尚未保存或正式提报。';renderMaintenanceWorkReportDialog();return true;
+      },onUnlisted(){if(state.maintenanceWorkReportDraft!==draft||!draft.contexts.includes(context))return false;
+        if(context.sourceFingerprint&&!context.manualManaged){context.standardSnapshot=null;draft.message='继续完善当前原导入草稿；正式提报时重新匹配，仍有标准候选时须先核对选择。';renderMaintenanceWorkReportDialog();return true;}
+        const empty=!context.label&&!context.chapter&&!context.reportExplanation&&!context.standardSnapshot&&!maintenanceWorkReportEntries(context).length;
+        if(!empty){const next=maintenanceTemporaryReportContext({manualManaged:true,category:''},draft.contexts.length);draft.contexts.push(next);for(const role of next.roles){draft.selections.set(`${next.key}|${role}`,new Set());draft.selectionOrder.set(`${next.key}|${role}`,new Map());}draft.activeContextKey=next.key;draft.activeRole=next.roles[0]||'';}
+        draft.message='请填写未收录申请五项并选择参与人员；保存草稿不会启动评议或入账。';renderMaintenanceWorkReportDialog();return true;
+      }});
+  }catch(error){draft.message=error.message;}finally{if(state.maintenanceWorkReportDraft===draft){draft.busy=false;renderMaintenanceWorkReportDialog();}}
+}
+
 function maintenanceWorkActiveContext() {
   const draft = state.maintenanceWorkReportDraft;
   return draft?.contexts.find(item => item.key === draft.activeContextKey) || null;
@@ -6717,7 +7072,7 @@ function setMaintenanceWorkContextCategory(context, category) {
   context.category = category;
   if (category === "拖机") {
     context.chapter = "09";
-    context.standardHours = draft.towDefaultHours;
+    if(!context.sourceFingerprint&&!context.manualManaged)context.standardHours = draft.towDefaultHours;
   }
   const roles = maintenanceSubtaskRoles(category);
   for (const role of context.roles || []) {
@@ -6812,16 +7167,20 @@ function renderMaintenanceWorkReportDialog() {
   const total = [...draft.selections.values()].reduce((sum, ids) => sum + ids.size, 0);
   const { flight } = draft.report;
   const isCreateNonroutine = draft.reportType === "nonroutine-create";
-  const title = draft.reportType === "routine" ? "例行报工" : draft.reportType === "nonroutine" ? "非例行报工" : isCreateNonroutine ? "新增非例行并报工" : "报工确认";
+  const importedSubmissionPending = draft.contexts.some(item=>item.sourceFingerprint&&item.sourceKind!=='MANUAL')&&draft.report.nonroutine.importedDraftSubmissionReady!==true || draft.contexts.some(item=>item.manualManaged)&&draft.report.nonroutine.manualDraftSubmissionReady!==true;
+  const lockedStandard = Boolean(context?.standardSnapshot);
+  const availableCategories = context?.sourceFingerprint || context?.manualManaged || context?.hourAssessment ? [...subtaskCategories, "三方附加", "试车", "人工除冰", "联合除冰"] : maintenanceLegacyCategories(context?.temporary?'':context?.category);
+
+  const title = importedSubmissionPending ? "非例行草稿" : draft.reportType === "routine" ? "例行报工" : draft.reportType === "nonroutine" ? "非例行报工" : isCreateNonroutine ? "新增非例行并报工" : "报工确认";
   const showContextTabs = draft.contexts.length > 1 || isCreateNonroutine || draft.reportType === "nonroutine";
   const contextTabs = showContextTabs ? `<div class="maintenance-report-contexts">${draft.contexts.map((item, index) => {
     const createLabel = isCreateNonroutine ? `单项${index + 1}` : item.label || `单项${index + 1}`;
-    const removable = (["finalize", "nonroutine"].includes(draft.reportType) && item.ownerType === "subtask" && hasRbac("maintenance.nonroutine.delete.own")) || (isCreateNonroutine && draft.contexts.length > 1 && hasRbac("maintenance.nonroutine.update.own"));
+    const removable = (["finalize", "nonroutine"].includes(draft.reportType) && item.ownerType === "subtask" && hasRbac("maintenance.nonroutine.delete.own")) || (isCreateNonroutine && draft.contexts.length > 1 && hasRbac("maintenance.nonroutine.delete.own"));
     const deleteAttribute = isCreateNonroutine ? `data-maint-remove-temp-nonroutine="${escapeHtml(item.key)}"` : `data-maint-delete-report-subtask="${escapeHtml(item.key)}"`;
-    return `<div class="maintenance-report-context-wrap"><button type="button" class="maintenance-report-context ${item.key === draft.activeContextKey ? "active" : ""}" data-maint-work-context="${escapeHtml(item.key)}"><strong>${escapeHtml(createLabel)}</strong>${!isCreateNonroutine && item.ownerType === "subtask" ? `<small>${item.standardHours ? `${escapeHtml(item.standardHours)}h` : "未填写工时"}</small>` : ""}</button>${removable ? `<button class="maintenance-report-context-delete" type="button" ${deleteAttribute} title="删除当前单项" aria-label="删除${escapeHtml(createLabel)}">×</button>` : ""}</div>`;
+    return `<div class="maintenance-report-context-wrap"><button type="button" class="maintenance-report-context ${item.key === draft.activeContextKey ? "active" : ""}" data-maint-work-context="${escapeHtml(item.key)}"><strong>${escapeHtml(createLabel)}</strong>${!isCreateNonroutine && item.ownerType === "subtask" ? `<small>${item.standardHours!==null&&item.standardHours!==undefined&&item.standardHours!=='' ? `${escapeHtml(item.standardHours)}h` : "未填写工时"}</small>` : ""}</button>${removable ? `<button class="maintenance-report-context-delete" type="button" ${deleteAttribute} title="删除当前单项" aria-label="删除${escapeHtml(createLabel)}">×</button>` : ""}</div>`;
   }).join("")}</div>` : "";
   const activeFeedback = context?.ownerType === "subtask"
-    ? `<label class="maintenance-work-feedback">非例行报工说明<textarea rows="2" data-maint-temp-field="reportExplanation" placeholder="填写本项非例行报工说明（可选）">${escapeHtml(context.reportExplanation || "")}</textarea></label>`
+    ? `<label class="maintenance-work-feedback">非例行报工说明<textarea rows="2" data-maint-temp-field="reportExplanation" ${context.standardSnapshot ? "readonly" : ""} placeholder="填写本项非例行报工说明（可选）">${escapeHtml(context.reportExplanation || "")}</textarea></label>`
     : ["routine", "finalize"].includes(draft.reportType)
       ? `<label class="maintenance-work-feedback">例行报工说明<textarea id="maintWorkReportFeedback" rows="2" placeholder="填写例行反馈说明（可选）">${escapeHtml(draft.feedback)}</textarea></label>`
       : "";
@@ -6829,22 +7188,27 @@ function renderMaintenanceWorkReportDialog() {
     ? `<div class="maintenance-locked-release"><strong>放行（已锁定）</strong><span>${escapeHtml(draft.lockedRelease.userName || "-")} · ${escapeHtml(draft.lockedRelease.team || "未设置")}</span></div>`
     : "";
   body.innerHTML = `<div class="dialog-head maintenance-dispatch-head"><h2>${title} <small>${escapeHtml(maintenanceDisplayFlightNo(flight))} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.aircraftType || "-")} · ${escapeHtml(flight.opportunity)}</small></h2><button class="icon-btn" data-close="maintenanceWorkReportDialog" type="button">×</button></div>
-    <form id="maintenanceWorkReportForm" class="entry-grid">
+    <form id="maintenanceWorkReportForm" class="entry-grid ${context?.sourceFingerprint || context?.manualManaged ? "maintenance-imported-draft" : ""}">
       ${draft.reportType === 'routine' && flight.routineHoursRule ? `<p class="status-line">${flight.routineHoursRule.baseHours > 0 ? `${escapeHtml(flight.routineHoursRule.groupName)} · 总标准工时 ${escapeHtml(flight.routineHoursRule.baseHours)} 小时 · 规则版本 ${escapeHtml(flight.routineHoursRule.version)}` : '此机型／维修机会未配置标准工时，可保存草稿，请联系管理员配置后再提交。'}</p>` : ''}
+      ${draft.reportType === "routine" ? '<p class="status-line">暂存仅保存本次报工的人员和放行选择，不修改正式派工。</p>' : ""}
       ${contextTabs}
-      ${["nonroutine", "finalize", "nonroutine-create"].includes(draft.reportType) && hasRbac("maintenance.nonroutine.create.own") ? `<button class="btn secondary maintenance-add-temp-report" type="button" data-maint-add-temp-nonroutine>${isCreateNonroutine ? "新增" : "增加临时非例行"}</button>` : ""}
+      ${["nonroutine", "finalize", "nonroutine-create"].includes(draft.reportType) && !(draft.reportType==='finalize'&&draft.report.nonroutine.manualDraftSubmissionReady) && hasRbac("maintenance.nonroutine.create.own") ? `<button class="btn secondary maintenance-add-temp-report" type="button" data-maint-add-temp-nonroutine>${isCreateNonroutine ? "新增" : "增加临时非例行"}</button>` : ""}
+      ${context?.sourceFingerprint && !context?.manualManaged ? `<p class="status-line">${!context.standardSnapshot ? "未收录 · Excel预录入 · 草稿" : `已收录 · Excel预录入 · 标准V${escapeHtml(context.standardSnapshot?.version || "")}`}${importedSubmissionPending ? " · 可保存或删除，正式报工功能尚未开放" : ""}</p>` : ""}
+      ${context?.hourAssessment?.pending ? `<p class="status-line">${context.hourAssessment.syncPending ? `已认定 ${escapeHtml(context.hourAssessment.recognized.recognizedHours)} 小时 · 待同步，尚未入账` : `审核中 · 申请总工时 ${escapeHtml(context.hourAssessment.requestedHours)} 小时，仅供参考，尚未计入有效工时`}${context.hourAssessment.estimateUnavailable ? " · 暂无法估算个人工时" : ""}</p>` : ""}
+      ${context?.sourceFingerprint&&!context.manualManaged?`<button class="btn secondary" type="button" data-maint-work-standard ${draft.busy||!hasRbac('maintenance.standard.view')||!draft.report.nonroutine.importedDraftSubmissionReady?'disabled':''}>选标准 / 继续完善当前草稿</button>`:''}
+      ${context?.manualManaged?`<p class="status-line">${context.standardSnapshot?`已收录 · 手工草稿 · 标准V${escapeHtml(context.standardSnapshot.version)}`:'未收录 · 手工草稿 · 正式提报后才启动评议，保存不入账。'}</p><button class="btn secondary" type="button" data-maint-work-standard ${draft.busy||!hasRbac('maintenance.standard.view')||!draft.report.nonroutine.manualDraftSubmissionReady?'disabled':''}>选标准 / 新增未收录工作</button>`:''}
       ${context?.ownerType === "subtask" ? `<div class="maintenance-temporary-fields">
-        <label class="maintenance-temp-chapter">章节<input data-maint-temp-field="chapter" value="${escapeHtml(context.chapter || "")}" placeholder="填写章节"></label>
-        <label class="maintenance-temp-category">类别<select data-maint-temp-field="category">${optionList(subtaskCategories, subtaskCategories.includes(context.category) ? context.category : "其他")}</select></label>
-        <label class="maintenance-temp-hours">工时<input type="number" min="0.1" step="0.1" data-maint-temp-field="standardHours" value="${escapeHtml(context.standardHours ?? "")}" placeholder="小时"></label>
-        <label class="maintenance-temp-title">标题<input data-maint-temp-field="title" value="${escapeHtml(context.label)}" placeholder="填写标题"></label>
+        <label class="maintenance-temp-chapter">章节<input data-maint-temp-field="chapter" ${lockedStandard ? "readonly" : ""} value="${escapeHtml(context.chapter || "")}" placeholder="填写章节"></label>
+        <label class="maintenance-temp-category">类别<select data-maint-temp-field="category" ${lockedStandard ? "disabled" : ""}>${context.sourceFingerprint || context.manualManaged ? '<option value="">请选择类别</option>' : ""}${optionList(availableCategories, context.sourceFingerprint || context.manualManaged || context.hourAssessment ? context.category : subtaskCategories.includes(context.category) ? context.category : "其他")}</select></label>
+        <label class="maintenance-temp-hours">${context.hourAssessment?.syncPending ? "认定工时（待同步）" : context.hourAssessment?.pending || context.manualManaged&&!context.standardSnapshot ? "申请工时（仅参考）" : "工时"}<input type="number" min="${lockedStandard ? "0" : "0.1"}" step="0.1" data-maint-temp-field="standardHours" ${lockedStandard || context.hourAssessment?.pending ? "readonly" : ""} value="${escapeHtml(context.standardHours ?? "")}" placeholder="小时"></label>
+        <label class="maintenance-temp-title">标题<input data-maint-temp-field="title" ${lockedStandard ? "readonly" : ""} value="${escapeHtml(context.label)}" placeholder="填写标题"></label>
       </div>` : ""}
       ${lockedRelease}
       <div class="maintenance-work-role-groups">${maintenanceWorkReportRoleGroups() || '<div class="status-line">当前没有需要选择人员的工种。</div>'}</div>
       ${context ? `<div class="maintenance-picker-tools"><select id="maintWorkReportTeam" aria-label="人员分类">${categoryOptions}</select><span class="maintenance-selected-count">已选 ${total} 人次</span><input id="maintWorkReportSearch" class="search" type="search" value="${escapeHtml(draft.search)}" placeholder="姓名 / 工号" aria-label="搜索姓名或工号" autocomplete="off"></div><div id="maintenanceWorkReportPicker" class="maintenance-people-picker">${renderMaintenanceWorkReportPicker()}</div>` : ""}
       ${activeFeedback}
       <div class="maintenance-review-message ${draft.message ? "show" : ""}">${escapeHtml(draft.message)}</div>
-<div class="form-actions maintenance-work-report-actions">${isCreateNonroutine && Number(draft.draftVersion || 0) > 0 && hasRbac("maintenance.nonroutine.delete.own") ? `<button class="btn danger secondary" type="button" data-maint-work-delete-draft ${draft.busy ? "disabled" : ""}>删除草稿</button>` : ""}<button class="btn secondary" type="button" data-close="maintenanceWorkReportDialog">取消</button>${isCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-work-save-draft ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "routine" ? `<button class="btn secondary" type="button" data-maint-work-save-routine ${draft.busy ? "disabled" : ""}>暂存</button>` : draft.reportType === "nonroutine" ? `<button class="btn secondary" type="button" data-maint-work-save-nonroutine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "finalize" ? `<button class="btn secondary" type="button" data-maint-work-save-confirmation ${draft.busy ? "disabled" : ""}>保存</button>` : ""}<button class="btn" type="button" data-maint-work-submit ${draft.busy ? "disabled" : ""}>${draft.reportType === "finalize" ? "确认并提交复核" : draft.reportType === "routine" ? "提交" : "提交并锁定"}</button></div>
+<div class="form-actions maintenance-work-report-actions">${isCreateNonroutine && Number(draft.draftVersion || 0) > 0 && hasRbac("maintenance.nonroutine.delete.own") ? `<button class="btn danger secondary" type="button" data-maint-work-delete-draft ${draft.busy ? "disabled" : ""}>删除草稿</button>` : ""}<button class="btn secondary" type="button" data-close="maintenanceWorkReportDialog">取消</button>${isCreateNonroutine ? `<button class="btn secondary" type="button" data-maint-work-save-draft ${draft.busy ? "disabled" : ""}>${draft.contexts.some(item => item.sourceFingerprint) ? "保存草稿" : "保存"}</button>` : draft.reportType === "routine" ? `<button class="btn secondary" type="button" data-maint-work-save-routine ${draft.busy ? "disabled" : ""}>暂存</button>` : draft.reportType === "nonroutine" ? `<button class="btn secondary" type="button" data-maint-work-save-nonroutine ${draft.busy ? "disabled" : ""}>保存</button>` : draft.reportType === "finalize" ? `<button class="btn secondary" type="button" data-maint-work-save-confirmation ${draft.busy ? "disabled" : ""}>保存</button>` : ""}<button class="btn" type="button" data-maint-work-submit ${draft.busy || importedSubmissionPending ? "disabled" : ""}>${importedSubmissionPending ? "正式报工（待开放）" : draft.reportType === "finalize" ? "确认并提交复核" : draft.reportType === "routine" ? "提交" : "提交并锁定"}</button></div>
     </form>`;
   if (maintenanceWorkUsesPicker(draft)) {
     maintenancePickerIndeterminate($("#maintenanceWorkReportPicker"), draft, true);
@@ -6870,9 +7234,10 @@ function maintenanceNonroutinePayload({ preserveIncomplete = false } = {}) {
     id: context.temporary ? "" : context.ownerId,
     clientId: context.clientId || "",
     temporary: !!context.temporary,
+    ...((context.manualManaged||context.sourceFingerprint)?{manualManaged:context.manualManaged===true,standardId:context.standardSnapshot?.id||'',standardVersion:context.standardSnapshot?.version??null}:{}),
     chapter: context.chapter || "",
     title: context.label,
-    category: subtaskCategories.includes(context.category) ? context.category : "其他",
+    category: context.sourceFingerprint || context.manualManaged || context.hourAssessment ? context.category : subtaskCategories.includes(context.category) ? context.category : "其他",
     standardHours: preserveIncomplete ? context.standardHours : Number(context.standardHours || 0),
     reportExplanation: context.reportExplanation || "",
     entries: maintenanceWorkReportEntries(context)
@@ -6886,10 +7251,7 @@ async function saveMaintenanceNonroutineDraft() {
   draft.message = "正在保存共享草稿...";
   renderMaintenanceWorkReportDialog();
   try {
-    const result = await maintenanceService.saveNonroutineDraft(draft.report.flight.id, {
-      items: maintenanceNonroutinePayload({ preserveIncomplete: true }),
-      version: draft.draftVersion
-    });
+    const result=draft.report.nonroutine.manualDraftSubmissionReady&&draft.contexts.some(context=>!context.temporary&&context.ownerType==='subtask')?await maintenanceService.submitReport(draft.report.flight.id,'nonroutine',{mode:'save',items:maintenanceNonroutinePayload({preserveIncomplete:true}),draftVersion:draft.draftVersion,revision:draft.nonroutineRevision}):await maintenanceService.saveNonroutineDraft(draft.report.flight.id,{items:maintenanceNonroutinePayload({preserveIncomplete:true}).filter(item=>item.temporary),version:draft.draftVersion});
     draft.draftVersion = result.draft?.version ?? draft.draftVersion;
     closeDialog($("#maintenanceWorkReportDialog"));
     await refreshMaintenance();
@@ -6923,7 +7285,7 @@ async function saveMaintenanceRoutineDraft() {
   if (!draft || draft.reportType !== "routine" || draft.busy) return;
   draft.feedback = $("#maintWorkReportFeedback")?.value ?? draft.feedback ?? "";
   draft.busy = true;
-  draft.message = "正在保存派工调整...";
+  draft.message = "正在保存例行草稿...";
   renderMaintenanceWorkReportDialog();
   try {
     await maintenanceService.saveRoutineDraft(draft.report.flight.id, {
@@ -6945,13 +7307,14 @@ async function saveMaintenanceNonroutineReport() {
   const draft = state.maintenanceWorkReportDraft;
   if (!draft || draft.reportType !== "nonroutine" || draft.busy) return;
   draft.busy = true;
-  draft.message = "正在保存非例行及派工调整...";
+  draft.message = "正在保存非例行工作和报工草稿...";
   renderMaintenanceWorkReportDialog();
   try {
     await maintenanceService.submitReport(draft.report.flight.id, "nonroutine", {
       mode: "save",
       items: maintenanceNonroutinePayload({ preserveIncomplete: true }),
       deletedSubtaskIds: [...draft.deletedSubtaskIds],
+      draftVersion:draft.draftVersion,
       revision: draft.nonroutineRevision
     });
     closeDialog($("#maintenanceWorkReportDialog"));
@@ -6984,7 +7347,7 @@ async function submitMaintenanceWorkReport() {
       mode: "submit",
       items: maintenanceNonroutinePayload(),
       version: draft.report.progress?.batches?.nonroutine?.version ?? null,
-      draftVersion: draft.reportType === "nonroutine-create" ? draft.draftVersion : null,
+      draftVersion: draft.draftVersion,
       revision: draft.nonroutineRevision
     });
     else await maintenanceService.finalizeReports(draft.report.flight.id, { routineEntries: draft.contexts.find(item => item.ownerType === "flight") ? maintenanceWorkReportEntries(draft.contexts.find(item => item.ownerType === "flight")) : [], nonroutineItems: maintenanceNonroutinePayload(), deletedSubtaskIds: [...draft.deletedSubtaskIds], feedback: draft.feedback });
@@ -7071,8 +7434,9 @@ function setMaintenanceReviewSubtaskCategory(task, category) {
   task.category = category;
   if (category === "拖机") {
     task.chapter = "09";
-    task.standardHours = maintenanceTowDefaultHours();
-    task.baseHours = maintenanceTowDefaultHours();
+    const defaultHours = Number(state.maintenanceReviewDraft?.review.defaults?.towStandardHours);
+    task.standardHours = Number.isFinite(defaultHours) && defaultHours > 0 ? defaultHours : "";
+    task.baseHours = Number(task.standardHours || 0);
   }
   const roleNames = maintenanceSubtaskRoles(category);
   const templates = maintenanceArchiveRoleTemplates(state.maintenanceReviewDraft?.tasks || []).filter(item => roleNames.includes(item.role));
@@ -7087,7 +7451,6 @@ function setMaintenanceReviewSubtaskCategory(task, category) {
 
 async function openMaintenanceReviewDialog(flightId, focusKey = "") {
   ensureMaintenanceDialogs();
-  await ensureMaintenanceRules();
   const { review } = await maintenanceService.getReview(flightId);
   state.maintenanceReviewDraft = {
     review,
@@ -7095,7 +7458,7 @@ async function openMaintenanceReviewDialog(flightId, focusKey = "") {
     routineElectronicSigned: review.flight.routineElectronicSigned ?? null,
     nonroutineElectronicSigned: review.flight.nonroutineElectronicSigned ?? null,
     newSubtasks: [],
-    canEdit: hasRbac("maintenance.review.submit") && (!review.flight.requiresChangeReason || hasRbac("maintenance.archive.modify")),
+    canEdit: review.canEditEntireTree !== false && hasRbac("maintenance.review.submit") && (!review.flight.requiresChangeReason || hasRbac("maintenance.archive.modify")),
     activeTaskKey: "",
     activeRole: "",
     team: "",
@@ -7116,6 +7479,11 @@ function maintenanceReviewPerson(task, role, personId) {
 
 function maintenanceReviewCalculatedHours(task, role, personId = "") {
   if (role === "放行") return 0;
+  if (task.hourAssessment) {
+    if (task.hourAssessment.pending||task.hourAssessment.cancelled) return null;
+    const saved=maintenanceReviewPerson(task,role,personId);
+    return !task.changed && saved && Number.isFinite(saved.reportedHours) ? saved.reportedHours : null;
+  }
   if (task.ownerType === "flight") {
     const saved = maintenanceReviewPerson(task, role, personId);
     // Stored results are authoritative, including historical rounding/adjustments.
@@ -7143,6 +7511,8 @@ function maintenanceReviewRoleHtml(task, roleInfo, peopleById) {
   const draft = state.maintenanceReviewDraft;
   const role = roleInfo.role;
   const selected = [...(task.selections.get(role) || [])];
+  const partialScope = draft.review?.canEditEntireTree === false;
+  const peopleCount = partialScope ? `当前可见 ${selected.length} 人` : `${selected.length} 人`;
   const isSortie = roleInfo.metricType === "sorties" || role === "放行";
   const active = draft.activeTaskKey === maintenanceReviewTaskKey(task) && draft.activeRole === role;
   const people = selected.map(personId => {
@@ -7150,13 +7520,14 @@ function maintenanceReviewRoleHtml(task, roleInfo, peopleById) {
     const saved = maintenanceReviewPerson(task, role, personId);
     const feedbackState = saved ? (saved.feedback === "后台复核调整" ? "后台复核调整" : saved.status || "-") : "后台复核调整";
     const reportTime = saved?.submittedAt ? ` · ${formatDisplayDate(saved.submittedAt)}` : "";
+    const hours = isSortie ? null : maintenanceReviewCalculatedHours(task, role, personId);
     const resultText = isSortie
       ? (!saved || Number(saved.reportedSorties || 0) > 0 ? "1架次" : "待上报")
-      : `${escapeHtml(maintenanceReviewCalculatedHours(task, role, personId))}h`;
+      : hours === null ? task.hourAssessment?.cancelled ? "评议已取消 · 未入账" : task.hourAssessment?.syncPending ? "已认定 · 待同步" : task.hourAssessment?.pending ? "审核中 · 未入账" : "保存后核算" : `${escapeHtml(hours)}h${saved?.allocationRole && saved.allocationRole!==role ? `<small>核算角色：${escapeHtml(saved.allocationRole)}</small>` : ""}`;
     return `<div class="maintenance-review-person"><span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.team || "未设置")}</small></span><span class="maintenance-review-feedback">${escapeHtml(feedbackState)}${escapeHtml(reportTime)}</span><b>${resultText}</b></div>`;
-  }).join("") || '<div class="status-line compact">暂无人员</div>';
+   }).join("") || `<div class="status-line compact">${partialScope ? "当前范围无可见人员" : "暂无人员"}</div>`;
   return `<section class="maintenance-review-role ${active ? "active" : ""}">
-    <div class="maintenance-review-role-head"><div><strong>${escapeHtml(role)}</strong><span>${isSortie ? `架次 · ${selected.length} 人` : `比例 ${escapeHtml(roleInfo.ratio)} · ${selected.length} 人`}</span></div>${task.editable && draft.canEdit ? `<button class="link-btn" type="button" data-maint-review-edit-role="${escapeHtml(role)}" data-maint-review-task-key="${escapeHtml(maintenanceReviewTaskKey(task))}">${active ? "收起" : "调整人员"}</button>` : ""}</div>
+    <div class="maintenance-review-role-head"><div><strong>${escapeHtml(role)}</strong><span>${isSortie ? `架次 · ${peopleCount}` : `${task.hourAssessment?.sourceKind === "REVIEW" && !task.hourAssessment.pending && !task.hourAssessment.cancelled ? "按终审核实角色" : task.hourAssessment?.strategy === "EQUAL" ? "按人员均分（去重）" : task.hourAssessment?.strategy === "UNDECIDED" ? "策略待定" : `比例 ${escapeHtml(roleInfo.ratio)}`} · ${peopleCount}`}</span></div>${task.editable && draft.canEdit ? `<button class="link-btn" type="button" data-maint-review-edit-role="${escapeHtml(role)}" data-maint-review-task-key="${escapeHtml(maintenanceReviewTaskKey(task))}">${active ? "收起" : "调整人员"}</button>` : ""}</div>
     ${people}${active ? maintenanceReviewPickerHtml(task, role, peopleById) : ""}
   </section>`;
 }
@@ -7171,7 +7542,7 @@ function maintenanceReviewPickerHtml(task, role, peopleById) {
     return !term || String(person.name || "").toLocaleLowerCase("zh-CN").includes(term);
   }).sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)) || String(a.team || "").localeCompare(String(b.team || ""), "zh-CN") || String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"));
   const categoryOptions = personnelSelectionOptionsHtml(draft.review.people, draft.team);
-  const inputType = role === "放行" ? "radio" : "checkbox";
+  const inputType = "checkbox";
   const inputName = role === "放行" ? ` name="review-release-${escapeHtml(task.ownerId)}"` : "";
   return `<div class="maintenance-review-picker">
     <div class="maintenance-picker-tools"><select data-maint-review-team aria-label="人员分类">${categoryOptions}</select><input class="search" data-maint-review-search value="${escapeHtml(draft.search)}" placeholder="搜索姓名" autocomplete="off"><span class="maintenance-selected-count">已选 ${selected.size} 人</span></div>
@@ -7185,7 +7556,7 @@ function maintenanceArchivedNewSubtaskHtml(task, peopleById, index) {
     <div class="maintenance-review-new-fields">
       <label>章节<input value="${escapeHtml(task.chapter || "")}" data-maint-review-new-field="chapter" data-maint-review-new-id="${escapeHtml(task.ownerId)}"></label>
       <label>标题<input value="${escapeHtml(task.title || "")}" data-maint-review-new-field="title" data-maint-review-new-id="${escapeHtml(task.ownerId)}" required></label>
-      <label>类别<select data-maint-review-new-field="category" data-maint-review-new-id="${escapeHtml(task.ownerId)}">${optionList(subtaskCategories, task.category || "工卡指令")}</select></label>
+      <label>类别<select data-maint-review-new-field="category" data-maint-review-new-id="${escapeHtml(task.ownerId)}">${optionList(maintenanceLegacyCategories(), task.category || "工卡指令")}</select></label>
       <label>标准工时<input type="number" min="0.1" step="0.1" value="${escapeHtml(task.standardHours || "")}" data-maint-review-new-field="standardHours" data-maint-review-new-id="${escapeHtml(task.ownerId)}" required></label>
       <label class="maintenance-review-new-explanation">报工说明<textarea rows="2" data-maint-review-new-field="reportExplanation" data-maint-review-new-id="${escapeHtml(task.ownerId)}" placeholder="对本项工作进行说明（非必填）">${escapeHtml(task.reportExplanation || "")}</textarea></label>
     </div>
@@ -7205,9 +7576,10 @@ function renderMaintenanceReviewDialog() {
   const signaturesHtml = `<section class="maintenance-review-signatures">${signatureFields.map(([key, label]) => `<fieldset data-review-signature-group="${key}" ${!draft.canEdit || draft.busy ? "disabled" : ""}><legend>${label}签署方式${!flight.requiresChangeReason ? "（确认时必选）" : ""}</legend><div class="maintenance-signature-row"><span class="maintenance-signature-title" aria-hidden="true">${label}：</span><div class="maintenance-signature-options">${[true, false].map(value => `<label><input type="radio" name="${key}" value="${value}" data-review-signature="${key}" ${draft[key] === value ? "checked" : ""}><span>${value ? "电签" : "纸签"}</span></label>`).join("")}</div>${draft[key] == null && (flight.requiresChangeReason || !draft.canEdit) ? "<small>未记录</small>" : ""}</div></fieldset>`).join("")}</section>`;
   const peopleById = new Map(draft.review.people.map(person => [person.id, person]));
   body.innerHTML = `<div class="dialog-head maintenance-review-head"><h2>任务树复核 <small>${escapeHtml(maintenanceDisplayFlightNo(flight))} · ${escapeHtml(flight.aircraftNo)} · ${escapeHtml(flight.opportunity)} · ${escapeHtml(flight.locationName || "青岛")}</small></h2><button class="icon-btn" data-close="maintenanceReviewDialog" type="button">×</button></div>
+    ${draft.review.canEditEntireTree === false ? '<p class="status-line">当前范围仅可查看部分人员，整棵任务树请交由有完整范围的负责人复核。</p>' : ''}
     <div class="maintenance-review-summary"><span>机型 ${escapeHtml(flight.aircraftType || "-")}</span><span>机位 ${escapeHtml(flight.stand || "-")}</span><span>${escapeHtml(flight.date || "-")}</span>${(flight.requiresChangeReason || flight.status === "待复核") && draft.canEdit ? `<button class="btn secondary maintenance-review-add-new" type="button" data-maint-review-add-new ${draft.busy ? "disabled" : ""}>新增非例行</button>` : ""}</div>
     <div class="maintenance-review-tree">${draft.tasks.map((task, index) => `<article class="maintenance-review-task" data-maint-review-task="${escapeHtml(maintenanceReviewTaskKey(task))}">
-      <div class="maintenance-review-task-head"><div><strong>${index === 0 ? "主任务 · " : "非例行 · "}${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subtitle)} · ${escapeHtml(task.baseHoursSource)} · 基础 ${escapeHtml(task.baseHours)}h</span></div><div class="actions"><span class="status-badge ${task.status === "已确认" ? "ok" : task.status === "待复核" ? "warn" : task.status === "已提报" ? "submitted" : ""}">${escapeHtml(task.status)}</span>${index > 0 && draft.canEdit ? `<button class="link-btn danger-text" type="button" data-maint-review-delete-subtask="${escapeHtml(task.ownerId)}">删除</button>` : ""}</div></div>
+      <div class="maintenance-review-task-head"><div><strong>${index === 0 ? "主任务 · " : "非例行 · "}${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subtitle)} · ${escapeHtml(task.baseHoursSource)} · ${task.hourAssessment?.cancelled ? "评议已取消 · 未入账" : task.hourAssessment?.syncPending ? `认定 ${escapeHtml(task.hourAssessment.recognized.recognizedHours)}h（待同步，未入账）` : task.hourAssessment?.pending ? `申请 ${escapeHtml(task.hourAssessment.requestedHours)}h（仅参考，未入账）` : `基础 ${escapeHtml(task.baseHours)}h`}</span></div><div class="actions"><span class="status-badge ${task.status === "已确认" ? "ok" : task.status === "待复核" ? "warn" : task.status === "已提报" ? "submitted" : ""}">${escapeHtml(task.status)}</span>${index > 0 && draft.canEdit ? `<button class="link-btn danger-text" type="button" data-maint-review-delete-subtask="${escapeHtml(task.ownerId)}">删除</button>` : ""}</div></div>
       ${!task.editable ? `<div class="maintenance-review-blocked">当前任务尚未完成，仅展示派工与反馈数据。</div>` : ""}
       <div class="maintenance-review-roles">${task.roles.map(role => maintenanceReviewRoleHtml(task, role, peopleById)).join("")}</div>
     </article>`).join("")}${draft.newSubtasks.map((task, index) => maintenanceArchivedNewSubtaskHtml(task, peopleById, index)).join("")}</div>
@@ -7914,6 +8286,23 @@ document.addEventListener("click", async event => {
   }
   const maintenanceTab = event.target.closest("[data-maint-tab]");
   if (maintenanceTab) {
+    if(maintenanceTab.dataset.maintTab!==state.maintenanceTab&&!canLeaveCorrectionWorkbench())return;
+    if(maintenanceTab.dataset.maintTab!==state.maintenanceTab&&state.maintenanceStandardController){
+      if(state.maintenanceStandardController.isBusy())return;
+      if(state.maintenanceStandardController.hasUnsaved()&&!confirm('切换模块会放弃尚未保存的标准内容，是否继续？'))return;
+    }
+    if(maintenanceTab.dataset.maintTab!==state.maintenanceTab && state.maintenancePeriodController){
+      if(state.maintenancePeriodController.isBusy())return;
+      if(state.maintenancePeriodController.hasUnsaved()&&!confirm('切换模块会放弃尚未保存的账期内容，是否继续？'))return;
+    }
+    if(maintenanceTab.dataset.maintTab!==state.maintenanceTab&&state.maintenancePublicationController){
+      if(state.maintenancePublicationController.isBusy())return;
+      if(state.maintenancePublicationController.hasUnsaved()&&!confirm('切换模块会放弃尚未提交的准入或发布内容，是否继续？'))return;
+    }
+    if(maintenanceTab.dataset.maintTab!==state.maintenanceTab && state.maintenanceReviewController){
+      if(state.maintenanceReviewController.isBusy())return;
+      if(state.maintenanceReviewController.hasUnsaved()&&!confirm('切换模块会放弃尚未提交的内容，是否继续？'))return;
+    }
     if (maintenanceTab.dataset.maintTab !== state.maintenanceTab) {
       clearTimeout(state.maintenanceDispatchClickTimer);
       state.maintenanceDispatchClickTimer = null;
@@ -7949,9 +8338,10 @@ document.addEventListener("click", async event => {
   }
   const nonroutineReportRow = event.target.closest("[data-maint-report-nonroutine]");
   if (nonroutineReportRow) {
+    if(!state.maintenanceReport||state.maintenanceReportLoading)return;
     const id = nonroutineReportRow.dataset.maintReportNonroutine;
     if (state.maintenanceReportOpenNonroutineIds.has(id)) state.maintenanceReportOpenNonroutineIds.delete(id);
-    else state.maintenanceReportOpenNonroutineIds.add(id);
+    else {state.maintenanceReportOpenNonroutineIds.add(id);state.maintenanceReportNonroutineDetails.delete(id);}
     const content = document.querySelector(".maintenance-report-content");
     if (content) {
       content.innerHTML = maintenanceReportBody(state.maintenanceReport, "nonroutine");
@@ -7962,9 +8352,10 @@ document.addEventListener("click", async event => {
   }
   const opportunityReportRow = event.target.closest("[data-maint-report-opportunity]");
   if (opportunityReportRow) {
+    if(!state.maintenanceReport||state.maintenanceReportLoading)return;
     const id = opportunityReportRow.dataset.maintReportOpportunity;
     if (state.maintenanceReportOpenOpportunityIds.has(id)) state.maintenanceReportOpenOpportunityIds.delete(id);
-    else state.maintenanceReportOpenOpportunityIds.add(id);
+    else {state.maintenanceReportOpenOpportunityIds.add(id);state.maintenanceReportOpportunityDetails.delete(id);}
     const content = document.querySelector(".maintenance-report-content");
     if (content) {
       content.innerHTML = maintenanceReportBody(state.maintenanceReport, "opportunities");
@@ -8140,6 +8531,26 @@ document.addEventListener("click", async event => {
     }
     return;
   }
+  const removeAssignmentButton = event.target.closest("[data-maint-assignment-remove]");
+  if (removeAssignmentButton) {
+    removeAssignmentButton.disabled = true;
+    try {
+      const id = removeAssignmentButton.dataset.maintAssignmentRemove;
+      const ownerType = $("#maintDispatchOwnerType").value, ownerId = $("#maintDispatchOwnerId").value;
+      const { impact } = await maintenanceService.previewAssignmentRemoval(id, $("#maintDispatchExpectedUpdatedAt").value);
+      const draftNotice = impact.drafts.length ? `已有 ${impact.drafts.length} 份草稿保留原样，后续报工须重新核对人员。` : "无已有报工草稿。";
+      const reason = prompt(`删除派工：${impact.assignment.name} · ${impact.assignment.role}\n${draftNotice}\n请填写删除原因：`);
+      if (reason === null) return;
+      if (!reason.trim()) throw new Error("请填写删除原因");
+      if (!confirm(`确认只删除 ${impact.assignment.name} 的“${impact.assignment.role}”关联？\n${impact.notice}\n本窗口尚未保存的选择将放弃。`)) return;
+      await maintenanceService.removeAssignment(id, { expectedUpdatedAt: impact.expectedUpdatedAt, confirmation: impact.confirmation, reason: reason.trim() });
+      closeDialog($("#maintenanceDispatchDialog"));
+      await refreshMaintenance();
+      await openMaintenanceDispatchDialog(ownerType, ownerId);
+    } catch (error) { alert(error.message); }
+    finally { removeAssignmentButton.disabled = false; }
+    return;
+  }
   const dispatchButton = event.target.closest("[data-maint-dispatch]");
   if (dispatchButton) {
     const [ownerType, ownerId] = dispatchButton.dataset.maintDispatch.split(":");
@@ -8192,12 +8603,14 @@ document.addEventListener("click", async event => {
     renderMaintenanceWorkReportDialog();
     return;
   }
+  if(event.target.closest('[data-maint-work-standard]')){await openMaintenanceWorkStandardPicker();return;}
   if (event.target.closest("[data-maint-add-temp-nonroutine]") && state.maintenanceWorkReportDraft) {
     const draft = state.maintenanceWorkReportDraft;
     const context = maintenanceTemporaryReportContext({
-      title: draft.reportType === "nonroutine-create" ? "" : "临时非例行",
-      category: "其他",
-      standardHours: draft.reportType === "nonroutine-create" ? "" : 1
+      title: draft.reportType === "nonroutine-create" || draft.report.nonroutine.manualDraftSubmissionReady ? "" : "临时非例行",
+      category: draft.report.nonroutine.manualDraftSubmissionReady?"":"其他",
+      manualManaged:draft.report.nonroutine.manualDraftSubmissionReady===true,
+      standardHours: draft.reportType === "nonroutine-create" || draft.report.nonroutine.manualDraftSubmissionReady ? "" : 1
     }, draft.contexts.length);
     const key = context.key;
     draft.contexts.push(context);
@@ -8446,12 +8859,16 @@ document.addEventListener("click", async event => {
     } else {
       draft.groups.push({ id: `aircraft-${Date.now()}-${Math.random().toString(36).slice(2)}`, name: '', codes: '', enabled: true, hours: {} });
     }
-    state.maintenanceAircraftHoursDraft = draft;
+    state.maintenanceAircraftHoursDraft = draft;state.maintenanceRulesDirty=true;
     $('#maintenanceAircraftMatrix').innerHTML = renderMaintenanceAircraftHours();
     return;
   }
   if (event.target.closest("[data-maint-save-rules]")) {
+    if(state.maintenanceRulesSaving)return;
+    const ruleAccountId=state.user.id;state.maintenanceRulesSaving=true;
     (async () => {
+      if(!state.maintenanceRuleVersion)throw new Error("请重新加载工时规则后再保存。");
+      const ruleVersion=structuredClone(state.maintenanceRuleVersion);
       const inputs = $$("[data-maint-rule]");
       const invalidInput = inputs.find(input => !Number.isFinite(Number(input.value)) || Number(input.value) < 0);
       if (invalidInput) {
@@ -8460,7 +8877,7 @@ document.addEventListener("click", async event => {
       }
       const routineInputs = inputs.filter(input => input.dataset.ruleType === "routineRatio");
       const towInput = inputs.find(input => input.dataset.ruleType === "nonroutineCategoryHours" && input.dataset.ruleName === "拖机");
-      if (!towInput || !(Number(towInput.value) > 0) || Math.abs(Number(towInput.value) * 10 - Math.round(Number(towInput.value) * 10)) > 1e-8) {
+      if (!maintenanceTowStandardOnly() && (!towInput || !(Number(towInput.value) > 0) || Math.abs(Number(towInput.value) * 10 - Math.round(Number(towInput.value) * 10)) > 1e-8)) {
         $$('[data-maint-rule-group]').find(item => item.dataset.maintRuleGroup === "towHours")?.setAttribute("open", "");
         towInput?.focus();
         throw new Error("拖机默认总工时必须大于0且以0.1小时为单位。");
@@ -8510,12 +8927,15 @@ document.addEventListener("click", async event => {
       const aircraftHours = readMaintenanceAircraftHours();
       const preview = await apiRequest('/maintenance/rules/aircraft-preview', { method: 'POST', body: { aircraftHours } });
       if (preview.affectedCount && !(await confirmDialog(`将影响 ${preview.affectedCount} 个未报工航班，已报工工时不变。以下仅列出您有权查看的航班：\n${preview.affected.slice(0, 15).map(flight => `${flight.date} ${flight.flightNo || '-'} ${flight.aircraftType || '未填机型'} ${flight.opportunity}`).join('\n')}\n是否继续？`))) return;
+      if(state.user.id!==ruleAccountId)return;
       const reason = await inputDialogPrompt('请填写本次工时规则修改原因（首次配置也须说明）：');
-      if (!reason?.trim()) return;
-      await maintenanceService.saveRules(rules, { aircraftHours, reason, confirmation: preview.confirmation });
+      if (!reason?.trim()||state.user.id!==ruleAccountId) return;
+      await maintenanceService.saveRules(rules, { ruleVersion, aircraftHours, reason, confirmation: preview.confirmation });
+      if(state.user.id!==ruleAccountId)return;
+      state.maintenanceRulesDirty=false;state.maintenanceRulesSaving=false;
       await refreshMaintenance();
       alert("规则已保存。");
-    })().catch(error => alert(error.message));
+    })().catch(error => {if(state.user.id===ruleAccountId)alert(error.message);}).finally(()=>{if(state.user.id===ruleAccountId)state.maintenanceRulesSaving=false;});
     return;
   }
   const confirmHour = event.target.closest("[data-maint-confirm-hour]");
@@ -8601,6 +9021,11 @@ document.addEventListener("click", event => {
 });
 
 async function performLogout() {
+  if(!canLeaveCorrectionWorkbench())return;
+  state.maintenanceWorkflowController?.destroy();state.maintenanceWorkflowController=null;state.maintenanceWorkflowControllerUser=null;
+  document.querySelector('[data-workflow-workbench]')?.remove();
+  state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;state.maintenanceCorrectionControllerUser=null;
+  document.querySelector('[data-correction-workbench]')?.remove();
   stopMaintenanceSync();
   stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
   await authService.logout();
@@ -9217,6 +9642,7 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("input", event => {
+  if(state.activePage==='maintenancePage'&&state.maintenanceTab==='hours'&&event.target.matches('[data-maint-rule], [data-aircraft-name], [data-aircraft-codes], [data-aircraft-enabled], [data-aircraft-hours]'))state.maintenanceRulesDirty=true;
   if (event.target.id === "maintLocationName") {
     $("#maintLocationId").value = "";
     showMaintenanceLocationChoices({ open: true });
@@ -9968,8 +10394,8 @@ $("#highlightColorSelect").addEventListener("change", event => {
 setupDrop($("#recordDrop"), $("#recordFiles"), state.recordFiles, $("#recordPending"));
 setupDrop($("#fixedDrop"), $("#fixedFiles"), state.fixedFiles, $("#fixedPending"));
 renderFixedAtaOptions();
-window.addEventListener("popstate", () => {
-  guardRoute().catch(error => {
+window.addEventListener("popstate", event => {
+  restoreHomeMaintenanceHistory(event).then(handled=>handled||guardRoute()).catch(error => {
     document.body.innerHTML = `<main class="wrap" style="padding:24px"><div class="data-panel"><h1>页面切换失败</h1><p class="status-line">${escapeHtml(error.message)}</p></div></main>`;
   });
 });

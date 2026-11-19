@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import http from 'node:http';
+const root=new URL('.',import.meta.url).pathname;
+process.env.MUC_NO_LISTEN='1';process.env.NODE_ENV='test';process.env.DATABASE_URL='';process.env.DB_PATH=root+'synthetic.sqlite';process.env.UPLOAD_DIR=root+'uploads';process.env.MUC_MAINTENANCE_COORDINATOR_ENABLED='1';
+for(const key of ['ATTENDANCE_SYNC_ENABLED','ATTENDANCE_WORKER_ENABLED','ATTENDANCE_EVENTS_ENABLED','ATTENDANCE_APPROVAL_PLANS_ENABLED','ATTENDANCE_APPROVAL_PLAN_DUE_ENABLED','ATTENDANCE_VALIDATION_ENABLED'])process.env[key]='false';
+const {db,measuredRoute}=await import('/Users/zhaowei/.codex/worktrees/maintenance-personnel-8788/MUC收集信息/muc_online_app/server.mjs');
+process.env.MUC_STANDARDS_MANAGEMENT_ENABLED='1';
+const template=db.prepare("select * from users where id='54002010'").get(),person=db.prepare('select * from personnel where id=?').get(template.person_id),stamp=new Date().toISOString();
+const add=(table,row)=>{const keys=Object.keys(row);db.prepare(`insert into ${table}(${keys.join(',')}) values(${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k]));};
+add('personnel',{id:'qa-manager-person',employee_no:'99985000',name:'浏览器权限验证',department:person.department,department_id:person.department_id,personnel_group_id:person.personnel_group_id,administrative_team_id:person.administrative_team_id,data_status:'active',employment_status:'在职',created_at:stamp,updated_at:stamp});
+add('users',{...template,id:'qa-manager',username:'qa-manager',name:'浏览器权限验证',role:'receiver',person_id:'qa-manager-person'});
+for(const code of ['worker','addon_maintenance_standard_manager'])db.prepare('insert into rbac_user_roles(user_id,role_id,created_at) select ?,id,? from rbac_roles where code=?').run('qa-manager',stamp,code);
+add('rbac_user_scopes',{id:'qa-manager-scope',user_id:'qa-manager',module:'maintenance',scope_type:'all',scope_id:'',valid_from:'',valid_to:'',created_at:stamp,updated_at:stamp});
+const server=http.createServer(measuredRoute);server.listen(18888,'127.0.0.1',()=>console.log('QA_READY'));
+process.on('SIGINT',()=>server.close(async()=>{fs.writeFileSync(root+'final-db.json',JSON.stringify({journal:db.prepare('select * from maintenance_rule_change_history order by revision').all(),flights:db.prepare('select * from maintenance_flights').all(),hours:db.prepare('select * from maintenance_effective_hour_results').all()},null,2));await db.close?.();process.exit(0);}));

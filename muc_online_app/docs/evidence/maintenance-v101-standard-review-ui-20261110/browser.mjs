@@ -1,0 +1,34 @@
+import WebSocket from '/Users/zhaowei/.codex/worktrees/maintenance-personnel-8788/MUC收集信息/muc_online_app/node_modules/ws/wrapper.mjs';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const output=new URL('.',import.meta.url).pathname;
+const targets=await(await fetch('http://127.0.0.1:18889/json/list')).json(),target=targets.find(item=>item.type==='page');
+const ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(resolve=>ws.once('open',resolve));let seq=0;const pending=new Map();
+ws.on('message',buffer=>{const message=JSON.parse(buffer);if(message.id){const item=pending.get(message.id);pending.delete(message.id);message.error?item.reject(message.error):item.resolve(message.result);}});
+const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
+const evaluate=async expression=>{const result=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
+const waitFor=async expression=>{for(let n=0;n<150;n++){try{if(await evaluate(expression))return;}catch{}await new Promise(resolve=>setTimeout(resolve,100));}throw Error('UI timeout '+expression);};
+await send('Runtime.enable');await send('Page.enable');
+await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+await send('Page.navigate',{url:'http://127.0.0.1:18888/'});
+await waitFor(`document.body.classList.contains('app-locked')||document.body.classList.contains('app-ready')`);
+if(await evaluate(`!document.querySelector('#loginPage').hidden`)){
+ await evaluate(`(()=>{document.querySelector('#loginUser').value='54002010';document.querySelector('#loginPass').value='muc2026';document.querySelector('#loginPass').closest('form').requestSubmit();})()`);
+}
+await waitFor(`document.body.classList.contains('app-ready')&&document.querySelector('#loginPage').hidden`);
+await evaluate(`document.querySelector('[data-page="maintenancePage"]').click()`);
+await waitFor(`!!document.querySelector('[data-maint-tab="standardReviews"]')`);
+await evaluate(`document.querySelector('[data-maint-tab="standardReviews"]').click()`);await waitFor(`!!document.querySelector('[data-nr-open="stdreview-qa-4"]')`);
+await evaluate(`document.querySelector('[data-nr-open="stdreview-qa-4"]').click()`);await waitFor(`!!document.querySelector('[name="final_recognizedHours"]')`);
+const desktop=await evaluate(`({text:document.querySelector('[data-review-workbench]').innerText,blank:document.querySelector('[name="final_recognizedHours"]').value,roles:document.querySelectorAll('[name^="finalRole"],[name="final_participantsVerified"]').length,scrollWidth:document.documentElement.scrollWidth,width:innerWidth})`);
+assert.equal(desktop.blank,'');assert.equal(desktop.roles,0);assert.ok(desktop.text.includes('标准评议申请依据'));assert.ok(desktop.text.includes('标准私有依据1'));
+fs.writeFileSync(output+'desktop.png',Buffer.from((await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true})).data,'base64'));
+await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+const mobile=await evaluate(`({scrollWidth:document.documentElement.scrollWidth,width:innerWidth,inputs:[...document.querySelectorAll('[data-review-workbench] input,[data-review-workbench] textarea')].map(el=>getComputedStyle(el).fontSize)})`);
+assert.ok(mobile.scrollWidth<=390,JSON.stringify(mobile));assert.equal(mobile.width,390);assert.ok(mobile.inputs.every(size=>parseFloat(size)>=16));
+fs.writeFileSync(output+'mobile.png',Buffer.from((await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true})).data,'base64'));
+await evaluate(`(()=>{const input=document.querySelector('[name="final_recognizedHours"]');input.value='0';input.dispatchEvent(new Event('input',{bubbles:true}));const admission=document.querySelector('[name="final_admissionDecision"]');admission.value='INCLUDE';admission.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('[data-nr-finalize]').requestSubmit();})()`);
+await waitFor(`!document.querySelector('[data-nr-finalize]')&&document.querySelector('[data-review-workbench]').innerText.includes('标准认定已锁定，尚未发布')`);
+const finalized=await evaluate(`({text:document.querySelector('[data-review-workbench]').innerText,workControls:!!document.querySelector('[data-nr-sync],[data-nr-final-preview]')})`);assert.equal(finalized.workControls,false);
+fs.writeFileSync(output+'browser-evidence.json',JSON.stringify({syntheticOnly:true,desktop,mobile,finalized},null,2));console.log(JSON.stringify({syntheticOnly:true,desktopWidth:desktop.width,mobileWidth:mobile.width,mobileScrollWidth:mobile.scrollWidth,explicitZero:true,finalizedUnpublished:true}));
+ws.close();

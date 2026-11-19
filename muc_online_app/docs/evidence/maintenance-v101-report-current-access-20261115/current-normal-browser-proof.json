@@ -1,0 +1,190 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalPage": true,
+  "viewports": [
+    {
+      "width": 1280,
+      "sorts": [
+        {
+          "direction": "asc",
+          "rows": [
+            {
+              "id": "mtns-1794737900653-10bdff5d108a",
+              "title": "报表页面-合法零",
+              "standard": "0h",
+              "actual": "0h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900654-950accac96bd",
+              "title": "报表页面-有效两小时",
+              "standard": "2h",
+              "actual": "2h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900652-83c78a1a807c",
+              "title": "报表页面-取消",
+              "standard": "评议已取消",
+              "actual": "尚无工时结果",
+              "status": "已确认评议已取消"
+            },
+            {
+              "id": "mtns-1794737900652-ed59678844f5",
+              "title": "报表页面-评议中",
+              "standard": "评议中",
+              "actual": "尚无工时结果",
+              "status": "已确认评议中"
+            }
+          ]
+        },
+        {
+          "direction": "desc",
+          "rows": [
+            {
+              "id": "mtns-1794737900654-950accac96bd",
+              "title": "报表页面-有效两小时",
+              "standard": "2h",
+              "actual": "2h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900653-10bdff5d108a",
+              "title": "报表页面-合法零",
+              "standard": "0h",
+              "actual": "0h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900652-83c78a1a807c",
+              "title": "报表页面-取消",
+              "standard": "评议已取消",
+              "actual": "尚无工时结果",
+              "status": "已确认评议已取消"
+            },
+            {
+              "id": "mtns-1794737900652-ed59678844f5",
+              "title": "报表页面-评议中",
+              "standard": "评议中",
+              "actual": "尚无工时结果",
+              "status": "已确认评议中"
+            }
+          ]
+        }
+      ],
+      "cancelledDetail": "章节 29 · 单项工作标准总工时 评议已取消实际总工时 尚无工时结果",
+      "zeroDetail": "章节 29 · 单项工作标准总工时 0h实际总工时 0h",
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 390,
+      "sorts": [
+        {
+          "direction": "asc",
+          "rows": [
+            {
+              "id": "mtns-1794737900653-10bdff5d108a",
+              "title": "报表页面-合法零",
+              "standard": "0h",
+              "actual": "0h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900654-950accac96bd",
+              "title": "报表页面-有效两小时",
+              "standard": "2h",
+              "actual": "2h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900652-83c78a1a807c",
+              "title": "报表页面-取消",
+              "standard": "评议已取消",
+              "actual": "尚无工时结果",
+              "status": "已确认评议已取消"
+            },
+            {
+              "id": "mtns-1794737900652-ed59678844f5",
+              "title": "报表页面-评议中",
+              "standard": "评议中",
+              "actual": "尚无工时结果",
+              "status": "已确认评议中"
+            }
+          ]
+        },
+        {
+          "direction": "desc",
+          "rows": [
+            {
+              "id": "mtns-1794737900654-950accac96bd",
+              "title": "报表页面-有效两小时",
+              "standard": "2h",
+              "actual": "2h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900653-10bdff5d108a",
+              "title": "报表页面-合法零",
+              "standard": "0h",
+              "actual": "0h",
+              "status": "已确认已认定"
+            },
+            {
+              "id": "mtns-1794737900652-83c78a1a807c",
+              "title": "报表页面-取消",
+              "standard": "评议已取消",
+              "actual": "尚无工时结果",
+              "status": "已确认评议已取消"
+            },
+            {
+              "id": "mtns-1794737900652-ed59678844f5",
+              "title": "报表页面-评议中",
+              "standard": "评议中",
+              "actual": "尚无工时结果",
+              "status": "已确认评议中"
+            }
+          ]
+        }
+      ],
+      "cancelledDetail": "章节 29 · 单项工作标准总工时 评议已取消实际总工时 尚无工时结果",
+      "zeroDetail": "章节 29 · 单项工作标准总工时 0h实际总工时 0h",
+      "noHorizontalOverflow": true
+    }
+  ],
+  "downloads": [
+    {
+      "viewport": 1280,
+      "file": "1280/维修管控综合报表_2024-11-10_2024-11-10.xlsx",
+      "bytes": 10481,
+      "sha256": "e91e9fad6d2385ca0ebf59ab2f5932ebeca459810ff5cc4ab4e8ff97e704442f",
+      "rows": 4,
+      "missingStandardCellsBlank": true,
+      "numericZeroAndTwoPreserved": true,
+      "recognitionStatusColumn": true
+    },
+    {
+      "viewport": 390,
+      "file": "390/维修管控综合报表_2024-11-10_2024-11-10.xlsx",
+      "bytes": 10481,
+      "sha256": "e91e9fad6d2385ca0ebf59ab2f5932ebeca459810ff5cc4ab4e8ff97e704442f",
+      "rows": 4,
+      "missingStandardCellsBlank": true,
+      "numericZeroAndTwoPreserved": true,
+      "recognitionStatusColumn": true
+    }
+  ],
+  "screenshots": [
+    "desktop-list.png",
+    "desktop-cancelled-detail.png",
+    "desktop-zero-detail.png",
+    "desktop-export-dialog.png",
+    "mobile-list.png",
+    "mobile-cancelled-detail.png",
+    "mobile-zero-detail.png",
+    "mobile-export-dialog.png"
+  ],
+  "sourceAndLedgerUnchanged": true,
+  "beforeSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+  "afterSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+  "noPhysicalDeviceClaim": true
+}

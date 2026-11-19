@@ -1,0 +1,87 @@
+{
+  "scope": "Existing archive authority financial correction approval, frozen original allocation, independent period-owner authorization and exact request replay",
+  "flag": "MUC_NONROUTINE_CORRECTIONS_ENABLED",
+  "defaultEnabled": false,
+  "sqlite": {
+    "tests": 685,
+    "pass": 685,
+    "fail": 0,
+    "skipped": 0
+  },
+  "preliminaryPostgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-yd7Gb6",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 142,
+      "rows": 3459,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "66f828e717661e1255c11c861ef9ac0c6bf012c68b3b516c96cc3be039d22c25"
+    },
+    "stopped": true
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-AVVD4V",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 142,
+      "rows": 3464,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "c3e226214b2f273fa0d2f8f0037d7ff31f9f6702a49a0605ce7a9ac171e2ca21"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "nonroutine-correction-service.mjs": "b4592d30c1d1fbc774b257a0eb067628ac498d702b0784d7d5aed4e551509957",
+    "nonroutine-corrections.mjs": "df48132d809385ed66f15b98ec578dd998a3d11a6f37dcefaa14b4646eeb525d",
+    "server.mjs": "e7e6270bc6edb76220f0b72a6e100e065ff93028dd3ac442bff2e7b8ae3f2bef",
+    "tests/nonroutine-correction-service.test.mjs": "624457804cce190226d6e93d6ee0b67db667dc1af7865e4d4d197d016044ce32",
+    "tests/server.test.mjs": "c79baf0d909f4ed09fb4e899791114b93558d947ebc9a0e9c3dc093ad34fa464",
+    "scripts/check-maintenance-v101-restored.mjs": "360e3ee67d81d0ef323907efd59ae0d590a06ff30a9877f95ed9302c5acf0def"
+  },
+  "limits": [
+    "No correction workbench yet",
+    "Pending correction cancellation/withdrawal is not implemented",
+    "Financial methods preserve original participants and do not implement actual construction-person changes or historical source reconciliation",
+    "Only fully scoped existing archive modifiers and period authorizers currently qualify",
+    "Cross-process races with permission changes, full allocation-role and amount fuzzing, Linux and actual-device acceptance remain open",
+    "No deployment or live database writes"
+  ],
+  "postgresServerTests": {
+    "tests": 70,
+    "pass": 70,
+    "fail": 0,
+    "skipped": 0
+  }
+}

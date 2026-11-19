@@ -1,0 +1,62 @@
+{
+  "baselineCommit": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sqlite": {
+    "default": 837,
+    "coordinator": 837,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 108,
+    "fixtureOnly": false,
+    "restore": {
+      "tables": 147,
+      "rows": 7752,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "bde470a5ec45890b9dc6867d0bcc120df887e133f16370f90f0435fa9fd4e3bb"
+    },
+    "workersCleanExit": true,
+    "clusterStopped": true,
+    "uniqueReferenceRestored": true
+  },
+  "browser": {
+    "actualOriginalBrowser": true,
+    "syntheticOnly": true,
+    "viewports": [
+      1280,
+      390
+    ],
+    "physicalDeviceVerified": false,
+    "unconfirmedExactMatchRejected": true,
+    "unlistedReturnKeepsOriginalItem": true,
+    "candidateCount": 1,
+    "selectedStandard": "browser-later-a",
+    "saveAndReopenRetained": true,
+    "originalSourceIdentityRetained": true,
+    "formalSubmitUsesStandard": true,
+    "reviewCases": 0,
+    "recognizedHours": 1.5,
+    "originalDispatchUnchanged": true
+  },
+  "browserCleanup": {
+    "chromeExit": 130,
+    "serverExit": 0
+  },
+  "sourceSha256": {
+    "server.mjs": "12bdcdfe1c8e1f9a8780a729ac90d367b02cb2cdc679433301933b013fbc9ab4",
+    "tests/server.test.mjs": "b4c5ec85e1dc1ab2d1b496ceafdd8d18c0673162615fccec362ae5f39fa33d57",
+    "scripts/check-maintenance-v101-restored.mjs": "75c57733073d08c54e07d90275d2405b550956580062a66c90edd501ac23b24a",
+    "public/app.js": "b2c6e504bc236adf67043eae365d4a15c4335666587ff60af7ed5bf23dd4f4e9",
+    "public/maintenance-standard-picker.mjs": "f867d456b3e5b1fa7e5f27c47c78a8a3399ffb4d2e4aa79187ef950a1bd6823f"
+  },
+  "mergedOrDeployed": false
+}

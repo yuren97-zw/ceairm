@@ -1,0 +1,61 @@
+{
+  "scope": "Original report module identities and gate metadata snapshots for newly created opportunities only",
+  "flag": "MUC_MAINTENANCE_MODULE_INSTANCES_ENABLED",
+  "defaultEnabled": false,
+  "sqlite": {
+    "tests": 659,
+    "pass": 659,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-X14VIC",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 139,
+      "rows": 3225,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "6b9b592a78052a9c97a805d4d8896bd3c5841aaa34063a22f5b37ce4821bddae"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-module-instances.mjs": "997f6ede7257cbeb2e36b64caabaddd1677e2f4b764c927f0196eb08e9f9e848",
+    "maintenance-opportunity-modules.mjs": "0029acc75c24749ccf3a8596b4ce2baedb970ac9f7fbc7fc2c494fcc17e394dd",
+    "migrations/052_maintenance_module_instances.sql": "dcb51703dbf9868da7e5075901077b35b4b1603c5da4b9c463a2ab584b11dae3",
+    "server.mjs": "fe4165daf5f3e57e8782236d544fdfa0c067a3abcab88809a4af6c05d888d44f",
+    "tests/maintenance-module-instances.test.mjs": "86f6ba84b4d54db3e8f7402bd9fa99f22260c51576599dbdff288de5f9422741",
+    "tests/server.test.mjs": "110dd142ec487ceead7c339703138d407c5e549f9fbd44fe2512192ac1eb1216",
+    "scripts/migrate-sqlite-to-postgres.mjs": "932cf8528044d17cb416ffd711f1abf617faa904c1236254b9a8b9d0200ef4d2",
+    "scripts/check-maintenance-v101-restored.mjs": "3d0a81e3560019711e4149034fdb833cc4ac779600cd00529790136089da6447"
+  },
+  "limits": [
+    "No arbitrary module or rule publishing API",
+    "Rules currently pin original predicate identifiers and metadata, not a new state executor",
+    "No extension workflow or typed result dispatcher yet",
+    "No live business data, Linux, large-scale production concurrency or physical-device acceptance",
+    "No deployment or live 8788 database changes"
+  ],
+  "postgresServerTests": {
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "skipped": 0
+  }
+}

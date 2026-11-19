@@ -1,0 +1,60 @@
+{
+  "scope": "Signed correction plan, approval/period/trace schema, existing effective net view and protection of corrected original sources",
+  "externalApprovalEndpointImplemented": false,
+  "sqlite": {
+    "tests": 676,
+    "pass": 676,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postedFixture": "Existing real confirmed review delivery plus explicit fixture-only approval and reversal delta; does not prove business authorization workflow",
+  "sourceSha256": {
+    "nonroutine-corrections.mjs": "df48132d809385ed66f15b98ec578dd998a3d11a6f37dcefaa14b4646eeb525d",
+    "migrations/053_nonroutine_corrections.sql": "31360f123505cda0d514399931e486af81ec82c5152e2700d417f9bc0303c189",
+    "server.mjs": "ebbfc0553d5e15cd0ff7e50d76bfa817db4a26e98f688bf099dacc5f6294e777",
+    "tests/nonroutine-corrections.test.mjs": "5665ae16ba19edcd5f1f8aff1472593f071eaec148d1dce886d88a0c478724ce",
+    "tests/server.test.mjs": "a0fbeed39d469716c5e12ae50ec9dab7a26e4b3c1de3ad9c6d6ee47932bf7f2d",
+    "scripts/migrate-sqlite-to-postgres.mjs": "a5b6a5f78a022de1c6951caebf7de3fb1acdf625337b4a3b640112614b4c281b",
+    "scripts/check-maintenance-v101-restored.mjs": "b26d2c46842ee942526ffa203317f829e2836ca50b3fdab1334fa2305ef9d6be"
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-Q5NpoV",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 142,
+      "rows": 3401,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "4b0b3a9489408875eb5a7f31348e3b7a582503103cb9b16f494b38575cf73a58"
+    },
+    "stopped": true
+  },
+  "limits": [
+    "No financial approval service, period authorization API or correction workbench yet",
+    "Inputs to the planner must be server-owned validated source rows and original-allocator results",
+    "Per-assignment legacy review rendering needs net reconciliation before enabling external correction writes",
+    "Full cross-process concurrency, actual personnel/period approval and production data remain unverified",
+    "No deployment or live business database changes"
+  ],
+  "postgresServerTests": {
+    "tests": 69,
+    "pass": 69,
+    "fail": 0,
+    "skipped": 0
+  }
+}

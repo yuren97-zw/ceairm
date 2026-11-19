@@ -1,0 +1,94 @@
+{
+  "scope": "independent standard review server inbox and shared reminder delivery",
+  "syntheticOnly": true,
+  "sqlite": {
+    "tests": 580,
+    "pass": 580,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 63,
+    "pass": 63,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-047",
+    "repeatedMigration": true,
+    "populatedLegacyRefused": true,
+    "restore": {
+      "tables": 125,
+      "rows": 2754,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "fca24532738b8f0dc8cf31883e8a9a30763de7cbd229b954c7b65b03e43adc05"
+    },
+    "stopped": true,
+    "sameApplicationSourceAsFirstRun": true,
+    "wakeAssertion": "temporary caffeinate -is only, ended with process"
+  },
+  "featureFlags": {
+    "MUC_STANDARDS_REVIEW_ENABLED": "default off",
+    "MUC_STANDARDS_NOTIFICATIONS_ENABLED": "default off"
+  },
+  "browser": {
+    "localChromium": true,
+    "ordinaryReviewer": true,
+    "desktopWidth": 1440,
+    "mobileEmulationWidth": 390,
+    "mobileScrollWidth": 390,
+    "noticeRenderedOpenedRead": true,
+    "unsentOpinionPreserved": true,
+    "otherPrivateOpinionsAbsent": true,
+    "realDevice": false,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true
+  },
+  "limitations": [
+    "shift/rest quiet window not implemented",
+    "no external notification channel used",
+    "no real device/PWA acceptance",
+    "no production or 8788 data touched",
+    "all 210 cases still pending or partial"
+  ],
+  "sourceSha256": {
+    "nonroutine-notifications.mjs": "7c96874ac6a02cc89c63aa9346a69a33fe6f40d305e2f2384e166f19f6de1ca4",
+    "maintenance-standard-notifications.mjs": "a39726cbad278d25e816f3eae948a63337339116f2033c0d6e2244af8b75c9ce",
+    "review-storage.mjs": "88112340a0daa88bdae8f01ad9e728a74a1894ffaffadd43b5c651c0a0e521b9",
+    "migrations/047_maintenance_standard_notifications.sql": "e2ff620b85a3c89734bf8188572852b5ad01bac113f6f033cce3384d22fb12be",
+    "public/app.js": "054b68a78e0c5eae2f3183100656f4bce94a35e8c300e9a34831d949d8d14c4a",
+    "public/nonroutine-review-workbench.mjs": "d6a4debab86f94da99c256a4981d6d1f60d715683e4aec85727f9b08a022f7ec",
+    "public/nonroutine-notification-view.mjs": "7eec54a6785d53a241c432780d12aa8faf7e12afacd5d53d8249526ed64a8090",
+    "server.mjs": "991c4720633ddfa80bdce22d5c160aa17e7edf5239d6e3a27f54af34d26fd7b5",
+    "scripts/migrate-sqlite-to-postgres.mjs": "839992d4b7a84b0cce19d1d1509b8b70a0322d43ff40946d6107074be6d1bb88",
+    "tests/nonroutine-notifications.test.mjs": "506deeddd17cb44b626f9c7725cb74b9c7a1d472ac68cb4ef1128b781bda9298",
+    "tests/maintenance-standard-notifications.test.mjs": "c13c0f8f26ccfd86b4f79eaa5622049e0ff3c0477e457ee6ac18475b6f54cd0d",
+    "tests/maintenance-standard-review-workbench.test.mjs": "0f96d94535ffb767364703e49c0e0a54e9fea54f00c8ed8a9fec3f0d02255007",
+    "tests/server.test.mjs": "e82fd3d45713875dbc65d643edd783c98639cddf785cca044fd0123f86352452"
+  },
+  "firstPostgresRun": {
+    "tests": 63,
+    "pass": 62,
+    "fail": 1,
+    "failedCase": "200 scoped accounts and 500 historical records use bounded incremental queries",
+    "request": "POST /api/info/sync",
+    "error": "QUERY_TIMEOUT",
+    "observedQuery": "select min(version) as v from info_sync_changes",
+    "observedQueryWallMs": 158165.1,
+    "systemSleepOverlap": "16:27:26 sleep for 161 seconds; dark wake 16:30:07",
+    "standardReviewAndNotificationsApi": "passed",
+    "restoreExecuted": false,
+    "stopped": true,
+    "sourceChangedForRetry": false,
+    "retryMethod": "caffeinate -is wraps verifier; no timeout, assertion, or test scope changes"
+  }
+}

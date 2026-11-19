@@ -1,0 +1,34 @@
+{
+  "syntheticOnly": true,
+  "ordinaryManager": true,
+  "combinedFilters": true,
+  "exactModelA321Excluded": true,
+  "sourceAndDraftDeduplicateToOne": true,
+  "technicalTraceSeparate": true,
+  "referenceDetailsNoWorkIdentityLeak": true,
+  "explicitDisableRetainsReferences": true,
+  "explicitZeroReferenceWithdrawal": true,
+  "mutationRefreshRespectsFilters": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "font": "16px"
+  },
+  "disabled": {
+    "id": "qa-manual-standard-0",
+    "status": "DISABLED",
+    "references": {
+      "available": true,
+      "workItems": 1,
+      "draftWorkItems": 1,
+      "formalWorkItems": 0,
+      "sourceTraces": 1,
+      "standardImportRows": 0,
+      "originWorkRecognitions": 0
+    }
+  },
+  "withdrawn": {
+    "id": "qa-unreferenced-standard",
+    "status": "WITHDRAWN"
+  }
+}

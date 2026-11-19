@@ -1,0 +1,5 @@
+# 非例行后续依赖核对
+
+applyMaintenanceNonroutineChanges在形成nonroutine批次前先改派工/生成结果；整体确认逐项生成结果后才替换类别批次。不能单独切换结果读取到旧批次。maintenanceRecognitionAssignments的认定角色展开、nonroutine-source-facts.mjs原事实快照仍读取maintenance_assignments；如果直接去掉replace，将误把正式派工和实际参与不一致判为原事实变化，影响12人评议终审/更正和账期入账。
+
+后续须统一正式实际来源顺序、同一非例行批次各工作项的实际参与投影、认定角色来源与实际参与事实、评议原事实变化核验及任务树授权复核；保留历史缺失不补造、标准及策略提报快照、待审不入账/真实0，以及原七组与拖机算法。独立审核取消权尚无业务明确授权，不自行赋权。

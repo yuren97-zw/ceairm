@@ -1,0 +1,110 @@
+{
+  "stage": "workflow-simulation-workbench",
+  "sourceSha256": {
+    "server.mjs": "6425a47a9148ec43faa901cd63b51c8dd0b95277e44baefd6dab5c7d0b1e8820",
+    "public/app.js": "7195ee38c907cbc46570a48a4235972c1b16344c2a5c0ad060ab006968674fce",
+    "public/maintenance-workflow-workbench.mjs": "10e3ee5039d4b179b0b2db481cbc5ce5a2b388bc518d3d464d1cc39ab33df9a5",
+    "tests/maintenance-workflow-workbench.test.mjs": "ef500321037a891a0ca77505fc1acb8c847dc92d2bc8edda4d0e8a4c62b687e7",
+    "tests/server.test.mjs": "59c08a13f02aaba6c6331a78b55fa77c56c8d746645e1c5916b5826ed7b09a42",
+    "rbac-policy.mjs": "446a84b85817d84b1a9d106d392317d7d1a515cc4d12af4e267a754c62c3f103",
+    "maintenance-workflow-actions.mjs": "1e11c12ad78f803a2628729d83669203c77fc64b0677b8edcd8ca18e4aeba940",
+    "maintenance-workflow-templates.mjs": "432d397f3ea035b1d7c78fbd081cf38f39dac77610ef62cf84b191397e505397",
+    "scripts/check-maintenance-v101-restored.mjs": "b5e5f74e7bac0150d17674a607e80dd1f868105fe65d9297e0131c618576239b"
+  },
+  "sqlitePassed": 738,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-OhDFvk",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3633,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "38a2fa75eb06a2c52db92c35caec5452b6250fe82f7c40eccad6000e5666612e"
+    },
+    "stopped": true,
+    "testsPassed": 75
+  },
+  "restoredApplication": {
+    "restoredApplicationStartup": true,
+    "workflowHttpRetries": 2,
+    "workflowCancelRetries": 2,
+    "workflowActionFixtureVerified": true,
+    "workflowActionRetries": 2,
+    "workflowStorageFixtureVerified": true,
+    "extensionInstancesVerified": 4,
+    "extensionRegistrationsRetried": 6,
+    "towStandardSourcesVerified": 2,
+    "towReviewSourcesVerified": 1,
+    "legacyTowHours": 3,
+    "retiredTowRuleWriteRejected": true,
+    "sourceFactBaselinesVerified": 5,
+    "sourceFactChangesVerified": 1,
+    "sourceAttestationsRetried": 2,
+    "moduleSnapshotsVerified": 16,
+    "detachedModuleSnapshotsVerified": 1,
+    "correctionsVerified": 2,
+    "correctionApprovalsRetried": 10,
+    "correctionAuthorizationsRetried": 2,
+    "retried": 4,
+    "standardFinalizationsRetried": 8,
+    "standardPublicationsRetried": 8,
+    "standardImportsRetried": 8,
+    "publicationKinds": [
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications"
+    ],
+    "postedPaths": [
+      "ADJUSTED_CLOSED",
+      "MERGED_CLOSED"
+    ],
+    "maintenanceBusinessUnchanged": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "managerCreatedThroughUI": true,
+    "managerCannotClaimForWorker": true,
+    "workerClaimedThroughUI": true,
+    "dirtyNavigationCancelled": true,
+    "submissionResponseLostAfterRealCommit": true,
+    "requestRetriedUnchanged": true,
+    "workflowId": "97f0e676-6b08-4599-9ff4-3e6c25ae508e",
+    "exceptionRemainsSubmitted": true,
+    "workflowCompleted": true,
+    "otherAccountDenied": true,
+    "layout": {
+      "width": 390,
+      "scrollWidth": 390,
+      "inputSize": "16px"
+    },
+    "stopped": true,
+    "originalOpportunityUnchanged": true,
+    "originalHoursUnchanged": true,
+    "workflowEventCount": 3,
+    "serverExitCode": 0,
+    "browserExitCode": 130,
+    "screenshotsInspected": true
+  },
+  "limitations": [
+    "Simulation only; no business check approved or published",
+    "Actual completion projection, professional dispatch, rejection and notifications remain incomplete",
+    "Full group-scope matrix, physical devices and installed PWA remain unverified",
+    "No live data writes, actual role grants or deployment; full V10.1 incomplete"
+  ],
+  "goalComplete": false
+}

@@ -1,0 +1,7 @@
+# Cancelled and mixed recognition projections
+
+Original-route regression reproduces the pre-fix cancelled review0-versus-null error. One actual report batch has four managed work items: cancelled, still in review, recognized zero and recognized2. Original acceptance/twelve-seat opinions, finalization, cancellation, release/report confirmation and task-tree confirmation are exercised. Only zero and2 have effective rows; only2 contributes to confirmed hours. Source cancellation leaves sibling cases/assessments/entries exact.
+
+Final820/820 SQLite,104 PG service tests and147-table/7286-row complete restore pass. Actual original export worksheet cells retain empty standard hours for unresolved work and numeric0/2 for recognized work, plus explicit recognition status. Both actual-hours sort directions put missing last. Actual audit/detail/review projections and restored personal review estimates distinguish these states. Invalid cancelled-case/open-channel pairing fails409. Latest source hashes verified after final PG run.
+
+Existing isolated construction/accounting-role renderer test was updated to load the shared formatter; all original role/escaping assertions retained. No actual new report browser/device/PWA or Excel visual inspection is claimed. The actual prior cancellation browser evidence covers cancellation forms, not these newly changed report views. No merge/deploy. Full210-case plan remains126partial/84pending/0verified.

@@ -1,0 +1,20 @@
+{
+  "syntheticOnly": true,
+  "damagedTemplateReadOnly": true,
+  "qualifiedHistoryAccessible": true,
+  "privateBasisAbsent": true,
+  "retryRefused": true,
+  "typedResultRefused": true,
+  "layout": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "recovered": true,
+  "stopped": true,
+  "recoveredViaOriginalSyntheticBytes": true,
+  "verifiedSourceAfterReread": true,
+  "sourceServerExitCode": 0,
+  "browserExitCode": 130,
+  "postFixCorruptListAccessible": true,
+  "screenshotInspected": true
+}

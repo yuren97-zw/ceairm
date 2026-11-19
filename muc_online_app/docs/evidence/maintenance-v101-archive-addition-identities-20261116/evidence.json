@@ -1,0 +1,82 @@
+{
+  "baselineCommit": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sqlite": {
+    "default": 849,
+    "coordinator": 849,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 112,
+    "failed": 0,
+    "fullServiceBeforePortableSerializationFix": true,
+    "fullRestore": {
+      "tables": 148,
+      "rows": 8425,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "a96d65f0c9f2cab6bfa3538f62240ecf2a39272ee4e917d3615b4918d4836fac"
+    },
+    "latestReaderFixtureOnly": true,
+    "latestReaderServerTestsRepeated": false,
+    "latestReaderRestore": {
+      "tables": 148,
+      "rows": 8431,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "ec50b2a5c53b98f66c6d163fa5dca57cce3102af652528f0657c63fbfe6e725b"
+    },
+    "fixtureSha256": "a96d65f0c9f2cab6bfa3538f62240ecf2a39272ee4e917d3615b4918d4836fac",
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-review-addition-sources.mjs": "399ca636aedb217973015f19ff567903fca6ba8b24d1af6f62e1e63e3aa252ea",
+    "migrations/057_maintenance_review_addition_sources.sql": "aa5684f3e6589616bf989f130137dda454c9d5e52c16da6910e99506b4962661",
+    "server.mjs": "5ba672ddd3d97726f86f635364dfe46ba49fac7bf33276051bbaca7554a44d2c",
+    "scripts/migrate-sqlite-to-postgres.mjs": "181923e1038e6907175a57500f0c3857f9d982ab72bb2e03f6adaffa71646614",
+    "scripts/check-maintenance-v101-concurrency.mjs": "052a01f55dae16a99b5d1efb94a99f7ac077a5623c1479ab8aef428a48f5f30f",
+    "scripts/check-maintenance-v101-restored.mjs": "edd4e56b43bafabac39fc38fffd40eecd5107be9cee505f2c45302cec4f2d9a4",
+    "tests/server.test.mjs": "0d18adaffe071d124fdf935f7aebcba2901549425ef0d7689181187b0da52cb2",
+    "tests/maintenance-review-addition-sources.test.mjs": "8f8d2d064d9c7209673b7104e199db7efcff5beac390600629a056a14cea7271"
+  },
+  "browserVerifiedThisPhase": false,
+  "mergedOrDeployed": false,
+  "concurrency": {
+    "originalOverlaps": 14,
+    "originalCases": 5,
+    "archiveAdditionIdentity": {
+      "flightId": "mtnf-1794781614786-86986e5c86c6",
+      "clientId": "archive-race-stable-source",
+      "subtaskId": "mtns-1794781615031-45d425540a93",
+      "concurrentStatuses": [
+        200,
+        409
+      ],
+      "refreshRetryStatus": 200,
+      "sourceRows": 1,
+      "effectiveRows": 1,
+      "hours": 2,
+      "originalResultPreserved": true
+    },
+    "additionalOverlapCount": 1,
+    "workersCleanExit": true
+  },
+  "unitTests": 4
+}

@@ -6,6 +6,7 @@ import net from 'node:net';
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
+import {pathToFileURL} from 'node:url';
 import pg from 'pg';
 import {integrationEnvironment,readIntegrationConfig,integrationDatabase} from '../integration-runtime.mjs';
 
@@ -35,6 +36,7 @@ execFileSync('tar',['-xzf',archive,'-C',root]);
 const version=(await fs.readFile(path.join(root,'.release-version'),'utf8')).trim();
 assert.ok(version.endsWith(sha),'Artifact version must identify the requested commit');
 for(const file of ['server.mjs','backup-envelope.mjs','backup-cos.mjs','public/attendance-approval-plan-view.mjs','scripts/create-encrypted-backup.mjs'])await fs.access(path.join(root,file));
+if(ci)for(const file of ['scripts/check-maintenance-package.mjs','nonroutine-review.mjs','nonroutine-finalization.mjs','migrations/055_maintenance_rule_history.sql'])await fs.access(path.join(root,file));
 const probe=net.createServer();let port=8800;
 await new Promise((resolve,reject)=>{probe.once('error',reject);probe.listen(ci?0:8800,'127.0.0.1',()=>{port=probe.address().port;probe.close(resolve);});});
 let ciAdmin,ciDatabase,ciRole;
@@ -50,6 +52,7 @@ if(ci){
 }
 async function cleanCi(){if(ciAdmin){if(ciDatabase)await ciAdmin.query(`drop database ${ciDatabase} with (force)`);if(ciRole)await ciAdmin.query(`drop role ${ciRole}`);await ciAdmin.end();}}
 const env=integrationEnvironment({databaseUrl:config.databaseUrl,root,sha,port,ci,ambient:process.env,adminPassword:config.adminPassword});
+if(ci){for(const key of ['MUC_NONROUTINE_REVIEW_ENABLED','MUC_NONROUTINE_SUBMISSION_ENABLED','MUC_NONROUTINE_MANUAL_ENABLED'])env[key]='1';env.MUC_MAINTENANCE_V101='draft';}
 try {
 execFileSync(process.execPath,['scripts/run-postgres-migrations.mjs'],{cwd:root,env,stdio:'pipe'});
 execFileSync(process.execPath,['scripts/run-postgres-migrations.mjs'],{cwd:root,env,stdio:'pipe'});
@@ -75,7 +78,9 @@ try {
  for(const endpoint of ['/api/me','/api/maintenance/flights','/api/attendance/status','/api/attendance/summary?month=2026-10&view=summary']){
   const response=await fetch(origin+endpoint,{headers:{cookie}});assert.equal(response.status,200,endpoint);await response.json();
  }
- await fs.writeFile(path.join(root,'acceptance.json'),JSON.stringify({sha,artifactSha256:actual,version,port,postgres:true,protectedRequests:true,authenticatedRequests:true},null,2));
+ let maintenance=null;
+ if(ci){const me=await fetch(origin+'/api/me',{headers:{cookie}}).then(r=>r.json());const {verifyMaintenancePackage}=await import(pathToFileURL(path.join(root,'scripts/check-maintenance-package.mjs')).href);maintenance=await verifyMaintenancePackage({origin,cookie,personId:me.user.personId});}
+ await fs.writeFile(path.join(root,'acceptance.json'),JSON.stringify({sha,artifactSha256:actual,version,port,postgres:true,protectedRequests:true,authenticatedRequests:true,maintenance},null,2));
  console.log(JSON.stringify({sha,artifactSha256:actual,version,port,root,passed:true}));
  if(mode==='--serve'){console.log('Isolated preview ready; Ctrl-C stops only this child.');await once(child,'exit');}
 }finally{stop();if(running())await once(child,'exit');await cleanCi();}

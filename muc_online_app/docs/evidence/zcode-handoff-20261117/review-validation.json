@@ -1,0 +1,38 @@
+{
+  "checkedOn": "2026-11-17 Asia/Shanghai",
+  "scope": "Read-only source/evidence integrity and documentation review; no business tests, services, migrations or development resumed",
+  "head": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sourceFilesChecked": 468,
+  "sourceDrift": [],
+  "acceptanceCases": 210,
+  "acceptanceStatusCounts": {
+    "partial": 138,
+    "pending": 72,
+    "verified": 0
+  },
+  "acceptanceEvidenceReferences": 742,
+  "missingEvidenceReferences": [],
+  "namedSourceTestReferences": 336,
+  "unmatchedNamedSourceTests": [],
+  "historicalEvidenceDirectories": 93,
+  "historicalEvidenceFilesHashed": 1441,
+  "historicalEvidenceSymlinksExcluded": [],
+  "temporaryOriginalPathExists": {
+    "sqlite-default": false,
+    "sqlite-coordinator": false,
+    "api-four-state": false,
+    "workbench": false,
+    "busy-before-fix": false,
+    "syntax": false,
+    "postgres-summary": false,
+    "browser-driver": false,
+    "browser-directory": false,
+    "synthetic-base": false
+  },
+  "specificationOriginalPathExists": false,
+  "newFindingsAreHandoffAndVerificationGapsNotProvenNewProductBugs": true,
+  "codexDevelopmentRemainsPaused": true,
+  "initialValidationPreservedAs": "initial-validation-20261117.json",
+  "missingCurrentDocumentLinks": [],
+  "documentReferencesCanBeFilesOrDirectories": true
+}

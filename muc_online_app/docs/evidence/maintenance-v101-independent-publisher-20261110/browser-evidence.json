@@ -1,0 +1,187 @@
+{
+  "syntheticOnly": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "drawer": 374.390625,
+    "parent": 374.390625,
+    "font": "16px"
+  },
+  "wrongAircraftRejected": true,
+  "selectedZeroReadonly": true,
+  "unlistedInOriginalDialog": true,
+  "saved": {
+    "formalItems": 0,
+    "draft": {
+      "id": "mtnrd-1794314407716-64e524a0c4b4",
+      "flightId": "qa-manual-flight",
+      "reportType": "nonroutine",
+      "items": [
+        {
+          "clientId": "draft-1794314406924-0-07eca03dacc188",
+          "chapter": "995",
+          "title": "手工浏览器零工时A320",
+          "category": "试车",
+          "standardHours": 0,
+          "reportExplanation": "机型精确匹配及合法0测试范围",
+          "entries": [
+            {
+              "role": "主做",
+              "personId": "person-1794314394009-6aa15fd571b4"
+            }
+          ],
+          "sourceFingerprint": "manual-b7c98d828fdb3f71f2c4eeca01519c5736c7accd2c9360c15b02fedf75e3cd79",
+          "sourceKind": "MANUAL",
+          "manualManaged": true,
+          "importedUnlisted": false,
+          "standardId": "qa-manual-standard-0",
+          "standardVersion": 1,
+          "standardSnapshot": {
+            "id": "qa-manual-standard-0",
+            "versionId": "qa-manual-standard-0-v1",
+            "version": 1,
+            "category": "试车",
+            "chapter": "995",
+            "title": "手工浏览器零工时A320",
+            "workScope": "机型精确匹配及合法0测试范围",
+            "standardHours": 0,
+            "aircraftCodes": [
+              "A320"
+            ],
+            "genericAircraft": false,
+            "effectiveAt": "2026-11-10T12:39:54.215Z"
+          }
+        },
+        {
+          "clientId": "draft-1794314407598-1-2312f7f30dbcf",
+          "chapter": "998",
+          "title": "手工浏览器未收录申请",
+          "category": "单项工作",
+          "standardHours": 2,
+          "reportExplanation": "页面手工申请范围，保存不得入账。",
+          "entries": [
+            {
+              "role": "主做",
+              "personId": "person-1794314394009-6aa15fd571b4"
+            }
+          ],
+          "sourceFingerprint": "manual-36d902fd0e80f54970fd5e05341a31f85724c25f82e1604997f939ae13f867ae",
+          "sourceKind": "MANUAL",
+          "manualManaged": true,
+          "importedUnlisted": true,
+          "standardId": "",
+          "standardVersion": null,
+          "standardSnapshot": null
+        }
+      ],
+      "version": 1,
+      "updatedBy": "54002010",
+      "updatedByName": "赵威",
+      "updatedAt": "2026-11-10T12:40:07.716Z"
+    }
+  },
+  "submitted": {
+    "items": [
+      {
+        "id": "mtns-1794314407928-9419c786cff1",
+        "chapter": "995",
+        "title": "手工浏览器零工时A320",
+        "category": "试车",
+        "standardHours": 0,
+        "hourAssessment": {
+          "sourceKind": "STANDARD",
+          "strategy": "EQUAL",
+          "pending": false,
+          "reviewPending": false,
+          "syncPending": false,
+          "reviewCaseId": null,
+          "requestedHours": 0,
+          "standard": {
+            "id": "qa-manual-standard-0",
+            "versionId": "qa-manual-standard-0-v1",
+            "version": 1,
+            "category": "试车",
+            "chapter": "995",
+            "title": "手工浏览器零工时A320",
+            "workScope": "机型精确匹配及合法0测试范围",
+            "standardHours": 0,
+            "aircraftCodes": [
+              "A320"
+            ],
+            "genericAircraft": false,
+            "effectiveAt": "2026-11-10T12:39:54.215Z"
+          },
+          "effectiveHours": 0
+        },
+        "reportExplanation": "机型精确匹配及合法0测试范围",
+        "entries": [
+          {
+            "id": "mtnre-1794314407929-4b3fabb2e097",
+            "ownerType": "subtask",
+            "ownerId": "mtns-1794314407928-9419c786cff1",
+            "role": "主做",
+            "personId": "person-1794314394009-6aa15fd571b4",
+            "userName": "赵威",
+            "team": "未设置",
+            "standardHours": 0,
+            "source": "临时非例行报工"
+          }
+        ]
+      },
+      {
+        "id": "mtns-1794314407929-8ab66a2f1d54",
+        "chapter": "998",
+        "title": "手工浏览器未收录申请",
+        "category": "单项工作",
+        "standardHours": null,
+        "hourAssessment": {
+          "sourceKind": "REVIEW",
+          "strategy": "ROLE_COMBINATION",
+          "pending": true,
+          "reviewPending": true,
+          "syncPending": false,
+          "reviewCaseId": "nrc-1794314407931-07f9e820ee13",
+          "requestedHours": 2,
+          "standard": null,
+          "effectiveHours": null,
+          "estimateOnly": true,
+          "personalEstimates": [
+            {
+              "personId": "person-1794314394009-6aa15fd571b4",
+              "hours": 2
+            }
+          ],
+          "estimateUnavailable": false
+        },
+        "reportExplanation": "页面手工申请范围，保存不得入账。",
+        "entries": [
+          {
+            "id": "mtnre-1794314407930-f9a0d1bf6332",
+            "ownerType": "subtask",
+            "ownerId": "mtns-1794314407929-8ab66a2f1d54",
+            "role": "主做",
+            "personId": "person-1794314394009-6aa15fd571b4",
+            "userName": "赵威",
+            "team": "未设置",
+            "standardHours": null,
+            "source": "临时非例行报工"
+          }
+        ]
+      }
+    ],
+    "draft": null,
+    "cases": [
+      {
+        "id": "nrc-1794314407931-07f9e820ee13",
+        "flightId": "qa-manual-flight",
+        "state": "PENDING_ACCEPTANCE",
+        "title": "手工浏览器未收录申请",
+        "category": "单项工作",
+        "chapter": "998",
+        "workScope": "页面手工申请范围，保存不得入账。",
+        "submittedCount": 0,
+        "createdAt": "2026-11-10T12:40:07.931Z"
+      }
+    ]
+  }
+}

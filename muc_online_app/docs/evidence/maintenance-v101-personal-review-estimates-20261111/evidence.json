@@ -1,0 +1,58 @@
+{
+  "syntheticOnly": true,
+  "sqlite": {
+    "tests": 653,
+    "pass": 653,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-SjjFDG",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 135,
+      "rows": 3153,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "ec89df08167b28b5c5de6701a8f8a2b1698ee7bc21a267410548dd478893e270"
+    },
+    "stopped": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "text": "审核中工时 · 2 项 · 暂估待分配\n\n个人申请暂估，仅参考。待分配 1 项。\n\n本人可计算申请\n2026-11-11 · QA901 · B-QA\n评议 3/12 · 评议中\n2 小时暂估\n原申请总工时 2 小时\n本人待分配申请\n2026-11-11 · QA901 · B-QA\n评议 3/12 · 评议中\n待分配 / 暂无法估算\n原申请总工时 2 小时",
+    "dimensions": {
+      "scrollWidth": 390,
+      "width": 390
+    }
+  },
+  "temporaryServerStopped": true,
+  "temporaryBrowserStopped": true,
+  "sourceSha256": {
+    "server.mjs": "b557fd624db3f70fc619352341a97429a96d08b803ef8de095063780dc8c30ef",
+    "public/app.js": "738265f40d09c818c6e10f2163324102a31d9ee6e6e67daf56d047394b1e29c1",
+    "public/index.html": "6e9abe1f51f7e234464cce94b4483e0b8b799ac3ff5c324e3735354f2c6372ef",
+    "tests/server.test.mjs": "59b40b90d759383351463d14d4536fbed4749ca04e60c89effc0518e4c7acd7e",
+    "tests/maintenance-personal-review-estimates.test.mjs": "6795d1e96ac8b5ca2b2f0004104c91287092bd6dba41050db8bf876c216595ef"
+  },
+  "limits": [
+    "Zero allocation and finalized-removal tested at helper level; browser uses positive estimate and unknown policy",
+    "Physical iOS/PWA, business data and large production data not verified",
+    "No deployment or changes to running 8788 business database"
+  ]
+}

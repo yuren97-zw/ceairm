@@ -1,0 +1,44 @@
+{
+  "stage": "internal-nonsettlement-module-registration",
+  "sourceSha256": {
+    "maintenance-extension-modules.mjs": "be75bfa63afaf7a00809373c93088f10938a48fc603c170dd2108f92e535ed7c",
+    "maintenance-module-instances.mjs": "a364f8576ffc29d53a69f24547e2b05296a7ccc53b7241359589eb8fba9bf8e4",
+    "tests/maintenance-extension-modules.test.mjs": "7f985c90bf31581318bc7c88724cdbb3dc3a19c4a636dfc506725318c6d8072b"
+  },
+  "sqlitePassed": 713,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-NT5hUE",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 142,
+      "rows": 3529,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "f263f7cedca4e37457062a71bf7bc890b0d6ae15a82932fa799b7a4f8f819abe"
+    },
+    "stopped": true
+  },
+  "limitations": [
+    "Internal service only; no public registration authority activated",
+    "Audit callback tested but not bound to a production registration route",
+    "No workflow tasks, completion services or non-settlement result dispatcher yet",
+    "PG run covers original compatibility, not extension registration scenarios",
+    "Full acceptance incomplete"
+  ],
+  "goalComplete": false
+}

@@ -1,0 +1,25 @@
+{
+  "driverVersion": "page-evidence-r10",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "pendingBefore": {
+      "ok": true,
+      "text": "+ 2 小时待复核"
+    },
+    "refreshE2E": {
+      "ok": true,
+      "db": 3,
+      "page": "+ 3 小时待复核",
+      "urlUnchanged": true
+    }
+  },
+  "screenshots": [
+    "r10-pending-2h.png",
+    "r10-pending-3h.png"
+  ],
+  "servicesStopped": true
+}

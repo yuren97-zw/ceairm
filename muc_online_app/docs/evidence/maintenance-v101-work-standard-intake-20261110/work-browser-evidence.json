@@ -1,0 +1,105 @@
+{
+  "syntheticOnly": true,
+  "explicitAircraft": true,
+  "createdUnadmittedDraft": true,
+  "separateAdmissionAndPublication": true,
+  "privateOpinionsAbsent": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "font": "16px"
+  },
+  "published": {
+    "standard": {
+      "id": "mst-1794316016165-f2251e1ef73a",
+      "status": "PUBLISHED",
+      "revision": 3,
+      "created_by": "qa-publisher",
+      "created_at": "2026-11-10T13:06:56.165Z",
+      "updated_at": "2026-11-10T13:06:56.382Z"
+    },
+    "version": {
+      "id": "msv-1794316016165-b3d688cc9c28",
+      "version": 1,
+      "status": "PUBLISHED"
+    },
+    "capabilities": {
+      "admit": false,
+      "publish": false
+    },
+    "applicability": {
+      "ready": true,
+      "reference": "maintenance_aircraft_hours_v1:1",
+      "dictionaryVersion": 1,
+      "aircraftCodes": [
+        "A320"
+      ],
+      "genericAircraft": false,
+      "groups": [
+        {
+          "code": "A320",
+          "groupId": "qa-exact-a320"
+        }
+      ]
+    },
+    "source": {
+      "kind": "WORK_FINAL",
+      "standardId": "mst-1794316016165-f2251e1ef73a",
+      "versionId": "msv-1794316016165-b3d688cc9c28",
+      "caseId": "nrc-059f48aa-9be4-46e1-af9d-1fdd2faf9065-71",
+      "finalId": "nrf-059f48aa-9be4-46e1-af9d-1fdd2faf9065-135",
+      "decision": {
+        "category": "单项工作",
+        "chapter": "29",
+        "title": "施工零认定标准候选",
+        "workScope": "施工终审锁定的真实范围",
+        "recognizedHours": 0
+      },
+      "aircraft": {
+        "aircraftCodes": [
+          "A320"
+        ],
+        "genericAircraft": false
+      },
+      "reviewAdmissionIntent": "PENDING",
+      "workSource": {
+        "flightId": "qa-manual-flight",
+        "subtaskId": "qa-work-source-task",
+        "reportBatchId": "qa-work-source-batch",
+        "approvedRevision": 1
+      }
+    },
+    "admission": {
+      "id": "std-admit-1794316016276-90874705541b",
+      "versionId": "msv-1794316016165-b3d688cc9c28",
+      "finalId": "nrf-059f48aa-9be4-46e1-af9d-1fdd2faf9065-135",
+      "sequence": 1,
+      "decision": "INCLUDE",
+      "actorId": "qa-publisher",
+      "reason": "独立准入纳入",
+      "createdAt": "2026-11-10T13:06:56.275Z"
+    },
+    "admissionHistory": [
+      {
+        "id": "std-admit-1794316016276-90874705541b",
+        "versionId": "msv-1794316016165-b3d688cc9c28",
+        "finalId": "nrf-059f48aa-9be4-46e1-af9d-1fdd2faf9065-135",
+        "sequence": 1,
+        "decision": "INCLUDE",
+        "actorId": "qa-publisher",
+        "reason": "独立准入纳入",
+        "createdAt": "2026-11-10T13:06:56.275Z"
+      }
+    ],
+    "publication": {
+      "id": "std-pub-1794316016382-295e9cd63cb7",
+      "versionId": "msv-1794316016165-b3d688cc9c28",
+      "finalId": "nrf-059f48aa-9be4-46e1-af9d-1fdd2faf9065-135",
+      "admissionId": "std-admit-1794316016276-90874705541b",
+      "effectiveAt": "2026-11-10T13:06:56.382Z",
+      "actorId": "qa-publisher",
+      "reason": "核验精确机型后独立发布",
+      "createdAt": "2026-11-10T13:06:56.382Z"
+    }
+  }
+}

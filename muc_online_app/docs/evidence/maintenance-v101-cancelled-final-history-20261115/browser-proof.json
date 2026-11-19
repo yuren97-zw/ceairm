@@ -1,0 +1,57 @@
+{
+  "actualOriginalBrowser": true,
+  "syntheticOnly": true,
+  "viewports": [
+    {
+      "width": 1280,
+      "caseId": "nrc-1794752116644-bcf7c5326984",
+      "originalTaskState": "PENDING_AUTHORIZATION",
+      "historicalRecognitionVisible": true,
+      "privateOpinionsAuthorized": true,
+      "finalizeAbsent": true,
+      "syncAbsent": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "width": 390,
+      "caseId": "nrc-1794752116744-b69409f88c44",
+      "originalTaskState": "AUTHORIZED",
+      "historicalRecognitionVisible": true,
+      "privateOpinionsAuthorized": true,
+      "finalizeAbsent": true,
+      "syncAbsent": true,
+      "noHorizontalOverflow": true
+    }
+  ],
+  "privateReads": [
+    {
+      "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116744-b69409f88c44/finalization",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116644-bcf7c5326984/finalization",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794752116744-b69409f88c44/finalization",
+      "status": 200
+    }
+  ],
+  "boundedSuccessAlsoClearsPrivateHistory": true,
+  "midReadRevocationClearsPrivateHistory": true,
+  "authorizedRequeryAfterRegrant": true,
+  "logoutDestroysPrivateWorkbench": true,
+  "beforeSha256": "7790bca45831992a7b0b4dd3a940d3a1d1cd8b592da436ffb0fef56500bcd053",
+  "afterSha256": "7790bca45831992a7b0b4dd3a940d3a1d1cd8b592da436ffb0fef56500bcd053",
+  "originalSourceHistoryAndLedgerUnchanged": true,
+  "physicalDeviceVerified": false,
+  "originalSyntheticRoleRestored": true
+}

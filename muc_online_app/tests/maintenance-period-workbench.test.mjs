@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {renderPeriodWorkbench,createPeriodWorkbench} from '../public/maintenance-period-workbench.mjs';
+const escape=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+const result={period:{month:'2026-09',state:'UNKNOWN',revision:1,responsible_account_id:'owner'},capabilities:{assign:true,confirm:true},history:[]};
+test('period page leaves owner and confirmation unselected and separates unknown from open',()=>{
+  const html=renderPeriodWorkbench({month:'2026-09',result,candidates:[{accountId:'owner',name:'<负责人>',employeeNo:'123'}]},escape);
+  assert.match(html,/未确认/);assert.match(html,/&lt;负责人>/);assert.ok(!html.includes('selected'));assert.match(html,/按原作业月份统计/);
+  const readonly=renderPeriodWorkbench({result:{...result,capabilities:{assign:false,confirm:false}}},escape);assert.ok(!readonly.includes('data-mp-confirm'));assert.ok(!readonly.includes('data-mp-assign'));
+});
+test('period operations preserve failed inputs, bind the loaded month revision and never silently confirm on assignment',async t=>{
+  const previous=[globalThis.addEventListener,globalThis.removeEventListener,globalThis.confirm];globalThis.addEventListener=()=>{};globalThis.removeEventListener=()=>{};globalThis.confirm=()=>false;
+  const handlers=new Map(),status={textContent:''},requests=[];
+  const root={innerHTML:'',querySelector:()=>status,addEventListener:(name,handler)=>handlers.set(name,handler),removeEventListener(){}};
+  let fail=true;
+  const controller=createPeriodWorkbench({root,escapeHtml:escape,async api(path,options){requests.push({path,options});
+    if(path.includes('candidates'))return {items:[{accountId:'owner',name:'负责人',employeeNo:'123'}],truncated:false};
+    if(options){if(fail)throw new Error('账期版本已变化');return {...result,period:{...result.period,revision:2},capabilities:{assign:true,confirm:false}};}return structuredClone(result);
+  }});t.after(()=>{controller.destroy();[globalThis.addEventListener,globalThis.removeEventListener,globalThis.confirm]=previous;});
+  const input=(name,value)=>handlers.get('input')({target:{name,value}});
+  const click=name=>handlers.get('click')({target:{closest:()=>({hasAttribute:attribute=>attribute===name})}});
+  const submit=form=>handlers.get('submit')({preventDefault(){},target:{matches:selector=>selector===form}});
+  await click('data-mp-query');assert.equal(requests.length,0);
+  input('periodMonth','2026-09');await click('data-mp-query');await click('data-mp-candidates');
+  input('periodAccount','owner');input('periodAssignReason','交接依据');input('periodConfirmReason','待核实状态依据');
+  input('periodMonth','2026-10');await submit('[data-mp-assign]');assert.equal(requests.filter(item=>item.options).length,0);
+  assert.match(status.textContent,/先查询/);input('periodMonth','2026-09');
+  await submit('[data-mp-assign]');assert.match(root.innerHTML,/账期版本已变化/);assert.match(root.innerHTML,/交接依据/);assert.equal(controller.hasUnsaved(),true);
+  const before=requests.length;await controller.refresh();await click('data-mp-query');assert.equal(requests.length,before);
+  fail=false;await submit('[data-mp-assign]');const post=requests.at(-1);assert.deepEqual(post.options.body,{revision:1,reason:'交接依据',accountId:'owner'});
+  assert.ok(!requests.some(item=>item.path.endsWith('/confirm')));assert.match(root.innerHTML,/待核实状态依据/);assert.equal(controller.hasUnsaved(),true);
+});
+test('responsible person must explicitly select open or closed and successful confirmation displays the authoritative response',async t=>{
+  const previous=[globalThis.addEventListener,globalThis.removeEventListener];globalThis.addEventListener=()=>{};globalThis.removeEventListener=()=>{};
+  const handlers=new Map(),status={textContent:''},requests=[];
+  const root={innerHTML:'',querySelector:()=>status,addEventListener:(name,handler)=>handlers.set(name,handler),removeEventListener(){}};
+  const controller=createPeriodWorkbench({root,escapeHtml:escape,async api(path,options){requests.push({path,options});return options?{...result,period:{...result.period,state:'CLOSED',revision:2}}:result;}});
+  t.after(()=>{controller.destroy();[globalThis.addEventListener,globalThis.removeEventListener]=previous;});
+  const input=(name,value)=>handlers.get('input')({target:{name,value}});
+  input('periodMonth','2026-09');await handlers.get('click')({target:{closest:()=>({hasAttribute:name=>name==='data-mp-query'})}});
+  const event={preventDefault(){},target:{matches:selector=>selector==='[data-mp-confirm]'}};
+  input('periodConfirmReason','月末核对封账');await handlers.get('submit')(event);assert.equal(requests.length,1);
+  input('periodConfirmState','CLOSED');await handlers.get('submit')(event);assert.equal(requests.length,2);
+  assert.deepEqual(requests[1].options.body,{revision:1,reason:'月末核对封账',state:'CLOSED'});assert.match(root.innerHTML,/2026-09 · 已封账/);assert.equal(controller.hasUnsaved(),false);
+  assert.ok(requests.every(item=>!item.path.includes('nonroutine')&&!item.path.endsWith('/assign')));
+});

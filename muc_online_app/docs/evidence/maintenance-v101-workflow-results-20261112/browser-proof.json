@@ -1,0 +1,29 @@
+{
+  "syntheticOnly": true,
+  "managerCreatedThroughUI": true,
+  "managerCannotClaimForWorker": true,
+  "workerClaimedThroughUI": true,
+  "dirtyNavigationCancelled": true,
+  "submissionResponseLostAfterRealCommit": true,
+  "requestRetriedUnchanged": true,
+  "workflowId": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+  "exceptionRemainsSubmitted": true,
+  "workflowCompleted": true,
+  "completionSourceVerified": true,
+  "typedResultVerified": true,
+  "otherAccountDenied": true,
+  "layout": {
+    "width": 390,
+    "scrollWidth": 390,
+    "inputSize": "16px"
+  },
+  "stopped": true,
+  "serverExitCode": 0,
+  "browserExitCode": 130,
+  "originalOpportunityUnchanged": true,
+  "originalHoursUnchanged": true,
+  "workflowEventCount": 3,
+  "inspectedScreenshots": [
+    "workflow-result-mobile.png"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "syntheticOnly": true,
+  "sourceChangeSeededDirectly": true,
+  "originalAndCurrentScopeShown": true,
+  "uncheckedByDefault": true,
+  "unreviewedSubmitBlocked": true,
+  "previewVersionBound": true,
+  "sameRoundTwelveOpinionsRetained": true,
+  "zeroRecognitionExplicit": true,
+  "sourceAttestationRecorded": true,
+  "pendingPeriodNoHours": true,
+  "layout": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "stopped": true,
+  "originalOpinionsUnchanged": true,
+  "singleCaseSingleFinal": true,
+  "formalAndAdjustmentHoursZero": true
+}

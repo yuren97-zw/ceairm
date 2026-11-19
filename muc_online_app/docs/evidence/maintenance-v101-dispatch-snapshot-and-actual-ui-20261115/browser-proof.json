@@ -1,0 +1,60 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalUi": true,
+  "flightId": "mtnf-1794715705669-df23d3c3422b",
+  "subtaskId": "mtns-1794715705686-ec5fd6455d9c",
+  "formalDispatchIdentityUnchanged": true,
+  "routineActualPerson": "person-browser-actual-1",
+  "nonroutineRevisedActualPerson": "person-browser-actual-2",
+  "finalRoutineHours": 5,
+  "finalNonroutineHours": 2,
+  "releaseSorties": 1,
+  "desktopAnd390Viewport": true,
+  "layout": {
+    "viewport": 390,
+    "width": 390,
+    "dialogWidth": 374.390625
+  },
+  "journal": [
+    {
+      "batch_id": "mtnrb-1794715706455-8f6fa7f5d53b",
+      "batch_version": 1,
+      "snapshot_sha256": "e8194f8a88d61fcf0f9914907fbc7261e363d5b6fbafd7b60d8c88619be97680"
+    },
+    {
+      "batch_id": "mtnrb-1794715706455-8f6fa7f5d53b",
+      "batch_version": 2,
+      "snapshot_sha256": "8665b53cb5be34c6572b21b8e8723c7c55b243ea40b6249f5fb19a27469eb383"
+    },
+    {
+      "batch_id": "mtnrb-1794715706927-ff8a87961ff0",
+      "batch_version": 1,
+      "snapshot_sha256": "eed43915cad9c1c2934f59e6e575951a9c06e7afb163fa3206ca073d71727546"
+    },
+    {
+      "batch_id": "mtnrb-1794715706927-ff8a87961ff0",
+      "batch_version": 2,
+      "snapshot_sha256": "ad1c8eb07d6e3771b0e0e1c5692877b5b5aaf2444d32c37dca480c45ab42e043"
+    },
+    {
+      "batch_id": "mtnrb-1794715706927-ff8a87961ff0",
+      "batch_version": 3,
+      "snapshot_sha256": "d665b0e8a744daa3227cd8856906884ffd68b9aca53749899de1234c02223832"
+    },
+    {
+      "batch_id": "mtnrb-1794715707035-bb1d45ef7fdb",
+      "batch_version": 1,
+      "snapshot_sha256": "2cecf6101177f161d0d1bf5d45ddc5aa54e5e5a030fb69381139c1042b5c5e17"
+    }
+  ],
+  "dialogs": [
+    "确认例行报工人员填写完整。"
+  ],
+  "confirmedReadRetainsActualRevision": true,
+  "confirmedNonroutineText": "\n      非例行 · 实际报工浏览器非例行其他 · 非例行标准工时 · 基础 2h已确认删除\n      \n      \n    主做比例 1 · 1 人调整人员\n    复核修订乙未设置已确认2h\n  \n    检验比例 0 · 0 人调整人员\n    暂无人员\n  \n    辅助比例 0 · 0 人调整人员\n    暂无人员\n  \n    ",
+  "confirmedReviewLayout": {
+    "viewport": 390,
+    "width": 390,
+    "dialogWidth": 374.390625
+  }
+}

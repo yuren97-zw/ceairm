@@ -1,0 +1,27 @@
+{
+  "flights": [
+    {
+      "id": "mtnf-1794617628748-b79ac55b468e",
+      "stand": "PEER-NEW",
+      "date": "2026-11-14"
+    },
+    {
+      "id": "mtnf-1794617678796-5e71b9628ddb",
+      "stand": "PEER-NEW",
+      "date": "2026-11-14"
+    },
+    {
+      "id": "mtnf-1794617711914-77444658fb40",
+      "stand": "PEER-NEW",
+      "date": "2026-11-14"
+    },
+    {
+      "id": "mtnf-1794617781023-d5f5f46a9c17",
+      "stand": "FINAL-SAVED",
+      "date": "2026-11-14"
+    }
+  ],
+  "hours": 0,
+  "noStaleInputPersisted": true,
+  "finalTargetStand": "FINAL-SAVED"
+}

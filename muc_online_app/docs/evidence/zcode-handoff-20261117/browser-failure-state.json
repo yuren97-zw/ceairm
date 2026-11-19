@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:18888/dashboard?qa=four-state-SEALED-1280",
+  "ready": "complete",
+  "activePage": "maintenancePage",
+  "reviewEnabled": false,
+  "tabs": [],
+  "rootCause": "NOT_ESTABLISHED"
+}

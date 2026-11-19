@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import http from 'node:http';
+import assert from 'node:assert/strict';
+const root=new URL('.',import.meta.url).pathname;
+process.env.MUC_NO_LISTEN='1';process.env.NODE_ENV='test';process.env.DATABASE_URL='';process.env.DB_PATH=root+'synthetic-audit.sqlite';process.env.UPLOAD_DIR=root+'uploads';
+for(const key of ['ATTENDANCE_SYNC_ENABLED','ATTENDANCE_WORKER_ENABLED','ATTENDANCE_EVENTS_ENABLED','ATTENDANCE_APPROVAL_PLANS_ENABLED'])process.env[key]='false';
+for(const key of ['MUC_WORKFLOW_TASKS_ENABLED','MUC_WORKFLOW_SIMULATION_ENABLED','MUC_NONSETTLEMENT_MODULES_ENABLED','MUC_MAINTENANCE_MODULE_INSTANCES_ENABLED'])process.env[key]='1';
+const {db,measuredRoute}=await import('/Users/zhaowei/.codex/worktrees/maintenance-personnel-8788/MUC收集信息/muc_online_app/server.mjs');
+const flightId=JSON.parse(fs.readFileSync(root+'metadata.json','utf8')).flightId;
+const server=http.createServer(measuredRoute);server.listen(18888,'127.0.0.1',()=>console.log('QA_READY'));
+process.on('SIGINT',()=>server.close(async()=>{fs.writeFileSync(root+'final-db.json',JSON.stringify({flight:db.prepare('select * from maintenance_flights where id=?').get(flightId),hours:db.prepare('select * from maintenance_effective_hour_results order by id').all(),workflows:db.prepare('select * from maintenance_workflow_instances').all(),tasks:db.prepare('select * from maintenance_workflow_tasks').all(),events:db.prepare('select * from maintenance_workflow_events').all()},null,2));await db.close?.();process.exit(0);}));
