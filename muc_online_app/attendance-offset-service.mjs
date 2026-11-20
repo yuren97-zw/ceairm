@@ -4,6 +4,7 @@ import {createOffsetRegister} from './attendance-offset-register.mjs';
 import {createActionTaskService} from './action-task-service.mjs';
 import {resolveOffsetFacts,accumulatedCoverage,exchangeSeconds,offsetDayLabel} from './attendance-offset-facts.mjs';
 import {monthDates,dayOf,classifyDay,plannedShift} from './attendance-rules.mjs';
+import {classifyPosition} from './identity-classification.mjs';
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const nextMonth=month=>{const [y,m]=month.split('-').map(Number);return `${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,'0')}`;};
@@ -17,6 +18,14 @@ export function hoursToSeconds(value){
 export function createOffsetService({db,clock=Date.now,hasPermission,canViewPerson,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled,listPeople=()=>[],allowLegacySettlement=false,listApproverIds=()=>db.prepare("select id from users where status='active'").all().map(r=>r.id)}){
  const register=createOffsetRegister({db,clock});
  db.exec(fs.readFileSync(new URL('./migrations/033_attendance_monthly_exchange.sql',import.meta.url),'utf8'));
+ // B4 路由候选表（V1.1 §6.3；036 编号预留给未合并的考勤单日封顶迁移）。
+ db.exec(fs.readFileSync(new URL('./migrations/037_attendance_offset_routes.sql',import.meta.url),'utf8'));
+ const CADRE_POSITIONS=['主任','副主任','助理'];
+ const routeOf=row=>{try{const parsed=JSON.parse(row.responsibility_json||'{}');return parsed.route_kind||parsed.status||'applicant_selected';}catch{return 'applicant_selected';}};
+ const personOfPosition=personId=>db.prepare('select position_code,employment_status from personnel where id=?').get(personId||'');
+ const isCadrePerson=personId=>{const person=personOfPosition(personId);return CADRE_POSITIONS.includes(person?.position_code)&&!['离职','停职'].includes(person?.employment_status||'');};
+ const isTeamLeaderPerson=personId=>{const person=personOfPosition(personId);return person?.position_code==='班组长'&&!['离职','停职'].includes(person?.employment_status||'');};
+ const insertRouteCandidates=(id,kind,candidates)=>{const insert=db.prepare('insert into attendance_offset_candidates(request_id,user_id,route_kind,reachable,reason,created_at) values(?,?,?,?,?,?) on conflict(request_id,user_id) do update set reachable=excluded.reachable,reason=excluded.reason');for(const candidate of candidates)insert.run(id,candidate.userId,kind,candidate.reachable?1:0,candidate.reason||null,at());};
  const monthlyRule=sourceMonth=>sourceMonth>='2026-10'?db.prepare('select * from attendance_monthly_exchange_rules where source_month<=? order by source_month desc,created_at desc,id desc').get(sourceMonth):null;
  const allPeople=()=>[...new Set(listPeople())];
  const at=()=>new Date(clock()).toISOString();
@@ -46,7 +55,12 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
  const request=id=>db.prepare('select * from attendance_offset_requests where id=?').get(id);
  const requestForUpdate=id=>db.prepare('select * from attendance_offset_requests where id=?'+(db.kind==='postgres'?' for update':'')).get(id);
  const items=id=>db.prepare('select * from attendance_offset_items where request_id=? order by id').all(id);
- const assigneeAllowed=(user,row)=>!!user&&row.status==='pending'&&row.assignee_user_id===user.id&&row.person_id!==user.personId&&user.status!=='disabled'&&hasPermission(user,'attendance.offset.approve');
+ const assigneeAllowed=(user,row)=>{
+  if(!user||row.status!=='pending'||row.person_id===user.personId||user.status==='disabled'||!hasPermission(user,'attendance.offset.approve'))return false;
+  // 干部共同审批（V1.1 §6.3）：候选快照 + 实时资格（D05）——离任/撤职的候选不能再审。
+  if(routeOf(row)==='cadre_pool')return !!db.prepare('select 1 from attendance_offset_candidates where request_id=? and user_id=? and reachable=1').get(row.id,user.id)&&isCadrePerson(user.personId);
+  return !!row.assignee_user_id&&row.assignee_user_id===user.id;
+ };
  const tasks=createActionTaskService({db,clock,selectVisible:user=>hasPermission(user,'attendance.offset.approve')?db.prepare("select t.* from action_tasks t join attendance_offset_requests r on r.id=t.source_id where t.source_module='attendance' and t.source_type='offset_approval' and t.status='pending' and r.status='pending' and t.assignee_user_id=? and r.assignee_user_id=? and r.person_id<>? order by t.created_at desc,t.id desc").all(user.id,user.id,user.personId||''):[],canAct:(user,task)=>{const row=request(task.source_id);return !!row&&assigneeAllowed(user,row);}});
  function adjust(personId,month,kind,itemId){
   const expressions={freeze:'frozen=frozen+1',approve:'frozen=frozen-1,used=used+1',release:'frozen=frozen-1',refund:'used=used-1'};
@@ -234,11 +248,21 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    return op(user,'transfer',key,{id,...body},()=>{
     const row=requestForUpdate(id);if(!row||!canViewPerson(user,row.person_id))throw fail('无权转办',403);
     if(row.status!=='pending'||row.version!==body.version||!body.reason?.trim())throw fail('申请已变化或缺少转办依据',409);
+    // B4（V1.1 §6.4）：审批人转交被禁止；此处仅允许"原审批责任失效后的事实纠正性重路由"。
+    const route=routeOf(row);
+    if(route==='cadre_pool'){
+     const activeCandidate=db.prepare('select user_id from attendance_offset_candidates where request_id=? and reachable=1').all(id).find(c=>assigneeAllowed(loadUser(c.user_id),row));
+     if(activeCandidate)throw fail('干部候选中仍有可审批人，不允许改指他人',409);
+    }else if(row.assignee_user_id&&assigneeAllowed(loadUser(row.assignee_user_id),row))throw fail('当前审批人仍然有效，不允许转交',409);
     const leader=loadUser(body.assigneeUserId);verifyLeader({assignee_user_id:body.assigneeUserId,leader_person_id:leader?.personId},row.person_id);
-    const result=db.prepare('update attendance_offset_requests set assignee_user_id=?,version=version+1,updated_at=? where id=? and version=?').run(leader.id,at(),id,body.version);
+    if(!isTeamLeaderPerson(leader?.personId)&&!isCadrePerson(leader?.personId))throw fail('重路由目标必须是当前班组长或干部',409);
+    const responsibility=JSON.parse(row.responsibility_json||'{}');
+    responsibility.reroute={by:user.id,at:at(),from:row.assignee_user_id||null,to:leader.id,reason:String(body.reason).slice(0,2000)};
+    const result=db.prepare('update attendance_offset_requests set assignee_user_id=?,responsibility_json=?,version=version+1,updated_at=? where id=? and version=?').run(leader.id,JSON.stringify(responsibility),at(),id,body.version);
     if(!result.changes)throw fail('申请已变化',409);
+    insertRouteCandidates(id,route,[{userId:leader.id,reachable:true}]);
     tasks.close(id,'invalidated');tasks.upsert({sourceModule:'attendance',sourceType:'offset_approval',sourceId:id,assigneeUserId:leader.id,title:db.prepare('select title from action_tasks where source_id=? order by created_at desc limit 1').get(id)?.title||'考勤抵消审批'});
-    audit(user,'transfer',id,{from:row.assignee_user_id,to:leader.id,reason:body.reason});return {id,assigneeUserId:leader.id};
+    audit(user,'transfer',id,{reroute:true,from:row.assignee_user_id,to:leader.id,reason:body.reason});return {id,assigneeUserId:leader.id};
    });
   },
   ownRequests(user,{month=dayOf(clock()).slice(0,7),limit=20,cursor=null}={}){
@@ -370,17 +394,46 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
     // Cross-day batching policy is unresolved: allow multiple independent points on one day only.
     if(new Set(events.map(e=>e.work_date)).size!==1)throw fail('跨日合并政策尚未启用',409);
     for(const event of events){const src=sourceItem(event);if(src.status!=='active'||src.evidenceHash!==event.evidence_hash)throw fail('异常依据已变化，请重新核对',409);}
-    const selection=this.approvalCandidates(user),selected=selection.candidates.find(c=>c.id===body.assigneeUserId);
-    if(!selected)throw fail('请选择有效且有审批权限的审批人',409);
-    const responsibility={status:'applicant_selected',work_date:events[0].work_date,applicationDate:selection.date,shift:selection.shift,team:selection.shift||'未取得当日排班',recommendedUserIds:selection.candidates.filter(c=>c.recommended).map(c=>c.id),assignee_user_id:selected.id,leader_person_id:selected.personId||null,assigneeName:selected.name};
+    // B4 路由（V1.1 §6.1）：缺卡单按申请人提交时身份分类（D01）路由；早退/混合申请维持申请人自选（D03）。
+    const applicantClass=classifyPosition(personOfPosition(user.personId).position_code).identity;
+    const missingOnly=events.every(event=>event.kind==='day_off_missing');
+    let route;
+    if(missingOnly&&applicantClass==='worker'){
+      const workDate=events[0].work_date;
+      const verified=register.responsibility(user.personId,workDate);
+      if(verified.status==='verified'&&verified.assignee_user_id&&listApproverIds().includes(verified.assignee_user_id)){
+        const leader=loadUser(verified.assignee_user_id);
+        if(leader&&leader.status!=='disabled'&&leader.personId!==user.personId&&hasPermission(leader,'attendance.offset.approve'))
+          route={kind:'duty_team_leader',assignee:leader,basis:'shift_responsibilities',candidates:[{userId:leader.id,reachable:true}],shift:null,applicationDate:dayOf(clock())};
+      }
+      if(!route){
+        const shiftOf=pid=>{const input=readDays(pid,workDate,workDate).find(d=>d?.date===workDate)?.input;return input?.covered&&!input.rest&&!input.scheduleConflict&&!input.identityIssue?plannedShift(input.points):null;};
+        const applicantShift=shiftOf(user.personId);
+        const leaders=listApproverIds().map(id=>loadUser(id)).filter(u=>u&&u.status!=='disabled'&&u.personId&&u.personId!==user.personId&&hasPermission(u,'attendance.offset.approve')).map(u=>({user:u,shift:u.personId?shiftOf(u.personId):null}));
+        const sameShift=leaders.filter(c=>applicantShift&&c.shift===applicantShift&&isTeamLeaderPerson(c.user.personId));
+        if(sameShift.length===1)route={kind:'duty_team_leader',assignee:sameShift[0].user,basis:'same_shift_inference',candidates:[{userId:sameShift[0].user.id,reachable:true}],shift:applicantShift,applicationDate:dayOf(clock())};
+        else throw fail(`无法唯一确定异常日（${workDate}）值班班组长（${sameShift.length?`同班次 ${sameShift.length} 人`:'无同班次在岗班组长'}），请先由管理员核实当班责任后再提交`,409);
+      }
+    }else if(missingOnly){
+      const pool=listApproverIds().map(id=>loadUser(id)).filter(u=>u&&u.status!=='disabled'&&u.personId&&u.personId!==user.personId).filter(u=>isCadrePerson(u.personId));
+      if(!pool.length)throw fail('车间暂无其他在职干部可审批班组长/干部缺卡，请先由管理员补充干部信息',409);
+      route={kind:'cadre_pool',assignee:null,candidates:pool.map(u=>{const reachable=hasPermission(u,'attendance.offset.approve');return {userId:u.id,reachable,reason:reachable?null:'缺 attendance.offset.approve 权限，无法收到待办'};}),shift:null,applicationDate:dayOf(clock())};
+    }else{
+      const selection=this.approvalCandidates(user),selected=selection.candidates.find(c=>c.id===body.assigneeUserId);
+      if(!selected)throw fail('请选择有效且有审批权限的审批人',409);
+      route={kind:'applicant_selected',assignee:selected,candidates:[{userId:selected.id,reachable:true}],selection};
+    }
+    const responsibility={status:route.kind,route_kind:route.kind,applicant_class:applicantClass,work_date:events[0].work_date,applicationDate:route.applicationDate??route.selection?.date,shift:route.shift??route.selection?.shift,team:(route.shift??route.selection?.shift)||'未取得当日排班',route_basis:route.basis||null,candidates:route.candidates,recommendedUserIds:route.selection?route.selection.candidates.filter(c=>c.recommended).map(c=>c.id):[],assignee_user_id:route.assignee?.id||'',leader_person_id:route.assignee?.personId||null,assigneeName:route.assignee?.name||null};
     const id=randomUUID();db.prepare("insert into attendance_offset_requests values(?,?,?,?,?,?,'pending',1,?,?)").run(id,user.personId,month,responsibility.assignee_user_id,JSON.stringify(responsibility),body.note,at(),at());
+    insertRouteCandidates(id,route.kind,route.candidates);
     for(const event of events){const itemId=randomUUID();db.prepare('insert into attendance_offset_claims values(?,?)').run(event.id,itemId);adjust(user.personId,month,'freeze',itemId);db.prepare("insert into attendance_offset_items values(?,?,?,?,?,'pending',0,null,null,null)").run(itemId,id,event.id,event.evidence_hash,event.revision);}
-    tasks.upsert({sourceModule:'attendance',sourceType:'offset_approval',sourceId:id,assigneeUserId:responsibility.assignee_user_id,title:`考勤 · 抵消审批 · ${user.name||user.employeeNo||'员工'} · ${events[0].work_date} · ${events.length}项`});audit(user,'submit',id,{applicant:{personId:user.personId,userId:user.id,name:user.name||user.employeeNo||user.id,employeeNo:user.employeeNo||null},events:body.events,submittedEvidence:events.map(event=>({eventId:event.id,revision:event.revision,evidenceHash:event.evidence_hash,evidence:JSON.parse(event.evidence_json)}))});return {id,status:'pending',version:1};
+    for(const candidate of route.candidates.filter(c=>c.reachable))tasks.upsert({sourceModule:'attendance',sourceType:'offset_approval',sourceId:id,assigneeUserId:candidate.userId,title:`考勤 · 抵消审批 · ${user.name||user.employeeNo||'员工'} · ${events[0].work_date} · ${events.length}项`});
+    audit(user,'submit',id,{applicant:{personId:user.personId,userId:user.id,name:user.name||user.employeeNo||user.id,employeeNo:user.employeeNo||null},route:route.kind,applicantClass,events:body.events,submittedEvidence:events.map(event=>({eventId:event.id,revision:event.revision,evidenceHash:event.evidence_hash,evidence:JSON.parse(event.evidence_json)}))});return {id,status:'pending',version:1};
    });
   },
   detail(user,id){
    if(!user?.id)throw fail('请先登录',401);const row=request(id);
-   if(!row||!(row.person_id===user.personId||row.assignee_user_id===user.id&&hasPermission(user,'attendance.offset.approve')||hasPermission(user,'attendance.offset.responsibility.manage')&&canViewPerson(user,row.person_id)))throw fail('无权读取该申请',403);
+   if(!row||!(row.person_id===user.personId||row.assignee_user_id===user.id&&hasPermission(user,'attendance.offset.approve')||routeOf(row)==='cadre_pool'&&!!db.prepare('select 1 from attendance_offset_candidates where request_id=? and user_id=?').get(row.id,user.id)&&hasPermission(user,'attendance.offset.approve')||hasPermission(user,'attendance.offset.responsibility.manage')&&canViewPerson(user,row.person_id)))throw fail('无权读取该申请',403);
    const requestItems=items(id);
    const history=db.prepare('select actor_id,action,detail_json,created_at from attendance_offset_audit where reference_id=? order by created_at,id').all(id);
    const submitted=history.find(entry=>entry.action==='submit');
@@ -405,7 +458,8 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
      if(decision.decision==='approved')approved++;else db.prepare('delete from attendance_offset_claims where item_id=?').run(item.id);
     }
     const status=approved===pending.length?'approved':approved?'partial':'rejected';
-    const updated=db.prepare("update attendance_offset_requests set status=?,version=version+1,updated_at=? where id=? and version=? and status='pending'").run(status,at(),id,body.version);if(!updated.changes)throw fail('申请已被处理',409);
+    // 干部共同审批（§6.3）：胜出决定者写入 assignee 留痕；version 条件更新保证只有一个提交胜出。
+    const updated=db.prepare("update attendance_offset_requests set status=?,assignee_user_id=case when assignee_user_id='' then ? else assignee_user_id end,version=version+1,updated_at=? where id=? and version=? and status='pending'").run(status,user.id,at(),id,body.version);if(!updated.changes)throw fail('申请已被处理',409);
     tasks.close(id);audit(user,'decide',id,body);return {id,status};
    });
   },
