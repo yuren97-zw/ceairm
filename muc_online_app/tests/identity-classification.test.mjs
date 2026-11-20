@@ -6,7 +6,7 @@ import { classifyPosition, identityQualityReport, IDENTITY_CLASSES, IDENTITY_CLA
 // 不拆词、不模糊识别；分组/角色/岗级与本分类无关（本模块唯一输入是 position_code）。
 
 test('干部职位精确匹配', () => {
-  for (const position of ['主任', '副主任', '助理']) {
+  for (const position of ['主任', '副主任', '助理', '书记']) {
     const result = classifyPosition(position);
     assert.equal(result.identity, IDENTITY_CLASSES.CADRE);
     assert.equal(result.identityLabel, '干部');

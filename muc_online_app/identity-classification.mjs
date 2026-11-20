@@ -18,8 +18,8 @@ export const IDENTITY_CLASS_LABELS = Object.freeze({
   worker: "普通员工"
 });
 
-// 精确匹配表（V1.1 §3.1）。
-const CADRE_POSITIONS = Object.freeze(["主任", "副主任", "助理"]);
+// 精确匹配表（V1.1 §3.1；"书记"经用户 2026-11-21 批准加入干部映射）。
+const CADRE_POSITIONS = Object.freeze(["主任", "副主任", "助理", "书记"]);
 const TEAM_LEADER_POSITIONS = Object.freeze(["班组长"]);
 // 已知普通员工职位（2026-11-21 生产实测值：维修/放行；维修人员/放行人员为历史写法兼容）。
 const KNOWN_WORKER_POSITIONS = Object.freeze(["维修人员", "放行人员", "维修", "放行"]);

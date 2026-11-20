@@ -20,7 +20,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
  db.exec(fs.readFileSync(new URL('./migrations/033_attendance_monthly_exchange.sql',import.meta.url),'utf8'));
  // B4 路由候选表（V1.1 §6.3；036 编号预留给未合并的考勤单日封顶迁移）。
  db.exec(fs.readFileSync(new URL('./migrations/037_attendance_offset_routes.sql',import.meta.url),'utf8'));
- const CADRE_POSITIONS=['主任','副主任','助理'];
+ const CADRE_POSITIONS=['主任','副主任','助理','书记'];
  const routeOf=row=>{try{const parsed=JSON.parse(row.responsibility_json||'{}');return parsed.route_kind||parsed.status||'applicant_selected';}catch{return 'applicant_selected';}};
  const personOfPosition=personId=>db.prepare('select position_code,employment_status from personnel where id=?').get(personId||'');
  const isCadrePerson=personId=>{const person=personOfPosition(personId);return CADRE_POSITIONS.includes(person?.position_code)&&!['离职','停职'].includes(person?.employment_status||'');};
