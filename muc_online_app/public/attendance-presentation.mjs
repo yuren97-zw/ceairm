@@ -100,3 +100,9 @@ const attendanceBadgeEscape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&'
 export function attendanceCategoryBadge(category,leaves=[]){const tone=attendanceTone(category,leaves);return `<span class="att-tag att-tone" style="--att-tone-bg:${tone.background};--att-tone-fg:${tone.foreground};--att-tone-border:${tone.border||tone.background}">${attendanceBadgeEscape(category)}</span>`;}
 export const attendanceBadgeStyles='.attendance .att-tag.att-tone,.offset-table-sheet .att-tag.att-tone{display:inline-block;padding:3px 8px;border-radius:5px;border:1px solid var(--att-tone-border);background:var(--att-tone-bg);color:var(--att-tone-fg);font-size:12px;font-weight:600;white-space:nowrap;line-height:1.55}';
 export function ensureAttendanceBadgeStyles(doc){if(!doc?.getElementById||doc.getElementById('attendance-shared-badge-style'))return;const style=doc.createElement('style');style.id='attendance-shared-badge-style';style.textContent=attendanceBadgeStyles;doc.head.append(style);}
+
+export function accumulationExplanation(o){
+ if(o?.capSeconds==null)return '';
+ const fmt=s=>s==null?'—':`${Math.floor(s/3600)}小时${Math.floor(s%3600/60)}分${s%60}秒`;
+ return `原始差额：${fmt(o.rawSeconds)}；计入累计：${fmt(o.seconds)}；适用上限：${fmt(o.capSeconds)}；超出未计入：${fmt(o.excessSeconds)}`;
+}

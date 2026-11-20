@@ -212,3 +212,18 @@ test('historical morning rest reads prior month night schedule consistently in d
  for(const result of [full,compact])assert.equal(result.people[0].days[0].category,'休息');assert.equal(summary.people.find(p=>p.personId==='p1').counts['休息'],1);
  const matrix=exportTables(full).find(([name])=>name==='逐日明细（横版）')[1];assert.equal(matrix[1][3],'休息');assert.equal(f.calls,0);assert.deepEqual(f.db.prepare('select * from attendance_days').all(),stored);f.service.stop();f.db.close();
 });
+test('single cap invalidates cached monthly and self snapshots, preserves facts and matches exports',async()=>{
+ const {exportTables,exportHtml}=await import('../attendance-export.mjs');const f=fixture();
+ const date='2026-10-20',planned=Date.parse(date+'T19:40:00+08:00'),actual=Date.parse(date+'T22:00:00+08:00');
+ const source={date,covered:true,points:[{type:'OffDuty',planId:'off',planned}],punches:[{type:'OffDuty',planId:'off',planned,actual,source:'USER',recordId:'p'}],approvals:[]};
+ f.db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run('p1',date,JSON.stringify(source),'{}','immutable','2026-10-21T00:00:00Z','test');
+ const before=f.db.prepare('select * from attendance_days').all();assert.equal(f.service.snapshot(reader,{month:'2026-10'}).people[0].overtimeSeconds,8400);
+ f.db.prepare('insert into attendance_monthly_exchange_rules values(?,?,?,?,?,?,?,?)').run('cap','2026-10',7200,1,4,'admin','2026-10-22',7200);
+ const snapshot=f.service.snapshot(reader,{month:'2026-10'}),day=snapshot.people[0].days.find(d=>d.date===date);
+ assert.equal(snapshot.people[0].overtimeSeconds,7200);assert.equal(day.overtime.rawSeconds,8400);assert.equal(day.overtime.excessSeconds,1200);
+ assert.equal(f.service.selfSummary(reader).overtimeSeconds,7200);
+ const tables=exportTables(snapshot),rows=tables.find(t=>t[0]==='加班明细')[1],row=rows.find(r=>r[2]===date);
+ assert.equal(row[5],7200);assert.equal(row[rows[0].indexOf('原始差额秒')],8400);assert.equal(row[rows[0].indexOf('超出未计入秒')],1200);
+ assert.equal(tables.length,11);const html=exportHtml(snapshot);assert.match(html,/accumulationExplanation/);assert.match(html,/"rawSeconds":8400/);
+ assert.deepEqual(f.db.prepare('select * from attendance_days').all(),before);assert.equal(f.calls,0);f.db.close();
+});
