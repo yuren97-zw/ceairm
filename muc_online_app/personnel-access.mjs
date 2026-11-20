@@ -175,6 +175,8 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
   }
   function checkMutation(user, payload, existing = null) {
     if (existing && Object.hasOwn(payload,"employeeNo") && text(payload.employeeNo) !== existing.employee_no) throw error("工号创建后不可修改");
+    // 职位决定身份分类与审批路由（V1.1 §3.3、D06-1）：本人不得修改自己的职位；值未变化时不阻断。
+    if (existing && user?.personId && user.personId === existing.id && Object.hasOwn(payload,"position") && String(text(payload.position)).trim() !== String(existing.position_code ?? "").trim()) throw error("职位是身份与审批路由的依据，不能修改本人职位",403);
     if (existing) requirePerson(user,"personnel",existing.id,true); else permission(user,"personnel.profile.create");
     const keys = Object.keys(payload).filter(k => !["reason","employeeNo","id"].includes(k));
     const profileKeys = keys.filter(k => !ORGANIZATION_FIELDS.includes(k) && k !== "employmentStatus");

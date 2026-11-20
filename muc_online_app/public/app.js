@@ -777,6 +777,14 @@ function personnelCadreBadgeHtml(person) {
   return isCadrePerson(person) ? '<span class="personnel-cadre-badge">干部</span>' : "";
 }
 
+// 身份分类徽标（V1.1 §3.1）：来源是人员主数据职位 position_code，与上方按人员分组的干部判定相互独立。
+function personnelIdentityBadgeHtml(person) {
+  if (!person?.identityClass) return "";
+  const unknown = person.identityQuality === "unknown_value" || person.identityQuality === "empty";
+  const title = `身份按职位「${person.position || "（空）"}」判定（来源：人员主数据职位）${unknown ? "；该职位为未知/空值，按规则归普通员工，建议核对主数据" : ""}`;
+  return `<span class="personnel-identity-badge identity-${escapeHtml(person.identityClass)}${unknown ? " identity-unknown" : ""}" title="${escapeHtml(title)}">${escapeHtml(person.identityLabel || person.identityClass)}${unknown ? "·未知值" : ""}</span>`;
+}
+
 function parsePeopleLines(text) {
   let skipped = 0;
   const people = String(text || "").split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => {
@@ -2882,7 +2890,7 @@ function renderPersonnelDetail() {
   const tabs = [["basic","基本资料"],["licenses",`执照（${counts.license}）`],["authorizations",`授权（${counts.authorization}）`],["training",`培训（${counts.training}）`],["changes",`变更记录（${changes.length}）`]];
   const englishLabel = detail.qualificationVisible ? (detail.englishLevels || []).join("、") || "未提供" : "无查看权限";
   const actualGradeLabel = person.actualGradeMasked ? "***" : (person.actualGrade || "未提供");
-  let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b></span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
+  let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b>${personnelIdentityBadgeHtml(person)}</span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
   if (tab === "changes") content = `<div class="personnel-flat-list">${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
   if (tab === "authorizations") content = detail.qualificationVisible ? renderAuthorizationCategoryPanel(detail) : '<div class="status-line">当前账号没有查看授权明细的权限。</div>';
   if (type) {
@@ -2919,7 +2927,7 @@ function renderPersonnelMetrics() {
 
 function renderPersonnelRows() {
   const rows = state.personnel || [];
-  return `<div class="personnel-row head"><span>工号</span><span>姓名</span><span>正式组织/当前班组</span><span>职位</span><span>状态</span><span>执照/授权/培训</span><span>账户</span><span></span></div>${rows.map(person => `<div class="personnel-row"><span>${escapeHtml(person.employeeNo)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.departmentName||"待分类")} / ${escapeHtml(person.personnelGroupName||"未分配")}<small>行政：${escapeHtml(person.administrativeTeamName||"—")} · 当前：${escapeHtml(person.currentWorkingTeamName||"—")} · ${{complete:"完整",unclassified:"待分类",group_unassigned:"待分组",review_required:"待复核"}[person.organizationStatus]||"待复核"}</small></span><span>${escapeHtml(person.position || "未设置")}</span><span>${escapeHtml(person.employmentStatus)}</span><span>${person.licenseCount ?? "—"} / ${person.authorizationCount ?? "—"} / ${person.trainingCount ?? "—"}</span><span>${person.hasAccount ? "已开通" : "未开通"}</span><span>${hasRbac("personnel.detail.view") ? `<button class="link-btn" type="button" data-personnel-detail="${escapeHtml(person.id)}">${state.activePersonnelDetail?.person?.id === person.id ? "收起" : "查看"}</button>` : ""}${personnelDeleteButton(person)}</span></div>${state.activePersonnelDetail?.person?.id === person.id ? renderPersonnelDetail() : ""}`).join("") || '<div class="status-line">暂无人员主数据，请先导入人员基本信息。</div>'}`;
+  return `<div class="personnel-row head"><span>工号</span><span>姓名</span><span>正式组织/当前班组</span><span>职位</span><span>状态</span><span>执照/授权/培训</span><span>账户</span><span></span></div>${rows.map(person => `<div class="personnel-row"><span>${escapeHtml(person.employeeNo)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.departmentName||"待分类")} / ${escapeHtml(person.personnelGroupName||"未分配")}<small>行政：${escapeHtml(person.administrativeTeamName||"—")} · 当前：${escapeHtml(person.currentWorkingTeamName||"—")} · ${{complete:"完整",unclassified:"待分类",group_unassigned:"待分组",review_required:"待复核"}[person.organizationStatus]||"待复核"}</small></span><span>${escapeHtml(person.position || "未设置")}${personnelIdentityBadgeHtml(person)}</span><span>${escapeHtml(person.employmentStatus)}</span><span>${person.licenseCount ?? "—"} / ${person.authorizationCount ?? "—"} / ${person.trainingCount ?? "—"}</span><span>${person.hasAccount ? "已开通" : "未开通"}</span><span>${hasRbac("personnel.detail.view") ? `<button class="link-btn" type="button" data-personnel-detail="${escapeHtml(person.id)}">${state.activePersonnelDetail?.person?.id === person.id ? "收起" : "查看"}</button>` : ""}${personnelDeleteButton(person)}</span></div>${state.activePersonnelDetail?.person?.id === person.id ? renderPersonnelDetail() : ""}`).join("") || '<div class="status-line">暂无人员主数据，请先导入人员基本信息。</div>'}`;
 }
 
 function renderPersonnelPagination() {
