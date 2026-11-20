@@ -123,7 +123,16 @@ test('shiftless schedule echo of morning punch on explicit rest is interpreted w
  const n=normalizeDay({date,userId:'u',config:configuration({}),day:{attendance_result_list:[{check_type:'OnDuty',plan_check_time:morning,user_check_time:morning,source_type:'USER',record_id:'p'}],check_record_list:[],approve_list:[]},schedules:[{userid:'u',work_date:morning,is_rest:'N',check_type:'OnDuty',plan_check_time:morning,id:'plan'},{userid:'u',work_date:morning,is_rest:'Y'}]});
  const before=JSON.stringify(n),context={previousWorkDays:[{...input(),punches:[]}]};
  const result=classifyDay(n,now,null,context);assert.equal(n.scheduleConflict,true);assert.equal(result.category,'休息');assert.equal(result.scheduleInterpretation.ignoredPlanPoints.length,1);assert.equal(result.overtime.seconds,null);assert.equal(result.punchDetails[0].planned,null);assert.equal(result.punchDetails[0].actual,morning);assert.equal(JSON.stringify(n),before);
- for(const point of [{...n.points[0],shiftId:'real-shift'},{...n.points[0],shiftVersion:'version'},{...n.points[0],type:'OffDuty'},{...n.points[0],planned:morning-60000},{type:'OnDuty',planned:morning}])assert.equal(classifyDay({...n,points:[point]},now,null,context).category,'待核对');
+ for(const point of [{...n.points[0],shiftId:'real-shift'},{...n.points[0],shiftVersion:'version'},{...n.points[0],type:'OffDuty'},{...n.points[0],planned:morning-60000},{type:'OnDuty',planned:morning}]){
+  const conflict=classifyDay({...n,points:[point]},now,null,context);
+  assert.equal(conflict.category,'待核对');assert.equal(conflict.scheduleInterpretation,undefined);assert.equal(conflict.punchDetails[0].planned,point.planned);
+ }
  for(const patch of [{scheduleRestFlags:[]},{scheduleRestFlags:['N','N','Y']},{identityIssue:'冲突'},{punches:[...n.punches,{...n.punches[0],type:'OffDuty'}]},{punches:[{...n.punches[0],actual:t(date+'T12:00:00')}]}])assert.equal(classifyDay({...n,...patch},now,null,context).category,'待核对');
  assert.equal(classifyDay(n,now).category,'待核对');
+ const noon=t(date+'T12:00:00');
+ const afternoon=classifyDay({...n,points:[{...n.points[0],planned:noon}],punches:[{...n.punches[0],actual:noon}]},now,null,context);
+ assert.equal(afternoon.category,'待核对');
+ assert.equal(afternoon.punchDetails[0].planned,null);
+ assert.equal(afternoon.punchDetails[0].actual,noon);
+ assert.equal(afternoon.punchDetails[0].status,'有效打卡（排班待核对）');
 });
