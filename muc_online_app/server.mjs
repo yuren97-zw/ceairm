@@ -27,6 +27,7 @@ import {
 } from "./rbac-policy.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
+import { classifyPosition, identityQualityReport } from "./identity-classification.mjs";
 import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS, CADRE_GROUP_CODE } from "./personnel-access.mjs";
 import fs from "node:fs/promises";
 import fss from "node:fs";
@@ -6671,13 +6672,18 @@ function publicPersonnelList(user=requestUser(), options={}) {
     left join organization_units at on at.id=p.administrative_team_id
     left join capability_current_states cs on cs.person_id=p.id
     left join organization_units wt on wt.id=cs.working_team_id
-    where p.data_status='active' and (${scope.sql}) ${options.where || ''} order by ${options.order || "p.employee_no"} ${options.limit ? 'limit ? offset ?' : ''}`).all(...scope.params,...(options.params || []),...(options.limit ? [options.limit,options.offset || 0] : [])).map(row => personnelAccess.redact(user,({
+    where p.data_status='active' and (${scope.sql}) ${options.where || ''} order by ${options.order || "p.employee_no"} ${options.limit ? 'limit ? offset ?' : ''}`).all(...scope.params,...(options.params || []),...(options.limit ? [options.limit,options.offset || 0] : [])).map(row => {
+      const identity = classifyPosition(row.position_code);
+      return personnelAccess.redact(user,({
       id:row.id,personId:row.id,departmentId:row.department_id||"",departmentName:row.department_name||"",personnelGroupId:row.personnel_group_id||"",personnelGroupName:row.personnel_group_name||"",maintenanceEligible:!!row.maintenance_eligible,administrativeTeamId:row.administrative_team_id||"",administrativeTeamName:row.administrative_team_name||"",currentWorkingTeamId:row.current_working_team_id||"",currentWorkingTeamName:row.current_working_team_name||"",organizationStatus:!row.department_id&&!row.personnel_group_id&&!row.administrative_team_id?"unclassified":row.department_id&&!row.personnel_group_id?"group_unassigned":row.department_id&&row.personnel_group_id?"complete":"review_required",hasAccount:!!row.account_id,employeeNo:row.employee_no,name:row.name,
       department:row.department_name||"未设置",homeTeam:row.administrative_team_name||"未设置",
       isInstructor: !!row.is_instructor, position: row.position_code || "", actualGrade: row.actual_grade || "", employmentStatus: row.employment_status || "在职",
+      identityClass: identity.identity, identityLabel: identity.identityLabel, identityQuality: identity.quality, suspectedCombined: identity.suspectedCombined || undefined,
+      identitySource: identity.source, identityRulesVersion: identity.rulesVersion,
       licenseCount: Number(row.license_count || 0), authorizationCount: Number(row.authorization_count || 0), trainingCount: Number(row.training_count || 0),
       account: row.account_id ? { id: row.account_id, username: row.account_username, status: row.account_status || "active" } : null, updatedAt: row.updated_at
-    })));
+    }));
+  });
 }
 
 function publicPersonnelPage(searchParams,user=requestUser()) {
@@ -7292,6 +7298,13 @@ async function routeRequest(req, res) {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
       if (!manager) return;
       return send(res, 200, publicPersonnelPage(url.searchParams));
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/identity-quality") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      const scope = personnelAccess.predicate(manager, "personnel");
+      const rows = db.prepare(`select p.employee_no as employeeNo,p.name,p.position_code as position from personnel p where p.data_status='active' and (${scope.sql}) order by p.employee_no`).all(...scope.params);
+      return send(res, 200, identityQualityReport(rows));
     }
     if (method === "GET" && url.pathname === "/api/personnel/authorizations/overview") {
       const viewer = requireRbacPermission(req, res, "personnel.list.view");
