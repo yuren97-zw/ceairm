@@ -245,6 +245,8 @@ function createMaintenanceTestAccount(template, { id, username = id, name }) {
 }
 
 test("maintenance hour rules are hidden from workers and dispatchers unless explicitly authorized", async () => {
+  // 交接待办以班组长身份办理（V1.1 §5.1）：把超账人员临时设为一组班组长，以便本用例通过交接单读取维修装配。
+  db.prepare("update personnel set position_code='班组长',administrative_team_id=(select id from organization_units where code='TEAM-LINE-1') where id=(select person_id from users where id='54002010')").run();
   const template = db.prepare("select * from users where id='54002010'").get();
   const worker = createMaintenanceTestAccount(template, { id: "hour-rule-worker", name: "规则工作者" });
   const dispatcher = createMaintenanceTestAccount(template, { id: "hour-rule-dispatcher", name: "规则派工人" });
@@ -362,6 +364,8 @@ test("read-only personnel authorization overview searches within current personn
 });
 
 test("self-scoped participants can report eligible people across teams without widening dispatch", async () => {
+  // 同上：超账人员临时设为班组长以满足交接办理身份。
+  db.prepare("update personnel set position_code='班组长',administrative_team_id=(select id from organization_units where code='TEAM-LINE-1') where id=(select person_id from users where id='54002010')").run();
   const adminLogin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const adminCookie = String(adminLogin.res.headers["Set-Cookie"]).split(";")[0];
   const template = db.prepare("select * from users where id='54002010'").get();

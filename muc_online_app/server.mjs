@@ -9206,7 +9206,12 @@ const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,act
     const rows=db.prepare(`select * from maintenance_report_drafts where report_type='nonroutine' and flight_id in (${flightIds.map(()=>'?').join(',')})`).all(...flightIds);
     if(!rows.length)return new Map();
     const people=new Map(allPeople().map(person=>[person.id,person]));
-    return new Map(rows.map(row=>[row.flight_id,maintenanceNonroutineDraftSummary(row,people,{includeExplanation:true})]));
+    return new Map(rows.map(row=>{
+      const summary=maintenanceNonroutineDraftSummary(row,people,{includeExplanation:true});
+      // 交接投影（V1.1 §5.6）：派工人员仅保留角色与姓名，不携带内部人员标识或人员当前班组。
+      if(summary)for(const item of summary.items||[])item.entries=(item.entries||[]).map(({role,userName})=>({role,userName}));
+      return [row.flight_id,summary];
+    }));
   }
 });
 

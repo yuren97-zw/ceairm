@@ -14,7 +14,7 @@ function fixture({withTasks=false,clock=CLOCK,loadNonroutineDrafts,loadRoutineRe
  db.exec("create table maintenance_assignments(id text primary key,owner_type text,owner_id text,role text,user_name text,assigned_at text)");
  const people=[['p1','u1','10001','张三','TEAM-LINE-1'],['p2','u2','10002','李四','TEAM-LINE-1'],['p3','u3','10003','王五','TEAM-LINE-2'],['p9','u9','10009','赵干','TEAM-LINE-1'],['p10','u10','10010','孙六','TEAM-LINE-2']];
  for(const [pid,uid,eno,name,team] of people){
-  db.prepare('insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)').run(pid,eno,name,eno==='10001'?'班组长':'组员',team);
+  db.prepare('insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)').run(pid,eno,name,['10001','10003','10009'].includes(eno)?'班组长':'组员',team);
   db.prepare('insert into users(id,person_id) values(?,?)').run(uid,pid);
  }
  db.prepare('insert into users(id,person_id,status) values(?,?,?)').run('u4','p1','disabled');
@@ -46,13 +46,13 @@ test('create draft auto-fills from team, resolves recipients and snapshots oppor
  assert.equal(opportunity.snapshot.aircraftNo,'B-1234','提交前快照现读维修机会字段');
  assert.equal(opportunity.snapshot.workKind,'航后');
 });
-test('teamless operators must explicitly choose the from team',()=>{
+test('teamless team leaders cannot create handovers even with an explicit from team',()=>{
  const {service,db,user}=fixture();
- db.prepare("insert into personnel(id,employee_no,name,administrative_team_id) values('p-none','19990002','无班组',NULL)");
- db.prepare("insert into users(id,person_id) values('u-none','p-none')");
+ db.prepare("insert into personnel(id,employee_no,name,position_code,administrative_team_id) values('p-none','19990002','无班组','班组长',NULL)").run();
+ db.prepare("insert into users(id,person_id) values('u-none','p-none')").run();
  assert.throws(()=>service.create(user('u-none'),{otherItems:'x'}),/请选择交班班组/);
- const created=service.create(user('u-none'),{fromTeamId:'TEAM-LINE-2',otherItems:'手动选择交班班组'});
- assert.equal(created.handover.fromTeamId,'TEAM-LINE-2');
+ // V1.1 §5.1：交班班组锁定本班，显式传入他组不再被接受。
+ assert.throws(()=>service.create(user('u-none'),{fromTeamId:'TEAM-LINE-2',otherItems:'手动选择交班班组'}),/请选择交班班组/);
 });
 test('drafts can be deleted by the creator only while still drafts',()=>{
  const {service,user}=fixture();
@@ -88,7 +88,7 @@ test('create rejects unknown flights and disabled recipient accounts atomically'
  assert.throws(()=>service.create(user('u1'),{...draftPayload,opportunities:[{flightId:'nope'}]}),/维修机会不存在/);
  assert.equal(db.prepare('select count(*) c from handover').get().c,0,'失败创建不留孤儿交接单');
  db.prepare('update users set status=? where id=?').run('disabled','u3');
- assert.throws(()=>service.create(user('u1'),draftPayload),/接收人账号无效或已停用/);
+ assert.throws(()=>service.create(user('u1'),draftPayload),/接收人无效或不是当前有效班组长/);
 });
 test('submit enforces recipients, to-team and non-empty content',()=>{
  const {service,user}=fixture();
@@ -176,9 +176,9 @@ test('maintenance options restrict dates and statuses even for legacy all scope'
 test('action tasks follow recipients through submit, edit and confirm',()=>{
  const {service,user,tasks}=fixture({withTasks:true});
  const creator=user('u1');
- const created=service.create(creator,{toTeamId:'TEAM-LINE-2',recipients:[{userId:'u2'},{userId:'u3'}],otherItems:'双人接收待办验证'});
+ const created=service.create(creator,{toTeamId:'TEAM-LINE-2',recipients:[{userId:'u9'},{userId:'u3'}],otherItems:'双人接收待办验证'});
  const submitted=service.submit(creator,created.handover.id,{expectedVersion:created.handover.version});
- assert.equal(tasks.count({id:'u2'}).count,1,'每名接收人各一条待办');
+ assert.equal(tasks.count({id:'u9'}).count,1,'每名接收人各一条待办');
  assert.equal(tasks.count({id:'u3'}).count,1);
  assert.equal(tasks.count({id:'u1'}).count,0,'交班人无待办');
  const listed=tasks.list({id:'u3'}).items[0];
