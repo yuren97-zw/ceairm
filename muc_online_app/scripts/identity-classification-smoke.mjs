@@ -128,7 +128,51 @@ try {
   await request("/personnel/identity-quality", { cookie: worker.cookie, expected: 403 });
   await request("/personnel?pageSize=10", { cookie: worker.cookie, expected: 403 });
 
-  console.log("身份分类隔离冒烟通过：6 人样本、列表字段、质量清单、401/403 门槛均符合预期。");
+  // B2：职位维护治理（D06-1/D06-2/D06-3）。
+  // 给张二（班组长，88000002）建 manager 账户：持 personnel.profile.update，用于验证"有权但禁止自改"。
+  const managerPerson = byNo.get("88000002");
+  await request("/admin/accounts", {
+    cookie: admin.cookie, method: "POST", expected: 201,
+    body: { personId: managerPerson.id, username: "manager-smoke", password: "123456", status: "active", mustChangePassword: false, roles: ["manager", "addon_personnel_import"], scopes: [{ module: "personnel", scopeType: "all", scopeId: "" }] }
+  });
+  const manager = await login("manager-smoke", "123456");
+
+  // 本人改自己职位（值变化）→ 403；提交相同值 → 放行且无变更。
+  await request(`/personnel/${encodeURIComponent(managerPerson.id)}`, { cookie: manager.cookie, method: "PUT", expected: 403, body: { position: "主任", reason: "自改尝试" } });
+  const sameValue = await request(`/personnel/${encodeURIComponent(managerPerson.id)}`, { cookie: manager.cookie, method: "PUT", body: { position: managerPerson.position, reason: "相同值应放行" } });
+  assert.equal(sameValue.data.person.position, managerPerson.position, "相同职位值放行且不产生变更");
+
+  // 改他人职位 → 成功，审计记录身份前后对照（张四：维修人员→班组长）。
+  const target = byNo.get("88000003");
+  await request(`/personnel/${encodeURIComponent(target.id)}`, { cookie: manager.cookie, method: "PUT", body: { position: "班组长", reason: "B2 冒烟：管理员调整职位" } });
+  const changed = db.prepare("select position_code from personnel where id=?").get(target.id);
+  assert.equal(changed.position_code, "班组长", "管理员应能修改他人职位");
+  const auditRow = db.prepare("select detail from audit_logs where action='update_personnel' and target_id=? order by created_at desc limit 1").get(target.id);
+  const auditDetail = JSON.parse(auditRow.detail);
+  assert.equal(auditDetail.identityChange.fromIdentity, "普通员工");
+  assert.equal(auditDetail.identityChange.toIdentity, "班组长");
+  assert.ok(auditDetail.identityChange.rulesVersion, "审计应携带分类规则版本");
+
+  // 导入含操作者本人行且职位变化 → 暂存阶段整批拒绝（预检走 checkMutation），职位保持不变。
+  const selfImport = await request("/personnel/imports", {
+    cookie: manager.cookie, method: "POST", expected: 400,
+    body: {
+      type: "personnel", fileName: "self-position.xlsx",
+      rows: [
+        ["员工工号", "员工姓名", "部门", "人员分组", "行政班组", "职位", "用工状态"],
+        ["88000002", "张二", "航线维修车间", "干部", "", "主任", "在职"]
+      ]
+    }
+  });
+  assert.ok(selfImport.data.issues?.some(issue => issue.employeeNo === "88000002" && issue.detail.includes("不能修改本人职位")), "导入自改应给出明确行级原因");
+  assert.equal(db.prepare("select position_code from personnel where id=?").get(managerPerson.id).position_code, "班组长", "自改导入后职位应保持不变");
+
+  // 干部缺账号统计：主任张一无账号 → 1；张二有账号但为班组长不计入。
+  const qualityB2 = await request("/personnel/identity-quality", { cookie: admin.cookie });
+  assert.equal(qualityB2.data.summary.cadreWithoutAccounts, 1);
+  assert.deepEqual(qualityB2.data.cadreWithoutAccounts.map(item => item.employeeNo), ["88000001"]);
+
+  console.log("身份分类+职位治理隔离冒烟通过：分类字段、质量清单（含干部缺账号）、401/403 门槛、禁止自改（编辑+导入）、审计身份对照均符合预期。");
   console.log(`隔离库：${process.env.DB_PATH}`);
   process.exitCode = 0;
 } catch (error) {

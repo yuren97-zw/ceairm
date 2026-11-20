@@ -98,3 +98,19 @@ test('数据质量清单对空输入与非数组输入安全', () => {
     assert.deepEqual(report.unknownValues, []);
   }
 });
+
+test('携带账号信息时统计干部缺账号，缺省时不输出该维度', () => {
+  const rows = [
+    { employeeNo: '54000001', name: '甲', position: '主任', hasAccount: false },
+    { employeeNo: '54000002', name: '乙', position: '副主任', hasAccount: true },
+    { employeeNo: '54000003', name: '丙', position: '班组长', hasAccount: false },
+    { employeeNo: '54000004', name: '丁', position: '维修人员', hasAccount: false }
+  ];
+  const report = identityQualityReport(rows);
+  assert.equal(report.summary.cadreWithoutAccounts, 1, '仅干部身份计入缺账号统计');
+  assert.deepEqual(report.cadreWithoutAccounts, [{ employeeNo: '54000001', name: '甲', position: '主任' }]);
+  assert.deepEqual(Object.keys(report.cadreWithoutAccounts[0]).sort(), ['employeeNo', 'name', 'position']);
+  const withoutAccountInfo = identityQualityReport(rows.map(({ hasAccount, ...rest }) => rest));
+  assert.ok(!('cadreWithoutAccounts' in withoutAccountInfo.summary));
+  assert.ok(!('cadreWithoutAccounts' in withoutAccountInfo));
+});

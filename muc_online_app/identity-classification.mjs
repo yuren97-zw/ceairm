@@ -51,12 +51,13 @@ export function classifyPosition(rawPosition) {
   };
 }
 
-// 数据质量清单：rows 为 [{ employeeNo, name, position }]（人员主数据投影）。
-// 只汇总分类结果与异常值，不输出其他个人敏感字段。
+// 数据质量清单：rows 为 [{ employeeNo, name, position, hasAccount? }]（人员主数据投影）。
+// 只汇总分类结果与异常值，不输出其他个人敏感字段。hasAccount 缺省时不做干部缺账号统计。
 export function identityQualityReport(rows) {
   const list = Array.isArray(rows) ? rows : [];
-  const entries = list.map(row => ({ employeeNo: String(row?.employeeNo ?? ""), name: String(row?.name ?? ""), position: String(row?.position ?? ""), classification: classifyPosition(row?.position) }));
+  const entries = list.map(row => ({ employeeNo: String(row?.employeeNo ?? ""), name: String(row?.name ?? ""), position: String(row?.position ?? ""), hasAccount: row?.hasAccount, classification: classifyPosition(row?.position) }));
   const count = identity => entries.filter(e => e.classification.identity === identity).length;
+  const cadreWithoutAccount = entries.filter(e => e.classification.identity === IDENTITY_CLASSES.CADRE && e.hasAccount === false);
   return {
     rulesVersion: IDENTITY_CLASSIFICATION_RULES_VERSION,
     source: "personnel.position_code",
@@ -68,8 +69,10 @@ export function identityQualityReport(rows) {
       workerMatched: entries.filter(e => e.classification.identity === IDENTITY_CLASSES.WORKER && e.classification.quality === "matched").length,
       workerUnknownValues: entries.filter(e => e.classification.identity === IDENTITY_CLASSES.WORKER && e.classification.quality === "unknown_value").length,
       emptyPositions: entries.filter(e => e.classification.quality === "empty").length,
-      suspectedCombined: entries.filter(e => e.classification.suspectedCombined).length
+      suspectedCombined: entries.filter(e => e.classification.suspectedCombined).length,
+      ...(entries.some(e => e.hasAccount !== undefined) ? { cadreWithoutAccounts: cadreWithoutAccount.length } : {})
     },
-    unknownValues: entries.filter(e => e.classification.quality === "unknown_value").map(e => ({ employeeNo: e.employeeNo, name: e.name, position: e.position, suspectedCombined: e.classification.suspectedCombined }))
+    unknownValues: entries.filter(e => e.classification.quality === "unknown_value").map(e => ({ employeeNo: e.employeeNo, name: e.name, position: e.position, suspectedCombined: e.classification.suspectedCombined })),
+    ...(entries.some(e => e.hasAccount !== undefined) ? { cadreWithoutAccounts: cadreWithoutAccount.map(e => ({ employeeNo: e.employeeNo, name: e.name, position: e.position })) } : {})
   };
 }

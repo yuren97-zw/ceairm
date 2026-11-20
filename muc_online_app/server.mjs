@@ -6523,15 +6523,20 @@ function visibleImportBatch(batch,user,context=null) {
    return hasRbac(user,"personnel.actual_grade.manage") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
  });
 }
-function confirmPersonnelRows(batchId, rows) {
+function confirmPersonnelRows(batchId, rows, user = null) {
   const upsert = db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(employee_no) do update set name=excluded.name,department=excluded.department,home_team=excluded.home_team,is_instructor=excluded.is_instructor,position_code=excluded.position_code,actual_grade=excluded.actual_grade,employment_status=excluded.employment_status,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0, updated = 0, skipped = 0, selfPositionBlocked = 0;
   for (const row of rows) {
     const employeeNo = importEmployeeNo(row), importedName = importEmployeeNo(row) === SUPER_ACCOUNT_ID ? SUPER_ACCOUNT_NAME : importName(row);
     let name = importedName;
     if (!employeeNo || !name) { skipped++; continue; }
     const existing = findImportedPerson(employeeNo);
+    // D06-1：导入不得修改确认操作者本人的职位（值未变化时放行）。该行跳过，不阻断整批。
+    if (existing && user?.personId && user.personId === existing.id && existing.position_code !== undefined) {
+      const supplied = personnelImportPayload(row);
+      if (Object.hasOwn(supplied, "position") && String(supplied.position ?? "").trim() !== String(existing.position_code ?? "").trim()) { selfPositionBlocked++; skipped++; continue; }
+    }
     const values = {name,department:importDepartment(row),personnelGroup:importValue(row,["人员分组"]),administrativeTeam:importValue(row,["行政班组"]),isInstructor:["是","true","1"].includes(importValue(row,["是否教员"]).toLowerCase())?1:0,position:importValue(row,["职位"]),actualGrade:importValue(row,["实际岗级"]),employmentStatus:employeeNo===SUPER_ACCOUNT_ID?"在职":importValue(row,["用工状态"])||"在职"};
     const supplied=personnelImportPayload(row);
     if(existing)for(const [key,[column]] of Object.entries(personnelEditableFields))if(!Object.hasOwn(supplied,key))values[key]=existing[column];
@@ -6565,7 +6570,7 @@ function confirmPersonnelRows(batchId, rows) {
     ].forEach(([category, code, value]) => dictionaryValue(category, code, value, batchId));
     if (existing) updated++; else created++;
   }
-  return { created, updated, skipped };
+  return { created, updated, skipped, ...(selfPositionBlocked ? { selfPositionBlocked } : {}) };
 }
 
 function confirmLicenseRows(batchId, rows) {
@@ -6637,7 +6642,7 @@ function confirmPersonnelImport(batch, user, payload={}) {
       if (checked.errors) throw Object.assign(new Error("授权项目或人员数据已变化，请修复后重新上传检查"), { status: 409, details: { summary: checked, issues: checked.issues } });
       Object.assign(summary, checked);
     }
-    result = batch.import_type === "personnel" ? confirmPersonnelRows(batch.id, rows)
+    result = batch.import_type === "personnel" ? confirmPersonnelRows(batch.id, rows, user)
       : batch.import_type === "license" ? confirmLicenseRows(batch.id, rows)
         : batch.import_type === "authorization" ? authorizationImport.replace(batch, rows, user, summary.replacement)
           : confirmTrainingRows(batch.id, rows);
@@ -6856,7 +6861,9 @@ function updatePersonnel(person, payload, manager) {
     if (account && account.id !== SUPER_ACCOUNT_ID && (orgChanged || updates.some(item => ["department", "home_team", "employment_status"].includes(item.column)))) {
       revokeUserSessions(account.id, { bumpCredentialVersion: true });
     }
-    audit(manager, "update_personnel", "personnel", person.id, JSON.stringify({ employeeNo: person.employee_no, fields: [...updates.map(item => item.apiField), ...(orgChanged ? ["departmentId","personnelGroupId","administrativeTeamId"] : [])], reason }));
+    const positionUpdate = updates.find(item => item.column === "position_code");
+    const identityChange = positionUpdate ? { from: classifyPosition(positionUpdate.previous), to: classifyPosition(positionUpdate.next) } : null;
+    audit(manager, "update_personnel", "personnel", person.id, JSON.stringify({ employeeNo: person.employee_no, fields: [...updates.map(item => item.apiField), ...(orgChanged ? ["departmentId","personnelGroupId","administrativeTeamId"] : [])], reason, ...(identityChange ? { identityChange: { fromIdentity: identityChange.from.identityLabel, fromPosition: identityChange.from.normalizedPosition, toIdentity: identityChange.to.identityLabel, toPosition: identityChange.to.normalizedPosition, rulesVersion: identityChange.to.rulesVersion } } : {}) }));
     db.exec("commit");
   } catch (error) {
     db.exec("rollback");
@@ -7303,7 +7310,7 @@ async function routeRequest(req, res) {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
       if (!manager) return;
       const scope = personnelAccess.predicate(manager, "personnel");
-      const rows = db.prepare(`select p.employee_no as employeeNo,p.name,p.position_code as position from personnel p where p.data_status='active' and (${scope.sql}) order by p.employee_no`).all(...scope.params);
+      const rows = db.prepare(`select p.employee_no as employeeNo,p.name,p.position_code as position,(u.id is not null and u.status='active') as hasAccount from personnel p left join users u on u.person_id=p.id where p.data_status='active' and (${scope.sql}) order by p.employee_no`).all(...scope.params).map(row => ({ ...row, hasAccount: !!row.hasAccount }));
       return send(res, 200, identityQualityReport(rows));
     }
     if (method === "GET" && url.pathname === "/api/personnel/authorizations/overview") {
