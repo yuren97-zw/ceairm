@@ -23,7 +23,7 @@ test('班组长职位精确匹配', () => {
 });
 
 test('已知普通员工职位匹配且不升级', () => {
-  for (const position of ['维修人员', '放行人员']) {
+  for (const position of ['维修人员', '放行人员', '维修', '放行']) {
     const result = classifyPosition(position);
     assert.equal(result.identity, IDENTITY_CLASSES.WORKER);
     assert.equal(result.quality, 'matched');

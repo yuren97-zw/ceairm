@@ -21,7 +21,8 @@ export const IDENTITY_CLASS_LABELS = Object.freeze({
 // 精确匹配表（V1.1 §3.1）。
 const CADRE_POSITIONS = Object.freeze(["主任", "副主任", "助理"]);
 const TEAM_LEADER_POSITIONS = Object.freeze(["班组长"]);
-const KNOWN_WORKER_POSITIONS = Object.freeze(["维修人员", "放行人员"]);
+// 已知普通员工职位（2026-11-21 生产实测值：维修/放行；维修人员/放行人员为历史写法兼容）。
+const KNOWN_WORKER_POSITIONS = Object.freeze(["维修人员", "放行人员", "维修", "放行"]);
 
 const COMBINATION_SEPARATORS = /[/、,，]/;
 
