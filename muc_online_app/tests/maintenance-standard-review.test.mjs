@@ -28,7 +28,7 @@ test('standard review uses a typed version source, locks edits and never creates
   assert.throws(()=>f.management.update(f.draft.standard.id,{clientId:'update-locked',revision:2,versionId:f.draft.versions[0].id,reason:'不能改快照',definition:{category:'单项工作',chapter:'29',title:'改名',workScope:'右侧',standardHours:1,aircraftCodes:['A320'],genericAircraft:false}},f.admin),{status:409});
   for(const table of ['maintenance_flights','maintenance_subtasks','maintenance_hour_results','maintenance_nonroutine_review_cases'])assert.equal(f.db.prepare(`select count(*) n from ${table}`).get().n,0);
   const columns=f.db.prepare('pragma table_info(maintenance_standard_review_cases)').all().map(row=>row.name);assert.ok(!columns.includes('flight_id'));assert.ok(!columns.includes('report_batch_id'));
-  const sql=fs.readFileSync(new URL('../migrations/046_maintenance_standard_review.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_review_cases').get().n,1);
+  const sql=fs.readFileSync(new URL('../migrations/048_maintenance_standard_review.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_review_cases').get().n,1);
 });
 test('standard round shares twelve-person privacy, seal and reference statistics but finalization never publishes or posts work',t=>{
   const f=fixture(t),id=f.request().review.id;assert.throws(()=>f.review.accept(id,{revision:1,accountIds:f.members.slice(1).map(user=>user.id),finalizerAccountId:f.finalizer.id},f.admin));f.accept(id);

@@ -56,7 +56,7 @@ test('confirmed recognition appends immutable adjustment facts and a unified rea
   assert.deepEqual(f.db.prepare('select * from maintenance_assignments').all(),before);
   assert.equal(f.db.prepare('select count(*) n from maintenance_effective_hour_results').get().n,3);
   assert.equal(f.deliver().detail.code,'EXISTING_RESULT_REQUIRES_RECONCILIATION');
-  const sql=fs.readFileSync(new URL('../migrations/040_nonroutine_adjustments.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/042_nonroutine_adjustments.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
   assert.equal(f.db.prepare('select count(*) n from maintenance_effective_hour_results').get().n,3);
 });
 test('a failed result write rolls back the original result rows and the effective source together',t=>{
@@ -141,7 +141,7 @@ test('normal-stage expanded and collapsed accounting roles share real parents, c
     assert.ok(parents.every(row=>before.some(actual=>actual.id===row.assignment_id&&actual.person_id===row.person_id)));assert.equal(new Set(parents.map(row=>row.assignment_id)).size,parents.length);
     assert.ok(children.every(row=>parents.some(parent=>parent.id===row.result_id&&parent.assignment_id===row.source_assignment_id)));
     assert.deepEqual(f.db.prepare('select * from maintenance_assignments order by id').all(),before);
-    const migration=fs.readFileSync(new URL('../migrations/045_nonroutine_role_results.sql',import.meta.url),'utf8');f.db.exec(migration);f.db.exec(migration);assert.equal(f.db.prepare('select count(*) n from maintenance_effective_hour_results').get().n,children.length);
+    const migration=fs.readFileSync(new URL('../migrations/047_nonroutine_role_results.sql',import.meta.url),'utf8');f.db.exec(migration);f.db.exec(migration);assert.equal(f.db.prepare('select count(*) n from maintenance_effective_hour_results').get().n,children.length);
     f.db.prepare("update maintenance_hour_results set status='待复核'").run();assert.ok(f.db.prepare('select status from maintenance_effective_hour_results').all().every(row=>row.status==='待复核'));
     f.db.exec('delete from maintenance_hour_results');assert.equal(f.db.prepare('select count(*) n from maintenance_nonroutine_role_results').get().n,0);assert.equal(f.db.prepare('select count(*) n from maintenance_effective_hour_results').get().n,0);
   }

@@ -14,7 +14,7 @@ function fixture(t){
   return {db,service,admin,editor,create,published};
 }
 test('management migration matches additive schema and create retries keep one draft and one audit',t=>{
-  const f=fixture(t),other=new DatabaseSync(':memory:');t.after(()=>other.close());other.exec(MAINTENANCE_STANDARDS_SCHEMA);const sql=fs.readFileSync(new URL('../migrations/044_maintenance_standard_management.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
+  const f=fixture(t),other=new DatabaseSync(':memory:');t.after(()=>other.close());other.exec(MAINTENANCE_STANDARDS_SCHEMA);const sql=fs.readFileSync(new URL('../migrations/046_maintenance_standard_management.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
   const schema=db=>db.prepare('select name,sql from sqlite_master order by name').all();assert.deepEqual(schema(f.db),schema(other));
   const first=f.create(),again=f.create();assert.equal(again.standard.id,first.standard.id);assert.equal(again.operation.replayed,true);assert.equal(again.history.length,1);
   assert.equal(first.versions[0].standard_hours,0);assert.deepEqual(first.versions[0].aircraftCodes,['A320']);assert.equal(first.versions[0].admission_decision,'PENDING');

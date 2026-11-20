@@ -12,7 +12,7 @@ const fixture=t=>{
 };
 const progress={batches:{release:{id:'release',status:'已提报',version:3}},hasRoutine:true,hasFormalNonroutine:false,hasNonroutineDraft:false};
 test('module identity migration is additive, replayable and matches the runtime schema',async t=>{
- const {db}=fixture(t);const sql=await fs.readFile(new URL('../migrations/052_maintenance_module_instances.sql',import.meta.url),'utf8');
+ const {db}=fixture(t);const sql=await fs.readFile(new URL('../migrations/054_maintenance_module_instances.sql',import.meta.url),'utf8');
  assert.equal(MAINTENANCE_MODULE_INSTANCES_SCHEMA,sql);db.exec(sql);db.exec(sql);
  assert.equal(db.prepare('select count(*) n from maintenance_flights').get().n,2);
  assert.equal(db.prepare('select count(*) n from maintenance_module_instances').get().n,0);

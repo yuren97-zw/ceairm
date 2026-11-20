@@ -10,7 +10,7 @@ test('assessment and reserved-channel migration agrees with initialization and f
   t.after(()=>{db.close();migrated.close();});
   for(const instance of [db,migrated]){instance.exec('pragma foreign_keys=on');instance.exec(NONROUTINE_REVIEW_SCHEMA);}
   db.exec(NONROUTINE_ASSESSMENT_SCHEMA);
-  const sql=fs.readFileSync(new URL('../migrations/037_nonroutine_assessment.sql',import.meta.url),'utf8');
+  const sql=fs.readFileSync(new URL('../migrations/039_nonroutine_assessment.sql',import.meta.url),'utf8');
   migrated.exec(sql);migrated.exec(sql);
   const schema=database=>database.prepare('select name,sql from sqlite_master order by name').all();
   assert.deepEqual(schema(db),schema(migrated));

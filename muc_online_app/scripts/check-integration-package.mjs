@@ -36,7 +36,7 @@ execFileSync('tar',['-xzf',archive,'-C',root]);
 const version=(await fs.readFile(path.join(root,'.release-version'),'utf8')).trim();
 assert.ok(version.endsWith(sha),'Artifact version must identify the requested commit');
 for(const file of ['server.mjs','backup-envelope.mjs','backup-cos.mjs','public/attendance-approval-plan-view.mjs','scripts/create-encrypted-backup.mjs'])await fs.access(path.join(root,file));
-if(ci)for(const file of ['scripts/check-maintenance-package.mjs','nonroutine-review.mjs','nonroutine-finalization.mjs','migrations/055_maintenance_rule_history.sql'])await fs.access(path.join(root,file));
+if(ci)for(const file of ['scripts/check-maintenance-package.mjs','nonroutine-review.mjs','nonroutine-finalization.mjs','migrations/057_maintenance_rule_history.sql'])await fs.access(path.join(root,file));
 const probe=net.createServer();let port=8800;
 await new Promise((resolve,reject)=>{probe.once('error',reject);probe.listen(ci?0:8800,'127.0.0.1',()=>{port=probe.address().port;probe.close(resolve);});});
 let ciAdmin,ciDatabase,ciRole;
