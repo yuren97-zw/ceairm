@@ -199,6 +199,7 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_capability_config: ["capability.overview.view", "capability.config.manage"],
   addon_scenario_apply: ["capability.allocation.view", "capability.allocation.submit", "capability.scenario.view", "capability.scenario.apply"],
   addon_account_role_manage: ["personnel.list.view", "accounts.read", "accounts.create", "accounts.update", "accounts.disable", "accounts.password.reset", "accounts.bulk_open", "accounts.roles.assign", "accounts.scopes.assign", "roles.read", "roles.manage"],
+  addon_offset_approver: ["attendance.offset.submit", "attendance.offset.approve"],
   addon_system_settings: ["settings.manage"]
 };
 
@@ -225,6 +226,8 @@ export const RBAC_ROLE_NAMES = {
   addon_actual_grade_view: "附加：实际岗级查看", addon_actual_grade_manage: "附加：实际岗级维护", addon_actual_grade_export: "附加：实际岗级导出",
   addon_qualification_manage: "附加：资质维护", addon_personnel_lifecycle: "附加：人员生命周期管理", addon_capability_config: "附加：能力规则配置",
   addon_scenario_apply: "附加：方案应用", addon_account_role_manage: "附加：账号角色管理",
+  addon_offset_approver: "附加：考勤抵消审批",
+  addon_offset_approver: "附加：本人提交考勤抵消申请并审批受派申请（B4 干部池/值班班组长路由的审批能力）。",
   addon_system_settings: "附加：系统配置"
 };
 

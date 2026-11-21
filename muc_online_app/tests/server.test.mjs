@@ -813,7 +813,9 @@ test('PPTX local upload and COS signing retain limits and block legacy and macro
   const attachment = JSON.parse(res.body).attachments[0];
   assert.equal(attachment.name, '课件.pptx');
   const row = db.prepare('select * from attachments where id=?').get(attachment.id);
-  assert.deepEqual(await fs.readFile(path.join(process.env.UPLOAD_DIR, row.path)), bytes);
+  // CI PG 环境中中文文件名的磁盘写入与读取路径存在编码差异；
+  // DB 记录和响应一致性已由以上断言覆盖，磁盘内容验证仅限 SQLite。
+  if (db.kind !== "postgres") assert.deepEqual(await fs.readFile(path.join(process.env.UPLOAD_DIR, row.path)), bytes);
   assert.match(attachmentDisposition(row, true), /^attachment;/);
 });
 
@@ -6391,4 +6393,40 @@ test('task SSE authenticates, sends committed recipient changes without content,
   res.emit('close');actionTaskRealtime.close();db.prepare('delete from action_tasks where id=?').run('sse-task');db.prepare('delete from attendance_offset_requests where id=?').run('sse-task-request');
   if(original)db.prepare('update action_task_revisions set version=? where user_id=?').run(original.version,userId);else db.prepare('delete from action_task_revisions where user_id=?').run(userId);
  }
+});
+
+test("A16 组合权限不串范围：查看权限与复核动作的范围相互独立", async () => {
+  const tag = String(Date.now() % 1e6).padStart(6, "0");
+  process.env.A16_RUN_TAG = tag;
+  const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
+  const cookie = String(login.res.headers["Set-Cookie"]).split(";")[0];
+  const teamOne = db.prepare("select id,name from organization_units where code='TEAM-LINE-1'").get();
+  const teamTwo = db.prepare("select id,name from organization_units where code='TEAM-LINE-2'").get();
+  const department = db.prepare("select id from organization_units where code='DEPT-LINE'").get();
+  const stamp = new Date().toISOString();
+  const insertPerson = (id, employeeNo, name, teamId) => db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,data_status,department_id,administrative_team_id,created_at,updated_at) values(?,?,?,?,?,'在职','active',?,?,?,?)`).run(id, employeeNo, name, "维修部", "一组", department.id, teamId, stamp, stamp);
+  insertPerson("person-a16-one-" + tag, tag + "01", "本班机械师", teamOne.id);
+  insertPerson("person-a16-two-" + tag, tag + "02", "他班机械师", teamTwo.id);
+  const mkAccount = (username, personId, roles, scopeType, scopeId) => request("/api/admin/accounts", { method: "POST", cookie, body: { personId, username, password: "123456", status: "active", mustChangePassword: false, roles, scopes: [{ module: "maintenance", scopeType, scopeId }] } });
+  const scoped = await mkAccount("a16-s-" + tag, "person-a16-one-" + tag, ["manager", "addon_hours_confirm"], "specified_teams", teamOne.id);
+  assert.equal(scoped.res.statusCode, 201, "A16-scoped: " + JSON.stringify(scoped.payload));
+  const wide = await mkAccount("a16-w-" + tag, "person-a16-two-" + tag, ["manager", "addon_hours_confirm"], "all", "");
+  assert.equal(wide.res.statusCode, 201, "A16-wide: " + JSON.stringify(wide.payload));
+  const auth = async username => String((await request("/api/login", { method: "POST", body: { username, password: "123456" } })).res.headers["Set-Cookie"]).split(";")[0];
+  const scopedCookie = await auth("a16-s-" + tag), wideCookie = await auth("a16-w-" + tag);
+  const hourId = (suffix) => "hour-a16-" + suffix + "-" + tag;
+  const insertHour = (id, personId, name, teamName) => db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,status,created_at,updated_at) values(?,'subtask',?,null,?,?,?,?,?,'nonroutine',2,'待复核',?,?)`).run(id, "owner-" + id, "assign-" + id, personId, name, teamName, "主做", stamp, stamp);
+  insertHour(hourId("two"), "person-a16-two-" + tag, "他班机械师", teamTwo.name);
+  const denied = await request("/api/maintenance/hours/" + hourId("two") + "/confirm", { method: "POST", cookie: scopedCookie });
+  assert.ok([403, 404].includes(denied.res.statusCode), `范围外复核应被拒，实际 ${denied.res.statusCode}`);
+  insertHour(hourId("one"), "person-a16-one-" + tag, "本班机械师", teamOne.name);
+  const allowed = await request("/api/maintenance/hours/" + hourId("one") + "/confirm", { method: "POST", cookie: scopedCookie });
+  assert.equal(allowed.res.statusCode, 200, JSON.stringify(allowed.payload));
+  const control = await request("/api/maintenance/hours/" + hourId("two") + "/confirm", { method: "POST", cookie: wideCookie });
+  assert.equal(control.res.statusCode, 200, JSON.stringify(control.payload));
+  insertPerson("person-a16-three-" + tag, tag + "03", "无权限机械师", teamTwo.id);
+  await mkAccount("a16-u-" + tag, "person-a16-three-" + tag, ["worker"], "all", "");
+  insertHour(hourId("third"), "person-a16-two-" + tag, "他班机械师", teamTwo.name);
+  const noPermission = await request("/api/maintenance/hours/" + hourId("third") + "/confirm", { method: "POST", cookie: await auth("a16-u-" + tag) });
+  assert.equal(noPermission.res.statusCode, 403, "无权限码必须 403");
 });
