@@ -32,7 +32,7 @@ test('unconfirmed, duplicated, malformed and negative ordinary sources cannot cr
  const zero=source.map(entry=>({...entry,hours:0}));assert.equal(plan(zero,target([0.07,0.03])).deltaHours,0.1);assert.throws(()=>plan(source,target([NaN,0.3])),{status:409});
 });
 test('signed correction schema replays and the existing effective view shows only posted net without rewriting base results',async t=>{
- const f=fixture(t),{db}=f;assert.equal(NONROUTINE_CORRECTIONS_SCHEMA,await fs.readFile(new URL('../migrations/059_nonroutine_corrections.sql',import.meta.url),'utf8'));db.exec(NONROUTINE_CORRECTIONS_SCHEMA);
+ const f=fixture(t),{db}=f;assert.equal(NONROUTINE_CORRECTIONS_SCHEMA,await fs.readFile(new URL('../migrations/060_nonroutine_corrections.sql',import.meta.url),'utf8'));db.exec(NONROUTINE_CORRECTIONS_SCHEMA);
  const base=db.prepare('select * from maintenance_hour_results order by id').all();f.approve();assert.throws(()=>f.approve('conflicting',2));
  const result=plan(source,target([0.35,0.15]));for(const [index,entry]of result.deltas.entries())f.insert('maintenance_nonroutine_correction_deltas',{id:'delta-'+index,correction_id:'correction',assignment_id:entry.assignmentId,person_id:entry.personId,user_name:entry.userName,team:entry.team,role:entry.role,hours:entry.hours,before_hours:entry.beforeHours,target_hours:entry.targetHours,correction_of_json:JSON.stringify(entry.correctionOf),created_at:'stamp'});
  assert.equal(db.prepare('select sum(hours) total from maintenance_effective_hour_results').get().total,1);

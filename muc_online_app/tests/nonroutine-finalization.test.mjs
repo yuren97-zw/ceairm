@@ -39,7 +39,7 @@ function fixture(t,{sourceFacts=()=>null}={}) {
 test('finalization migration agrees with startup initialization and can be replayed', t=>{
   const {db}=fixture(t);const other=new DatabaseSync(':memory:');t.after(()=>other.close());
   for(const schema of [NONROUTINE_REVIEW_SCHEMA,NONROUTINE_REVIEW_SUGGESTIONS_SCHEMA,NONROUTINE_ASSESSMENT_SCHEMA])other.exec(schema);
-  const sql=fs.readFileSync(new URL('../migrations/044_nonroutine_finalization.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/045_nonroutine_finalization.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
   const schema=database=>database.prepare('select name,sql from sqlite_master order by name').all();
   assert.deepEqual(schema(db),schema(other));
 });

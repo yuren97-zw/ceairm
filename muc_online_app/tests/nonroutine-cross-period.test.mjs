@@ -20,7 +20,7 @@ test('cross-period source is uniquely reserved and original closed-period snapsh
   const f=fixture(t);const first=f.ensure();assert.equal(first.state,'PENDING_AUTHORIZATION');
   f.source.revision=4;assert.deepEqual(f.ensure(),first);
   assert.equal(JSON.parse(f.ensure().source_period_json).revision,3);
-  const sql=fs.readFileSync(new URL('../migrations/047_nonroutine_cross_period.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/048_nonroutine_cross_period.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
   assert.equal(f.db.prepare('select count(*) n from maintenance_nonroutine_cross_period_tasks').get().n,1);
 });
 test('month task list exposes no private application data and authorization capability follows current owner and effective authorization',t=>{
@@ -76,7 +76,7 @@ test('delivery rechecks authorization revisions and current responsible identity
 
 test('posting receipt migration retains separate handling period and cannot classify work into the handling month',t=>{
   const f=fixture(t);f.ensure();f.db.exec(NONROUTINE_POSTING_RECEIPTS_SCHEMA);
-  const sql=fs.readFileSync(new URL('../migrations/049_nonroutine_posting_receipts.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/050_nonroutine_posting_receipts.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
   const insert=f.db.prepare("insert into maintenance_nonroutine_posting_receipts(channel_id,case_id,approved_revision,work_month,handling_month,statistical_month,policy,period_snapshot_json,created_at) values('channel','case',1,'2026-09','2026-10',?,'ORIGINAL_WORK_MONTH','{}','t')");
   assert.throws(()=>insert.run('2026-10'));
   insert.run('2026-09');assert.throws(()=>insert.run('2026-09'));

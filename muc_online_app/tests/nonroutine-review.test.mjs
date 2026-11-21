@@ -40,7 +40,7 @@ test('review schema matches the additive migration and preserves one immutable a
   const other = new DatabaseSync(':memory:'); t.after(() => other.close());
   const sql = fs.readFileSync(new URL('../migrations/041_nonroutine_review.sql',import.meta.url),'utf8');
   other.exec(sql); other.exec(sql);
-  const suggestionsSql = fs.readFileSync(new URL('../migrations/042_nonroutine_review_suggestions.sql',import.meta.url),'utf8');
+  const suggestionsSql = fs.readFileSync(new URL('../migrations/043_nonroutine_review_suggestions.sql',import.meta.url),'utf8');
   other.exec(suggestionsSql); other.exec(suggestionsSql);
   const schema = database => database.prepare('select name,sql from sqlite_master order by name').all();
   assert.deepEqual(schema(db), schema(other));
