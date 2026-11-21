@@ -6394,6 +6394,8 @@ test('task SSE authenticates, sends committed recipient changes without content,
 });
 
 test("A16 组合权限不串范围：查看权限与复核动作的范围相互独立", async () => {
+  const tag = String(Date.now() % 1e6).padStart(6, "0");
+  process.env.A16_RUN_TAG = tag;
   const login = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const cookie = String(login.res.headers["Set-Cookie"]).split(";")[0];
   const teamOne = db.prepare("select id,name from organization_units where code='TEAM-LINE-1'").get();
@@ -6401,27 +6403,27 @@ test("A16 组合权限不串范围：查看权限与复核动作的范围相互�
   const department = db.prepare("select id from organization_units where code='DEPT-LINE'").get();
   const stamp = new Date().toISOString();
   const insertPerson = (id, employeeNo, name, teamId) => db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,data_status,department_id,administrative_team_id,created_at,updated_at) values(?,?,?,?,?,'在职','active',?,?,?,?)`).run(id, employeeNo, name, "维修部", "一组", department.id, teamId, stamp, stamp);
-  insertPerson("person-a16-one", "99000001", "本班机械师", teamOne.id);
-  insertPerson("person-a16-two", "99000002", "他班机械师", teamTwo.id);
+  insertPerson("person-a16-one-" + tag, tag + "01", "本班机械师", teamOne.id);
+  insertPerson("person-a16-two-" + tag, tag + "02", "他班机械师", teamTwo.id);
   const mkAccount = (username, personId, roles, scopeType, scopeId) => request("/api/admin/accounts", { method: "POST", cookie, body: { personId, username, password: "123456", status: "active", mustChangePassword: false, roles, scopes: [{ module: "maintenance", scopeType, scopeId }] } });
-  const scoped = await mkAccount("a16-scoped", "person-a16-one", ["manager", "addon_hours_confirm"], "specified_teams", teamOne.id);
+  const scoped = await mkAccount("a16-scoped", "person-a16-one-" + tag, ["manager", "addon_hours_confirm"], "specified_teams", teamOne.id);
   assert.equal(scoped.res.statusCode, 201, JSON.stringify(scoped.payload));
-  const wide = await mkAccount("a16-wide", "person-a16-two", ["manager", "addon_hours_confirm"], "all", "");
+  const wide = await mkAccount("a16-wide", "person-a16-two-" + tag, ["manager", "addon_hours_confirm"], "all", "");
   assert.equal(wide.res.statusCode, 201, JSON.stringify(wide.payload));
   const auth = async username => String((await request("/api/login", { method: "POST", body: { username, password: "123456" } })).res.headers["Set-Cookie"]).split(";")[0];
   const scopedCookie = await auth("a16-scoped"), wideCookie = await auth("a16-wide");
   const insertHour = (id, personId, name, teamName) => db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,status,created_at,updated_at) values(?,'subtask',?,null,?,?,?,?,?,'nonroutine',2,'待复核',?,?)`).run(id, "owner-" + id, "assign-" + id, personId, name, teamName, "主做", stamp, stamp);
-  insertHour("hour-a16-two", "person-a16-two", "他班机械师", teamTwo.name);
+  insertHour("hour-a16-two", "person-a16-two-" + tag, "他班机械师", teamTwo.name);
   const denied = await request("/api/maintenance/hours/hour-a16-two/confirm", { method: "POST", cookie: scopedCookie });
   assert.ok([403, 404].includes(denied.res.statusCode), `范围外复核应被拒，实际 ${denied.res.statusCode}`);
-  insertHour("hour-a16-one", "person-a16-one", "本班机械师", teamOne.name);
+  insertHour("hour-a16-one", "person-a16-one-" + tag, "本班机械师", teamOne.name);
   const allowed = await request("/api/maintenance/hours/hour-a16-one/confirm", { method: "POST", cookie: scopedCookie });
   assert.equal(allowed.res.statusCode, 200, JSON.stringify(allowed.payload));
   const control = await request("/api/maintenance/hours/hour-a16-two/confirm", { method: "POST", cookie: wideCookie });
   assert.equal(control.res.statusCode, 200, JSON.stringify(control.payload));
-  insertPerson("person-a16-three", "99000003", "无权限机械师", teamTwo.id);
-  await mkAccount("a16-worker", "person-a16-three", ["worker"], "all", "");
-  insertHour("hour-a16-third", "person-a16-two", "他班机械师", teamTwo.name);
+  insertPerson("person-a16-three-" + tag, tag + "03", "无权限机械师", teamTwo.id);
+  await mkAccount("a16-worker", "person-a16-three-" + tag, ["worker"], "all", "");
+  insertHour("hour-a16-third", "person-a16-two-" + tag, "他班机械师", teamTwo.name);
   const noPermission = await request("/api/maintenance/hours/hour-a16-third/confirm", { method: "POST", cookie: await auth("a16-worker") });
   assert.equal(noPermission.res.statusCode, 403, "无权限码必须 403");
 });
