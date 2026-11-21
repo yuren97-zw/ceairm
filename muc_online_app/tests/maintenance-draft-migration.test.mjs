@@ -9,7 +9,7 @@ test("draft revision migration preserves historical high-water marks and is safe
   db.exec("create table maintenance_report_drafts(flight_id text,report_type text,version integer)");
   db.prepare("insert into maintenance_report_drafts values('flight-one','nonroutine',99)").run();
   db.prepare("insert into maintenance_report_drafts values('flight-one','routine',8)").run();
-  const sql = fs.readFileSync(new URL("../migrations/063_maintenance_draft_versions.sql", import.meta.url), "utf8");
+  const sql = fs.readFileSync(new URL("../migrations/039_maintenance_draft_versions.sql", import.meta.url), "utf8");
   db.exec(sql);
   db.prepare("update maintenance_report_drafts set version=1 where report_type='nonroutine'").run();
   db.exec(sql);

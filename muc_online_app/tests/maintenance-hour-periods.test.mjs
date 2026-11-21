@@ -15,7 +15,7 @@ function fixture(t){
 }
 test('period schema matches replayable migration and absent months remain unknown',t=>{
   const f=fixture(t);const other=new DatabaseSync(':memory:');t.after(()=>other.close());
-  const sql=fs.readFileSync(new URL('../migrations/041_maintenance_hour_periods.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/045_maintenance_hour_periods.sql',import.meta.url),'utf8');other.exec(sql);other.exec(sql);
   const schema=db=>db.prepare('select name,sql from sqlite_master order by name').all();assert.deepEqual(schema(f.db),schema(other));
   assert.equal(f.service.state('2026-09').state,'UNKNOWN');
   for(const month of ['2026-13','2026-00','2026-9','1899-01','2026-09-extra'])assert.throws(()=>f.service.state(month),{status:400});

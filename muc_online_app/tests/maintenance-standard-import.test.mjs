@@ -33,5 +33,5 @@ test('explicit draft update reuses original management audit and cannot update a
 });
 test('batch ownership and current authority are rechecked, migration replay preserves provenance and duplicate source uniqueness',async t=>{
  const f=await fixture(t);assert.throws(()=>f.service.view(f.preview.batchId,f.other),{status:404});assert.throws(()=>f.service.view(f.preview.batchId,f.denied),{status:403});f.user.active=false;assert.throws(()=>f.service.commit(f.preview.batchId,f.payload,f.user),{status:403});f.user.active=true;f.service.commit(f.preview.batchId,f.payload,f.user);
- const sql=fs.readFileSync(new URL('../migrations/053_maintenance_standard_import.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_import_sources').get().n,1);assert.throws(()=>f.db.prepare('insert into maintenance_standard_import_sources select * from maintenance_standard_import_sources').run());
+ const sql=fs.readFileSync(new URL('../migrations/057_maintenance_standard_import.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_import_sources').get().n,1);assert.throws(()=>f.db.prepare('insert into maintenance_standard_import_sources select * from maintenance_standard_import_sources').run());
 });

@@ -60,7 +60,7 @@ test("import batch schema is additive, repeatable and identical to its PostgreSQ
   const { db } = fixture(t);
   const other = new DatabaseSync(":memory:");
   t.after(() => other.close());
-  const sql = fs.readFileSync(new URL("../migrations/064_maintenance_import_provenance.sql", import.meta.url), "utf8");
+  const sql = fs.readFileSync(new URL("../migrations/040_maintenance_import_provenance.sql", import.meta.url), "utf8");
   other.exec(sql); other.exec(sql);
   const schema = database => database.prepare("select name,sql from sqlite_master where name not like '%test_drafts%' order by name").all();
   assert.deepEqual(schema(other), schema(db));

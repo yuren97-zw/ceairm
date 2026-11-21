@@ -40,7 +40,7 @@ test('intake requires explicit authority, final id and applicable scope and cann
 });
 test('failure in provenance binding rolls back the candidate standard and retry uses the original work source',t=>{
   const f=fixture(t),count=f.db.prepare('select count(*) n from maintenance_standards').get().n,before=f.facts();f.db.exec("create trigger fail_work_binding before insert on maintenance_standard_work_sources begin select raise(abort,'work intake audit failed'); end");assert.throws(()=>f.intake.intake(f.workId,f.payload,f.publisher),/work intake audit failed/);assert.equal(f.db.prepare('select count(*) n from maintenance_standards').get().n,count);assert.deepEqual(f.facts(),before);f.db.exec('drop trigger fail_work_binding');f.intake.intake(f.workId,f.payload,f.publisher);
-  const sql=fs.readFileSync(new URL('../migrations/052_work_standard_intake.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_work_sources').get().n,1);
+  const sql=fs.readFileSync(new URL('../migrations/056_work_standard_intake.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);assert.equal(f.db.prepare('select count(*) n from maintenance_standard_work_sources').get().n,1);
 });
 test('tampered original work final or changed candidate fields cannot be admitted under the old provenance',t=>{
   const f=fixture(t),created=f.intake.intake(f.workId,f.payload,f.publisher),std=created.result.standard.id,version=created.result.version.id;

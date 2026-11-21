@@ -11,8 +11,8 @@ function fixture(t){
  return {db,service,actor,qualification,tx,change};
 }
 test('rule history migration matches runtime, is replayable and reads never fabricate past versions',t=>{
- const f=fixture(t);f.db.exec(fs.readFileSync(new URL('../migrations/057_maintenance_rule_history.sql',import.meta.url),'utf8'));f.db.exec(MAINTENANCE_RULE_HISTORY_SCHEMA);
- const migrated=new DatabaseSync(':memory:');try{migrated.exec(fs.readFileSync(new URL('../migrations/057_maintenance_rule_history.sql',import.meta.url),'utf8'));assert.deepEqual(migrated.prepare("select name,sql from sqlite_master where name='maintenance_rule_change_history'").all(),f.db.prepare("select name,sql from sqlite_master where name='maintenance_rule_change_history'").all());}finally{migrated.close();}
+ const f=fixture(t);f.db.exec(fs.readFileSync(new URL('../migrations/061_maintenance_rule_history.sql',import.meta.url),'utf8'));f.db.exec(MAINTENANCE_RULE_HISTORY_SCHEMA);
+ const migrated=new DatabaseSync(':memory:');try{migrated.exec(fs.readFileSync(new URL('../migrations/061_maintenance_rule_history.sql',import.meta.url),'utf8'));assert.deepEqual(migrated.prepare("select name,sql from sqlite_master where name='maintenance_rule_change_history'").all(),f.db.prepare("select name,sql from sqlite_master where name='maintenance_rule_change_history'").all());}finally{migrated.close();}
  const before=f.db.prepare('select * from maintenance_hour_rules order by name').all(),state=f.service.state();assert.equal(state.revision,0);assert.equal(state.historyKnown,false);assert.equal(state.hasUnjournaledChanges,false);assert.deepEqual(f.service.list().items,[]);assert.equal(f.db.prepare('select count(*) n from maintenance_rule_change_history').get().n,0);assert.deepEqual(f.db.prepare('select * from maintenance_hour_rules order by name').all(),before);
 });
 test('actual before and after configuration, actor qualification and explicit reason are appended once; no-op is not a new version',t=>{

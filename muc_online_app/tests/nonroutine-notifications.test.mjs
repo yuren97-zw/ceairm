@@ -51,7 +51,7 @@ test('terminal cases stop outstanding reminders and notification inserts roll ba
   f.db.prepare("update maintenance_nonroutine_review_cases set state='FINALIZED' where id=?").run(f.id);f.time(48);
   assert.equal(f.service.pump().delivered,0);assert.equal(f.service.list(f.members[0]).length,0);
   assert.equal(f.db.prepare("select count(*) n from maintenance_nonroutine_review_outbox where state='PENDING'").get().n,0);
-  const sql=fs.readFileSync(new URL('../migrations/044_nonroutine_notifications.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
+  const sql=fs.readFileSync(new URL('../migrations/048_nonroutine_notifications.sql',import.meta.url),'utf8');f.db.exec(sql);f.db.exec(sql);
   assert.equal(f.db.prepare('select count(*) n from maintenance_nonroutine_review_notifications').get().n,12);
 });
 test('finalizer inbox reprojects current progress after later opinions and never trusts stored payload fields',t=>{
