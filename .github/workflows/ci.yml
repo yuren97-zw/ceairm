@@ -28,6 +28,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://airline:test-password@127.0.0.1:5432/airline_operations
       PGSSLMODE: disable
+      # COS 直传配置在 job 级恒定注入：测试文件内晚设的 env 无法影响已加载的
+      # server 模块（cosConfig 在模块加载时固化），曾导致慢 runner 上 presign 409。
+      COS_SECRET_ID: test-secret-id
+      COS_SECRET_KEY: test-secret-key
+      COS_BUCKET: test-bucket-1234567890
+      COS_REGION: ap-shanghai
     steps:
       - uses: actions/checkout@v4
         with:
