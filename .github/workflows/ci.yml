@@ -34,6 +34,7 @@ jobs:
       COS_SECRET_KEY: test-secret-key
       COS_BUCKET: test-bucket-1234567890
       COS_REGION: ap-shanghai
+      APP_VERSION: test-version
     steps:
       - uses: actions/checkout@v4
         with:

@@ -6401,8 +6401,8 @@ test("A16 组合权限不串范围：查看权限与复核动作的范围相互�
   const department = db.prepare("select id from organization_units where code='DEPT-LINE'").get();
   const stamp = new Date().toISOString();
   const insertPerson = (id, employeeNo, name, teamId) => db.prepare(`insert into personnel(id,employee_no,name,department,home_team,employment_status,data_status,department_id,administrative_team_id,created_at,updated_at) values(?,?,?,?,?,'在职','active',?,?,?,?)`).run(id, employeeNo, name, "维修部", "一组", department.id, teamId, stamp, stamp);
-  insertPerson("person-a16-one", "81000001", "本班机械师", teamOne.id);
-  insertPerson("person-a16-two", "81000002", "他班机械师", teamTwo.id);
+  insertPerson("person-a16-one", "99000001", "本班机械师", teamOne.id);
+  insertPerson("person-a16-two", "99000002", "他班机械师", teamTwo.id);
   const mkAccount = (username, personId, roles, scopeType, scopeId) => request("/api/admin/accounts", { method: "POST", cookie, body: { personId, username, password: "123456", status: "active", mustChangePassword: false, roles, scopes: [{ module: "maintenance", scopeType, scopeId }] } });
   const scoped = await mkAccount("a16-scoped", "person-a16-one", ["manager", "addon_hours_confirm"], "specified_teams", teamOne.id);
   assert.equal(scoped.res.statusCode, 201, JSON.stringify(scoped.payload));
@@ -6419,7 +6419,7 @@ test("A16 组合权限不串范围：查看权限与复核动作的范围相互�
   assert.equal(allowed.res.statusCode, 200, JSON.stringify(allowed.payload));
   const control = await request("/api/maintenance/hours/hour-a16-two/confirm", { method: "POST", cookie: wideCookie });
   assert.equal(control.res.statusCode, 200, JSON.stringify(control.payload));
-  insertPerson("person-a16-three", "81000003", "无权限机械师", teamTwo.id);
+  insertPerson("person-a16-three", "99000003", "无权限机械师", teamTwo.id);
   await mkAccount("a16-worker", "person-a16-three", ["worker"], "all", "");
   insertHour("hour-a16-third", "person-a16-two", "他班机械师", teamTwo.name);
   const noPermission = await request("/api/maintenance/hours/hour-a16-third/confirm", { method: "POST", cookie: await auth("a16-worker") });
