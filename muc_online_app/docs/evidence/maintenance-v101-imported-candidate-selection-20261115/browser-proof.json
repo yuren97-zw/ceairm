@@ -1,0 +1,18 @@
+{
+  "actualOriginalBrowser": true,
+  "syntheticOnly": true,
+  "viewports": [
+    1280,
+    390
+  ],
+  "physicalDeviceVerified": false,
+  "unlistedReturnKeepsOriginalItem": true,
+  "candidateCount": 2,
+  "selectedStandard": "browser-later-a",
+  "saveAndReopenRetained": true,
+  "originalSourceIdentityRetained": true,
+  "formalSubmitUsesStandard": true,
+  "reviewCases": 0,
+  "recognizedHours": 1.5,
+  "originalDispatchUnchanged": true
+}

@@ -1,0 +1,44 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "widths": [
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    }
+  ],
+  "servicesStopped": true
+}

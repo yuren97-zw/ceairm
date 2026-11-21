@@ -1,0 +1,19 @@
+{
+  "syntheticOnly": true,
+  "retirementEnabledOnlyInPrivateFixture": true,
+  "oldAmountReadOnly": true,
+  "oldAmountInputAbsent": true,
+  "originalRatioSaveViaUI": true,
+  "savedMainRatio": 0.55,
+  "savedInspectionRatio": 0.45,
+  "legacyDefaultRemains": 3,
+  "newUnlistedTowAmountBlank": true,
+  "layout": {
+    "width": 390,
+    "scrollWidth": 390,
+    "fontSize": "16px"
+  },
+  "stopped": true,
+  "legacyRuleUnchangedIncludingTimestamps": true,
+  "fixtureCanonicalLocation": true
+}

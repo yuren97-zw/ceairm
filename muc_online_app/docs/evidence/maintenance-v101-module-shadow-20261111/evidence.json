@@ -1,0 +1,46 @@
+{
+  "scope": "existing report module read adapters and server transition shadow comparison",
+  "sqlite": {
+    "tests": 648,
+    "pass": 648,
+    "fail": 0
+  },
+  "shadowDifferencesInSqliteLog": 0,
+  "postgres": {
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "shadowDifferences": 0,
+    "restore": {
+      "tables": 135,
+      "rows": 3153,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "6c33a560cfdf427970f74e90ae28f6d230957d81f6bc2392e79bb691c1c57712"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-opportunity-modules.mjs": "0d5fd742c288df82dc7ba018ea3b4064115540725fef999f593d16508a3f864d",
+    "server.mjs": "358b455e4196eb23706a6e331e7b3e2f52cec8dc1c7a32b5d4ada3d42b8f1e8e",
+    "tests/server.test.mjs": "15b5e8a3d30f922d8f3d84904b2e8ee9ce2662303ea321db08aee944df3649bc"
+  },
+  "remaining": [
+    "persisted instance and rule snapshots",
+    "extended module result submission",
+    "full release-lock comparison coverage",
+    "workflow foundation and approved gates",
+    "homepage complete count and navigation acceptance",
+    "full goal acceptance"
+  ],
+  "initialFailure": "Initial run had one dispatch request query timeout and 67 passing tests during repeated clamshell/maintenance sleep. Same-code full rerun passed all 68 tests and completed restore."
+}

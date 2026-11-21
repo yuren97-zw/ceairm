@@ -1,0 +1,32 @@
+{
+  "stage": "home-browser-history",
+  "sourceSha256": {
+    "public/app.js": "4ae4ebbd3dbfa6ae3a8acf28f157d9dec9466acd2e83709ccf5475ba3adccca3",
+    "tests/maintenance-home-navigation.test.mjs": "c7ef1d6f81114829432e54f4ddeef8ce43bcdb60c43e265edbe7e5d0646bce71"
+  },
+  "testsLog": "tests.log",
+  "syntaxAndBuild": true,
+  "browserVerified": true,
+  "limitations": [
+    "Installed PWA, cross-login native history and physical devices remain pending",
+    "No server or database implementation changes; private synthetic opportunity deleted for authorization check",
+    "Full V10.1 acceptance incomplete"
+  ],
+  "goalComplete": false,
+  "browser": {
+    "syntheticOnly": true,
+    "pendingCount": 501,
+    "before": 34069,
+    "backY": 34069,
+    "zeroPositionRestored": true,
+    "forwardReauthorized": true,
+    "revokedForwardRejected": true,
+    "alerts": [
+      "\u672a\u627e\u5230\u822a\u73ed\u4efb\u52a1"
+    ],
+    "stopped": true
+  },
+  "reviewedScreenshots": [
+    "home-history-mobile.png"
+  ]
+}

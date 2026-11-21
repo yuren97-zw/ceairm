@@ -77,7 +77,8 @@ export function localProfileForBranch(branch) {
 export function localDevelopmentEnvironment(appDir, profile, ambient={},interfaces) {
   const definition=Object.hasOwn(LOCAL_DEVELOPMENT_PROFILES,profile)?LOCAL_DEVELOPMENT_PROFILES[profile]:null;
   if(!definition)throw new Error('未知本机开发配置');
-  const inherited=Object.fromEntries(['PATH','HOME','LANG','LC_ALL','TZ','TMPDIR'].filter(key=>typeof ambient[key]==='string').map(key=>[key,ambient[key]]));
+  const v101PassThrough=['MUC_MAINTENANCE_V101','MUC_NONROUTINE_REVIEW_ENABLED','MUC_NONROUTINE_MANUAL_ENABLED','MUC_NONROUTINE_SUBMISSION_ENABLED','MUC_NONROUTINE_FINALIZATION_ENABLED','MUC_MAINTENANCE_PERIODS_ENABLED','MUC_NONROUTINE_CORRECTIONS_ENABLED','MUC_STANDARDS_MANAGEMENT_ENABLED','MUC_STANDARDS_REVIEW_ENABLED','MUC_NONSETTLEMENT_MODULES_ENABLED','MUC_MAINTENANCE_MODULE_INSTANCES_ENABLED','MUC_MAINTENANCE_MODULE_SHADOW_ENABLED','MUC_STANDARDS_REVIEW_ENABLED','MUC_WORKFLOW_TASKS_ENABLED','MUC_WORKFLOW_SIMULATION_ENABLED'];
+  const inherited=Object.fromEntries(['PATH','HOME','LANG','LC_ALL','TZ','TMPDIR',...v101PassThrough].filter(key=>typeof ambient[key]==='string').map(key=>[key,ambient[key]]));
   if(ambient.MUC_DEV_LAN&&!['true','false'].includes(ambient.MUC_DEV_LAN))throw new Error('MUC_DEV_LAN只能为true或false');
   const address=ambient.MUC_DEV_LAN==='true'?selectDevelopmentLanAddress(ambient.MUC_DEV_LAN_ADDRESS,interfaces):'127.0.0.1';
   return {...inherited,NODE_ENV:'development',MUC_DEV_LAN:ambient.MUC_DEV_LAN==='true'?'true':'false',HOST:ambient.MUC_DEV_LAN==='true'?'0.0.0.0':'127.0.0.1',PORT:String(definition.port),

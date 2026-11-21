@@ -1,0 +1,46 @@
+{
+  "driverVersion": "page-evidence-r3",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "importWorkbenchPreview": {
+      "ok": true,
+      "facts": {
+        "rowCount": 2,
+        "texts": [
+          "第2行 · 作为草稿导入 · A320 · 2023-06-10页面取证三轮新草稿A类别待填 · ATA 待填查看详情",
+          "第3行 · 作为草稿导入 · A320 · 2023-06-10页面取证三轮新草稿B类别待填 · ATA 待填查看详情"
+        ],
+        "confirm": "导入所选 2 行草稿",
+        "summary": [
+          "待处理全部（待处理优先）异常与"
+        ]
+      },
+      "selection": [
+        [
+          "2",
+          true,
+          false
+        ],
+        [
+          "3",
+          true,
+          false
+        ]
+      ]
+    },
+    "importWorkbenchCommit": {
+      "ok": true,
+      "progress": "草稿处理结果已保存，可继续处理异常行或到原执行页查看。",
+      "activeDrafts": 2
+    }
+  },
+  "screenshots": [
+    "r3-import-workbench-preview.png",
+    "r3-import-workbench-committed.png"
+  ],
+  "servicesStopped": true
+}

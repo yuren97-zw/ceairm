@@ -1,0 +1,58 @@
+{
+  "stage": "original-source-removal-review-cancellation",
+  "date": "2026-11-13",
+  "sourceSha256": {
+    "nonroutine-source-cancellation.mjs": "a6c941b72c671812d93e1f4be272f3922af6f56c1e90511a487bb61f4fdfcbae",
+    "nonroutine-cross-period.mjs": "52589aa85c70cecf008f1d40c4684714ee4a554168dc264c683875ea482233d7",
+    "public/maintenance-cross-period-workbench.mjs": "f76517e365d209e0841971251f19257b23813f758de51fb43f4297c1859a6f26",
+    "server.mjs": "3c5d4aa68b37712f91ff0f0de2be281cba4b58191aec15818ad5d3bd8e3dde10",
+    "tests/nonroutine-source-cancellation.test.mjs": "2112b983140a4a6c4336895628bbe5dbe96c64b401c1b5f03348b3aa7512422b",
+    "tests/nonroutine-cross-period.test.mjs": "be1cbf5fad955918f70a980fcb6857b55480351a6b17a53d83771d15d9aee689",
+    "tests/maintenance-cross-period-workbench.test.mjs": "78e1d56f09d6c5cac1b36b16f825645319696aa5e69b69bf4b721bc0b4d2808a",
+    "tests/server.test.mjs": "9eb5b30fcfbed50492c5c5822ff068971535842aabed447c808dfb727fdffbf7",
+    "scripts/check-maintenance-v101-restored.mjs": "7ec4c3a0eb99d9b8adcec603e912656228b30b29a11514e87a68480196e49124"
+  },
+  "sqlitePassed": 759,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-ZlexpV",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3636,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "01d4b40b4db8b8fb67b86d08d7d23ca77b28a424c43a321f13c61970f99d07d0"
+    },
+    "stopped": true,
+    "testsPassed": 75
+  },
+  "restoredSourceCancellationsVerified": 3,
+  "independentCancellationAuthority": "PENDING_BUSINESS_DECISION",
+  "live8788Changed": false,
+  "businessDatabaseChanged": false,
+  "browserVisualVerifiedThisStage": false,
+  "fullAcceptanceVerified": false,
+  "scope": [
+    "existing authorized source removal only",
+    "immutable final and opinions preserved",
+    "posted evidence including zero blocks deletion",
+    "CAS and audit failures roll back original deletion",
+    "cross-period cancellation projection retains recorded task and history",
+    "cancelled source cannot authorize or post"
+  ]
+}

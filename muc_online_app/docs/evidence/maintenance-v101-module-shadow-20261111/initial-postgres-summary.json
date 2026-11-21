@@ -1,0 +1,13 @@
+{
+  "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+  "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-uHADAH",
+  "port": 15432,
+  "fixtureOnly": false,
+  "populatedLegacyRefused": true,
+  "upgrade": true,
+  "repeatedMigration": true,
+  "serverTests": false,
+  "restore": null,
+  "stopped": true,
+  "error": "server-tests failed (1); isolated log: /var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-uHADAH/server-tests.log"
+}

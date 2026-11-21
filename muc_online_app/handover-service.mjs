@@ -94,7 +94,18 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   }
   const drafts=loadNonroutineDrafts([...tree.keys()]);
   const routineReports=loadRoutineReports([...tree.keys()]);
-  for(const [id,entry] of tree){entry.nonroutineDraft=drafts.get(id)||null;entry.routineReport=routineReports.get(id)||null;}
+  for(const [id,entry] of tree){
+   entry.nonroutineDraft=drafts.get(id)||null;entry.routineReport=routineReports.get(id)||null;
+   // B5-3 集成兜底：维修 V10.1 草稿把派工人员保存在草稿条目 entries（不写 assignments 表），
+   // 交接投影在表内无派工时按草稿条目合成，维持字段白名单形态（role+userName）。
+   if(entry.nonroutineDraft&&Array.isArray(entry.nonroutineDraft.items))
+    for(const sub of entry.subtasks){
+     if(sub.assignments.length)continue;
+     const items=entry.nonroutineDraft.items;
+     const item=items.find(candidate=>String(candidate.id)===String(sub.id))||items.find(candidate=>String(candidate.title||'')===String(sub.title||''));
+     if(item&&Array.isArray(item.entries))sub.assignments=item.entries.map(({role,userName})=>({role,userName}));
+    }
+  }
   return tree;
  };
  const flightView=(row,entry)=>{

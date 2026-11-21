@@ -1,0 +1,29 @@
+{
+  "stage": "eight-category-strategy-summary",
+  "sourceSha256": {
+    "server.mjs": "43897d6066a20fad1e44b5951bf3e56df9cb16c30148017df04048d747fbc637",
+    "public/app.js": "709cea58d1e151fa907dc7e9764e25243decc8061e9dbcfa53bdb82b03a38cf1",
+    "tests/maintenance-tow-transition.test.mjs": "75954d1e6cacfe2c151d42fc0a86e4935d8a3f0674dbef01d3f026b438621b90",
+    "tests/server.test.mjs": "14663f9018ab2e0e1d28eee01153170cd5669aff4801bbbb4f51d9502e68dad7"
+  },
+  "sqlitePassed": 707,
+  "syntaxAndBuild": true,
+  "browser": {
+    "syntheticOnly": true,
+    "width": 390,
+    "twoRoleCombination": true,
+    "threeEqual": true,
+    "threeUndecided": true,
+    "noHorizontalOverflow": true,
+    "screenshotReviewed": true,
+    "stopped": true
+  },
+  "newPersistentWrites": false,
+  "postgresRerun": false,
+  "limitations": [
+    "Physical iOS and installed PWA pending",
+    "Three strategies still business-undecided; legacy retained",
+    "Full acceptance incomplete"
+  ],
+  "goalComplete": false
+}

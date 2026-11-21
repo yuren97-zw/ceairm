@@ -1,0 +1,280 @@
+{
+  "driverVersion": "four-state-diagnostic-r2",
+  "teardown": false,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "widths": [
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "SEALED",
+      "width": 1280,
+      "dirtyBeforeRefresh": true,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "SEALED",
+      "width": 390,
+      "dirtyBeforeRefresh": true,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "FINALIZED",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "FINALIZED",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    }
+  ],
+  "diagnostics": {
+    "stages": [
+      "PENDING_ACCEPTANCE",
+      "IN_REVIEW",
+      "SEALED",
+      "FINALIZED"
+    ],
+    "baseSqlite": "/private/tmp/zcode-sealed-20261117/base-r2.sqlite",
+    "loaded-PENDING_ACCEPTANCE-1280": {
+      "label": "loaded-PENDING_ACCEPTANCE-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-PENDING_ACCEPTANCE-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-PENDING_ACCEPTANCE-1280": {
+      "label": "clicked-PENDING_ACCEPTANCE-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-PENDING_ACCEPTANCE-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-PENDING_ACCEPTANCE-390": {
+      "label": "loaded-PENDING_ACCEPTANCE-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-PENDING_ACCEPTANCE-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-PENDING_ACCEPTANCE-390": {
+      "label": "clicked-PENDING_ACCEPTANCE-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-PENDING_ACCEPTANCE-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-IN_REVIEW-1280": {
+      "label": "loaded-IN_REVIEW-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-IN_REVIEW-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-IN_REVIEW-1280": {
+      "label": "clicked-IN_REVIEW-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-IN_REVIEW-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-IN_REVIEW-390": {
+      "label": "loaded-IN_REVIEW-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-IN_REVIEW-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-IN_REVIEW-390": {
+      "label": "clicked-IN_REVIEW-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-IN_REVIEW-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-SEALED-1280": {
+      "label": "loaded-SEALED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-SEALED-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-SEALED-1280": {
+      "label": "clicked-SEALED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-SEALED-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-SEALED-390": {
+      "label": "loaded-SEALED-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-SEALED-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-SEALED-390": {
+      "label": "clicked-SEALED-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-SEALED-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-FINALIZED-1280": {
+      "label": "loaded-FINALIZED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-FINALIZED-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-FINALIZED-1280": {
+      "label": "clicked-FINALIZED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-FINALIZED-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-FINALIZED-390": {
+      "label": "loaded-FINALIZED-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-FINALIZED-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-FINALIZED-390": {
+      "label": "clicked-FINALIZED-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag2-FINALIZED-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag2-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    }
+  },
+  "browserReviewWrites": 0,
+  "initialBusinessSha256": "06c4a0203f857a92aa0b8785d5fa3ab7309bdeec9eab9db18de27d61e1c32410",
+  "finalBusinessSha256": "bc490571ed3b8d1bd3859fc5b756698c0e6c3e2e1f2275b1a75c8851e70dfcd8",
+  "currentOpinionCount": 12,
+  "caseState": "NEEDS_ATTENTION",
+  "servicesStopped": true
+}

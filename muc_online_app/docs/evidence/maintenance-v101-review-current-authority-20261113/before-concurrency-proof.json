@@ -1,0 +1,37 @@
+{
+  "syntheticOnly": true,
+  "processes": [
+    {
+      "port": 18890,
+      "backendPid": 55997,
+      "processId": 55996
+    },
+    {
+      "port": 18891,
+      "backendPid": 55999,
+      "processId": 55998
+    }
+  ],
+  "overlaps": [],
+  "cases": [],
+  "workersStopped": true,
+  "month": "2026-11",
+  "revokedAcceptances": [
+    {
+      "scenario": "role-revoked",
+      "waiting": [
+        {
+          "pid": 55997,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-13T10:47:39.035Z"
+        }
+      ],
+      "status": 200,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true
+    }
+  ],
+  "workersCleanExit": true,
+  "observationObjectsRemoved": true
+}

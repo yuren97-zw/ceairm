@@ -1,0 +1,117 @@
+{
+  "scope": "published version revision real API lifecycle, original confirmed work snapshot freeze, shared effective-version projection and browser revision/future activation",
+  "sqlite": {
+    "tests": 622,
+    "pass": 622,
+    "fail": 0,
+    "skipped": 0
+  },
+  "serverTests": {
+    "tests": 66,
+    "pass": 66,
+    "fail": 0,
+    "skipped": 0
+  },
+  "targetedTests": 21,
+  "concurrentRevisionRequests": {
+    "attempts": 2,
+    "success": 1,
+    "conflict": 1,
+    "source": "real measuredRoute API; original transaction and stale revision checks"
+  },
+  "oldConfirmedWork": {
+    "createdUsingOriginalDraftAndSubmission": true,
+    "standardVersion": 1,
+    "recognizedHours": 0,
+    "afterNewVersionHours": 1.2,
+    "originalWorkFactsUnchanged": true,
+    "oldVersionFinalAndPublicationUnchanged": true
+  },
+  "futureActivation": {
+    "domainBoundaryChecked": true,
+    "managementAndPublicationShareMatchingGates": true,
+    "oldRemainsEffectiveBeforeFuture": true,
+    "newEffectiveAtBoundary": true,
+    "oldMarkedSupersededAfterBoundary": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "publishedOldZero": true,
+    "revisionDraftThroughUi": true,
+    "reviewRequestThroughUi": true,
+    "twelveRealApiOpinions": true,
+    "independentPublicationThroughUi": true,
+    "explicitFutureActivation": true,
+    "privateOpinionsAbsent": true,
+    "oldVersionEffectiveUntilFuture": true,
+    "mobile": {
+      "width": 390,
+      "scrollWidth": 390,
+      "font": "16px"
+    },
+    "versions": [
+      {
+        "id": "msv-1794316662662-556b90631a77",
+        "version": 2,
+        "lifecycle": "SCHEDULED",
+        "standardHours": 1.2
+      },
+      {
+        "id": "msv-93704b9a-00b3-49fe-bfa7-a25e52f091ff-2",
+        "version": 1,
+        "lifecycle": "EFFECTIVE",
+        "standardHours": 0
+      }
+    ],
+    "desktopWidth": 1440,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true,
+    "realDeviceOrPWA": false,
+    "retryNote": "First script used incorrect existing management root selector; corrected script resumed the already published synthetic V1 and completed V2 flow. No business implementation changed for that selector error."
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 66,
+    "pass": 66,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-050",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 131,
+      "rows": 3092,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "d9633ca8e9e267ed87852cfeb375f6ddd8e977ad2a9521aea7e68296322eff35"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "maintenance-standards.mjs": "e737baa393e41de5ff5e023bf423d00b2891eb2674c10fbb147d3a3772c9b04e",
+    "maintenance-standard-management.mjs": "6bdc33aea3f2a02b50d6b7890677bee0039512f61a829a36bf74250c23b96aa4",
+    "maintenance-standard-review.mjs": "df791257d4b05c214cdaebb47d06d3f96ddfb3e43005af5dfd2ea2eb8bbcc851",
+    "maintenance-standard-publication.mjs": "36922b5248e13956ca2978d7425da3fda1b5c724b782948380155cbc25169b17",
+    "public/maintenance-standard-management-workbench.mjs": "442bf7850d6bf244aa9612f890b6660fb2f369c3234e3e63deeaf44a1e4b02f3",
+    "public/maintenance-standard-publication-workbench.mjs": "1cee8ce57a12664587e8e24c3fb24d4b78a616bb341d6177c5118aed69ccf209",
+    "tests/server.test.mjs": "c3a0a3e22a37c9b155b5d6ac1f6ccf06a609d564914675a9ae2a62198df11261",
+    "tests/maintenance-standard-publication.test.mjs": "d8c45e75c31c2ad0c5dafb669da18b47a0a930f8876d29613a604d504978f3c7",
+    "tests/maintenance-standard-management-workbench.test.mjs": "20c97679cdb50806c81bde8fca4d7ce8a813146ea869bf29345fd98785a96e94",
+    "tests/maintenance-standard-publication-workbench.test.mjs": "3edf5ccdba3571ff1a9eda30a662eb7d0efe93c20b56aec4b7661b1da37a05e0"
+  },
+  "limitations": [
+    "generic applicability independent approval policy still not configured",
+    "all cross-process/concurrent version/aircraft/permission changes not exhausted",
+    "standard Excel import, compliant deletion, authorized corrections, modules and shift quiet windows remain open",
+    "full 210 business-case acceptance not completed",
+    "no real user assignment, live 8788 modification or deployment"
+  ]
+}

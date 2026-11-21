@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-15",
+  "scope": "P0-10 original API SQLite regression only",
+  "applicationChanged": false,
+  "test": "locked routine source and hours survive legitimate independent release dispatch changes",
+  "results": {
+    "focused": 1,
+    "defaultFull": 811,
+    "coordinatorFull": 811
+  },
+  "verified": [
+    "routine submitted source version, participants, hours, journal and drafts byte-for-field unchanged",
+    "independent release removal preview and commit before release reporting",
+    "new release dispatch and omitted locked association retention",
+    "locked role additions, removal preview and commit rejected 409 without mutation"
+  ],
+  "limitations": [
+    "No new PostgreSQL run",
+    "No new browser or physical-device verification",
+    "No production or live 8788 writes"
+  ],
+  "sha256": {
+    "server.mjs": "4cd1fdba7d92cfc70d0048b5cad5bfadb4db71d2f26d8e6f5b507db39cb042ee",
+    "public/app.js": "b13417732c3d0d4b2dddf0e214f8f73d156c6f207acfa95a6bed580134726233",
+    "tests/server.test.mjs": "0110d9957465f2d4d4df5ebb4926fcf974196978ce08d44631ebc748f5fc7aa8"
+  }
+}

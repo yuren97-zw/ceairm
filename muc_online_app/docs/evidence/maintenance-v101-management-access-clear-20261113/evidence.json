@@ -1,0 +1,26 @@
+{
+  "stage": "management-client-access-loss-clearing",
+  "date": "2026-11-13",
+  "sourceSha256": {
+    "public/maintenance-standard-management-workbench.mjs": "dd1188dffb962ad34d59f456c84f74c2bf152f295bd01108489f43e8c2e7fc19",
+    "public/sw.js": "bc1d6b8a2197099e8e8888808f1f74c20d040b2e394a3101d6eeaf79fdb18b1b",
+    "tests/maintenance-standard-management-workbench.test.mjs": "c2e4e3e4a076bc3e80c35bd186008adafe0609b2a9cda43b1a63893446802df4",
+    "server.mjs": "563967294575cd98c434462cdf6363c51544d722ccf37a5f22743cf4eeabae57",
+    "tests/server.test.mjs": "2160c10ab4f81d4e4c5e4bc833b5b186238af950cc7d186043e807f49c7a969e"
+  },
+  "sqliteDefaultPassed": 776,
+  "sqliteCoordinatorEnabledPassed": 776,
+  "focusedTestsPassed": 13,
+  "buildPassed": true,
+  "runtimeUnchanged": {
+    "server.mjs": true,
+    "tests/server.test.mjs": true
+  },
+  "previousPostgresEvidence": "../maintenance-v101-publication-current-scope-20261113/evidence.json",
+  "limits": [
+    "Controller tests use simulated API failures, not a new real-browser or real revocation acceptance.",
+    "No new database changes; previous server and server-test hashes match, PG suite not rerun in this client-only stage.",
+    "Initial tests also exposed a shared global-mock cleanup error; independent subtests corrected that harness issue.",
+    "Complete privacy matrix, devices, PWA installation and all210 acceptance remain incomplete."
+  ]
+}

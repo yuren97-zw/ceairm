@@ -1,0 +1,76 @@
+{
+  "driverVersion": "page-evidence-r4",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "p16HomeDual": {
+      "ok": true,
+      "facts": {
+        "count": "2",
+        "items": [
+          "停场B-DUALPEVR4-DUAL-A · A320 · 06.10 已派工机位 -落地 -起飞 -青岛",
+          "航后B-DUALPEVR4-DUAL-B · A320 · 06.10 已提报机位 -落地 -起飞 -青岛"
+        ],
+        "dualA": true,
+        "dualB": true,
+        "sameAircraft": 2
+      }
+    },
+    "p123HomeNavigation": {
+      "ok": true,
+      "landed": {
+        "page": "maintenancePage",
+        "tab": "execute",
+        "visible": true
+      }
+    },
+    "p46DualUnits": {
+      "ok": true,
+      "cards": [
+        "今日工时0小时2026-11-18",
+        "本月工时0小时2026年11月",
+        "月度放行架次0架次2026年11月"
+      ]
+    },
+    "p46SortieDetail": {
+      "ok": true,
+      "excerpt": "2026-11 放行架次明细× 合计 0 架次 没有对应记录。"
+    },
+    "p46ApiDbReconcile": {
+      "ok": true,
+      "apiSortiesConfirmed": 0,
+      "apiSortiesPending": 1,
+      "dbSorties": 1,
+      "apiHoursConfirmed": 0,
+      "apiHoursPending": 5,
+      "dbHours": 5
+    },
+    "p127Strategies": {
+      "ok": true,
+      "facts": {
+        "open": true,
+        "allPresent": true,
+        "counts": {
+          "combination": 2,
+          "equal": 6,
+          "undecided": 3
+        }
+      }
+    }
+  },
+  "screenshots": [
+    "p16-home-dual-opportunities.png",
+    "p123-home-to-execute.png",
+    "p46-personal-dual-units.png",
+    "p46-sortie-detail.png",
+    "p127-eight-category-strategies.png"
+  ],
+  "servicesStopped": true,
+  "homeToggleDiagnostic": {
+    "expanded": true,
+    "status": "ready"
+  }
+}

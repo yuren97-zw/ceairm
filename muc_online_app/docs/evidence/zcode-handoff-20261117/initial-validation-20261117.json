@@ -1,0 +1,21 @@
+{
+  "checkedOn": "2026-11-17 Asia/Shanghai",
+  "markdownSha256": "d60291c9bf973e9b182950b1b7661b6b814e4c47a64f996f91c543bf713ea605",
+  "markdownLines": 592,
+  "acceptanceUniqueCases": 210,
+  "statusCounts": {
+    "partial": 138,
+    "pending": 72,
+    "verified": 0
+  },
+  "sourceFilesChecked": 468,
+  "sourceDrift": [],
+  "missingLinkedFiles": [],
+  "recordedTestsAgree": true,
+  "postgresFull118AndRestoreAgree": true,
+  "browserPartialOnlyAndStopped": true,
+  "originalSpecificationFullTextMissing": true,
+  "browserAdaptationSyntaxOnlyNotRun": true,
+  "noBusinessTestsOrServicesStartedForHandoff": true,
+  "notACompletionOrReleaseApproval": true
+}

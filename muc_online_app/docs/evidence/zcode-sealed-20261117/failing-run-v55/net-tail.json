@@ -1,0 +1,422 @@
+[
+  {
+    "t": 1794920296951,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296951,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews",
+    "requestId": "9306.223",
+    "body": "<unavailable>"
+  },
+  {
+    "t": 1794920296951,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794920293483-ffcf46e281ef",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296953,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "requestId": "9306.224",
+    "body": "<unavailable>"
+  },
+  {
+    "t": 1794920296956,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794920293483-ffcf46e281ef",
+    "requestId": "9306.225",
+    "body": "<unavailable>"
+  },
+  {
+    "t": 1794920296957,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794920293483-ffcf46e281ef/finalization",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296960,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+    "resourceType": "Document"
+  },
+  {
+    "t": 1794920296961,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-reviews/nrc-1794920293483-ffcf46e281ef/finalization",
+    "requestId": "9306.226",
+    "body": "<unavailable>"
+  },
+  {
+    "t": 1794920296964,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/html",
+    "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+    "requestId": "B81DCECC5E82F91158000BDB9C9C736C"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/attachment-viewer.css?v=20261012-1",
+    "resourceType": "Stylesheet"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/attendance.css?v=1",
+    "resourceType": "Stylesheet"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/config.js",
+    "resourceType": "Script"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/import-workspace.js?v=20260904-2",
+    "resourceType": "Script"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/app.js?v=20261116-review-queued-access",
+    "resourceType": "Script"
+  },
+  {
+    "t": 1794920296973,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/css",
+    "url": "http://127.0.0.1:18888/attachment-viewer.css?v=20261012-1",
+    "requestId": "9306.229"
+  },
+  {
+    "t": 1794920296974,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/css",
+    "url": "http://127.0.0.1:18888/attendance.css?v=1",
+    "requestId": "9306.230"
+  },
+  {
+    "t": 1794920296974,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/javascript",
+    "url": "http://127.0.0.1:18888/config.js",
+    "requestId": "9306.231"
+  },
+  {
+    "t": 1794920296974,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/javascript",
+    "url": "http://127.0.0.1:18888/import-workspace.js?v=20260904-2",
+    "requestId": "9306.232"
+  },
+  {
+    "t": 1794920296976,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/manifest.webmanifest",
+    "resourceType": "Manifest"
+  },
+  {
+    "t": 1794920296977,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/manifest+json",
+    "url": "http://127.0.0.1:18888/manifest.webmanifest",
+    "requestId": "9306.239"
+  },
+  {
+    "t": 1794920296977,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/javascript",
+    "url": "http://127.0.0.1:18888/app.js?v=20261116-review-queued-access",
+    "requestId": "9306.233"
+  },
+  {
+    "t": 1794920296979,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/attachment-viewer.mjs?v=20261012-3",
+    "resourceType": "Script"
+  },
+  {
+    "t": 1794920296979,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/me",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296982,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/me",
+    "requestId": "9306.241",
+    "body": "{\"user\":{\"id\":\"diag-browser-reviewer-12\",\"personId\":\"person-diag-browser-reviewer-12\",\"employeeNo\":\"99989212\",\"username\":\"diag-browser-reviewer-12\",\"name\":\"隔离诊断评议12\",\"position\":\"\",\"actualGrade\":\"\",\"actualGradeMasked\":false,\"department\":\"航线维修车间\",\"team\":\"干部\",\"functionCategory\":\"维修\",\"status\":\"active\",\"mustChangePassword\":false,\"credentialVersion\":1,\"rbacRoles\":[{\"code\":\"addon_archive_modify\",\"name\":\"附加：归档修正\"},{\"code\":\"addon_nonroutine_review_finalizer\",\"name\":\"附加：非例行工时终审\"},{\"code\":\"addon_nonroutine_reviewer\",\"name\":\"附加：非例行评议员\"},{\"code\":\"worker\",\"name\":\"工作者\"}],\"rbacPermissions\":[\"info.read\",\"maintenance.archive.modify\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.finalize\",\"maintenance.nonroutine.review.opinion.submit\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.review.submit\",\"maintenance.review.view\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\"],\"dataScopes\":[{\"id\":\"scope-diag-browser-reviewer-12\",\"module\":\"maintenance\",\"scopeType\":\"all\",\"scopeId\":\"\",\"validFrom\":\"\",\"validTo\":\"\"}],\"visibleNavigation\":[\"infoPage\",\"maintenancePage\"]}}"
+  },
+  {
+    "t": 1794920296982,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/records?summary=1",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296983,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/javascript",
+    "url": "http://127.0.0.1:18888/attachment-viewer.mjs?v=20261012-3",
+    "requestId": "9306.240"
+  },
+  {
+    "t": 1794920296983,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/icons/icon-192.png",
+    "resourceType": "Other"
+  },
+  {
+    "t": 1794920296984,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/records?summary=1",
+    "requestId": "9306.242",
+    "body": "{\"records\":[],\"receipts\":[],\"cursor\":\"tURwAk60qOl3RarVnMXi1JaWxjoQd8Z2MLUXpTWGkKmCF2DWykld9cZUu3SDUBY9vRJZyot9UIhde3mFCKo-PzsN141A95iXIaH3SIF2bvpNtH0qXQn-ZIt7FJC8Lf1keVXstbZNnvHdSeFtdIiHmBiYbRsA7IknyC8RP0W5MqC4mwo2KfSAusc\",\"settings\":{\"categories\":[\"质量问题\",\"规定要求\",\"周例会\",\"日例会\",\"其他\"],\"overdueDays\":3,\"reminderDays\":1,\"personnelFunctionCategories\":[\"维修\",\"放行\"],\"securityNotes\":\"正式部署后由后端认证、数据库权限校验、附件访问鉴权和操作日志保障。\"}}"
+  },
+  {
+    "t": 1794920296984,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296984,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "image/png",
+    "url": "http://127.0.0.1:18888/icons/icon-192.png",
+    "requestId": "9306.243"
+  },
+  {
+    "t": 1794920296985,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "requestId": "9306.244",
+    "body": "{\"flights\":[],\"nextCursor\":\"\",\"version\":24}"
+  },
+  {
+    "t": 1794920296989,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/events",
+    "resourceType": "EventSource"
+  },
+  {
+    "t": 1794920296989,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/info/events",
+    "resourceType": "EventSource"
+  },
+  {
+    "t": 1794920296990,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/event-stream",
+    "url": "http://127.0.0.1:18888/api/maintenance/events",
+    "requestId": "9306.245"
+  },
+  {
+    "t": 1794920296990,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920296990,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "text/event-stream",
+    "url": "http://127.0.0.1:18888/api/info/events",
+    "requestId": "9306.246"
+  },
+  {
+    "t": 1794920297042,
+    "phase": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:18888/api/info/sync",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920297079,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-review-capabilities",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920313836,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-review-capabilities",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355025,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=execute&view=summary",
+    "requestId": "9306.247"
+  },
+  {
+    "t": 1794920355029,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/info/sync",
+    "requestId": "9306.248"
+  },
+  {
+    "t": 1794920355030,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-review-capabilities",
+    "requestId": "9306.249"
+  },
+  {
+    "t": 1794920355031,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/standard-review-capabilities",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355032,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-review-capabilities",
+    "requestId": "9306.250"
+  },
+  {
+    "t": 1794920355034,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/standard-review-capabilities",
+    "requestId": "9306.251"
+  },
+  {
+    "t": 1794920355034,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/standard-publication-capabilities",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355037,
+    "phase": "response",
+    "status": 403,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/standard-publication-capabilities",
+    "requestId": "9306.252"
+  },
+  {
+    "t": 1794920355037,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-correction-capabilities",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355039,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/nonroutine-correction-capabilities",
+    "requestId": "9306.253"
+  },
+  {
+    "t": 1794920355040,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/locations",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355041,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/locations",
+    "requestId": "9306.254"
+  },
+  {
+    "t": 1794920355042,
+    "phase": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=dispatch&view=summary&limit=100&dateFrom=2026-11-17&dateTo=2026-11-17&opportunity=%E8%88%AA%E5%89%8D&opportunity=%E8%88%AA%E5%90%8E&opportunity=%E8%88%AA%E5%90%8E%2F%E8%88%AA%E5%89%8D&opportunity=%E7%9F%AD%E5%81%9C&opportunity=%E7%83%AD%E5%A4%87%E6%9C%BA&opportunity=%E5%81%9C%E5%9C%BA&opportunity=%E9%99%84%E5%8A%A0&opportunity=%E5%85%B6%E4%BB%96&opportunity=%E4%B8%89%E6%96%B9%E7%9F%AD%E5%81%9C&opportunity=%E4%B8%89%E6%96%B9%E8%88%AA%E5%90%8E&opportunity=%E4%B8%89%E6%96%B9%E8%88%AA%E5%89%8D",
+    "resourceType": "Fetch"
+  },
+  {
+    "t": 1794920355043,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "application/json",
+    "url": "http://127.0.0.1:18888/api/maintenance/flights?scope=dispatch&view=summary&limit=100&dateFrom=2026-11-17&dateTo=2026-11-17&opportunity=%E8%88%AA%E5%89%8D&opportunity=%E8%88%AA%E5%90%8E&opportunity=%E8%88%AA%E5%90%8E%2F%E8%88%AA%E5%89%8D&opportunity=%E7%9F%AD%E5%81%9C&opportunity=%E7%83%AD%E5%A4%87%E6%9C%BA&opportunity=%E5%81%9C%E5%9C%BA&opportunity=%E9%99%84%E5%8A%A0&opportunity=%E5%85%B6%E4%BB%96&opportunity=%E4%B8%89%E6%96%B9%E7%9F%AD%E5%81%9C&opportunity=%E4%B8%89%E6%96%B9%E8%88%AA%E5%90%8E&opportunity=%E4%B8%89%E6%96%B9%E8%88%AA%E5%89%8D",
+    "requestId": "9306.255"
+  },
+  {
+    "t": 1794920355047,
+    "phase": "request",
+    "method": "GET",
+    "url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNSIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJXaW5kb3dUZXh0IiBkPSJNMjAgM2gtMVYxaC0ydjJIN1YxSDV2Mkg0Yy0xLjEgMC0yIC45LTIgMnYxNmMwIDEuMS45IDIgMiAyaDE2YzEuMSAwIDItLjkgMi0yVjVjMC0xLjEtLjktMi0yLTJ6bTAgMThINFY4aDE2djEzeiIvPjxwYXRoIGZpbGw9Im5vbmUiIGQ9Ik0wIDBoMjR2MjRIMHoiLz48L3N2Zz4=",
+    "resourceType": "Image"
+  },
+  {
+    "t": 1794920355047,
+    "phase": "response",
+    "status": 200,
+    "mimeType": "image/svg+xml",
+    "url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNSIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJXaW5kb3dUZXh0IiBkPSJNMjAgM2gtMVYxaC0ydjJIN1YxSDV2Mkg0Yy0xLjEgMC0yIC45LTIgMnYxNmMwIDEuMS45IDIgMiAyaDE2YzEuMSAwIDItLjkgMi0yVjVjMC0xLjEtLjktMi0yLTJ6bTAgMThINFY4aDE2djEzeiIvPjxwYXRoIGZpbGw9Im5vbmUiIGQ9Ik0wIDBoMjR2MjRIMHoiLz48L3N2Zz4=",
+    "requestId": "9306.256"
+  }
+]

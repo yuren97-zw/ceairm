@@ -1,0 +1,30 @@
+{
+  "syntheticOnly": true,
+  "publishedOldZero": true,
+  "revisionDraftThroughUi": true,
+  "reviewRequestThroughUi": true,
+  "twelveRealApiOpinions": true,
+  "independentPublicationThroughUi": true,
+  "explicitFutureActivation": true,
+  "privateOpinionsAbsent": true,
+  "oldVersionEffectiveUntilFuture": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "font": "16px"
+  },
+  "versions": [
+    {
+      "id": "msv-1794316662662-556b90631a77",
+      "version": 2,
+      "lifecycle": "SCHEDULED",
+      "standardHours": 1.2
+    },
+    {
+      "id": "msv-93704b9a-00b3-49fe-bfa7-a25e52f091ff-2",
+      "version": 1,
+      "lifecycle": "EFFECTIVE",
+      "standardHours": 0
+    }
+  ]
+}

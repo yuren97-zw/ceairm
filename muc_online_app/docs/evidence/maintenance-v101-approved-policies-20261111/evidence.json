@@ -1,0 +1,105 @@
+{
+  "userDecisions": {
+    "inFlightAllocation": "正式提报时快照；新比例仅用于新提报",
+    "genericScope": "允许，由单独授权标准发布负责人逐条明确批准"
+  },
+  "sqlite": {
+    "tests": 670,
+    "pass": 670,
+    "fail": 0,
+    "skipped": 0
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "uncheckedInitially": true,
+    "requiredConsentPreventedSubmit": true,
+    "explicitConsentAdmitted": true,
+    "publicationStillSeparate": true,
+    "dimensions": {
+      "scrollWidth": 390,
+      "width": 390
+    }
+  },
+  "temporaryServerStopped": true,
+  "temporaryBrowserStopped": true,
+  "preliminaryPostgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-vzKIQ9",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 139,
+      "rows": 3395,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "743a699ce3fb8452b343b3d07b71ff9164a24ce180c2a7197811053ed8863121"
+    },
+    "stopped": true
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-26baWz",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 139,
+      "rows": 3395,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "0436d1087ad42bab615090908d706b907e6657e1615799081b8ecadb2d54ad3d"
+    },
+    "stopped": true
+  },
+  "sourceSha256": {
+    "server.mjs": "6c8c9edad34b67ac8dd296a3a866ebfda7b094de621f1d6701a9c03d779e846c",
+    "nonroutine-frozen-policy.mjs": "b295b48edf86516a9c3305721310e972ad6391e42a1017479a3ec0e8cb1789b0",
+    "nonroutine-finalization.mjs": "458860c5d9803d15fd91be8939f4a822700aabdda82569665cb0308cac1f9571",
+    "maintenance-standard-publication-authority.mjs": "a0b5118269796976b485dda8765881eef59b013e6baef0186a99591a3ec19087",
+    "maintenance-standard-publication.mjs": "9339ba7ba84c1a05c7a87f481bf3f273bbdfaaaffac743d947ffe66e45f7c9a7",
+    "public/nonroutine-finalization-view.mjs": "32b7fc2895f33b03d9c1aee1a4e3211a46d5758297ea8c35630285b16202882c",
+    "public/maintenance-standard-publication-workbench.mjs": "a391e07d510b0a46bf31268ed31d813c4a0e431464a847e5d998e89d2ccf08d8",
+    "tests/nonroutine-frozen-policy.test.mjs": "fd3d728be5c8100840bd0aefa7887a0a6af0fe31d0990627cddd006e08780974",
+    "tests/maintenance-standard-publication.test.mjs": "e492132f22e48edf170d5ea365cad5eae11fbdce88a86739af16f2dbdf2e9792",
+    "tests/maintenance-standard-publication-authority.test.mjs": "02cf23fe132ee1dcac380d7f966cfcfc88bb6a19655bfae1830b004b711d9ccf",
+    "tests/maintenance-standard-publication-workbench.test.mjs": "f3c2686e53490f06cf2fc3aabce31199bdbb0506e4b4dd62fa38306149b99aa8",
+    "tests/server.test.mjs": "4d59f2fec58e1702ddb039f5a0bfa1630d5abf41a676fe5d2d52a89daab3ade7"
+  },
+  "limits": [
+    "Missing historic rule snapshots are not backfilled; affected recognition remains unavailable",
+    "Finalized and published history are not reinterpreted using the new policy",
+    "Frozen policy behavior tested through server preview and unit cases; physical iOS/PWA and production data remain unverified",
+    "No deployment or actual business-role grants"
+  ],
+  "postgresServerTests": {
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "skipped": 0
+  }
+}

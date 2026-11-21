@@ -1,0 +1,65 @@
+{
+  "driverVersion": "page-evidence-r7",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "p23AcceptForm": {
+      "ok": true,
+      "facts": {
+        "nomineeCount": "已选 0/12 人",
+        "hasCandidates": true,
+        "hasFinalizer": true,
+        "notice": true
+      }
+    },
+    "p23AcceptSubmitted": {
+      "ok": true,
+      "picked": {
+        "picked": 12,
+        "finalizer": "r5-finalizer"
+      }
+    },
+    "p2544OpinionForm": {
+      "ok": true,
+      "facts": {
+        "hours": true,
+        "basis": true,
+        "privacy": true
+      }
+    },
+    "p27SuggestionForm": {
+      "ok": true,
+      "facts": {
+        "field": true,
+        "value": true,
+        "reason": true,
+        "privacyBox": true,
+        "noticeRaw": true
+      }
+    },
+    "p28ReferenceNotice": {
+      "ok": true,
+      "facts": {
+        "reference": true,
+        "placeholder": "负责人明确认定，不自动套用参考值"
+      }
+    },
+    "p68FinalizeSubmitFlow": {
+      "ok": true,
+      "channel": "NEEDS_ATTENTION"
+    }
+  },
+  "screenshots": [
+    "r7-accept-form.png",
+    "r7-accepted.png",
+    "r7-opinion-form.png",
+    "r7-suggestion-form.png",
+    "r7-finalize-submitted.png"
+  ],
+  "servicesStopped": true,
+  "acceptStatus": "",
+  "finalizeStatus": ""
+}

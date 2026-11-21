@@ -1,0 +1,3 @@
+# Next full-goal work
+
+Report current-access phase is archived. Next inspect retained final decisions after independent cancellation and pending closed-period authorization tasks/correction projections. Verify original records stay immutable, stale grants cannot reopen cancelled/consumed channels, current actors cannot read private opinions through generic views/exports/SSE, and proper authorized history remains readable. Mixed-person partial-scope report cases and actual login/account-switching browser permutations also remain. Preserve the existing ordinary participant full-task audit exception unless an explicit newer business rule replaces it. Full plan remains126partial/84pending.

@@ -1,0 +1,64 @@
+{
+  "baselineCommit": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sqlite": {
+    "default": 839,
+    "coordinator": 839,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 109,
+    "fixtureOnly": false,
+    "restore": {
+      "tables": 147,
+      "rows": 7822,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "cf8a5958fb71c363bd2b6a2ba755dafaab1dc4cbfcdf48f8a87b92d461adf69c"
+    },
+    "workersCleanExit": true,
+    "clusterStopped": true,
+    "ordinaryWorkerSourceRestored": true
+  },
+  "browser": {
+    "actualOriginalBrowser": true,
+    "syntheticOnly": true,
+    "physicalDeviceVerified": false,
+    "revokedNewReferenceDeniedWithoutMutation": true,
+    "viewports": [
+      1280,
+      390
+    ],
+    "existingReferencePreservedWithCatalogRevoked": true,
+    "catalogReadStatus": 403,
+    "selectorDisabledAfterRefresh": true,
+    "existingReferenceSaveAndSubmitAllowed": true,
+    "originalDispatchUnchanged": true,
+    "originalInputTextPreserved": true,
+    "reviewCases": 0,
+    "standardHours": 1.5,
+    "originalWorkerRoleRestored": true
+  },
+  "browserCleanup": {
+    "chromeExit": 130,
+    "serverExit": 0
+  },
+  "sourceSha256": {
+    "server.mjs": "a223589ca714570297d80b9541f61d402711eb78eaf4304b02a28e003c081f40",
+    "public/app.js": "eaae2e9b6d7e9e865590d90bc931ce14e2217e045be0599ccdfaecba59183c92",
+    "public/index.html": "01b29ff846a1c6cf3e81df525669caef4f67deb21027971eb0604a552383c788",
+    "public/sw.js": "f80f483505a36b63be91c19fd0e3f2ea87d41dc223232e0c857bebcc51234376",
+    "tests/server.test.mjs": "30aa70a08633f71d0082ff33abc257198ddba7b42a18f6e919e7710160c84517",
+    "tests/maintenance-imported-draft-ui.test.mjs": "b903349429f70bc6c731654e227a832419bfdb4f68a60bb0cbb4077b7cced813",
+    "scripts/check-maintenance-v101-restored.mjs": "38a8a098635b10fd62fbfb350fe3caade4d0b175b9ceafa266185ee99a5779e6"
+  },
+  "mergedOrDeployed": false
+}

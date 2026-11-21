@@ -1,0 +1,61 @@
+{
+  "syntheticOnly": true,
+  "ordinaryDraftManager": true,
+  "fileSelectedThroughBrowser": true,
+  "previewReady": 1,
+  "previewDuplicates": 1,
+  "previewErrors": 1,
+  "zeroReadonly": true,
+  "explicitSameNameDistinction": true,
+  "partialSuccess": true,
+  "batchResume": true,
+  "csvTemplateDownloaded": true,
+  "allRowsCsvExported": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "font": "16px"
+  },
+  "batch": {
+    "batchId": "std-import-1794317566141-e270c1d0cf2b",
+    "filename": "standards.csv",
+    "sheetName": "CSV",
+    "fileSha256": "b973d36aa13cfec2e0b32bdde44c962dba870e3b9f19a588854e58ed9ff49994",
+    "revision": 3,
+    "items": [
+      {
+        "rowNumber": 2,
+        "status": "ALREADY_IMPORTED",
+        "title": "标准文件零工时",
+        "receipt": {
+          "standardId": "mst-1794317566314-86d2202076b0",
+          "versionId": "msv-1794317566314-175f9e3d9dbc",
+          "action": "CREATE_DRAFT"
+        }
+      },
+      {
+        "rowNumber": 3,
+        "status": "BLOCKED",
+        "title": "缺少工时的标准",
+        "reason": "标准工时须为0至10000小时且最多一位小数"
+      },
+      {
+        "rowNumber": 4,
+        "status": "ALREADY_IMPORTED",
+        "title": "手工浏览器零工时A320",
+        "receipt": {
+          "standardId": "mst-1794317566420-683dc97a9ed4",
+          "versionId": "msv-1794317566420-73dab6e1d9ba",
+          "action": "CREATE_DRAFT"
+        }
+      }
+    ],
+    "summary": {
+      "total": 3,
+      "ready": 0,
+      "needsReview": 0,
+      "blocked": 1,
+      "imported": 2
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "syntheticOnly": true,
+  "uncheckedInitially": true,
+  "requiredConsentPreventedSubmit": true,
+  "explicitConsentAdmitted": true,
+  "publicationStillSeparate": true,
+  "dimensions": {
+    "scrollWidth": 390,
+    "width": 390
+  }
+}

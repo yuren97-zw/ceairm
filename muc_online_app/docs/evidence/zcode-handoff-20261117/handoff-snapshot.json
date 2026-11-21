@@ -1,0 +1,205 @@
+{
+  "handoffDateAsiaShanghai": "2026-11-17",
+  "goalStatus": "paused",
+  "goalObjective": "按照方案执行。特别注意在开始编码之前，先核对本机8788开发线的真实源码，比对方案先解决冲突和不清晰的地方，然后再开始编码。",
+  "goalRecordedTokens": 9228924,
+  "goalRecordedSeconds": 124924,
+  "head": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "branch": "codex/maintenance-personnel",
+  "commonGitDir": "/Users/zhaowei/Documents/MUC收集信息/.git",
+  "acceptance": {
+    "count": 210,
+    "statusCounts": {
+      "partial": 138,
+      "pending": 72
+    },
+    "verified": 0,
+    "manifestSha256": "3faa88d63f444bf648d408ee3ce606375b72854b1d43e6ad16e5563a351eb83c",
+    "baselineCommitInManifest": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d"
+  },
+  "specification": {
+    "originalPath": "/Users/zhaowei/Downloads/航线运行中心_维修管控模块_完整设计与Codex实施规范_V10.1_文字草稿安全导入与风险闭环.md",
+    "existsNow": false,
+    "expectedSha256": "a1e7f567474b456ac4a33f7a2827a272eccf734b04e9cb154ad0f4d40ab4c57c",
+    "fullTextAvailableInThisHandoff": false,
+    "searchedLocations": [
+      "Downloads",
+      "Documents",
+      "Codex visualizations",
+      "Codex filename search",
+      "private tmp Markdown exact-hash search",
+      "Trash readable Markdown exact-hash search"
+    ],
+    "note": "No matching original full text found; specification references/source rows are not a substitute for the complete original."
+  },
+  "logs": {
+    "sqlite-default": {
+      "originalPath": "/private/tmp/muc-archive-four-state-final-full.log",
+      "originalSha256": "2b10f7e66dc1ce87b176f64e843bd167ed3211398501cbc5827f1b403cc10047",
+      "extractedEvidence": "sqlite-default.log",
+      "originalBytes": 155678
+    },
+    "sqlite-coordinator": {
+      "originalPath": "/private/tmp/muc-archive-four-state-final-coordinator.log",
+      "originalSha256": "83c153de4f359098fe79cc24f19b0f5c94ca6f5f1410444d9eec0dc91d3e74bc",
+      "extractedEvidence": "sqlite-coordinator.log",
+      "originalBytes": 155705
+    },
+    "api-four-state": {
+      "originalPath": "/private/tmp/muc-archive-four-state-focused.log",
+      "originalSha256": "37063f63626d27ae165c7cee27eb31bb1b23c77ced8c1759f3e7030d6d264d8f",
+      "extractedEvidence": "api-four-state.log",
+      "originalBytes": 271
+    },
+    "workbench": {
+      "originalPath": "/private/tmp/muc-archive-four-state-workbench.log",
+      "originalSha256": "c0c87dcdf366c92ea0672914b4db44b22e8584837c2873574ec8c21b2344e035",
+      "extractedEvidence": "workbench.log",
+      "originalBytes": 2417
+    },
+    "busy-before-fix": {
+      "originalPath": "/private/tmp/muc-archive-four-state-busy-before.log",
+      "originalSha256": "1d1b0124b2731588eacca68edf2c87f89b0086434a1cca1bb3d6c96183139b7e",
+      "extractedEvidence": "busy-before-fix.log",
+      "originalBytes": 2600
+    },
+    "syntax": {
+      "originalPath": "/private/tmp/muc-archive-four-state-syntax.log",
+      "originalSha256": "2eaf08695ff0332ef65032b2ba5ce66c263ccd84b26c80113fd501593e17259d",
+      "extractedEvidence": "syntax.log",
+      "originalBytes": 2125
+    }
+  },
+  "postgres": {
+    "fullRun": true,
+    "serviceTests": 118,
+    "summary": {
+      "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+      "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL",
+      "port": 15432,
+      "fixtureOnly": false,
+      "coordinatorEnabled": true,
+      "populatedLegacyRefused": true,
+      "upgrade": true,
+      "repeatedMigration": true,
+      "serverTests": true,
+      "restore": {
+        "tables": 148,
+        "rows": 8998,
+        "dataEqual": true,
+        "indexesEqual": true,
+        "constraintsEqual": true,
+        "viewsEqual": true,
+        "functionsEqual": true,
+        "triggersEqual": true,
+        "sequencesEqual": true,
+        "sourceUnchanged": true,
+        "uniquenessEnforced": true,
+        "cascadeRollback": true,
+        "closedChannelReplay": true,
+        "snapshotSha256": "015d03b535d71d807f75c19b1f5a38797906fde207eb6d62b169725ccb5bb36c"
+      },
+      "stopped": true
+    },
+    "origins": {
+      "summary.json": {
+        "originalPath": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL/summary.json",
+        "sha256": "bee3e43aee7b1ae9e88d8f24488cead27a612d4d44e976561daf60cfe1e639db",
+        "savedAs": "postgres-summary.json"
+      },
+      "concurrency-proof.json": {
+        "originalPath": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL/concurrency-proof.json",
+        "sha256": "a380cc6cf4b5fc687a6261bf7116b038d1fb6000c11f4070bf116e67a9953602",
+        "savedAs": "postgres-concurrency-proof.json"
+      },
+      "restore-proof.json": {
+        "originalPath": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL/restore-proof.json",
+        "sha256": "e6f04ebc274e14a375941061f21136718a8e4ab8ebe9aa395bda412a3e60b41c",
+        "savedAs": "postgres-restore-proof.json"
+      },
+      "restored-application.log": {
+        "originalPath": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL/restored-application.log",
+        "sha256": "0a13447149235be473644a78a1b826bca6b6b5dd1bbfb088bc03fd9bccf67088",
+        "savedAs": "postgres-restored-application.log"
+      },
+      "server-tests.log": {
+        "originalPath": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-15FqnL/server-tests.log",
+        "sha256": "0870c2e098dc65136a8f151de8d4dd98549be1eadff9e54bb02a0b24efd5d5db",
+        "savedAs": "postgres-service-tests.log",
+        "format": "test labels and totals only"
+      }
+    }
+  },
+  "browser": {
+    "originalDirectory": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-four-state-browser-xalBdg",
+    "proof": {
+      "syntheticOnly": true,
+      "actualOriginalAppBrowser": true,
+      "physicalDeviceVerified": false,
+      "widths": [
+        {
+          "stage": "PENDING_ACCEPTANCE",
+          "width": 1280,
+          "dirtyBeforeRefresh": false,
+          "actualSseRefresh": true,
+          "privateContentCleared": true,
+          "originalBusinessUnchanged": true,
+          "noHorizontalOverflow": true
+        },
+        {
+          "stage": "PENDING_ACCEPTANCE",
+          "width": 390,
+          "dirtyBeforeRefresh": false,
+          "actualSseRefresh": true,
+          "privateContentCleared": true,
+          "originalBusinessUnchanged": true,
+          "noHorizontalOverflow": true
+        },
+        {
+          "stage": "IN_REVIEW",
+          "width": 1280,
+          "dirtyBeforeRefresh": false,
+          "actualSseRefresh": true,
+          "privateContentCleared": true,
+          "originalBusinessUnchanged": true,
+          "noHorizontalOverflow": true
+        },
+        {
+          "stage": "IN_REVIEW",
+          "width": 390,
+          "dirtyBeforeRefresh": false,
+          "actualSseRefresh": true,
+          "privateContentCleared": true,
+          "originalBusinessUnchanged": true,
+          "noHorizontalOverflow": true
+        }
+      ],
+      "servicesStopped": true
+    },
+    "sanitizedFailure": {
+      "url": "http://127.0.0.1:18888/dashboard?qa=four-state-SEALED-1280",
+      "ready": "complete",
+      "activePage": "maintenancePage",
+      "reviewEnabled": false,
+      "tabs": [],
+      "rootCause": "NOT_ESTABLISHED"
+    },
+    "originalDriverPath": "/private/tmp/muc-four-state-browser.mjs",
+    "originalDriverSha256": "aa2c52dd1e9382432101d252c08766b6362c3048db6021224cba0988513148db",
+    "adaptedDriverWasExecuted": false,
+    "allFourStagesPassed": false
+  },
+  "runtimeSources": {
+    "server.mjs": "6531f3766abb69a708249e9b9e772085ff638b4c3a994d78cccbbcea497209ba",
+    "nonroutine-review.mjs": "17838126cf851f079a5a0097edd4d1ca32543cd89453b77daf7f8bd7a7e1fbfa",
+    "nonroutine-finalization.mjs": "3bf32538ffcf67adbb4e98180edf50ad67061cc365ca36e01c38b577d75dbbaf",
+    "public/nonroutine-review-workbench.mjs": "af26505890e362ea3c472ecd20d66f34588e9bb4ccb08b83794c19e0e4904c8e",
+    "public/app.js": "404030abb32348fe3cd44c150f7a6e4d5cd602cfe80de83ad48b84313700a445",
+    "public/index.html": "89ff0851cfc5e00023f77712ac081062e8f4b14f827ae96dab33f0df6a3c90de",
+    "public/sw.js": "2e863459dbd1518ee985bd2151f8099dce401628305f1ed83af6488b858740cb",
+    "tests/server.test.mjs": "1c7ec2fd7600ac1024e2e8bc0f9095c6ebaa7a1081475fff7cfce80b4109d428",
+    "tests/nonroutine-review-workbench.test.mjs": "45806b6063457a0027ab5b05c76a6278262aaf6e3c5211a3046a28ad534a76c8",
+    "scripts/check-maintenance-v101-restored.mjs": "a443f4db7af93d0d8b415240265d37b4862475118bee97dfdd02e6dfcf1fd511"
+  },
+  "noDevelopmentServicesStartedByHandoff": true
+}

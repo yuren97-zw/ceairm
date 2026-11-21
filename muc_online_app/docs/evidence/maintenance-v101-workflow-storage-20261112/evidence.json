@@ -1,0 +1,81 @@
+{
+  "stage": "workflow-task-storage-foundation",
+  "sourceSha256": {
+    "maintenance-workflow-tasks.mjs": "0dad82ee11166706d201f251b10323aab259d6ade49913e1a4c37e2a38356245",
+    "migrations/054_maintenance_workflow_tasks.sql": "17e4d535a3805eeb2319c021c8359cc8270bcc40eba4f03d9dbbde2e62a5605e",
+    "server.mjs": "c09e328eedd0ceb79e40592c3e7e375e247a49f141cc15a85d3f9e97dbc59abc",
+    "scripts/migrate-sqlite-to-postgres.mjs": "db5d4efdd4a2926754df0d0aa458794c5235ea041a470b44e483f9061d46577b",
+    "scripts/check-maintenance-v101-restored.mjs": "8f3aaf00d2b2875120e0720a18b7a19293a457270ccd5040d0687e1bb02a557c",
+    "tests/maintenance-workflow-tasks.test.mjs": "1ca5f89ec13bfef9e2b87cba6129d183b1bbc2776d16e33d7452a955820eded4",
+    "tests/server.test.mjs": "195c3aa551cb7985280825a90a7addc66205a6ca8d415adaa1d0868e3c07c041"
+  },
+  "sqlitePassed": 719,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-p60qfi",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3554,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "ea8999f16f8a717e850e029d51fd92d5ad0a708b91b0007fed75305c80894747"
+    },
+    "stopped": true,
+    "testsPassed": 73
+  },
+  "newTables": 3,
+  "migration": "054_maintenance_workflow_tasks.sql",
+  "limitations": [
+    "Storage only: no workflow action HTTP or business qualification implemented",
+    "Explicit fixture-only task outcome is not a real business approval",
+    "Extension completion projection remains unavailable; no rule gates activated",
+    "Full V10.1 acceptance incomplete"
+  ],
+  "goalComplete": false,
+  "restoredApplication": {
+    "restoredApplicationStartup": true,
+    "workflowStorageFixtureVerified": true,
+    "extensionInstancesVerified": 1,
+    "extensionRegistrationsRetried": 2,
+    "towStandardSourcesVerified": 2,
+    "towReviewSourcesVerified": 1,
+    "legacyTowHours": 3,
+    "retiredTowRuleWriteRejected": true,
+    "sourceFactBaselinesVerified": 5,
+    "sourceFactChangesVerified": 1,
+    "sourceAttestationsRetried": 2,
+    "moduleSnapshotsVerified": 15,
+    "detachedModuleSnapshotsVerified": 1,
+    "correctionsVerified": 2,
+    "correctionApprovalsRetried": 10,
+    "correctionAuthorizationsRetried": 2,
+    "retried": 4,
+    "standardFinalizationsRetried": 8,
+    "standardPublicationsRetried": 8,
+    "standardImportsRetried": 8,
+    "publicationKinds": [
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications"
+    ],
+    "postedPaths": [
+      "ADJUSTED_CLOSED",
+      "MERGED_CLOSED"
+    ],
+    "maintenanceBusinessUnchanged": true
+  }
+}

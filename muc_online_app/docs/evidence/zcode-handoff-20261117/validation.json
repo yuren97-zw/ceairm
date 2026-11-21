@@ -1,0 +1,26 @@
+{
+  "checkedOn": "2026-11-17 Asia/Shanghai",
+  "markdownSha256": "b4d4a01d3fc66cf395657787effa9b921ca7c0b5033fa6f0ed64bae511565fe9",
+  "markdownLines": 648,
+  "acceptanceUniqueCases": 210,
+  "statusCounts": {
+    "partial": 138,
+    "pending": 72,
+    "verified": 0
+  },
+  "sourceFilesChecked": 468,
+  "sourceDrift": [],
+  "missingLinkedFiles": [],
+  "recordedTestsAgree": true,
+  "postgresFull118AndRestoreAgree": true,
+  "browserPartialOnlyAndStopped": true,
+  "originalSpecificationFullTextMissing": true,
+  "browserAdaptationSyntaxOnlyNotRun": true,
+  "noBusinessTestsOrServicesStartedForHandoff": true,
+  "notACompletionOrReleaseApproval": true,
+  "secondReviewFile": "review-validation.json",
+  "promptSha256": "a6de382913c443810fda49a495804b1fd4e69bde20e1abb6b47e51251ce8e4fa",
+  "historicalEvidenceFilesHashed": 1441,
+  "temporaryOriginalsCheckedNowAbsent": true,
+  "initialValidationPreservedAs": "initial-validation-20261117.json"
+}

@@ -1,0 +1,13 @@
+{
+  "syntheticOnly": true,
+  "pendingCount": 501,
+  "before": 34069,
+  "backY": 34069,
+  "zeroPositionRestored": true,
+  "forwardReauthorized": true,
+  "revokedForwardRejected": true,
+  "alerts": [
+    "未找到航班任务"
+  ],
+  "stopped": true
+}

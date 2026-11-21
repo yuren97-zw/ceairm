@@ -1,0 +1,32 @@
+{
+  "stage": "original-opportunity-edit-browser",
+  "date": "2026-11-14",
+  "sourceSha256": {
+    "server.mjs": "890980245fdf606678aa0cb39393ca35a112831b944ea439a490a235f3bb7b34",
+    "public/app.js": "07ee5740d85e1641e358cdcc8f420a91034b6eaf6f89affaba31e5e4b6523471",
+    "public/sw.js": "94aeece08f0774167013414e100a8859bb994c8952f726bfc1295ecf2e1fc539"
+  },
+  "browser": {
+    "actualOriginalPage": true,
+    "syntheticOnly": true,
+    "locationRoundtripRetainsReadVersion": true,
+    "staleSaveRejectedInputRetained": true,
+    "peerNotOverwritten": true,
+    "freshSaveSucceeded": true,
+    "layout": {
+      "viewport": 390,
+      "width": 390
+    },
+    "flightId": "mtnf-1794617781023-d5f5f46a9c17"
+  },
+  "screenshotsInspected": true,
+  "browserStopped": true,
+  "serverStopped": true,
+  "limits": [
+    "Real original page and real API peer update; stale rejection observed through conflict dialog, unchanged persisted peer stand and retained form values. HTTP409 separately proven in prior API/PG tests, not captured as a browser network trace here.",
+    "Initial script incorrectly expected list synchronization while editing and selected data instead of dispatch; failed attempts retained, not attributed to application failures.",
+    "Final target plus three prior synthetic attempts remain in private QA DB; none persisted MY-DRAFT, no hours.",
+    "390px emulation is not a physical phone or installed PWA.",
+    "No product changes or new full-suite run this stage; exact source hashes match prior779/779 and79PG evidence."
+  ]
+}

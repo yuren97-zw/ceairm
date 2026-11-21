@@ -1,0 +1,27 @@
+{
+  "userDecision": "仅当前待办机会（沿用现有口径）",
+  "readMethod": "one existing execute summary request without a limit or offset",
+  "tests": 652,
+  "pass": 652,
+  "fail": 0,
+  "browser": {
+    "syntheticOnly": true,
+    "pendingCount": 501,
+    "visibleHomeItems": 501,
+    "exactTarget": "home-500",
+    "targetTop": 573.5625,
+    "scrollBefore": 34069,
+    "scrollRestored": 34069
+  },
+  "temporaryServerStopped": true,
+  "temporaryBrowserStopped": true,
+  "sourceSha256": {
+    "public/app.js": "c31b232b5d9ec3eb62114c069f0c98c0446c072506e6dc2a9c3fccc3ad2f9598",
+    "tests/maintenance-home-navigation.test.mjs": "bed06e0fb7be449c18dd9db375b9b4506226b489fe625be1c6e633678839c94d"
+  },
+  "limits": [
+    "browser native history-back behavior remains to be verified",
+    "a later request can observe newer assignment state; clicks reauthorize current opportunity",
+    "large production pending sets and physical-device testing remain open"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "widths": [
+    {
+      "width": 1280,
+      "actualSseRefresh": true,
+      "dirtyDraftNotSubmitted": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true
+    },
+    {
+      "width": 390,
+      "actualSseRefresh": true,
+      "dirtyDraftNotSubmitted": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true
+    }
+  ],
+  "browserReviewWrites": 0,
+  "originalBusinessSha256": "a3a3b3d728c27ebe9d36813c53bbffdb87b974881b4266384482324d48614935",
+  "currentOpinionCount": 2,
+  "actualOriginalManualSubmission": true,
+  "servicesStopped": true
+}

@@ -1,0 +1,13 @@
+{
+  "actualBrowser": true,
+  "actualOriginalPage": true,
+  "syntheticOnly": true,
+  "networkFailureRetainsInput": true,
+  "actualRoleRevocationClearsOldDetails": true,
+  "apiStatusAfterRevocation": 403,
+  "layout": {
+    "viewport": 390,
+    "width": 390
+  },
+  "standardId": "mst-1794613049122-a9a0d2e57f84"
+}

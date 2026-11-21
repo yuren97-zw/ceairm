@@ -1,0 +1,19 @@
+{
+  "actualOriginalBrowser": true,
+  "syntheticOnly": true,
+  "physicalDeviceVerified": false,
+  "revokedNewReferenceDeniedWithoutMutation": true,
+  "viewports": [
+    1280,
+    390
+  ],
+  "existingReferencePreservedWithCatalogRevoked": true,
+  "catalogReadStatus": 403,
+  "selectorDisabledAfterRefresh": true,
+  "existingReferenceSaveAndSubmitAllowed": true,
+  "originalDispatchUnchanged": true,
+  "originalInputTextPreserved": true,
+  "reviewCases": 0,
+  "standardHours": 1.5,
+  "originalWorkerRoleRestored": true
+}

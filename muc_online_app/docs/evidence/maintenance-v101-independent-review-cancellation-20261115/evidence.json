@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-15",
+  "businessDecision": "Separate authorized review cancellation owner; posted work continues through correction/reversal",
+  "sqlite": {
+    "default": 818,
+    "coordinator": 818,
+    "apiFocused": 1
+  },
+  "postgres": {
+    "state": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-nNEcwp",
+    "serviceTests": 103,
+    "restore": {
+      "tables": 147,
+      "rows": 6337,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "86b5999d66c8efd39b5bd8b30bde0967824f8d9a496f0ca3b9109e74cdf539eb"
+    },
+    "stopped": true,
+    "workersCleanExit": true,
+    "workersStopped": true,
+    "independentCancellationRecovered": {
+      "sourcePreserved": true,
+      "ledgerRows": 0,
+      "revokedRoleAbsent": true,
+      "deniedReplays": 2,
+      "statsReadable": true
+    },
+    "sourceJournal": {
+      "snapshots": 177,
+      "internalReplays": 2
+    },
+    "scopeLimitation": "Original concurrency matrix passed; no new independent-cancellation overlap or real lock-revocation matrix was added."
+  },
+  "browser": "Not yet run for new cancellation UI",
+  "files": {
+    "server.mjs": "de29a08d6cf9c3e3d6630d863c62fc798b9d3507e93b4ddd0fae1f7e495fe51c",
+    "rbac-policy.mjs": "8cf28be370702b8d68fce4b6bf806e4e7ceccec2e352fc593ca016fc9458a880",
+    "nonroutine-review.mjs": "37d0d7ab078599ff274ab372e72cf3715d909c62189c1b2fdf14c101fd2f17f5",
+    "nonroutine-source-cancellation.mjs": "069f5a2122466c482459b0248ef6c2cf3f259a5198fdc490bf4814868856ad50",
+    "public/app.js": "1cd117cd89335f712d57cee08ab000d8ddef83cd5a8bbd78d0ddac288597aeb3",
+    "public/nonroutine-review-workbench.mjs": "31b46bdfc6666328047a4eb73e9d2b03b8ff77190cc7f9a537fe46d627866f53",
+    "public/index.html": "b481553ac51d52e9ac280d539378365794f27bc65080ec57900e6a8a8d054d35",
+    "public/sw.js": "b56d42f2d45fabaa4027edc2d1701927e4e92bf2b9e860505767c1dea0941fba",
+    "tests/server.test.mjs": "cb5e61c28269e4b4c3c98ca56efe99451308e2995c9fbeae4651c6fe6295b783",
+    "tests/nonroutine-source-cancellation.test.mjs": "f7992c93f00ec81d724b92425a20dc7d30fec8a6a37e4f9688bc83ba6cd67e45",
+    "tests/nonroutine-review-workbench.test.mjs": "03e708f9a4c2ed2804c9855f6b4a90a06e082c4b0fa1d6eba8c62ab08d4b7044",
+    "scripts/check-maintenance-v101-restored.mjs": "9ca88d663b3610c107dbfef1b12dd2f1781ab40c6305cecf803b18de61a85277"
+  },
+  "firstPostgres": {
+    "state": "muc-v101-pg16-rG4MzN",
+    "serverTestsPassed": true,
+    "concurrencyPassed": false,
+    "restore": null,
+    "stopped": true,
+    "failure": "stats rejected cancelled assessment retained by independent cancellation; fixed and covered by original API regression"
+  },
+  "uiRevisionNote": "Final access-denial clearing and explicit cancelled labels were verified by the latest 818/818 SQLite runs. PostgreSQL server and server-test sources remained unchanged during the final PostgreSQL run."
+}

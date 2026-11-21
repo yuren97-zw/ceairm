@@ -1,0 +1,31 @@
+{
+  "driverVersion": "page-evidence-r9",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "workflowWorkbench": {
+      "ok": true,
+      "facts": {
+        "header": true,
+        "nonBlockingNotice": true,
+        "notFormal": true,
+        "filter": true,
+        "tasksButton": true,
+        "empty": true,
+        "status": true
+      }
+    },
+    "workflowTasksLoaded": {
+      "ok": true,
+      "emptyState": true
+    }
+  },
+  "screenshots": [
+    "r9-workflow-workbench.png",
+    "r9-workflow-tasks.png"
+  ],
+  "servicesStopped": true
+}

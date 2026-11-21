@@ -1,0 +1,101 @@
+{
+  "syntheticOnly": true,
+  "rootImplicitAuthorityDenied": 403,
+  "zeroLabel": "试车 · 0h",
+  "independentPublisher": true,
+  "explicitAdmission": true,
+  "explicitImmediate": true,
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390,
+    "font": "16px"
+  },
+  "published": {
+    "standard": {
+      "id": "mst-74a4d92a-052d-4885-bc52-8569ae8bf460-1",
+      "status": "PUBLISHED",
+      "revision": 5,
+      "created_by": "pub-test-74a4d92a-052d-4885-bc52-8569ae8bf460-admin",
+      "created_at": "2026-11-10T00:00:00.000Z",
+      "updated_at": "2026-11-10T12:40:43.781Z"
+    },
+    "version": {
+      "id": "msv-74a4d92a-052d-4885-bc52-8569ae8bf460-2",
+      "version": 1,
+      "status": "PUBLISHED"
+    },
+    "capabilities": {
+      "admit": false,
+      "publish": false
+    },
+    "applicability": {
+      "ready": true,
+      "reference": "maintenance_aircraft_hours_v1:1",
+      "dictionaryVersion": 1,
+      "aircraftCodes": [
+        "A320"
+      ],
+      "genericAircraft": false,
+      "groups": [
+        {
+          "code": "A320",
+          "groupId": "qa-exact-a320"
+        }
+      ]
+    },
+    "source": {
+      "kind": "STANDARD_FINAL",
+      "standardId": "mst-74a4d92a-052d-4885-bc52-8569ae8bf460-1",
+      "versionId": "msv-74a4d92a-052d-4885-bc52-8569ae8bf460-2",
+      "caseId": "stdreview-74a4d92a-052d-4885-bc52-8569ae8bf460-4",
+      "finalId": "std-final-74a4d92a-052d-4885-bc52-8569ae8bf460-69",
+      "decision": {
+        "category": "单项工作",
+        "chapter": "29",
+        "title": "独立发布标准",
+        "workScope": "左侧",
+        "recognizedHours": 0
+      },
+      "aircraft": {
+        "aircraftCodes": [
+          "A320"
+        ],
+        "genericAircraft": false
+      },
+      "reviewAdmissionIntent": "PENDING"
+    },
+    "admission": {
+      "id": "std-admit-1794314443531-16c4954a334b",
+      "versionId": "msv-74a4d92a-052d-4885-bc52-8569ae8bf460-2",
+      "finalId": "std-final-74a4d92a-052d-4885-bc52-8569ae8bf460-69",
+      "sequence": 1,
+      "decision": "INCLUDE",
+      "actorId": "qa-publisher",
+      "reason": "独立发布负责人确认纳入",
+      "createdAt": "2026-11-10T12:40:43.531Z"
+    },
+    "admissionHistory": [
+      {
+        "id": "std-admit-1794314443531-16c4954a334b",
+        "versionId": "msv-74a4d92a-052d-4885-bc52-8569ae8bf460-2",
+        "finalId": "std-final-74a4d92a-052d-4885-bc52-8569ae8bf460-69",
+        "sequence": 1,
+        "decision": "INCLUDE",
+        "actorId": "qa-publisher",
+        "reason": "独立发布负责人确认纳入",
+        "createdAt": "2026-11-10T12:40:43.531Z"
+      }
+    ],
+    "publication": {
+      "id": "std-pub-1794314443781-a3faaa4f8b4a",
+      "versionId": "msv-74a4d92a-052d-4885-bc52-8569ae8bf460-2",
+      "finalId": "std-final-74a4d92a-052d-4885-bc52-8569ae8bf460-69",
+      "admissionId": "std-admit-1794314443531-16c4954a334b",
+      "effectiveAt": "2026-11-10T12:40:43.781Z",
+      "actorId": "qa-publisher",
+      "reason": "核对A320精确机型后明确立即发布",
+      "createdAt": "2026-11-10T12:40:43.781Z"
+    }
+  },
+  "originalWorkUnchanged": true
+}

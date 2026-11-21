@@ -1,0 +1,63 @@
+{
+  "syntheticOnly": true,
+  "realBrowser": true,
+  "cancellationRequests": [
+    {
+      "status": 200,
+      "body": {
+        "clientId": "cancel_baf41183-0f47-4d63-9cb1-b81b81d1b976",
+        "revision": 1,
+        "reason": "桌面原样重试，保留原工作"
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "clientId": "cancel_baf41183-0f47-4d63-9cb1-b81b81d1b976",
+        "revision": 1,
+        "reason": "桌面原样重试，保留原工作"
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "clientId": "cancel_7c2eb6ef-a6f4-4fcb-becf-e864293375ea",
+        "revision": 1,
+        "reason": "手机确认取消，原报工保留"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "clientId": "cancel_72b09ff8-b5af-4ef3-8b62-498844282b64",
+        "revision": 1,
+        "reason": "撤权后不得保留旧事项详情"
+      }
+    }
+  ],
+  "screenshots": [],
+  "droppedSuccessfulResponse": true,
+  "cases": [
+    {
+      "id": "nrc-1794734902005-ff2bc4ec9c93",
+      "flightId": "mtnf-1794734901974-6a07019cac45",
+      "label": "DESKTOP"
+    },
+    {
+      "id": "nrc-1794734902053-b47b2bb6063f",
+      "flightId": "mtnf-1794734902019-b72230a4b8f8",
+      "label": "MOBILE"
+    },
+    {
+      "id": "nrc-1794734902112-1e0f95832761",
+      "flightId": "mtnf-1794734902062-b8fe8443bdce",
+      "label": "REVOKED"
+    }
+  ],
+  "desktopLostResponseExactRetry": true,
+  "mobileExplicitConfirmation": true,
+  "uncheckedConfirmationNoRequest": true,
+  "revokedAccessClearsDetail": true,
+  "originalSourceAndLedgerUnchanged": true,
+  "noPhysicalDeviceClaim": true
+}

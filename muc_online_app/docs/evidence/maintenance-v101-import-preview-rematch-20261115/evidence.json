@@ -1,0 +1,69 @@
+{
+  "baselineCommit": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sharedCommitObservation": "Existing personnel/UI commit observed at turn entry; previous module hashes unchanged. Preserved without merge/push/deploy.",
+  "sqlite": {
+    "default": 843,
+    "coordinator": 843,
+    "failed": 0,
+    "focused": 22
+  },
+  "postgres": {
+    "serviceTests": 110,
+    "fixtureOnly": false,
+    "restore": {
+      "tables": 147,
+      "rows": 7879,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "1974fbf08329c40ed7b70b761ed511eae77e425cfd4aa36ed07c4d95b292b0da"
+    },
+    "workersCleanExit": true,
+    "clusterStopped": true
+  },
+  "browser": {
+    "actualOriginalBrowser": true,
+    "syntheticOnly": true,
+    "physicalDeviceVerified": false,
+    "viewports": [
+      1280,
+      390
+    ],
+    "actualCsvFileInput": true,
+    "expiredCommitCreatesNoDraft": true,
+    "resetThroughOriginalRowApi": true,
+    "reselectedVersion": 2,
+    "originalTextPreserved": true,
+    "originalDispatchUnchanged": true,
+    "oneOriginalDraftItem": true,
+    "standardHours": 2.5,
+    "formalWorkRows": 0,
+    "reviewCases": 0,
+    "resetAuditRetained": true,
+    "terminalCheckResumedAfterPrematureObserver": true
+  },
+  "browserCleanup": {
+    "chromeExit": 130,
+    "serverExit": 0
+  },
+  "sourceSha256": {
+    "maintenance-import-batches.mjs": "e00efb18cb1160c93ed3dc8181caa14af19e81ebcf17c6124c0b098e8a7949eb",
+    "maintenance-import-preview.mjs": "39b10b68def39c60fac7e06c1905b7547440b4e1a2e858fbba76202a1f4460a4",
+    "public/maintenance-import-workbench.mjs": "281a7bdfdd99a494fc817b39c6deab2c7b5fa8b6e22be0fd429c8f35bb74a472",
+    "public/index.html": "6698a458774b998e74edbbc21a7d86f420a71169a46ca4b510e75fc7b289c543",
+    "public/sw.js": "84a415539080b7429e8144d283fc0f23326a227e9740a9ae19f86ff5554c65ca",
+    "tests/server.test.mjs": "8408876c8e015fcee20354ca0356045dd7884e2da5a9790fc3bc1283ea136c1f",
+    "tests/maintenance-import-batches.test.mjs": "598a95bafdce37dfdac27b6a5d50eda9cfa2022256ca36fe1c89739dbabe4ad4",
+    "tests/maintenance-import-workbench.test.mjs": "2584c14367ccf85a68894c8d60b86470b904b10c2f955f9c149fb2b5d1ecbc65",
+    "scripts/check-maintenance-v101-restored.mjs": "904cd74fd0e5715854b93830a69d5b08a046f4310e74e4f2c9ecdc928dab13f3"
+  },
+  "mergedOrDeployed": false
+}

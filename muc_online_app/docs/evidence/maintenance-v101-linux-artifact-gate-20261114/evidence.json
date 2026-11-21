@@ -1,0 +1,25 @@
+{
+  "stage": "linux-artifact-maintenance-lifecycle-gate-preparation",
+  "date": "2026-11-14",
+  "sourceSha256": {
+    ".github/workflows/ci.yml": "6e3d54507a8e46b6c0719a7f808f79048c7c3ab44fb4641a46be9db8896aa376",
+    "muc_online_app/scripts/check-integration-package.mjs": "7076e9243198a0aeb675a8281c70613d5e114f08fd82c7b94fe7586f51f65dec",
+    "muc_online_app/scripts/check-maintenance-package.mjs": "d0436a348f37fe48873a48900abe53516901edae1ad7f96d2ae851ffb61508c3",
+    "muc_online_app/tests/server.test.mjs": "5f0df3db792986d232f577a8744e622f7f14a16f1d75c25e4648868c26867280",
+    "muc_online_app/tests/maintenance-package-guard.test.mjs": "690542093e3bca6f0198395be6246f4e4e6c329bdfff5152ad20233909b66613"
+  },
+  "sqliteDefaultPassed": 778,
+  "sqliteCoordinatorEnabledPassed": 778,
+  "sourceRouteScenarioExecuted": true,
+  "unsafeTargetGuardsPassed": true,
+  "linuxArtifactExecuted": false,
+  "remoteCiTriggered": false,
+  "deployment": false,
+  "limits": [
+    "Source-route adapter uses real measuredRoute/database but replaces fetch transport; not Linux, not packaged-runtime acceptance.",
+    "New CI-only probe is loaded from the extracted verified artifact and writes only the preexisting verifier-created ephemeral database. Actual Linux CI has not run these changes.",
+    "No Docker or Podman executable found locally; no remote push/CI dispatch authorized or performed.",
+    "The existing non-CI preview remains outside this new write scenario.",
+    "210-case acceptance remains incomplete."
+  ]
+}

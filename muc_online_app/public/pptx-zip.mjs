@@ -42,7 +42,7 @@ export function rasterDimensions(buffer, ext) {
 }
 
 export class PptxZip {
-  constructor(buffer) {
+  constructor(buffer, { requiredEntries = ['ppt/presentation.xml', 'ppt/_rels/presentation.xml.rels'] } = {}) {
     if (buffer.byteLength > PPTX_LIMITS.file) throw new Error('PPTX超过10MiB预览限制，请下载原文件');
     this.bytes = new Uint8Array(buffer); this.view = new DataView(buffer); this.entries = new Map(); this.actual = 0; this.seen = new Set();
     const n = buffer.byteLength;
@@ -79,7 +79,7 @@ export class PptxZip {
       offset += 46 + nameLength + extra + comment;
     }
     if (offset !== end) throw new Error('PPTX目录长度无效');
-    if (!this.entries.has('ppt/presentation.xml') || !this.entries.has('ppt/_rels/presentation.xml.rels')) throw new Error('未找到有效的PPTX演示文稿');
+    if (requiredEntries.some(name => !this.entries.has(name))) throw new Error('未找到有效的PPTX演示文稿');
   }
 
   async read(name, limit = PPTX_LIMITS.expanded) {

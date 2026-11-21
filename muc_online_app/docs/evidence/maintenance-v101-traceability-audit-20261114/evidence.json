@@ -1,0 +1,18 @@
+{
+  "stage": "whole-specification-evidence-inventory",
+  "designCases": 210,
+  "sourceSha256": "8f85e07283dad4444cd743d69af9c7c8936d549fe8ce71df69e5b14e809c60e4",
+  "specificationSha256": "a1e7f567474b456ac4a33f7a2827a272eccf734b04e9cb154ad0f4d40ab4c57c",
+  "finalCounts": {
+    "NO_LINKED_EVIDENCE": 94,
+    "LINKS_READABLE_SCOPE_UNPROVEN": 101,
+    "TEST_LABEL_REQUIRES_REVIEW": 15
+  },
+  "finalStatusCounts": {
+    "pending": 94,
+    "partial": 116
+  },
+  "focusedTestsPassed": 13,
+  "notAnAcceptancePass": true,
+  "productCodeChanged": false
+}

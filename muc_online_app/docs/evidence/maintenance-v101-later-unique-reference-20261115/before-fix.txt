@@ -1,0 +1,2 @@
+Original authenticated API: later unique exact standard, matching requested hours, no explicit reference. Expected409 with original draft retained; actual200 and formal STANDARD assessment created. Original private test log contains full fixture response and is intentionally not copied.
+Assertion: 200 !== 409

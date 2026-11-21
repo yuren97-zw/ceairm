@@ -1,0 +1,86 @@
+{
+  "date": "2026-11-15",
+  "applicationChanged": false,
+  "unchangedFiles": {
+    "server.mjs": true,
+    "public/app.js": true,
+    "public/index.html": true,
+    "public/sw.js": true,
+    "tests/server.test.mjs": true,
+    "tests/nonroutine-delivery.test.mjs": true,
+    "tests/maintenance-nonroutine-recognition-display.test.mjs": true,
+    "scripts/check-maintenance-v101-restored.mjs": true
+  },
+  "verificationBaseline": {
+    "sqliteDefault": 820,
+    "sqliteCoordinator": 820,
+    "postgresService": 104,
+    "restoreTables": 147,
+    "restoreRows": 7286,
+    "notRerunThisPhase": true,
+    "basis": "Exact application/test/verifier SHA equality with preceding mixed projection evidence"
+  },
+  "browser": {
+    "desktop": 1280,
+    "mobileViewport": 390,
+    "cases": 4,
+    "sortDirectionsPerViewport": 2,
+    "detailKindsPerViewport": [
+      "cancelled",
+      "legitimate zero"
+    ],
+    "actualOriginalDownloads": 2,
+    "actualXlsxCellValuesVerified": true,
+    "screenshotsViewed": [
+      "desktop-list.png",
+      "desktop-cancelled-detail.png",
+      "desktop-zero-detail.png",
+      "desktop-export-dialog.png",
+      "mobile-list.png",
+      "mobile-cancelled-detail.png",
+      "mobile-zero-detail.png",
+      "mobile-export-dialog.png"
+    ],
+    "sourceBeforeSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+    "sourceAfterSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+    "chromeExit": 130,
+    "syntheticServerExit": 0,
+    "physicalDeviceVerified": false,
+    "pwaVerified": false
+  },
+  "testHarnessCorrections": [
+    "Synthetic reviewer10 initially had nine-digit employee number; seed guard correctly refused before listening. Corrected eight-digit IDs and used a fresh separate clean.sqlite, preserving the rejected fixture.",
+    "Initial download observer required a new filename; both viewports export the same named file. Final run uses a separate private download directory per viewport and checks two completed files. No product change."
+  ],
+  "remaining": [
+    "Current-person/scope and revocation matrix across mixed reports and exports",
+    "Historical final decision retained after cancellation in report projections",
+    "Closed-period pending authorization tasks and corrections",
+    "Physical devices and installed PWA",
+    "Remaining full-plan requirements"
+  ],
+  "artifactSha256": {
+    "fixture.json": "705618d878862c4e92f7e9699e2def7bd6cb5116435bbf3bbbec708088d9a180",
+    "seed.mjs": "0888fd8d31614382908f5ec7ea34959188c5caefe9165a4efb649d4ef6957d8b",
+    "setup-final.log": "85dcee749ea7a5641eaee7d83879c3a2bd3e43760dc56bae94b2793b97424994",
+    "mobile-export-dialog.png": "e79002d97fadca4520c9505cccad44d5ed12a40d5ff2bc8e22bd653f95fa5721",
+    "setup.mjs": "1d096731e2ca5986719020a29bf8d7f53e7d7626cdc516fc5ee3d5ebfa18015b",
+    "first-download-observer.log": "99a5c63e28ffb5417648074d37a448f10608ac6bc5d4acd3fca7fc78fbf3c7d8",
+    "desktop-zero-detail.png": "a81f56bcb1304bae72cd4298c839336abede03a84a5355686300a38f8109115f",
+    "browser.mjs": "cb38cfd596a88e622571ff9ef29d6c84432979f1672d5d6745ed4edfbb81876d",
+    "desktop-cancelled-detail.png": "4887e7e0bbf6efa0308a3241872b31c01e68e6b8f621777433086d831b1a16cf",
+    "desktop-export-dialog.png": "1660ba227a399d2cab07f0a5892f0f5217009b472164928b96463dd9a2298ac4",
+    "traceability.md": "abcfbc3cfef42be1eb5c22bdf6eec1be4ead47523d331bf5f6d9742a31b7510e",
+    "mobile-zero-detail.png": "fb684af2bb2a8257a9344bf3a38825c167350ce2a553353d89a4a44e51099cc7",
+    "README.md": "8685a756742ccf4671ea9f34e919e2c4a2fcdfca5e22b20b8aeb587aaef74a59",
+    "mobile-export.xlsx": "e91e9fad6d2385ca0ebf59ab2f5932ebeca459810ff5cc4ab4e8ff97e704442f",
+    "browser-final.log": "8972d498d76257d3c8fc512b649b9ada47559af3b24275504a445865443a1ed7",
+    "traceability.json": "37c3af0794cdb7792af7297df299bf21f55ca076df55c943f3abe00c504c3b5f",
+    "desktop-list.png": "d145a69105272b13b229442c68f547efca0a660126fd2fc84fb703c33717970e",
+    "mobile-cancelled-detail.png": "8ab0eb1d2a6642c6417d0762995daf553426c1f022c61686e43f8bc9c0051c9f",
+    "mobile-list.png": "04ff5fd3896fe90b32a55a3463e2106a6ac521431826bfa49af2048106ff0145",
+    "desktop-export.xlsx": "e91e9fad6d2385ca0ebf59ab2f5932ebeca459810ff5cc4ab4e8ff97e704442f",
+    "browser-proof.json": "c0c8b41a5fba84dc71b86e933748194e5ef6410cb764cb528e5eb831b2b482c5",
+    "next-source-check.md": "72127f3adc636742b089606e667439ec4bb2ccb6b68af297a715c5d31e8c78fe"
+  }
+}

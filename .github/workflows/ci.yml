@@ -55,7 +55,7 @@ jobs:
       - run: test -f /tmp/ceairm-public/index.html && find /tmp/ceairm-public -maxdepth 1 -name 'app.*.js' | grep -q . && find /tmp/ceairm-public -maxdepth 1 -name 'styles.*.css' | grep -q .
       - run: bash deploy/tencent/build-release.sh ci-${{ github.sha }} /tmp/airline-operations-center.tar.gz
       - run: tar -tzf /tmp/airline-operations-center.tar.gz | grep -q './node_modules/'
-      - name: Verify the actual Linux artifact with PostgreSQL
+      - name: Verify the actual Linux artifact with PostgreSQL and maintenance lifecycle
         run: node scripts/check-integration-package.mjs /tmp/airline-operations-center.tar.gz '${{ github.sha }}' --check
         env:
           ATTENDANCE_TEST_DATABASE: 'true'

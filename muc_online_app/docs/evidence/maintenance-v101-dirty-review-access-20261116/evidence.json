@@ -1,0 +1,73 @@
+{
+  "baselineCommit": "4b56f438b81fb1ef73b22112721b9a9561f8448d",
+  "sqlite": {
+    "default": 856,
+    "coordinator": 856,
+    "failed": 0
+  },
+  "focusedWorkbenchTests": 18,
+  "syntaxCheckPassed": true,
+  "postgres": {
+    "rerunThisPhase": false,
+    "reusedServiceTests": 117,
+    "runtimeSourcesMatchPrevious": true,
+    "previousEvidence": "docs/evidence/maintenance-v101-archive-independent-authority-20261116/evidence.json",
+    "previousRestore": {
+      "tables": 148,
+      "rows": 8764,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "8bbe282e4414f0ff941c73fa9b935e64a235434932d5ee72de4cf24adcb17c9a"
+    }
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "actualOriginalAppBrowser": true,
+    "physicalDeviceVerified": false,
+    "widths": [
+      {
+        "width": 1280,
+        "actualSseRefresh": true,
+        "dirtyDraftNotSubmitted": true,
+        "privateContentCleared": true,
+        "originalBusinessUnchanged": true
+      },
+      {
+        "width": 390,
+        "actualSseRefresh": true,
+        "dirtyDraftNotSubmitted": true,
+        "privateContentCleared": true,
+        "originalBusinessUnchanged": true
+      }
+    ],
+    "browserReviewWrites": 0,
+    "originalBusinessSha256": "a3a3b3d728c27ebe9d36813c53bbffdb87b974881b4266384482324d48614935",
+    "currentOpinionCount": 2,
+    "actualOriginalManualSubmission": true,
+    "servicesStopped": true
+  },
+  "screenshotsInspected": 4,
+  "serviceWorkerShell": "v54",
+  "installedPwaUpgradeVerified": false,
+  "sourceSha256": {
+    "public/nonroutine-review-workbench.mjs": "29b79eb9f02e68e5ef83364141bb6e1ef124919707880b4da4e7f917e010e116",
+    "public/app.js": "a06abe13a07fea20077957092f8a88402f97856e398c3802f8a17d8194291b34",
+    "public/index.html": "582c9da9428e71ac7fc70569bde362304e7ddbde2cff998d228980844455d379",
+    "public/sw.js": "3f3a679d663a6d9c551cdce9426664aa0d25fee078a0bd9bbcf5fb4c3f9fe12c",
+    "tests/nonroutine-review-workbench.test.mjs": "0a3b1fd02f5b3170ee816a4c5664a7f7b8dff6001f3145413e6d114e374bc397",
+    "tests/maintenance-standard-review-workbench.test.mjs": "104fb5fdb34014380c5348479b68d98c46e5374998f88f18e36fcfd8826aaa86",
+    "server.mjs": "6531f3766abb69a708249e9b9e772085ff638b4c3a994d78cccbbcea497209ba",
+    "nonroutine-review.mjs": "17838126cf851f079a5a0097edd4d1ca32543cd89453b77daf7f8bd7a7e1fbfa",
+    "nonroutine-finalization.mjs": "3bf32538ffcf67adbb4e98180edf50ad67061cc365ca36e01c38b577d75dbbaf"
+  },
+  "mergedOrDeployed": false
+}

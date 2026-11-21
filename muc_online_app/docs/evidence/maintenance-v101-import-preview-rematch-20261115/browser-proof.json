@@ -1,0 +1,21 @@
+{
+  "actualOriginalBrowser": true,
+  "syntheticOnly": true,
+  "physicalDeviceVerified": false,
+  "viewports": [
+    1280,
+    390
+  ],
+  "actualCsvFileInput": true,
+  "expiredCommitCreatesNoDraft": true,
+  "resetThroughOriginalRowApi": true,
+  "reselectedVersion": 2,
+  "originalTextPreserved": true,
+  "originalDispatchUnchanged": true,
+  "oneOriginalDraftItem": true,
+  "standardHours": 2.5,
+  "formalWorkRows": 0,
+  "reviewCases": 0,
+  "resetAuditRetained": true,
+  "terminalCheckResumedAfterPrematureObserver": true
+}

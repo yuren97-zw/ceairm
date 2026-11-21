@@ -1,0 +1,48 @@
+{
+  "driverVersion": "page-evidence-r5",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "correctionsWorkbenchRender": {
+      "ok": true,
+      "facts": {
+        "header": "已确认工时更正",
+        "hasQuery": true,
+        "notice": "更正只追加差额，保留原报工和原认定。统计仍归原作业月份，另记办理账期。"
+      }
+    },
+    "correctionsSourceForm": {
+      "ok": true,
+      "facts": {
+        "amount": true,
+        "previewButton": true,
+        "verifiedCheckbox": true,
+        "mentionsOriginal": true,
+        "noParticipantEdit": true,
+        "subtaskId": "mtns-1795013531680-43351575d020"
+      }
+    },
+    "periodWorkbench": {
+      "ok": true,
+      "facts": {
+        "open": true,
+        "responsible": true,
+        "confirmForm": true,
+        "history": true
+      }
+    }
+  },
+  "screenshots": [
+    "r5-corrections-workbench.png",
+    "r5-corrections-source-form.png",
+    "r5-period-workbench.png"
+  ],
+  "servicesStopped": true,
+  "sourceOpenDiagnostic": {
+    "status": "来源及当前净额已读取；目标金额请明确填写。",
+    "busyText": false
+  }
+}
