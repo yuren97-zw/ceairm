@@ -1,7 +1,14 @@
 import fs from 'node:fs';
 export function installAccumulation(db){
  db.exec(fs.readFileSync(new URL('./migrations/033_attendance_monthly_exchange.sql',import.meta.url),'utf8'));
- if(!db.prepare('pragma table_info(attendance_monthly_exchange_rules)').all().some(c=>c.name==='single_cap_seconds')){const sql=fs.readFileSync(new URL('./migrations/036_attendance_single_cap.sql',import.meta.url),'utf8');db.exec(db.kind==='postgres'?sql:sql.replace('add column if not exists','add column'));}
+ const table='attendance_monthly_exchange_rules';
+ const exists=db.kind==='postgres'
+  ? db.prepare("select 1 from pg_attribute where attrelid=to_regclass(?) and attname='single_cap_seconds' and not attisdropped").get(table)
+  : db.prepare(`pragma table_info(${table})`).all().some(column=>column.name==='single_cap_seconds');
+ if(!exists){
+  const sql=fs.readFileSync(new URL('./migrations/036_attendance_single_cap.sql',import.meta.url),'utf8');
+  db.exec(db.kind==='postgres'?sql:sql.replace('add column if not exists','add column'));
+ }
 }
 export function accumulationPolicies(db){
  const rules=db.prepare('select id,source_month,single_cap_seconds from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').all();
