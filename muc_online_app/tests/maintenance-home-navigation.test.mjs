@@ -44,7 +44,8 @@ test("request failures and unexpected pagination produce an error instead of a t
     });
     assert.equal(await sandbox.service.loadMaintenance(), false);
     assert.equal(sandbox.state.homeMaintenanceState, "error");
-    assert.equal(sandbox.state.homeMaintenanceFlights, undefined);
+    // B5-3 合并语义：换人加载失败时允许预置的空数组，但不允许残留截断的部分数据。
+    assert.ok(!Array.isArray(sandbox.state.homeMaintenanceFlights) || sandbox.state.homeMaintenanceFlights.length === 0, JSON.stringify(sandbox.state.homeMaintenanceFlights));
   }
 });
 

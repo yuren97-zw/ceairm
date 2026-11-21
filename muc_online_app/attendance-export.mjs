@@ -16,9 +16,11 @@ function zip(entries){
 export function exportTables(snapshot,{changes=[],runs=[]}={}){
  const {people,dates}=excelApprovalProjection(snapshot);
  const categories=attendanceOrderedCategories(snapshot.categories);
- const summary=[['姓名','工号','部门','班组',...categories,'天数合计','累计分钟','累计小时','累计时长','已计算天数','无法计算天数'],...people.map(p=>[p.name,p.employeeNo,p.department,p.team,...categories.map(c=>p.counts[c]||0),p.days.length,p.overtimeSeconds===null?null:p.overtimeSeconds/60,p.overtimeSeconds===null?null:p.overtimeSeconds/3600,{duration:p.overtimeSeconds},p.computedDays,p.uncomputableDays])];
- const matrix=[['姓名','工号','班组',...dates],...people.map(p=>[p.name,p.employeeNo,p.team,...p.days.map(d=>d.category)])];
- const detail=[['姓名','工号','部门','班组','工作日','最终类别','班次','出差用途','出差事由','命中关键词','审批实例ID','审批有效期间','分类依据','问题','源同步时间','规则版本','计划上班','有效实际上班','上班状态','计划下班','有效实际下班','下班状态','全部上下班打卡']];
+ const withOffsets=snapshot.offsetVersion!==undefined||people.some(p=>p.days.some(d=>d.offset));
+ const summaryColumns=categories.flatMap(c=>withOffsets&&['缺卡','早退'].includes(c)?[c,c+'已抵消（项）']:[c]);
+ const summary=[['姓名','工号','部门','班组',...summaryColumns,...(withOffsets?['全部有效抵消（项）']:[]),'天数合计','累计分钟','累计小时','累计时长','已计算天数','无法计算天数'],...people.map(p=>[p.name,p.employeeNo,p.department,p.team,...summaryColumns.map(c=>c.endsWith('已抵消（项）')?p.offsetCounts?.[c.replace('已抵消（项）','')]||0:p.counts[c]||0),...(withOffsets?[p.offsetTotal||0]:[]),p.days.length,p.overtimeSeconds===null?null:p.overtimeSeconds/60,p.overtimeSeconds===null?null:p.overtimeSeconds/3600,{duration:p.overtimeSeconds},p.computedDays,p.uncomputableDays])];
+ const matrix=[['姓名','工号','班组',...dates],...people.map(p=>[p.name,p.employeeNo,p.team,...p.days.map(d=>d.category+(d.offset?.label?'\n'+d.offset.label+(d.offset.approved?' '+d.offset.approved+'项':''):''))])];
+ const detail=[['姓名','工号','部门','班组','工作日','最终类别',...(withOffsets?['内部抵消状态','有效抵消项数','抵消事项依据']:[]),'班次','出差用途','出差事由','命中关键词','审批实例ID','审批有效期间','分类依据','问题','源同步时间','规则版本','计划上班','有效实际上班','上班状态','计划下班','有效实际下班','下班状态','全部上下班打卡']];
  const overtime=[['姓名','工号','工作日','计划下班','有效实际下班','秒','分钟','小时','累计格式时长','计算状态','计算依据','计划上班','有效实际上班','上班状态','下班状态']];
  const raw=[['姓名','工号','工作日','类型','原始状态（必要字段）']];
  const issues=[['姓名','工号','工作日','类别','原因','问题','同步错误']];
@@ -27,7 +29,7 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
  for(const p of people)for(const d of p.days){
   const {on,off}=punchSummary(d);
   const allPunches=(d.punchDetails||[]).map(v=>`${v.type==='OnDuty'?'上班':v.type==='OffDuty'?'下班':v.type} | 计划：${local(v.planned)||'—'} | 有效实际：${local(v.actual)||'—'} | ${v.status} | ${(v.rawStatus||[]).map(attendanceRawStatus).join('、')} | ${v.reason}`).join('\n');
-  detail.push([p.name,p.employeeNo,p.department,p.team,d.date,d.category,d.shift,d.purposes.map(a=>a.category||a.status).join('；'),d.purposes.map(a=>a.reason??'').join('；'),d.purposes.flatMap(a=>a.keywords).join('；'),d.purposes.map(a=>a.id).join('；'),d.purposes.map(a=>local(a.start)+' 至 '+local(a.end)).join('；'),d.reason,d.issues.join('；'),d.updatedAt,snapshot.ruleVersion,local(on.planned),local(on.actual),on.status,local(off.planned),local(off.actual),off.status,allPunches]);
+  detail.push([p.name,p.employeeNo,p.department,p.team,d.date,d.category,...(withOffsets?[d.offset?.label||'',d.offset?.approved||0,JSON.stringify(d.offset?.items||[])]:[]),d.shift,d.purposes.map(a=>a.category||a.status).join('；'),d.purposes.map(a=>a.reason??'').join('；'),d.purposes.flatMap(a=>a.keywords).join('；'),d.purposes.map(a=>a.id).join('；'),d.purposes.map(a=>local(a.start)+' 至 '+local(a.end)).join('；'),d.reason,d.issues.join('；'),d.updatedAt,snapshot.ruleVersion,local(on.planned),local(on.actual),on.status,local(off.planned),local(off.actual),off.status,allPunches]);
   const o=d.overtime;overtime.push([p.name,p.employeeNo,d.date,local(o.planned),local(o.actual),o.seconds,o.seconds===null?null:o.seconds/60,o.seconds===null?null:o.seconds/3600,{duration:o.seconds},o.status,o.reason,local(on.planned),local(on.actual),on.status,off.status]);
   for(const kind of ['points','punches','approvals'])for(const v of d.input[kind]||[])raw.push([p.name,p.employeeNo,d.date,kind,JSON.stringify(v)]);
   if(!['未同步','未来日期','尚未到下班时间'].includes(d.category)&&(d.category==='待核对'||d.category==='缺卡'||d.issues.length||d.syncError))issues.push([p.name,p.employeeNo,d.date,d.category,d.reason,d.issues.join('；'),d.syncError]);
@@ -36,7 +38,7 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
  const names=new Map(people.map(p=>[p.personId,p]));
  const history=[['姓名','工号','工作日','变更前','变更后','变更时间','同步批次'],...excelApprovalProjection(changes).filter(c=>names.has(c.person_id)).map(c=>[names.get(c.person_id).name,names.get(c.person_id).employeeNo,c.work_date,c.before_json,c.after_json,c.changed_at,c.run_id])];
  const jobs=[['批次','开始日期','结束日期','状态','任务计数','错误','更新时间'],...runs.map(r=>[r.id,r.from,r.to,r.status,JSON.stringify(r.counts),r.error,r.updatedAt])];
- const rules=[['项目','说明'],['月份',snapshot.month],['导出人数',people.length],['导出范围',snapshot.exportScope||'当前筛选人员'],['筛选条件',JSON.stringify(snapshot.filters||{})],['假期目录',attendanceLeaveCatalogText(snapshot.leaveTypes)],['假期目录最近更新',snapshot.leaveTypes?.lastSyncedAt||'尚未成功读取'],['类别筛选',snapshot.filters?.categories?.length?'以下类别任一整月数量大于0：'+snapshot.filters.categories.join('、'):'未限制类别；显示符合基础条件的全部人员'],['生成时间',snapshot.generatedAt],['导出时间',snapshot.exportedAt||snapshot.generatedAt],['最后数据同步时间',snapshot.lastSyncedAt],['规则版本',snapshot.ruleVersion],['历史覆盖',snapshot.historyWarning],['分类','每人每天唯一分类；完整有效打卡明确的白班／夜班优先于外出审批和出差用途，未解释请假及冲突仍核对。跨夜外出有前序排班及同一审批依据时归前一工作日，不重复占用次日休息；培训和派驻只匹配出差事由字段。'],['关键词','培训、派驻；同时命中标为用途冲突，未命中保留出差，事由缺失不等于未命中。'],['加班',snapshot.overtimeNote],['时间精度','按秒累计，不逐日取整，不扣用餐，不设门槛；空值不等于零。'],['夜班金额','最终类别为夜班或24小时班的日期每次25元，跨夜按归属工作日只计一次；派驻、缺卡、旷工仅标识。自动结果，覆盖不足时不代表完整应发金额。'],['打卡展示','摘要为首个计划上班点、末次计划下班点及各自配对的有效实际打卡；逐日明细保留全部点。空值及审批免打卡不表示真实打卡。'],['颜色','蓝绿色：正常出勤、休息及合法审批；琥珀至赭红：异常或待核对；灰色：未同步、无记录、未到时及未知类别。'],['来源','钉钉API；源数据修正后重新同步；人员与能力状态接口首期不启用。']];
+ const rules=[['项目','说明'],['源版本',snapshot.dataVersion||''],['来源版本水位',JSON.stringify(snapshot.sourceVersion||{})],['抵消版本',snapshot.offsetVersion??''],['账本版本',snapshot.ledgerVersion??''],['抵消口径','原始统计按天、抵消按事项，不能相减；只标记有效内部审批，不修改钉钉事实。'],['月份',snapshot.month],['导出人数',people.length],['导出范围',snapshot.exportScope||'当前筛选人员'],['筛选条件',JSON.stringify(snapshot.filters||{})],['假期目录',attendanceLeaveCatalogText(snapshot.leaveTypes)],['假期目录最近更新',snapshot.leaveTypes?.lastSyncedAt||'尚未成功读取'],['类别筛选',snapshot.filters?.categories?.length?'以下类别任一整月数量大于0：'+snapshot.filters.categories.join('、'):'未限制类别；显示符合基础条件的全部人员'],['生成时间',snapshot.generatedAt],['导出时间',snapshot.exportedAt||snapshot.generatedAt],['最后数据同步时间',snapshot.lastSyncedAt],['规则版本',snapshot.ruleVersion],['历史覆盖',snapshot.historyWarning],['分类','每人每天唯一分类；完整有效打卡明确的白班／夜班优先于外出审批和出差用途，未解释请假及冲突仍核对。跨夜外出有前序排班及同一审批依据时归前一工作日，不重复占用次日休息；培训和派驻只匹配出差事由字段。'],['关键词','培训、派驻；同时命中标为用途冲突，未命中保留出差，事由缺失不等于未命中。'],['加班',snapshot.overtimeNote],['时间精度','按秒累计，不逐日取整，不扣用餐，不设门槛；空值不等于零。'],['夜班金额','最终类别为夜班或24小时班的日期每次25元，跨夜按归属工作日只计一次；派驻、缺卡、旷工仅标识。自动结果，覆盖不足时不代表完整应发金额。'],['打卡展示','摘要为首个计划上班点、末次计划下班点及各自配对的有效实际打卡；逐日明细保留全部点。空值及审批免打卡不表示真实打卡。'],['颜色','蓝绿色：正常出勤、休息及合法审批；琥珀至赭红：异常或待核对；灰色：未同步、无记录、未到时及未知类别。'],['来源','钉钉API；源数据修正后重新同步；人员与能力状态接口首期不启用。']];
  return [['人员汇总',summary],['逐日明细（横版）',matrix],['逐日明细',detail],['原始状态核对',raw],['异常清单',issues],['夜班值班统计表',night],['加班明细',overtime],['同步覆盖',coverage],['源数据变更记录',history],['同步任务',jobs],['统计规则',rules]];
 }
 export function exportXlsx(snapshot,options){
@@ -52,11 +54,11 @@ export function exportXlsx(snapshot,options){
  tables.forEach(([name,rows],i)=>{
   const columns=Math.max(...rows.map(r=>r.length)),last=column(columns-1)+rows.length;
   const cells=rows.map((row,r)=>`<row r="${r+1}"${r===0?' ht="42" customHeight="1"':''}>${row.map((value,c)=>{let v=value,style=r===0?1:0;
-    if(r===0&&name==='人员汇总'&&c>=4&&c<4+snapshot.categories.length&&attendanceAbnormal.includes(snapshot.categories[c-4]))style=toneIndex(snapshot.categories[c-4]);
+    if(r===0&&name==='人员汇总'&&snapshot.categories.includes(String(rows[0][c]))&&attendanceAbnormal.includes(rows[0][c]))style=toneIndex(rows[0][c]);
     if(r>0){
-     if(name==='人员汇总'&&c>=4&&c<4+snapshot.categories.length&&Number(v)>0)style=toneIndex(snapshot.categories[c-4]);
-     if(name==='逐日明细（横版）'&&c>=3)style=toneIndex(v);
-     if(name==='逐日明细'&&c===5||name==='异常清单'&&c===3)style=toneIndex(v);
+     if(name==='人员汇总'&&snapshot.categories.includes(String(rows[0][c]))&&Number(v)>0)style=toneIndex(rows[0][c]);
+     if(name==='逐日明细（横版）'&&c>=3)style=toneIndex(snapshot.people[r-1]?.days[c-3]?.category||v);
+     if(name==='逐日明细'&&rows[0][c]==='最终类别'||name==='异常清单'&&rows[0][c]==='类别')style=toneIndex(v);
     }
     if(v&&typeof v==='object'&&'duration'in v){v=v.duration===null?null:v.duration/86400;style=2;}const ref=column(c)+(r+1);return typeof v==='number'&&Number.isFinite(v)?`<c r="${ref}" s="${style}"><v>${v}</v></c>`:`<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;}).join('')}</row>`).join('');
   entries.push([`xl/worksheets/sheet${i+1}.xml`,`<worksheet xmlns="${ns}"><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0"><pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><cols>${Array.from({length:columns},(_,c)=>`<col min="${c+1}" max="${c+1}" width="${c<2?15:columns>25?12:24}" customWidth="1"/>`).join('')}</cols><sheetData>${cells}</sheetData><autoFilter ref="A1:${last}"/><pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`]);

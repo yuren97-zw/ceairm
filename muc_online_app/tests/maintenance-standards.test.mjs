@@ -29,7 +29,7 @@ test("standards migration and SQLite initialization have identical additive sche
   const { db } = fixture(t);
   const migrated = new DatabaseSync(":memory:");
   t.after(() => migrated.close());
-  const migration = fs.readFileSync(new URL("../migrations/032_maintenance_standards.sql", import.meta.url), "utf8");
+  const migration = fs.readFileSync(new URL("../migrations/062_maintenance_standards.sql", import.meta.url), "utf8");
   migrated.exec(migration);
   migrated.exec(migration);
   const structure = database => database.prepare("select name,sql from sqlite_master where name like 'maintenance_standard%' order by name").all();

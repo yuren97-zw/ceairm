@@ -72,6 +72,10 @@ const maintenanceV2 = [
 ];
 
 const existing = [
+  ["attendance.offset.rules.manage", "管理考勤兑换规则与结算", "attendance"],
+  ["attendance.offset.submit", "本人申请及撤回考勤抵消", "attendance"],
+  ["attendance.offset.approve", "审批受派考勤抵消", "attendance"],
+  ["attendance.offset.responsibility.manage", "核实考勤班次责任与转办", "attendance"],
   ["personnel.organization.manage", "维护人员正式组织", "personnel"],
   ["personnel.qualification.manage", "维护执照授权培训", "personnel"],
   ["accounts.read", "查看登录账户", "accounts"], ["accounts.create", "开通登录账户", "accounts"],
@@ -95,7 +99,10 @@ const existing = [
   ["hours.adjust", "调整工时数据", "hours"], ["hours.confirm", "确认工时数据", "hours"], ["hours.export", "导出工时数据", "hours"],
   ["attendance.read", "查看考勤", "attendance"], ["attendance.record.manage", "维护考勤记录", "attendance"],
   ["attendance.exception.manage", "处理考勤异常", "attendance"], ["attendance.stats.read", "查看考勤统计", "attendance"],
-  ["attendance.export", "导出考勤数据", "attendance"]
+  ["attendance.export", "导出考勤数据", "attendance"],
+  ["handover.view", "查看班组交接", "info"], ["handover.create", "填写班组交接", "info"],
+  ["handover.history.all", "查看全部交接历史", "info"], ["handover.baseline.manage", "管理班序基准", "info"],
+  ["handover.export", "导出交接记录", "info"]
 ];
 
 export const RBAC_PERMISSION_DEFINITIONS = [...CAPABILITY_CONFIGURATION_PERMISSIONS, ...capabilityV2, ...personnelV2, ...maintenanceV2, ...existing];
@@ -145,12 +152,16 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
   "personnel.import.execute": ["personnel.import.view"],
   "personnel.lifecycle.manage": ["personnel.list.view", "personnel.detail.view"],
   "capability.config.manage": ["capability.overview.view"],
+  "handover.create": ["handover.view"],
+  "handover.history.all": ["handover.view"],
+  "handover.baseline.manage": ["handover.view"],
+  "handover.export": ["handover.view"],
   "roles.manage": ["roles.read"]
 };
 
-const worker = ["info.read", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view"];
+const worker = ["info.read", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export"];
+const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),

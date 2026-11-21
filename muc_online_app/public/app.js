@@ -1,3 +1,20 @@
+let pendingHomeDayTarget=null;
+let offsetUiImport=null;
+const offsetUi=()=>offsetUiImport||(offsetUiImport=import('./attendance-offset-ui.mjs'));
+const openActionTasks=(...args)=>offsetUi().then(module=>module.openActionTasks(...args));
+const openPersonalAttendance=(...args)=>offsetUi().then(module=>module.openPersonalAttendance(...args));
+let actionTaskRealtimeController=null,actionTaskRealtimeImport=null,actionTaskRealtimeEpoch=0;
+async function startActionTaskRealtime(){
+ const generation=actionTaskRealtimeEpoch;
+ if(!isLoggedIn()||document.hidden){actionTaskRealtimeController?.stop();return;}
+ try{
+  const module=await (actionTaskRealtimeImport ||= import('./action-task-realtime.mjs'));
+  if(generation!==actionTaskRealtimeEpoch||!isLoggedIn()||document.hidden)return;
+  actionTaskRealtimeController ||= module.createActionTaskRealtimeClient({url:`${API_BASE_URL}/action-tasks/events`,getIdentity:()=>isLoggedIn()?state.user.id:null,refresh:async valid=>{const ok=await loadHomeActionTasks();if(!valid())return;let listsOk=true;if(offsetUiImport){const ui=await offsetUiImport;if(valid())listsOk=await ui.refreshActionTaskLists();}return ok&&listsOk;},onAccessRevoked:()=>handleAuthExpired('登录状态已变化，请重新登录。')});
+  actionTaskRealtimeController.start();
+ }catch{ /* Existing home polling remains available if the module cannot load. */ }
+}
+function stopActionTaskRealtime(){actionTaskRealtimeEpoch++;actionTaskRealtimeController?.stop();}
 let attendanceModule = null, attendanceImport = null;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -263,6 +280,7 @@ function showLoginRoute(message = "", replace = false) {
 }
 
 async function showDashboardRoute(replace = false) {
+  window.__t&&window.__t.push('showDashboardRoute @'+new Error().stack.split('\n')[2]);
   setRoute(ROUTES.dashboard, replace);
   state.activePage = "homePage";
   state.activeSubpage = "infoListSubpage";
@@ -282,6 +300,7 @@ async function ensureAuthenticated() {
 }
 
 async function guardRoute(message = "") {
+  window.__t&&window.__t.push('guardRoute @'+new Error().stack.split('\n')[2]);
   const route = currentRoute();
   if (route === ROUTES.dashboard) {
     const ok = await ensureAuthenticated();
@@ -301,6 +320,7 @@ async function guardRoute(message = "") {
 }
 
 async function navigate(path, options = {}) {
+  window.__t&&window.__t.push('navigate('+path+') @'+new Error().stack.split('\n')[2]);
   const target = path === ROUTES.dashboard ? ROUTES.dashboard : ROUTES.login;
   setRoute(target, !!options.replace);
   return guardRoute(options.message || "");
@@ -317,6 +337,7 @@ function showLoginPage(message = "") {
   document.querySelector('[data-workflow-workbench]')?.remove();
   state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;state.maintenanceCorrectionControllerUser=null;
   document.querySelector('[data-correction-workbench]')?.remove();
+  resetHomeAttendanceSession();
   state.user = emptyUser();
   setAppMode("locked");
   $("#loginPage").hidden = false;
@@ -774,6 +795,14 @@ function personnelCadreBadgeHtml(person) {
   return isCadrePerson(person) ? '<span class="personnel-cadre-badge">干部</span>' : "";
 }
 
+// 身份分类徽标（V1.1 §3.1）：来源是人员主数据职位 position_code，与上方按人员分组的干部判定相互独立。
+function personnelIdentityBadgeHtml(person) {
+  if (!person?.identityClass) return "";
+  const unknown = person.identityQuality === "unknown_value" || person.identityQuality === "empty";
+  const title = `身份按职位「${person.position || "（空）"}」判定（来源：人员主数据职位）${unknown ? "；该职位为未知/空值，按规则归普通员工，建议核对主数据" : ""}`;
+  return `<span class="personnel-identity-badge identity-${escapeHtml(person.identityClass)}${unknown ? " identity-unknown" : ""}" title="${escapeHtml(title)}">${escapeHtml(person.identityLabel || person.identityClass)}${unknown ? "·未知值" : ""}</span>`;
+}
+
 function parsePeopleLines(text) {
   let skipped = 0;
   const people = String(text || "").split(/\n+/).map(line => line.trim()).filter(Boolean).map(line => {
@@ -923,7 +952,7 @@ async function syncInformation(checkPermissions=false) {
       const x=window.scrollX,y=window.scrollY;
       state.records.sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.createdAt).localeCompare(String(a.createdAt)));
       renderRecords();renderHome();if(state.activeSubpage==='statsSubpage')renderStats();
-      for(const [id,note] of opened){const article=document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`);if(!article)continue;article.querySelector('.original-panel').hidden=false;article.querySelector('[data-toggle-panel]').textContent='收起原文';const n=article.querySelector('.read-note');if(n&&note){n.textContent=note;n.hidden=false;}}
+      for(const [id,note] of opened){const article=document.querySelector(`#cards article[data-record-id="${CSS.escape(id)}"]`);if(!article)continue;article.querySelector('.original-panel').hidden=false;article.querySelector('[data-toggle-panel]').textContent='收起原文';const m=article.querySelector('.metrics-row');if(m)m.hidden=false;const n=article.querySelector('.read-note');if(n&&note){n.textContent=note;n.hidden=false;}}
       window.scrollTo(x,y);
     }
     infoSyncStatus(infoRealtime.source?'实时同步':'自动同步');
@@ -1378,8 +1407,8 @@ const maintenanceService = {
   }
 };
 
-async function hydrateMaintenanceFlight(flightId) {
-  const scope = state.maintenanceTab === "execute" || state.maintenanceTab === "data" ? "execute" : "dispatch";
+async function hydrateMaintenanceFlight(flightId, requestedScope = "") {
+  const scope = requestedScope || (state.maintenanceTab === "execute" || state.maintenanceTab === "data" ? "execute" : "dispatch");
   const flight = await maintenanceService.getFlight(flightId, scope);
   if (!flight) return null;
   const index = state.maintenanceFlights.findIndex(item => item.id === flightId);
@@ -1735,6 +1764,7 @@ function canViewSubpage(subpage) {
   if (!isLoggedIn()) return false;
   if (subpage === "infoListSubpage") return true;
   if (subpage === "statsSubpage") return hasRbac("info.stats.read");
+  if (subpage === "handoverSubpage") return hasRbac("handover.view");
   return false;
 }
 
@@ -1929,6 +1959,7 @@ function renderShell() {
   $$(".page").forEach(section => section.classList.toggle("active", section.id === state.activePage));
   $$(".subpage").forEach(section => section.classList.toggle("active", section.id === state.activeSubpage));
   $("#pager").hidden = state.activePage !== "infoPage" || state.activeSubpage !== "infoListSubpage";
+  updateBottomReserve();
   $("#infoFilters").hidden = state.activeSubpage !== "infoListSubpage";
   closeSubpageMenu();
 }
@@ -2050,57 +2081,64 @@ const homeDataService = {
   attendanceSeq: 0,
   attendanceUser: "",
   attendanceAt: 0,
+  attendanceLoadingUser: "",
   maintenanceSeq: 0,
   maintenanceUser: "",
   maintenanceAt: 0,
+  maintenanceVersion: 0,
+  maintenanceLoadingUser: "",
+  maintenanceReloadPending: false,
   async loadAttendance(force = false) {
     if (!isLoggedIn() || !canView("attendancePage")) {
       state.homeAttendance = null;
       state.homeAttendanceState = "";
       return true;
     }
+    const identity = state.user.id;
+    if (this.attendanceUser !== identity && this.attendanceLoadingUser !== identity) {
+      state.homeAttendance = null;
+      state.homeAttendanceState = "";
+      state.homeAttendanceError = "";
+    }
     const fresh = this.attendanceUser === state.user.id && Date.now() - this.attendanceAt < 60000;
-    if (state.homeAttendanceState === "loading" || (fresh && !force)) return true;
+    if ((state.homeAttendanceState === "loading" && this.attendanceLoadingUser === identity) || (fresh && !force)) return true;
     const seq = ++this.attendanceSeq;
+    this.attendanceLoadingUser = identity;
     state.homeAttendanceState = "loading";
     renderHome();
     try {
       const month = maintenanceLocalDateValue().slice(0, 7);
-      const [daysData, leaveData] = await Promise.all([
-        apiRequest(`/attendance/days?month=${encodeURIComponent(month)}&view=compact`),
-        apiRequest(`/attendance/leave-balances?year=${encodeURIComponent(month.slice(0, 4))}&month=${encodeURIComponent(month)}`)
-      ]);
-      if (seq !== this.attendanceSeq) return true;
-      const people = daysData.people || [];
-      const me = people.find(person => person.personId && person.personId === state.user.personId)
-        || people.find(person => person.employeeNo && person.employeeNo === state.user.employeeNo)
-        || (people.length === 1 ? people[0] : null);
-      if (!me) {
+      const summary = await apiRequest('/attendance/self/summary');
+      if (seq !== this.attendanceSeq || state.user?.id !== identity) return true;
+      if (summary.status !== 'ready') {
         state.homeAttendance = null;
-        state.homeAttendanceState = "empty";
+        state.homeAttendanceState = summary.status === 'identity_unbound' ? 'unbound' : 'empty';
       } else {
-        const today = maintenanceLocalDateValue();
-        const todayRow = (me.days || []).find(day => day.date === today);
-        const issueCount = (me.days || []).filter(day => !["未同步", "未来日期", "尚未到下班时间"].includes(day.category)
-          && (day.category === "待核对" || day.category === "缺卡" || (day.issues || []).length > 0 || day.syncError)).length;
-        const leaveCells = ((leaveData.people || []).find(person => person.personId === me.personId)?.cells) || [];
-        const leaveRemaining = group => leaveCells.filter(cell => cell.group === group)
-          .reduce((sum, cell) => sum + Number(cell.values?.remaining ?? 0), 0);
-        state.homeAttendance = {
-          schedule: todayRow?.category || "",
-          issueCount,
-          publicLeave: leaveRemaining("公休假"),
-          childcareLeave: leaveRemaining("山东省育儿假"),
-          overtimeSeconds: me.overtimeSeconds
-        };
-        state.homeAttendanceState = "ready";
+        state.homeAttendance = {...summary, publicLeave:'—', childcareLeave:'—'};
+        state.homeAttendanceState = 'ready';
+        // Holiday failure does not erase a successful attendance summary.
+        apiRequest('/attendance/self/leaves').then(leaveData => {
+          if (seq !== this.attendanceSeq || state.user?.id !== identity) return;
+          const cells = leaveData.people?.[0]?.cells || [];
+          const text = group => {
+            const cell = cells.find(c => c.group === group);
+            if (!cell || cell.coverage !== 'complete' || !cell.units?.length || cell.issues?.some(message=>message.includes('数据冲突'))) return '—';
+            return cell.units.map(v => `${Math.max(0, v.remaining - v.unavailable)}${v.unit}`).join('·');
+          };
+          const labels={'公休假':'公','山东省育儿假':'育','婚假':'婚','陪产假':'陪'};
+          const available=cells.filter(c=>c.coverage==='complete'&&c.units?.length&&!c.issues?.some(message=>message.includes('数据冲突'))).flatMap(c=>c.units.filter(u=>u.remaining-u.unavailable>0).map(u=>`${labels[c.group]||c.group}${u.remaining-u.unavailable}${u.unit}`));
+          const complete=cells.length===4&&cells.every(c=>c.coverage==='complete'&&c.units?.length&&!c.issues?.some(message=>message.includes('数据冲突')));
+          const leaveSummary=available.length?available.slice(0,2).join('·')+(available.length>2?`+${available.length-2}`:'')+(complete?'':'·…'):complete?'无可用':'—';
+          state.homeAttendance = {...state.homeAttendance, publicLeave:text('公休假'), childcareLeave:text('山东省育儿假'),leaveSummary};
+          renderHome();
+        }).catch(() => {});
       }
       this.attendanceUser = state.user.id;
       this.attendanceAt = Date.now();
       renderHome();
       return true;
     } catch (error) {
-      if (seq !== this.attendanceSeq) return true;
+      if (seq !== this.attendanceSeq || state.user?.id !== identity) return true;
       if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
       state.homeAttendanceState = "error";
       state.homeAttendanceError = error.message || "考勤数据读取失败";
@@ -2116,37 +2154,86 @@ const homeDataService = {
       state.homeMaintenanceState = "";
       return true;
     }
-    const fresh = this.maintenanceUser === state.user.id && Date.now() - this.maintenanceAt < 60000;
-    if (state.homeMaintenanceState === "loading" || (fresh && !force)) return true;
+    const identity = state.user.id;
+    if (this.maintenanceUser !== identity && this.maintenanceLoadingUser !== identity) {
+      state.homeMaintenanceFlights = [];
+      state.homeMaintenanceGroups = [];
+      state.homeMaintenanceNextCursor = "";
+      this.maintenanceVersion = 0;
+      this.maintenanceReloadPending = false;
+    }
+    if (this.maintenanceLoadingUser === identity) {
+      if (force) this.maintenanceReloadPending = true;
+      return true;
+    }
+    const fresh = this.maintenanceUser === identity && Date.now() - this.maintenanceAt < 60000;
+    if (fresh && !force) return true;
+    this.maintenanceLoadingUser = identity;
     const seq = ++this.maintenanceSeq;
     state.homeMaintenanceState = "loading";
     renderHome();
     try {
       const query = new URLSearchParams({ scope: "execute", view: "summary" });
       const data = await apiRequest(`/maintenance/flights?${query.toString()}`);
-      if (seq !== this.maintenanceSeq) return true;
+      if (seq !== this.maintenanceSeq || state.user?.id !== identity || !isLoggedIn()) return true;
       if (data.nextCursor) throw new Error("维修待办未完整返回，请刷新重试");
       const flights = new Map((data.flights || []).map(flight => [flight.id, flight]));
       state.homeMaintenanceFlights = [...flights.values()];
       state.homeMaintenanceNextCursor = "";
       state.homeMaintenanceGroups = maintenanceAssignmentsForMeFrom(state.homeMaintenanceFlights);
       state.homeMaintenanceState = "ready";
-      this.maintenanceUser = state.user.id;
+      this.maintenanceUser = identity;
       this.maintenanceAt = Date.now();
+      this.maintenanceVersion = Number(data.version || 0);
+      state.homeMaintenanceError = "";
       renderHome();
       return true;
     } catch (error) {
-      if (seq !== this.maintenanceSeq) return false;
+      if (seq !== this.maintenanceSeq || state.user?.id !== identity || !isLoggedIn()) return false;
       if (isAuthExpired(error)) { await handleAuthExpired(error.message); return false; }
       state.homeMaintenanceState = "error";
       state.homeMaintenanceError = error.message || "维修机会读取失败";
       renderHome();
       return false;
+    } finally {
+      if (seq === this.maintenanceSeq && state.user?.id === identity) {
+        this.maintenanceLoadingUser = "";
+        if (this.maintenanceReloadPending) {
+          this.maintenanceReloadPending = false;
+          void this.loadMaintenance(true);
+        }
+      }
     }
   }
 };
 
+let homeTaskSequence=0,homeRefreshTimer=null;
+function resetHomeAttendanceSession(){
+ stopActionTaskRealtime();
+ homeDataService.maintenanceSeq++;homeDataService.maintenanceUser='';homeDataService.maintenanceLoadingUser='';homeDataService.maintenanceAt=0;homeDataService.maintenanceVersion=0;homeDataService.maintenanceReloadPending=false;
+ state.homeMaintenanceFlights=[];state.homeMaintenanceGroups=[];state.homeMaintenanceNextCursor='';state.homeMaintenanceState='';state.homeMaintenanceError='';
+ homeDataService.attendanceSeq++;homeDataService.attendanceUser='';homeDataService.attendanceLoadingUser='';homeDataService.attendanceAt=0;
+ state.homeAttendance=null;state.homeAttendanceState='';state.homeAttendanceError='';pendingHomeDayTarget=null;homeTaskSequence++;
+ clearTimeout(homeRefreshTimer);homeRefreshTimer=null;const button=document.querySelector('#homeActionTasks');if(button)button.hidden=true;
+ if(offsetUiImport)offsetUiImport.then(module=>module.closeOffsetSheets());
+}
+
+function scheduleHomeRefresh(){
+ if(homeRefreshTimer||document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;
+ homeRefreshTimer=setTimeout(()=>{homeRefreshTimer=null;if(document.hidden||!isLoggedIn()||!document.querySelector('#homePage.active'))return;Promise.allSettled([...(actionTaskRealtimeController?[]:[loadHomeActionTasks()]),homeDataService.loadAttendance(true)]).finally(scheduleHomeRefresh);},30000);
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(homeRefreshTimer);homeRefreshTimer=null;}else if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);homeDataService.loadMaintenance(true);scheduleHomeRefresh();}});
+window.addEventListener('online',()=>{if(isLoggedIn()&&document.querySelector('#homePage.active')){loadHomeActionTasks();homeDataService.loadAttendance(true);homeDataService.loadMaintenance(true);}});
+
+async function loadHomeActionTasks(){
+ const seq=++homeTaskSequence,identity=state.user?.id;
+ let button=document.querySelector('#homeActionTasks');
+ if(!button){button=document.createElement('button');button.id='homeActionTasks';button.className='btn secondary';button.hidden=true;button.onclick=()=>openActionTasks(apiRequest,()=>{loadHomeActionTasks();homeDataService.loadAttendance(true);},item=>{if(item?.sourceModule==='handover')openHandoverTask(item.target?.id||item.sourceId);});document.querySelector('.home-user-actions')?.prepend(button);}
+ if(!isLoggedIn()){button.hidden=true;return true;}
+ try{const value=await apiRequest('/action-tasks/count');if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=value.count===0;button.textContent=`待处理 ${value.count} ›`;return true;}catch(error){if(seq!==homeTaskSequence||identity!==state.user?.id)return true;button.hidden=true;if(error.status===401){stopActionTaskRealtime();await handleAuthExpired(error.message);}return false;}
+}
 function renderHome() {
+  scheduleHomeRefresh();
   const userBar = $("#homeUserBar");
   if (!userBar) return;
   if (!isLoggedIn()) {
@@ -2164,7 +2251,6 @@ function renderHome() {
   grade.hidden = !user.actualGrade;
   $("#homeUserSep").hidden = !user.employeeNo;
   const unread = personalReadRecords(visibleInfoRecords()).filter(record => ["未读", "即将超期", "已超期"].includes(readState(record)));
-  $("#homeNotifyDot").hidden = !unread.length;
   renderHomeInfoMetrics(unread);
   renderHomeAttendanceMetrics();
   renderHomeMaintenanceModule();
@@ -2191,7 +2277,7 @@ function renderHomeInfoMetrics(unread) {
     { label: "未读", value: String(unread.length), warn: unread.length > 0, filter: "未读", hint: "查看未读信息" },
     { label: `${currentMonth}超期`, value: `${overdueRate}%`, warn: overdue.length > 0, filter: "超期", hint: "查看当月超期信息" },
     { label: "收藏", value: String(favorites.length), filter: "收藏", hint: "查看我的收藏" },
-    { label: "待办", value: "—", hint: "待办统计尚未接入", disabled: true }
+    { label: "预留位置", value: "—", hint: "预留位置", disabled: true }
   ];
   box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.filter ? ` data-home-info-filter="${escapeHtml(metric.filter)}"` : ""}${metric.disabled ? " disabled" : ""} title="${escapeHtml(metric.hint)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
 }
@@ -2209,19 +2295,19 @@ function renderHomeAttendanceMetrics() {
   if (!state.homeAttendance) {
     const text = state.homeAttendanceState === "loading" ? "加载中…"
       : state.homeAttendanceState === "error" ? "读取失败"
-      : state.homeAttendanceState === "empty" ? "暂无考勤数据" : "—";
+      : state.homeAttendanceState === "unbound" ? "未关联人员" : state.homeAttendanceState === "empty" ? "暂无考勤数据" : "—";
     box.innerHTML = `<span class="home-metric-status${state.homeAttendanceState === "error" ? " error" : ""}">${escapeHtml(text)}</span>`;
     return;
   }
   const data = state.homeAttendance;
   const overtime = data.overtimeSeconds == null ? "—" : formatHomeOvertime(data.overtimeSeconds);
   const metrics = [
-    { label: "排班", value: data.schedule || "—", hint: "当前用户当日班次" },
-    { label: "异常", value: String(data.issueCount), warn: data.issueCount > 0, action: "issues", hint: "查看考勤管理异常" },
-    { label: "假期", value: `公${data.publicLeave}·育${data.childcareLeave}`, hint: "公休假·育儿假剩余" },
+    { label: "排班", value: data.schedule || "—", action:"schedule", hint: "当前用户当日班次" },
+    { label: "异常/抵消", value: `${data.issueCount??0}/${data.exceptionOffsetCount??0}`, warn: false, action: "issues", hint: "本月全部原始异常天数／有生效抵消的异常天数；点击查看全部异常及处理结果" },
+    { label: "假期", value: data.leaveSummary||'—', action:"leaves", hint: "当前可休假期；点击查看完整额度与休假记录" },
     { label: "累计/可用", value: `${overtime}/—`, hint: "累计为当月加班时长；可用次数统计尚未接入" }
   ];
-  box.innerHTML = metrics.map(metric => `<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button"${metric.action ? ` data-home-attendance-action="${metric.action}"` : ""} title="${escapeHtml(metric.hint || metric.label)}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
+  box.innerHTML = metrics.map((metric,index) => index===1?`<button class="home-metric-item" type="button" data-home-attendance-action="issues" title="${escapeHtml(metric.hint)}" aria-label="异常${data.issueCount??0}天，抵消${data.exceptionOffsetCount??0}天"><span class="home-metric-name">异常/抵消</span><strong class="home-metric-value"><span class="${data.issueCount>0?'home-exception-number':''}">${data.issueCount??0}</span><span>/</span><span class="${data.exceptionOffsetCount>0?'home-offset-number':''}">${data.exceptionOffsetCount??0}</span></strong></button>`:index===3?`<div class="home-metric-item"><span class="home-metric-name" title="本月累计／本月可用次数">累计/次</span><strong class="home-metric-value offset-credit-values"><button type="button" data-home-attendance-action="accumulation" aria-label="本月累计详情">${escapeHtml(overtime)}</button><span>/</span><button type="button" data-home-attendance-action="credits" class="${Number.isFinite(data.credits?.available)&&data.credits.available!==0?'home-credit-highlight':''}" aria-label="本月可用次数详情">${data.credits?.available??'—'}</button></strong></div>`:`<button class="home-metric-item${metric.warn ? " warn" : ""}" type="button" data-home-attendance-action="${metric.action}" title="${escapeHtml(metric.hint||metric.label)}" aria-label="${escapeHtml(metric.label+'：'+metric.value+'。'+(metric.hint||''))}"><span class="home-metric-name">${escapeHtml(metric.label)}</span><strong class="home-metric-value">${escapeHtml(metric.value)}</strong></button>`).join("");
 }
 
 function renderHomeMaintenanceModule() {
@@ -2243,7 +2329,7 @@ function renderHomeMaintenanceModule() {
   if (!executeAllowed) count.textContent = "—";
   else if (state.homeMaintenanceState === "loading" && !state.homeMaintenanceGroups.length) count.textContent = "…";
   else if (state.homeMaintenanceState === "error") count.textContent = "!";
-  else if (state.homeMaintenanceState === "ready") count.textContent = String(state.homeMaintenanceGroups.length);
+  else if (["ready", "loading"].includes(state.homeMaintenanceState)) count.textContent = String(state.homeMaintenanceGroups.length);
   else count.textContent = "—";
   count.classList.toggle("error", state.homeMaintenanceState === "error");
   count.title = state.homeMaintenanceState === "error" ? state.homeMaintenanceError || "读取失败" : "";
@@ -2261,7 +2347,7 @@ function renderHomeMaintenanceList(expanded) {
     return;
   }
   list.hidden = false;
-  if (state.homeMaintenanceState === "loading") {
+  if (state.homeMaintenanceState === "loading" && !state.homeMaintenanceGroups.length) {
     list.innerHTML = `<div class="status-line">正在读取维修机会…</div>`;
     return;
   }
@@ -2274,13 +2360,9 @@ function renderHomeMaintenanceList(expanded) {
     list.innerHTML = `<div class="status-line">暂无派给你的维修任务。</div>`;
     return;
   }
-  const items = groups.map(group => {
-    const flight = group.flight;
-    return `<button class="home-maint-item" type="button" data-home-maint-goto="${escapeHtml(flight.id)}" aria-label="打开维修机会：${escapeHtml(maintenanceTitle(flight))}">
-      <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(flight)}</span>
-      <span class="home-maint-item-meta">${maintenanceStatusBadge(flight.status || "已派工")}${maintenanceFlightSecondaryHtml(flight)}</span>
-    </button>`;
-  }).join("");
+  const items = groups.map(({ flight }) => `<article class="maintenance-card execute-flight-card collapsed">
+    ${maintenanceExecuteHeaderHtml(flight, { home: true })}
+  </article>`).join("");
   const moreNote = state.homeMaintenanceNextCursor
     ? `<div class="home-maint-more">已显示前 ${groups.length} 项，更多请进入维修管控执行页查看。</div>`
     : "";
@@ -2416,7 +2498,7 @@ function renderRecords() {
   $("#cards").innerHTML = pageItems.map(record => {
     const metrics = recordMetrics(record);
     const canManageFeedback = record.publishStatus !== "作废" && canManageFeedbackRecord(record);
-    const publisherLine = hasRbac("info.stats.read") && canManageFeedback ? `<span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span>` : "";
+    const metricsLine = hasRbac("info.stats.read") && canManageFeedback ? `<div class="metrics-row" hidden><span class="record-metrics">接收 ${metrics.total} · 已读 ${metrics.read} · 未读 ${metrics.unread} · 超期 ${metrics.overdue}</span></div>` : "";
     const menu = state.user.id ? `<div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">
       <button class="item-btn" type="button" data-favorite="${escapeHtml(record.id)}">${favoriteService.isFavorite(record.id) ? "取消收藏" : "收藏"}</button>
       ${canEditRecord(record) ? `<button class="item-btn" type="button" data-edit-record="${escapeHtml(record.id)}">修改</button>` : ""}
@@ -2427,7 +2509,8 @@ function renderRecords() {
     </div></div>` : "";
     return `<article class="card" data-record-id="${escapeHtml(record.id)}" style="--category-color:${categoryColor(record)}">
       <div class="card-row"><h2 class="title"><span class="title-text">${highlight(record.title, term)}</span>${priorityTag(record)}${titleMeta(record)}</h2>${menu}</div>
-      <div class="card-row secondary"><span class="inline-status-tags">${statusTags(record)}</span>${recordMetaLine(record, publisherLine)}<span>·</span><button class="link-btn" type="button" data-toggle-panel>展开原文</button></div>
+      <div class="card-row secondary split"><div class="secondary-main"><span class="inline-status-tags">${statusTags(record)}</span>${recordMetaLine(record)}</div><button class="link-btn" type="button" data-toggle-panel>展开原文</button></div>
+      ${metricsLine}
       <div class="original-panel" hidden><div class="original">${highlight(record.original, term)}</div><div class="read-note" hidden></div><div class="attachment-slot">${renderAttachments(record, "record")}</div></div>
     </article>`;
   }).join("");
@@ -2900,7 +2983,7 @@ function renderPersonnelDetail() {
   const tabs = [["basic","基本资料"],["licenses",`执照（${counts.license}）`],["authorizations",`授权（${counts.authorization}）`],["training",`培训（${counts.training}）`],["changes",`变更记录（${changes.length}）`]];
   const englishLabel = detail.qualificationVisible ? (detail.englishLevels || []).join("、") || "未提供" : "无查看权限";
   const actualGradeLabel = person.actualGradeMasked ? "***" : (person.actualGrade || "未提供");
-  let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b></span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
+  let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b>${personnelIdentityBadgeHtml(person)}</span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
   if (tab === "changes") content = `<div class="personnel-flat-list">${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
   if (tab === "authorizations") content = detail.qualificationVisible ? renderAuthorizationCategoryPanel(detail) : '<div class="status-line">当前账号没有查看授权明细的权限。</div>';
   if (type) {
@@ -2937,7 +3020,7 @@ function renderPersonnelMetrics() {
 
 function renderPersonnelRows() {
   const rows = state.personnel || [];
-  return `<div class="personnel-row head"><span>工号</span><span>姓名</span><span>正式组织/当前班组</span><span>职位</span><span>状态</span><span>执照/授权/培训</span><span>账户</span><span></span></div>${rows.map(person => `<div class="personnel-row"><span>${escapeHtml(person.employeeNo)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.departmentName||"待分类")} / ${escapeHtml(person.personnelGroupName||"未分配")}<small>行政：${escapeHtml(person.administrativeTeamName||"—")} · 当前：${escapeHtml(person.currentWorkingTeamName||"—")} · ${{complete:"完整",unclassified:"待分类",group_unassigned:"待分组",review_required:"待复核"}[person.organizationStatus]||"待复核"}</small></span><span>${escapeHtml(person.position || "未设置")}</span><span>${escapeHtml(person.employmentStatus)}</span><span>${person.licenseCount ?? "—"} / ${person.authorizationCount ?? "—"} / ${person.trainingCount ?? "—"}</span><span>${person.hasAccount ? "已开通" : "未开通"}</span><span>${hasRbac("personnel.detail.view") ? `<button class="link-btn" type="button" data-personnel-detail="${escapeHtml(person.id)}">${state.activePersonnelDetail?.person?.id === person.id ? "收起" : "查看"}</button>` : ""}${personnelDeleteButton(person)}</span></div>${state.activePersonnelDetail?.person?.id === person.id ? renderPersonnelDetail() : ""}`).join("") || '<div class="status-line">暂无人员主数据，请先导入人员基本信息。</div>'}`;
+  return `<div class="personnel-row head"><span>工号</span><span>姓名</span><span>正式组织/当前班组</span><span>职位</span><span>状态</span><span>执照/授权/培训</span><span>账户</span><span></span></div>${rows.map(person => `<div class="personnel-row"><span>${escapeHtml(person.employeeNo)}</span><span>${escapeHtml(person.name)}</span><span>${escapeHtml(person.departmentName||"待分类")} / ${escapeHtml(person.personnelGroupName||"未分配")}<small>行政：${escapeHtml(person.administrativeTeamName||"—")} · 当前：${escapeHtml(person.currentWorkingTeamName||"—")} · ${{complete:"完整",unclassified:"待分类",group_unassigned:"待分组",review_required:"待复核"}[person.organizationStatus]||"待复核"}</small></span><span>${escapeHtml(person.position || "未设置")}${personnelIdentityBadgeHtml(person)}</span><span>${escapeHtml(person.employmentStatus)}</span><span>${person.licenseCount ?? "—"} / ${person.authorizationCount ?? "—"} / ${person.trainingCount ?? "—"}</span><span>${person.hasAccount ? "已开通" : "未开通"}</span><span>${hasRbac("personnel.detail.view") ? `<button class="link-btn" type="button" data-personnel-detail="${escapeHtml(person.id)}">${state.activePersonnelDetail?.person?.id === person.id ? "收起" : "查看"}</button>` : ""}${personnelDeleteButton(person)}</span></div>${state.activePersonnelDetail?.person?.id === person.id ? renderPersonnelDetail() : ""}`).join("") || '<div class="status-line">暂无人员主数据，请先导入人员基本信息。</div>'}`;
 }
 
 function renderPersonnelPagination() {
@@ -3535,7 +3618,7 @@ function renderFixedProjects() {
   $("#fixedStatus").textContent = `共 ${state.fixedProjects.length} 项 · 当前显示 ${items.length} 项`;
   $("#fixedEmpty").hidden = !!items.length;
   $("#fixedList").innerHTML = items.map(project => `<article class="card fixed-card" data-fixed-id="${escapeHtml(project.id)}">
-    <div class="card-row"><span class="tag cat-规定">ATA ${escapeHtml(project.ata)}</span><h2 class="title">${escapeHtml(project.title)}${project.attachments?.length ? '<span class="title-meta"><span class="badge attachment-badge">附件</span></span>' : ""}</h2>
+    <div class="card-row"><span class="tag cat-规定">ATA ${escapeHtml(project.ata)}</span><h2 class="title"><span class="title-text">${escapeHtml(project.title)}</span>${project.attachments?.length ? '<span class="title-meta"><span class="badge attachment-badge">附件</span></span>' : ""}</h2>
     <div class="more-wrap"><button class="more-btn" type="button" data-more>⋯</button><div class="more-menu">${hasRbac("fixed.manage") ? `<button class="item-btn" type="button" data-edit-fixed="${escapeHtml(project.id)}">修改</button><button class="item-btn delete" type="button" data-delete-fixed="${escapeHtml(project.id)}">删除</button>` : ""}</div></div></div>
     <div class="card-row secondary"><span>更新 ${escapeHtml((project.updatedAt || "").slice(0, 10))}</span><span>·</span><button class="link-btn" type="button" data-toggle-panel>展开</button><span>·</span><button class="link-btn" type="button" data-print-fixed="${escapeHtml(project.id)}">打印</button></div>
     <div class="fixed-panel" hidden><div class="rich-view">${sanitizeRichHtml(project.contentHtml || "<p>暂无内容</p>")}</div>${project.references ? `<div class="references"><strong>参考资料：</strong>\n${escapeHtml(project.references)}</div>` : ""}${renderAttachments(project, "fixedProject")}</div>
@@ -3707,6 +3790,25 @@ function maintenanceFlightSecondaryHtml(flight) {
   return `<span class="maintenance-flight-secondary">${stand}${flight.flightNo ? `<span class="maintenance-time-tag">落地 ${escapeHtml(flight.plannedArrival || "-")}</span>` : ""}<span class="maintenance-time-tag">起飞 ${escapeHtml(flight.plannedDeparture || "-")}</span>${departure}${location}</span>`;
 }
 
+// Shared opportunity header: homepage opens execution; execution toggles its details.
+function maintenanceExecuteHeaderHtml(flight, { home = false, expanded = false } = {}) {
+  const id = escapeHtml(flight.id);
+  const action = home ? `data-home-maint-goto="${id}"` : `data-maint-execute-toggle="${id}" aria-expanded="${expanded ? "true" : "false"}"`;
+  const label = home ? `打开维修机会：${maintenanceTitle(flight)}` : `${expanded ? "收起" : "展开"}维修机会`;
+  const subtaskCount = (flight.subtasks || []).length;
+  const draftCount = flight.nonroutineDraft?.items?.length || 0;
+  const complete = flight.status === "已提报" && flight.personalReportProgress?.allAssignedWorkComplete
+    ? '<span class="execute-personal-complete-check" role="img" aria-label="个人相关工作已全部提报" title="个人相关工作已全部提报"></span>' : "";
+  return `<button class="execute-flight-toggle" type="button" ${action} aria-label="${escapeHtml(label)}">
+    <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(flight)}</span>
+    <span class="execute-flight-head-meta">${complete}${maintenanceStatusBadge(flight.status || "已派工", "", "", "", flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
+  </button>
+  <div class="execute-flight-info-row">
+    <button class="execute-flight-info-toggle" type="button" ${action} aria-label="${escapeHtml(label)}">${maintenanceFlightSecondaryHtml(flight)}</button>
+    ${String(flight.remark || "").trim() ? `<button class="maintenance-remark-indicator" type="button" ${home ? `data-home-maint-goto="${id}"` : `data-maint-remark-view="${id}"`} aria-label="${home ? "进入执行页查看维修机会备注" : "查看维修机会备注"}" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>` : ""}
+  </div>`;
+}
+
 function maintenanceAssigneeGroups(item, ownerType = "flight") {
   const grouped = new Map();
   for (const person of item.assignments || []) {
@@ -3869,7 +3971,7 @@ function maintenanceFlightCard(flight) {
     <div class="maintenance-children ${nonroutineExpanded ? "open" : ""}">
       <div class="maintenance-child-head">
         <button class="maintenance-child-toggle" type="button" data-maint-toggle-subtasks="${escapeHtml(flight.id)}" aria-expanded="${nonroutineExpanded ? "true" : "false"}"><span>＋ 非例行 <b class="maintenance-child-count ${subtaskCount ? "has-items" : ""}">${subtaskCount}</b> 项${draftCount ? ` · 草稿 <b class="maintenance-child-count draft-count">${draftCount}</b> 项` : ""}</span></button>
-        ${canManageMaintenance() ? `<div class="maintenance-child-actions"><button class="link-btn" type="button" data-maint-add-subtask="${escapeHtml(flight.id)}">新增</button>${!flight.archivedAt && ["未派工", "已派工", "已提报"].includes(flight.status) ? `<button class="link-btn maintenance-remark-action ${String(flight.remark || "").trim() ? "has-remark" : ""}" type="button" data-maint-remark-edit="${escapeHtml(flight.id)}" aria-label="备注，${String(flight.remark || "").trim() ? "已有内容" : "暂无内容"}">备注</button>` : ""}</div>` : ""}
+        ${canManageMaintenance() ? `<div class="maintenance-child-actions">${hasRbac("maintenance.content.manage")?`<button class="link-btn" type="button" data-maint-add-subtask="${escapeHtml(flight.id)}">新增</button>`:""}${!flight.archivedAt && ["未派工", "已派工", "已提报"].includes(flight.status) ? `<button class="link-btn maintenance-remark-action ${String(flight.remark || "").trim() ? "has-remark" : ""}" type="button" data-maint-remark-edit="${escapeHtml(flight.id)}" aria-label="备注，${String(flight.remark || "").trim() ? "已有内容" : "暂无内容"}">备注</button>` : ""}</div>` : ""}
       </div>
       ${nonroutineExpanded ? `<div class="maintenance-subtask-list">${(flight.subtasks || []).map(item => maintenanceSubtaskCard(flight, item)).join("")}${draftItems.map(maintenanceDraftSubtaskCard).join("")}${!subtaskCount && !draftCount ? '<div class="status-line">暂无非例行。</div>' : ""}</div>` : ""}
     </div>
@@ -4078,11 +4180,6 @@ function renderMaintenanceExecute() {
       return `${index ? "、" : ""}<span class="execute-person-name${isSelf ? " is-self" : ""}">${escapeHtml(person.userName)}</span>`;
     }).join("");
   };
-  const statusHtml = flight => maintenanceStatusBadge(flight.status || "已派工", "", "", "", flight);
-  const personalCompleteHtml = flight => flight.status === "已提报"
-    && flight.personalReportProgress?.allAssignedWorkComplete
-    ? '<span class="execute-personal-complete-check" role="img" aria-label="个人相关工作已全部提报" title="个人相关工作已全部提报"></span>'
-    : "";
   const nonroutineHtml = flight => {
     const batchEntries = flight.reportProgress?.batches?.nonroutine?.entries || [];
     const formalItems = (flight.subtasks || []).map(item => ({ ...item, draft: false }));
@@ -4153,18 +4250,7 @@ function renderMaintenanceExecute() {
     </section>`;
   };
   const flightCardHtml = group => { const { flight } = group; const subtaskCount = (flight.subtasks || []).length; const draftCount = flight.nonroutineDraft?.items?.length || 0; const expanded = state.maintenanceExecuteOpenFlightId === flight.id; return `<article class="maintenance-card execute-flight-card ${expanded ? "expanded" : "collapsed"}">
-      <button class="execute-flight-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}">
-        <span class="maintenance-flight-identity">
-          ${maintenanceFlightPrimaryHtml(flight)}
-        </span>
-        <span class="execute-flight-head-meta">${personalCompleteHtml(flight)}${statusHtml(flight)}<span class="execute-subtask-count ${subtaskCount > 0 ? "has-items" : ""}">非例行 ${subtaskCount} 项</span>${draftCount ? `<span class="execute-subtask-count draft-count">草稿 ${draftCount} 项</span>` : ""}</span>
-      </button>
-      <div class="execute-flight-info-row">
-        <button class="execute-flight-info-toggle" type="button" data-maint-execute-toggle="${escapeHtml(flight.id)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "收起" : "展开"}维修机会">
-          ${maintenanceFlightSecondaryHtml(flight)}
-        </button>
-        ${String(flight.remark || "").trim() ? `<button class="maintenance-remark-indicator" type="button" data-maint-remark-view="${escapeHtml(flight.id)}" aria-label="查看维修机会备注" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>` : ""}
-      </div>
+      ${maintenanceExecuteHeaderHtml(flight, { expanded })}
       ${expanded ? `<div class="execute-flight-body">${mainWorkHtml(group)}${subtaskCount || draftCount ? `<div class="execute-subtask-heading">非例行${draftCount ? ` · 草稿 ${draftCount} 项` : ""}</div><div class="execute-nonroutine-list">${nonroutineHtml(flight)}</div>` : ""}</div>` : ""}
     </article>`; };
   const today = maintenanceLocalDateValue();
@@ -5012,6 +5098,7 @@ async function loadActivePageData({ force = true } = {}) {
   if (page === "homePage" && (force || !loaded.has("homeMetrics"))) {
     const results = await Promise.all([
       homeDataService.loadAttendance(force),
+      loadHomeActionTasks(),
       homeDataService.loadMaintenance(force)
     ]);
     if (results.every(Boolean)) loaded.add("homeMetrics");
@@ -5048,6 +5135,16 @@ async function loadActivePageData({ force = true } = {}) {
   }
 }
 
+function updateBottomReserve() {
+  const nav = $("#bottomNav"), pager = $("#pager");
+  const navH = nav && !nav.hidden ? nav.offsetHeight : 0;
+  const pagerH = pager && !pager.hidden ? pager.offsetHeight : 0;
+  const root = document.documentElement.style;
+  root.setProperty("--bottom-nav-h", `${navH}px`);
+  root.setProperty("--app-bottom-reserve", `${navH + pagerH}px`);
+}
+const bottomReserveObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => updateBottomReserve()) : null;
+
 function renderActivePage() {
   renderShell();
   renderEntryOptions();
@@ -5055,6 +5152,7 @@ function renderActivePage() {
     renderHome();
     renderRecords();
     renderStats();
+    renderHandover();
   } else if (state.activePage === "settingsPage") {
     renderSettings();
   } else if (state.activePage === "fixedPage") {
@@ -5096,6 +5194,7 @@ async function renderAll(options = {}) {
   renderActivePage();
   startMaintenanceSync();
   startInfoSync();
+  startActionTaskRealtime();
 }
 
 const pullRefreshGesture = {
@@ -5106,6 +5205,7 @@ const pullRefreshGesture = {
   distance: 0,
   settleTimer: null
 };
+const PULL_REFRESH_START_DISTANCE = 10;
 const PULL_REFRESH_THRESHOLD = 72;
 const PULL_REFRESH_MAX_OFFSET = 96;
 const PULL_REFRESH_HOLD_OFFSET = 48;
@@ -5139,7 +5239,14 @@ function settlePullRefresh(delay = 0) {
   window.clearTimeout(pullRefreshGesture.settleTimer);
   pullRefreshGesture.tracking = false;
   pullRefreshGesture.distance = 0;
+  const wasVisible = document.body.classList.contains("pull-refresh-tracking")
+    || document.body.classList.contains("pull-refresh-refreshing");
   document.body.classList.remove("pull-refresh-tracking", "pull-refresh-ready", "pull-refresh-refreshing");
+  // A tap only arms the gesture; never animate an indicator that was not shown.
+  if (!wasVisible) {
+    setPullRefreshVisual(0);
+    return;
+  }
   document.body.classList.add("pull-refresh-settling");
   pullRefreshGesture.settleTimer = window.setTimeout(() => {
     setPullRefreshVisual(0);
@@ -5180,10 +5287,16 @@ function handlePullRefreshStart(event) {
 }
 
 function handlePullRefreshMove(event) {
-  if (!pullRefreshGesture.tracking || pullRefreshGesture.refreshing || event.touches.length !== 1) return;
+  if (!pullRefreshGesture.tracking || pullRefreshGesture.refreshing) return;
+  if (event.touches.length !== 1) {
+    settlePullRefresh();
+    return;
+  }
   const touch = event.touches[0];
   const deltaX = touch.clientX - pullRefreshGesture.startX;
   const deltaY = touch.clientY - pullRefreshGesture.startY;
+  if (!document.body.classList.contains("pull-refresh-tracking")
+    && Math.hypot(deltaX, deltaY) < PULL_REFRESH_START_DISTANCE) return;
   if (deltaY <= 0 || Math.abs(deltaX) >= Math.abs(deltaY) || pullRefreshScrollTop() > 0) {
     settlePullRefresh();
     return;
@@ -5209,7 +5322,7 @@ document.addEventListener("touchcancel", () => {
   if (pullRefreshGesture.tracking && !pullRefreshGesture.refreshing) settlePullRefresh();
 }, { passive: true });
 
-const BOTTOM_NAV_PAGES = ["homePage", "maintenancePage", "personnelPage", "attendancePage"];
+const BOTTOM_NAV_PAGES = ["homePage", "infoPage", "maintenancePage", "personnelPage", "attendancePage"];
 
 function bottomMorePages() {
   return $$(".top-tab").map(tab => tab.dataset.page)
@@ -5257,6 +5370,7 @@ async function showPage(page) {
     document.querySelector('[data-correction-workbench]')?.remove();
   }
   state.activePage = canView(page) ? page : "homePage";
+  if(state.activePage!=="attendancePage")pendingHomeDayTarget=null;
   if (state.activePage === "personnelPage") {
     const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
     if (capabilityAllowed) {
@@ -5273,6 +5387,612 @@ async function showPage(page) {
   }
 }
 
+// ===== 班组交接（信息传达左上角菜单第三项）=====
+const handoverUi={tab:"create",epoch:0,listEpoch:0,optionsError:"",submitting:false,oppFilter:{aircraft:"",kind:""},oppKinds:[],editor:null,options:[],recipientCache:new Map(),context:null,lists:{pending:[],drafts:[],history:[]},historyFilter:{from:"",to:"",teamId:"",aircraft:"",q:""},view:{mode:"list"},detail:null,changesOpen:"",baseline:null,baselineLeaders:{}};
+function handoverActive(){return state.activePage==="infoPage"&&state.activeSubpage==="handoverSubpage";}
+// Handover-only readers retain their scoped API permissions; never open the maintenance stream for them.
+setInterval(()=>{
+  if(document.hidden||!isLoggedIn()||!handoverActive()||canView("maintenancePage")||handoverUi.submitting)return;
+  if(handoverUi.view.mode==="detail"||(handoverUi.tab==="create"&&handoverUi.editor&&!handoverUi.editor.needsInit))refreshHandoverView();
+},15000);
+function handoverStatusText(status){return {draft:"草稿",pending:"待接收",accepted:"已接收"}[status]||status;}
+function handoverTime(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});}
+function newHandoverEditor(){
+  return {id:null,version:0,status:"draft",needsInit:true,fromTeam:"",toTeamId:"",otherItems:"",recipients:[],opportunities:[],recommended:[],recipientBasis:"none",available:[],pickerOpen:new Set(),saving:false,message:""};
+}
+function handoverBegin(){return ++handoverUi.epoch;}
+function handoverValid(token){return token===handoverUi.epoch&&handoverActive();}
+function handoverFlightLike(entry){
+  const snapshot=entry.snapshot||{};
+  return {date:snapshot.date||snapshot.plannedArrival||"",aircraftNo:snapshot.aircraftNo||"",flightNo:snapshot.flightNo||"",workKind:snapshot.workKind||"",stand:snapshot.stand||"",plannedArrival:snapshot.plannedArrival||"",locationName:snapshot.locationName||"青岛"};
+}
+async function openHandoverTask(id){
+ if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}
+ state.activePage="infoPage";state.activeSubpage="handoverSubpage";handoverUi.tab="pending";handoverUi.view={mode:"list"};
+ await showPage("infoPage");
+ await openHandoverDetail(id);
+}
+async function openHandoverDetail(id){
+  if(!handoverActive()){if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}state.activePage="infoPage";state.activeSubpage="handoverSubpage";await showPage("infoPage");}
+  const token=handoverBegin();
+  try{
+    const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+    if(!handoverValid(token))return;
+    handoverUi.detail=detail;handoverUi.view={mode:"detail"};handoverUi.changesOpen="";
+    if(detail.handover.status==="pending"&&hasRbac("maintenance.dispatch.view"))maintenanceService.load().catch(()=>{});
+    renderHandover();
+  }catch(error){if(handoverValid(token))alert(`载入交接单失败：${error.message}`);}
+}
+async function openHandoverEditor(id){
+  if(!canViewSubpage("handoverSubpage")){alert("你没有班组交接的访问权限。");return;}
+  if(!handoverActive()){state.activePage="infoPage";state.activeSubpage="handoverSubpage";await showPage("infoPage");}
+  handoverUi.tab="create";handoverUi.view={mode:"list"};handoverUi.editor=newHandoverEditor();
+  handoverUi.editor.needsInit=false;
+  renderHandover();
+  const token=handoverBegin();
+  try{
+    if(id){
+      const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+      if(!handoverValid(token))return;
+      handoverUi.editor={...newHandoverEditor(),needsInit:false,id:detail.handover.id,version:detail.handover.version,status:detail.handover.status,fromTeamId:detail.handover.fromTeamId||"",fromTeamName:detail.handover.fromTeamName||"",toTeamId:detail.handover.toTeamId||"",otherItems:detail.handover.otherItems||"",recipients:detail.recipients.map(r=>({userId:r.user_id,user_name:r.user_name})),opportunities:detail.opportunities.filter(o=>!o.removedAt).map(o=>({flightId:o.flightId,note:o.note||"",snapshot:o.snapshot||{},live:o.live||null}))};
+    }else{
+      const context=await apiRequest("/handover/shift-context");
+      if(!handoverValid(token))return;
+      handoverUi.context=context;
+      handoverUi.editor.needsInit=false;
+      handoverUi.editor.fromTeamId=context.fromTeam?.id||"";
+      handoverUi.editor.fromTeamName=context.fromTeam?.name||"";
+      handoverUi.editor.toTeamId=context.toTeam?.id||"";
+    }
+    await handoverLoadRecipientOptions(handoverUi.editor.toTeamId,token);
+    if(!id)for(const recipient of handoverUi.editor.recommended)if(!handoverUi.editor.recipients.some(r=>r.userId===recipient.userId))handoverUi.editor.recipients.push(recipient);
+    await handoverLoadOptions(token);
+    if(handoverValid(token))handoverRepaint();
+  }catch(error){if(handoverValid(token)){handoverUi.editor.message=`载入失败：${error.message}`;handoverRepaint();}}
+}
+async function handoverLoadRecipientOptions(teamId,token){
+  try{
+    const query=teamId?`?teamId=${encodeURIComponent(teamId)}`:"";
+    const data=await apiRequest(`/handover/recipient-options${query}`);
+    if(!handoverValid(token??handoverUi.epoch))return;
+    const editor=handoverUi.editor;if(!editor)return;
+    editor.available=data.items||[];editor.recommended=data.recommended||[];editor.recipientBasis=data.recipientBasis||"none";
+  }catch{}
+}
+function handoverRemarkIndicatorHtml(flight){
+  if(!flight?.id||!String(flight.remark||"").trim())return "";
+  return `<button class="maintenance-remark-indicator" type="button" data-hov-remark="${escapeHtml(flight.id)}" aria-label="查看维修机会备注" title="查看维修机会备注"><span class="maintenance-remark-symbol" aria-hidden="true"></span></button>`;
+}
+function handoverRemarkFlight(id){
+  if(handoverUi.view.mode==="detail")return handoverUi.detail?.opportunities.find(o=>o.flightId===id)?.live||null;
+  return handoverUi.options.find(o=>o.id===id)||handoverUi.editor?.opportunities.find(o=>o.flightId===id)?.live||null;
+}
+function syncHandoverRemarkDialog(){
+  const dialog=$("#handoverRemarkDialog");
+  if(!dialog?.open||dialog.dataset.loading==="true"||dialog.querySelector('[role="alert"]').textContent)return;
+  const flight=handoverRemarkFlight(dialog.dataset.flightId);
+  dialog.querySelector(".maintenance-remark-content").textContent=flight?String(flight.remark||"").trim()||"暂无备注":"该维修机会已不在当前可查看范围。";
+}
+function openHandoverRemark(flightId,trigger=document.activeElement){
+  if(document.querySelector("dialog[open]")||!handoverActive())return;
+  const origin=trigger;
+  const returnToggle=origin?.closest("article")?.querySelector("[data-hov-expand-detail],[data-hov-expand]");
+  const returnKey=returnToggle?[...returnToggle.attributes].filter(a=>a.name.startsWith("data-hov-expand")).map(a=>[a.name,a.value]):[];
+  const userId=state.user?.id;
+  const handoverId=handoverUi.view.mode==="detail"?handoverUi.detail?.handover?.id:handoverUi.editor?.id;
+  const flight=handoverRemarkFlight(flightId);
+  if(!flight)return;
+  const dialog=document.createElement("dialog");
+  dialog.id="handoverRemarkDialog";dialog.className="maintenance-remark-dialog";dialog.dataset.flightId=flightId;
+  dialog.setAttribute("aria-labelledby","handoverRemarkTitle");
+  dialog.innerHTML=`<div class="dialog-body"><div class="dialog-head"><h2 id="handoverRemarkTitle">维修机会备注</h2><button type="button" class="icon-btn" aria-label="关闭" data-close="handoverRemarkDialog">×</button></div><div class="maintenance-remark-identity">${escapeHtml([flight.date,maintenanceDisplayFlightNo(flight),flight.aircraftNo].filter(Boolean).join(" · "))}</div><div class="maintenance-remark-content maintenance-remark-text" role="status"></div><div class="status-line error" role="alert"></div><div class="form-actions"><button type="button" class="btn secondary" data-hov-remark-retry hidden>重试</button></div></div>`;
+  document.body.append(dialog);
+  let request=0;
+  async function refresh(){
+    const token=++request;dialog.dataset.loading="true";
+    const body=dialog.querySelector(".maintenance-remark-content"),error=dialog.querySelector('[role="alert"]'),retry=dialog.querySelector('[data-hov-remark-retry]');
+    body.textContent="正在读取最新备注…";error.textContent="";retry.hidden=true;
+    try{
+      const data=await apiRequest(handoverId?`/handover/${encodeURIComponent(handoverId)}`:"/handover/maintenance-options");
+      if(!dialog.open||token!==request||state.user?.id!==userId||!handoverActive())return;
+      const latest=handoverId?data.opportunities.find(o=>o.flightId===flightId)?.live:data.items.find(o=>o.id===flightId);
+      body.textContent=latest?String(latest.remark||"").trim()||"暂无备注":"该维修机会已不在当前可查看范围。";
+      const cached=handoverRemarkFlight(flightId);
+      if(cached)cached.remark=latest?.remark||"";
+      if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id===handoverId){
+        const entry=handoverUi.detail.opportunities.find(o=>o.flightId===flightId);if(entry)entry.live=latest||null;
+      }
+    }catch(e){
+      if(!dialog.open||token!==request||state.user?.id!==userId)return;
+      body.textContent="";error.textContent=`读取备注失败：${e.message}`;retry.hidden=false;
+    }finally{if(token===request){dialog.dataset.loading="false";}}
+  }
+  dialog.querySelector('[data-hov-remark-retry]').addEventListener("click",refresh);
+  dialog.addEventListener("close",()=>{
+    request++;unlockMaintenanceDataDetailBackground();dialog.remove();
+    const target=origin?.isConnected?origin:[...document.querySelectorAll('[data-hov-remark]')].find(el=>el.dataset.hovRemark===flightId);
+    const fallback=returnKey.length?[...document.querySelectorAll("[data-hov-expand-detail],[data-hov-expand]")].find(el=>returnKey.every(([key,value])=>el.getAttribute(key)===value)):null;
+    (target||fallback)?.focus({preventScroll:true});
+  });
+  lockMaintenanceDataDetailBackground();dialog.showModal();dialog.querySelector('[data-close]').focus();refresh();
+}
+async function handoverLoadOptions(token){
+  try{
+    const data=await apiRequest("/handover/maintenance-options");
+    if(!handoverValid(token??handoverUi.epoch))return;
+    handoverUi.options=data.items||[];
+    if(handoverUi.editor?.id){
+      const editor=handoverUi.editor;
+      const detail=await apiRequest(`/handover/${encodeURIComponent(editor.id)}`);
+      if(!handoverValid(token??handoverUi.epoch)||handoverUi.editor!==editor)return;
+      for(const item of editor.opportunities)item.live=detail.opportunities.find(o=>o.flightId===item.flightId)?.live||null;
+    }
+    handoverUi.oppKinds=[...new Set(handoverUi.options.map(o=>o.workKind).filter(Boolean))];
+    handoverUi.optionsError="";
+  }catch(error){
+    if(!handoverValid(token??handoverUi.epoch))return;
+    handoverUi.optionsError=error.message;
+  }
+}
+function paintHandover(){
+  if(!handoverActive())return;
+  const panel=$("#handoverPanel");if(!panel)return;
+  const active=document.activeElement;
+  const focus=panel.contains(active)?{attrs:[...active.attributes].filter(a=>a.name.startsWith("data-hov-")).map(a=>[a.name,a.value]),start:active.selectionStart,end:active.selectionEnd,scroll:active.scrollTop}:null;
+  const scrollY=window.scrollY;
+  if(handoverUi.view.mode==="detail")panel.innerHTML=handoverDetailBodyHtml();
+  else if(handoverUi.tab==="create")panel.innerHTML=handoverEditorHtml();
+  else if(handoverUi.tab==="drafts")panel.innerHTML=handoverDraftsHtml();
+  else if(handoverUi.tab==="pending")panel.innerHTML=handoverPendingHtml();
+  else panel.innerHTML=handoverHistoryHtml();
+  if(focus?.attrs.length){
+    const target=[...panel.querySelectorAll("input,textarea,select,button")].find(el=>focus.attrs.every(([key,value])=>el.getAttribute(key)===value));
+    if(target){target.focus({preventScroll:true});if(typeof focus.start==="number"&&target.setSelectionRange)try{target.setSelectionRange(focus.start,focus.end);}catch{}target.scrollTop=focus.scroll;}
+  }
+  if(!maintenanceDataDetailScrollLock)window.scrollTo({top:scrollY,behavior:"instant"});
+  syncHandoverRemarkDialog();
+}
+function renderHandover(){
+  if(!handoverActive())return;
+  if(handoverUi.tab==="create"&&(!handoverUi.editor||handoverUi.editor.needsInit)){handoverUi.editor=null;openHandoverEditor();return;}
+  paintHandover();
+  refreshHandoverView();
+}
+function handoverRepaint(){paintHandover();}
+function refreshHandoverView(options={}){
+  const {fromDispatch=false}=options||{};
+  const token=handoverBegin();
+  (async()=>{
+    if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id){
+      const id=handoverUi.detail.handover.id;
+      const scrollY=window.scrollY;
+      try{
+        const detail=await apiRequest(`/handover/${encodeURIComponent(id)}`);
+        if(!handoverValid(token)||handoverUi.view.mode!=="detail"||handoverUi.detail?.handover?.id!==id)return;
+        handoverUi.refreshError="";
+        handoverUi.detail=detail;
+        handoverRepaint();
+        window.scrollTo({top:scrollY,behavior:"instant"});
+      }catch(error){
+        if(!handoverValid(token))return;
+        if(fromDispatch){handoverUi.refreshError=`派工已保存，详情刷新失败：${error.message}`;handoverRepaint();}
+      }
+      return;
+    }
+    if(handoverUi.tab==="create"&&handoverUi.editor&&!handoverUi.editor.needsInit){
+      await handoverLoadOptions(token);
+      if(handoverValid(token)&&handoverUi.tab==="create"&&handoverUi.view.mode==="list")handoverRepaint();
+      return;
+    }
+    if(handoverUi.tab==="drafts"){
+      try{
+        const drafts=await apiRequest("/handover?scope=drafts");
+        if(!handoverValid(token))return;
+        handoverUi.lists.drafts=drafts.items||[];
+        if(handoverActive()&&handoverUi.tab==="drafts"&&handoverUi.view.mode==="list")panelRenderHandover();
+      }catch{}
+      return;
+    }
+    if(handoverUi.tab==="pending"){
+      try{
+        const [pending,drafts,mine]=await Promise.all([apiRequest("/handover?scope=pending"),apiRequest("/handover?scope=drafts"),apiRequest("/handover?scope=mine")]);
+        if(!handoverValid(token))return;
+        handoverUi.lists={pending:pending.items||[],drafts:drafts.items||[],history:mine.items||[]};
+        if(handoverUi.tab==="pending"&&handoverUi.view.mode==="list")panelRenderHandover();
+      }catch{}
+      return;
+    }
+    if(handoverUi.tab==="history"){
+      try{
+        const scope=hasRbac("handover.history.all")?"all":"mine";
+        const query=new URLSearchParams({scope});
+        if(handoverUi.historyFilter.from)query.set("from",handoverUi.historyFilter.from);
+        if(handoverUi.historyFilter.to)query.set("to",handoverUi.historyFilter.to);
+        if(handoverUi.historyFilter.teamId)query.set("teamId",handoverUi.historyFilter.teamId);
+        if(handoverUi.historyFilter.aircraft)query.set("aircraft",handoverUi.historyFilter.aircraft);
+        if(handoverUi.historyFilter.q)query.set("q",handoverUi.historyFilter.q);
+        const data=await apiRequest(`/handover?${query}`);
+        if(!handoverValid(token))return;
+        handoverUi.lists.history=data.items||[];
+        if(handoverUi.tab==="history"&&handoverUi.view.mode==="list")panelRenderHandover();
+      }catch{}
+    }
+  })();
+}
+function panelRenderHandover(){const panel=$("#handoverPanel");if(!panel)return;panel.innerHTML=handoverUi.tab==="pending"?handoverPendingHtml():handoverUi.tab==="drafts"?handoverDraftsHtml():handoverUi.tab==="history"?handoverHistoryHtml():handoverEditorHtml();}
+function handoverStatusBadgeClass(status){return status==="accepted"?"ok":status==="pending"?"warn":"";}
+function handoverMark(text,terms){
+  let html=escapeHtml(String(text??""));
+  for(const term of terms||[]){
+   const safe=escapeHtml(String(term||"")).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+   if(!safe)continue;
+   html=html.replace(new RegExp(`(${safe})`,"gi"),'<mark class="handover-mark">$1</mark>');
+  }
+  return html;
+}
+function handoverHistoryTerms(){return [handoverUi.historyFilter.q,handoverUi.historyFilter.aircraft].filter(v=>String(v||"").trim());}
+function handoverTabsHtml(){
+  const tabs=[["create","发起交接"],["drafts","草稿"],["pending","待接收"],["history","历史记录"]];
+  return `<div class="chips handover-tabs">${tabs.map(([key,label])=>`<button class="chip ${handoverUi.tab===key?"active":""}" type="button" data-hov-tab="${key}">${label}</button>`).join("")}</div>`;
+}
+function handoverRosterHtml(item){
+  const groups=maintenanceAssigneeGroups(item,item.subtasks?"flight":"subtask");
+  if(!groups.length)return '<div class="execute-nonroutine-empty">尚未派工</div>';
+  return `<div class="execute-role-roster">${groups.map(([role,names])=>`<div class="execute-role-row"><strong>${escapeHtml(role)}</strong><span>${names.map(name=>`<span class="execute-person-name">${escapeHtml(name)}</span>`).join("、")}</span></div>`).join("")}</div>`;
+}
+function handoverNonroutineCountsHtml(flight){
+  const count=Array.isArray(flight?.subtasks)?flight.subtasks.length:"—";
+  const draftCount=flight?.nonroutineDraft?.items?.length||0;
+  return `<span class="handover-summary-count">非例行 ${count} 项</span>${draftCount?`<span class="handover-summary-count draft-count">草稿 ${draftCount} 项</span>`:""}`;
+}
+function handoverFlightTimesHtml(flight){
+  const fields=[["进港",flight.flightNo],["落地",flight.plannedArrival],["起飞",flight.plannedDeparture],["出港",flight.departureFlightNo],["地点",flight.locationName]];
+  return `<div class="handover-flight-times">${fields.map(([label,value])=>`<span><span class="handover-time-label">${label}</span> ${escapeHtml(String(value??"").trim()||"—")}</span>`).join('<span class="handover-time-separator" aria-hidden="true"> · </span>')}</div>`;
+}
+function handoverSubtaskCanDispatch(flight,item){
+  return handoverActive()&&handoverUi.tab==="pending"&&handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.status==="pending"
+    &&hasRbac("maintenance.dispatch.view")&&hasRbac("maintenance.assignment.manage")
+    &&flight&&!flight.archived&&!flight.archivedAt&&!flight.reportFinalizedAt&&!["待复核","已确认"].includes(flight.status)
+    &&item?.id&&["未派工","已派工"].includes(item.status);
+}
+function handoverSubtaskStatusHtml(flight,item){
+  if(handoverSubtaskCanDispatch(flight,item))return `<button class="status-badge status-action" type="button" data-hov-subtask-dispatch="${escapeHtml(item.id)}" data-hov-flight-id="${escapeHtml(flight.id)}" title="调整非例行派工">${escapeHtml(item.status)}</button>`;
+  return `<span class="status-badge ${item.status==="已确认"?"ok":item.status==="待复核"?"warn":""}">${escapeHtml(item.status||"未派工")}</span>`;
+}
+async function openHandoverSubtaskDispatch(flightId,subtaskId){
+  if(handoverUi.subtaskOpening)return;
+  const detail=handoverUi.detail,flight=detail?.opportunities.find(o=>o.flightId===flightId)?.live;
+  const item=flight?.subtasks?.find(s=>s.id===subtaskId);
+  if(!handoverSubtaskCanDispatch(flight,item)){alert("当前非例行不能调整派工，或你没有派工权限。");return;}
+  const handoverId=detail.handover.id,userId=state.user?.id;
+  const isCurrent=()=>handoverActive()&&state.user?.id===userId&&handoverUi.tab==="pending"&&handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.id===handoverId&&handoverUi.detail.handover.status==="pending";
+  handoverUi.subtaskOpening=true;
+  try{
+    const fresh=await hydrateMaintenanceFlight(flightId,"dispatch");
+    if(!isCurrent())return;
+    const subtask=fresh?.subtasks?.find(s=>s.id===subtaskId);
+    if(!fresh||!subtask)throw Error("该非例行已删除或不在你的派工范围，请刷新交接单。");
+    if(!handoverSubtaskCanDispatch(fresh,subtask))throw Error("该非例行状态已变化，当前不能调整派工，请刷新交接单。");
+    const roles=maintenanceRolesForOwner("subtask",fresh.workKind||fresh.workType||"其他",subtask.category||"");
+    const locked=maintenanceLockedDispatchRoles(fresh,"subtask");
+    if(roles.every(role=>locked.has(role)))throw Error("该非例行已提报，不能调整派工。");
+    const opened=await openMaintenanceDispatchDialog("subtask",subtaskId,isCurrent);
+    if(!opened&&isCurrent())throw Error("未找到可派工的非例行，请刷新交接单后重试。");
+  }catch(error){if(isCurrent())alert(`打开非例行派工失败：${error.message}`);}
+  finally{handoverUi.subtaskOpening=false;}
+}
+function handoverRoutineExplanationHtml(flight){
+  const report=flight.routineReport,feedback=String(report?.feedback||"").trim();
+  if(!feedback)return "";
+  return `<div class="handover-routine-explanation"><strong>例行报工说明${report.source==="draft"?"（未提交）":""}：</strong><span>${escapeHtml(feedback)}</span></div>`;
+}
+function handoverNonroutineListHtml(flight){
+  const subtasks=flight.subtasks||[];
+  if(!subtasks.length)return "";
+  return `<div class="execute-subtask-heading">非例行 ${subtasks.length} 项</div><div class="execute-nonroutine-list">${subtasks.map(item=>{
+    const groups=maintenanceAssigneeGroups(item,"subtask");
+    const peopleHtml=groups.length?groups.map(([role,names])=>`<span class="execute-nonroutine-person-group"><strong>${escapeHtml(role)}：</strong><span>${names.map(name=>`<span class="execute-person-name">${escapeHtml(name)}</span>`).join("、")}</span></span>`).join(""):'<div class="execute-nonroutine-empty">尚未派工</div>';
+    return `<section class="execute-nonroutine-item"><div class="execute-nonroutine-head"><strong class="execute-nonroutine-title">${escapeHtml(item.title||"未填写标题")}</strong><small class="execute-nonroutine-meta">${escapeHtml(item.category||"非例行")} · ${escapeHtml(maintenanceStandardHoursLabel(item.standardHours))}</small>${handoverSubtaskStatusHtml(flight,item)}</div><div class="execute-nonroutine-people">${peopleHtml}</div>${String(item.content||"").trim()?`<small class="handover-opp-remark">报工说明：${escapeHtml(item.content)}</small>`:""}</section>`;
+  }).join("")}</div>`;
+}
+function handoverDraftSubtaskHtml(item){
+  const assigned=(item.entries||[]).some(entry=>entry.personId||entry.userName);
+  const explanation=String(item.reportExplanation||"").trim();
+  return `<section class="handover-draft-work">${maintenanceDraftSubtaskCard(item)}<div class="handover-draft-state"><span class="status-badge ${assigned?"":"warn"}">${assigned?"已选派工人员，未提交":"未派工，未提交"}</span></div>${explanation?`<p class="handover-draft-explanation">${escapeHtml(explanation)}</p>`:""}</section>`;
+}
+function handoverOpportunityBodyHtml(flight){
+  const roster=handoverRosterHtml(flight);
+  const nonroutine=handoverNonroutineListHtml(flight);
+  const remark=String(flight.remark||"").trim()?`<p class="handover-opp-remark">维修备注：${escapeHtml(flight.remark)}</p>`:"";
+  const drafts=flight.nonroutineDraft?.items||[];
+  const draftBody=drafts.length?`<div class="execute-subtask-heading">共享草稿 ${drafts.length} 项</div><div class="execute-nonroutine-list">${drafts.map(handoverDraftSubtaskHtml).join("")}</div>`:"";
+  return `<section class="execute-main-work">${roster}</section>${handoverRoutineExplanationHtml(flight)}${nonroutine}${draftBody}${remark}`;
+}
+function handoverOpportunityCardHtml(entry,{selectable=false,checked=false,expanded=false,note=false,noteIndex=null,expandKey=null,snapshotBadge=""}={}){
+  const open=Boolean(expanded);
+  const subtaskCount=(entry.subtasks||[]).length;
+  const key=expandKey??entry.id??"";
+  return `<article class="maintenance-card execute-flight-card ${open?"expanded":"collapsed"}">
+    <div class="handover-opp">
+      ${selectable?`<input type="checkbox" class="handover-opp-check" data-hov-pick="${escapeHtml(entry.id)}" ${checked?"checked":""} aria-label="${checked?"取消勾选":"勾选"}该维修机会">`:""}
+      <div class="handover-opp-main">
+        <button class="execute-flight-toggle" type="button" data-hov-expand="${escapeHtml(key)}" aria-expanded="${open?"true":"false"}" aria-label="${open?"收起":"展开"}维修机会">
+          <span class="maintenance-flight-identity">${maintenanceFlightPrimaryHtml(entry)}</span>
+          <span class="execute-flight-head-meta">${maintenanceStatusBadge(entry.status||"未派工")}${snapshotBadge}<span class="execute-subtask-count ${subtaskCount>0?"has-items":""}">非例行 ${subtaskCount} 项</span></span>
+        </button>
+        <div class="execute-flight-info-row"><button class="execute-flight-info-toggle" type="button" data-hov-expand="${escapeHtml(key)}" aria-expanded="${open?"true":"false"}">${maintenanceFlightSecondaryHtml(entry)}</button>${handoverRemarkIndicatorHtml(entry)}</div>
+      </div>
+    </div>
+    ${open?`<div class="execute-flight-body">${handoverOpportunityBodyHtml(entry)}</div>`:""}
+    ${note?`<label class="handover-opp-note">交接说明（该机会仅一条整体说明）<textarea class="handover-textarea" rows="2" data-hov-note="${noteIndex}">${escapeHtml(entry.note||"")}</textarea></label>`:""}
+  </article>`;
+}
+function handoverLiveFlight(entry){
+  const snapshot=entry.snapshot||{};
+  const option=handoverUi.options.find(o=>o.id===entry.flightId);
+  return {...snapshot,...(entry.live||{}),...(option||{}),remark:option?.remark??entry.live?.remark??"",id:entry.flightId,note:entry.note};
+}
+function handoverEditorHtml(){
+  const editor=handoverUi.editor;if(!editor)return '<p class="status-line">正在准备发起交接…</p>';
+  const teamOptions=[["TEAM-LINE-1","一组"],["TEAM-LINE-2","二组"],["TEAM-LINE-3","三组"],["TEAM-LINE-4","四组"]];
+  const selectedIds=new Set(editor.recipients.map(r=>r.userId));
+  const recommendedIds=new Set(editor.recommended.map(r=>r.userId));
+  const addOptions=editor.available.filter(r=>!selectedIds.has(r.userId)).map(r=>`<option value="${escapeHtml(r.userId)}">${escapeHtml(r.name)}${r.teamName?`（${escapeHtml(r.teamName)}）`:""}${recommendedIds.has(r.userId)?" ★":""}</option>`).join("");
+  const recipientChips=editor.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}${recommendedIds.has(r.userId)?" ★":""}<button type="button" class="handover-recipient-remove" data-hov-remove-recipient="${escapeHtml(r.userId)}" aria-label="移除接收人">×</button></span>`).join("");
+  const selectableOptions=[...handoverUi.options,...editor.opportunities.filter(o=>!handoverUi.options.some(option=>option.id===o.flightId)).map(handoverLiveFlight)];
+  const pickerRows=selectableOptions.filter(item=>(!handoverUi.oppFilter.aircraft||(item.aircraftNo||"").toUpperCase().includes(handoverUi.oppFilter.aircraft.toUpperCase()))&&(!handoverUi.oppFilter.kind||handoverUi.oppFilter.kind==="全部"||item.workKind===handoverUi.oppFilter.kind)).map(item=>{const oppIndex=editor.opportunities.findIndex(o=>o.flightId===item.id);return handoverOpportunityCardHtml(oppIndex>=0?{...item,note:editor.opportunities[oppIndex].note}:item,{selectable:true,checked:oppIndex>=0,expanded:editor.pickerOpen.has(item.id),note:oppIndex>=0,noteIndex:oppIndex});}).join("");
+  return `${handoverTabsHtml()}
+  <section class="data-panel handover-card">
+    <h3 style="margin:0 0 6px">发起交接</h3>
+    <div class="handover-team-row">
+      <label>交班班组<select class="handover-select" data-hov-from-team>${editor.fromTeamId?"":'<option value="" selected disabled>请选择</option>'}${teamOptions.map(([value,label])=>`<option value="${value}" ${editor.fromTeamId===value?"selected":""}>${label}</option>`).join("")}</select></label>
+      <span class="handover-team-arrow" aria-hidden="true">→</span>
+      <label>接班班组<select class="handover-select" data-hov-to-team>${teamOptions.map(([value,label])=>`<option value="${value}" ${editor.toTeamId===value?"selected":""}>${label}</option>`).join("")}</select></label>
+    </div>
+    <fieldset class="handover-field"><legend>接收人员（任一人确认整单完成）</legend>
+      <div class="handover-recipient-row">
+        <div class="chips handover-recipients">${recipientChips||'<small class="status-line">尚未选择接收人</small>'}</div>
+        <select class="handover-select" data-hov-add-recipient><option value="">添加接收人…</option>${addOptions}</select>
+      </div>
+      <small class="handover-hint status-line">${editor.recipientBasis==="team_leader_position"?"★ 为接班班组的班组长（按组长职位与班组自动过滤）":"候选为班组长职位人员；换接班班组后自动更新推荐"}</small>
+    </fieldset>
+    <fieldset class="handover-field"><legend>维修机会（已选 ${editor.opportunities.length} 项，勾选即填交接说明）</legend>
+      <div class="handover-filters">
+        <label>机号 <input type="search" class="handover-inline-input" data-hov-opp-aircraft value="${escapeHtml(handoverUi.oppFilter.aircraft||"")}" placeholder="6587"></label>
+        <label>类别 <select class="handover-select" data-hov-opp-kind>${["全部",...handoverUi.oppKinds].map(kind=>`<option value="${escapeHtml(kind)}" ${handoverUi.oppFilter.kind===kind||(kind==="全部"&&!handoverUi.oppFilter.kind)?"selected":""}>${escapeHtml(kind)}</option>`).join("")}</select></label>
+      </div>
+      <div>${pickerRows||`<p class="status-line">没有匹配的维修机会（服务端候选 ${handoverUi.options.length} 项${handoverUi.optionsError?`；加载失败：${escapeHtml(handoverUi.optionsError)}`:""}）。</p>`}</div>
+    </fieldset>
+    <label class="handover-label">其他交接事项<textarea class="handover-textarea" rows="3" data-hov-other placeholder="没有维修机会时必须填写此处">${escapeHtml(editor.otherItems)}</textarea></label>
+    <div class="handover-actions"><button type="button" class="btn secondary" data-hov-save ${handoverUi.submitting?"disabled":""}>存草稿</button><button type="button" class="btn" data-hov-submit ${handoverUi.submitting?"disabled":""}>${handoverUi.submitting?"正在提交…":"提交交接"}</button></div>
+    ${editor.message?`<p class="status-line" role="status">${escapeHtml(editor.message)}</p>`:""}
+  </section>`;
+}
+function handoverListCardHtml(item,actions,{exportable=true,terms=null}={}){
+  const mark=t=>terms&&terms.length?handoverMark(t,terms):escapeHtml(t);
+  return `<article class="data-panel handover-card">
+    <div class="handover-card-head"><div class="handover-card-title">${escapeHtml(item.fromTeamName)} <span aria-hidden="true">→</span> ${escapeHtml(item.toTeamName||"—")}</div><span class="status-badge ${handoverStatusBadgeClass(item.status)}">${escapeHtml(handoverStatusText(item.status))}</span></div>
+    <small class="handover-meta">交班 ${mark(item.createdByName||"")} · ${handoverTime(item.submittedAt||item.createdAt)} · 机会 ${item.opportunityCount} 项 · 接收 ${item.recipientCount} 人${item.confirmedByName?` · 确认 ${mark(item.confirmedByName)} ${handoverTime(item.confirmedAt)}`:""}</small>
+    ${item.otherItems?`<div class="handover-note-box"><strong>其他交接事项：</strong>${mark(item.otherItems)}</div>`:""}
+    ${item.matchedAircraft?`<div class="handover-meta">匹配机号：${handoverMark(item.matchedAircraft,terms||[])}</div>`:""}
+    <div class="handover-actions">${actions}${exportable?`<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(item.id)}">导出</button>`:""}</div>
+  </article>`;
+}
+function handoverDraftsHtml(){
+  const drafts=handoverUi.lists.drafts||[];
+  return `${handoverTabsHtml()}
+  <section class="data-panel handover-card">
+    <h3 style="margin:0 0 6px">草稿（${drafts.length}）</h3>
+    ${drafts.length?drafts.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(item.id)}">继续填写</button><button type="button" class="btn secondary" data-hov-delete="${escapeHtml(item.id)}">删除</button>`,{exportable:false})).join(""):'<p class="status-line">暂无草稿。在「发起交接」保存草稿后，可随时继续填写或删除。</p>'}
+    <small class="status-line">草稿可继续填写或删除；删除后不可恢复。</small>
+  </section>`;
+}
+function handoverPendingHtml(){
+  const me=state.user?.id;
+  const pendingMine=handoverUi.lists.pending||[];
+  const outgoing=(handoverUi.lists.history||[]).filter(h=>h.status==="pending"&&h.createdBy===me);
+  const section=(title,items,build)=>`<h3 style="margin:12px 0 4px">${title}</h3>${items.length?items.map(build).join(""):'<p class="status-line">暂无。</p>'}`;
+  return `${handoverTabsHtml()}
+  ${section("待我确认",pendingMine,item=>handoverListCardHtml(item,`<button type="button" class="btn" data-hov-open="${escapeHtml(item.id)}">查看并确认</button>`))}
+  ${section("我发起的待接收",outgoing,item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看</button>`))}`;
+}
+function handoverHistoryHtml(){
+  const canAll=hasRbac("handover.history.all");
+  const teamOptions=[["","全部班组"],["TEAM-LINE-1","一组"],["TEAM-LINE-2","二组"],["TEAM-LINE-3","三组"],["TEAM-LINE-4","四组"]];
+  return `${handoverTabsHtml()}
+  <div class="handover-filters">
+    <label>从 <input type="date" class="handover-input-date" data-hov-filter-from value="${escapeHtml(handoverUi.historyFilter.from)}"></label>
+    <label>至 <input type="date" class="handover-input-date" data-hov-filter-to value="${escapeHtml(handoverUi.historyFilter.to)}"></label>
+    <label>机号 <input type="search" class="handover-inline-input" data-hov-filter-aircraft value="${escapeHtml(handoverUi.historyFilter.aircraft||"")}" placeholder="如 B-1234"></label>
+    <label>关键词 <input type="search" class="handover-inline-input" data-hov-filter-q value="${escapeHtml(handoverUi.historyFilter.q||"")}" placeholder="交接说明"></label>
+    ${canAll?`<label>班组 <select class="handover-select" data-hov-filter-team>${teamOptions.map(([value,label])=>`<option value="${value}" ${handoverUi.historyFilter.teamId===value?"selected":""}>${label}</option>`).join("")}</select></label>`:""}
+    <button type="button" class="btn secondary" data-hov-export>批量导出 Excel</button>
+  </div>
+  ${(handoverUi.lists.history||[]).length?handoverUi.lists.history.map(item=>handoverListCardHtml(item,`<button type="button" class="btn secondary" data-hov-open="${escapeHtml(item.id)}">查看原始记录</button>`,{terms:handoverHistoryTerms()})).join(""):'<section class="data-panel handover-card"><div class="status-line">没有匹配的交接记录。</div></section>'}
+  <small class="status-line">历史记录按最近交接时间倒序；卡片为整张交接单，查看历史不授予维修派工或报工权限。</small>`;
+}
+function handoverDetailBodyHtml(){
+  const detail=handoverUi.detail;if(!detail)return '<div class="status-line">正在载入交接单…</div>';
+  const handover=detail.handover,me=state.user?.id;
+  const isRecipient=detail.recipients.some(r=>r.user_id===me);
+  const canEdit=handover.status==="draft"&&(handover.createdBy===me||hasRbac("handover.create"));
+  const recipientChips=detail.recipients.map(r=>`<span class="chip handover-recipient-chip">${escapeHtml(r.user_name)}</span>`).join("");
+  const opportunities=detail.opportunities.map(entry=>{
+   const live=entry.live;
+   const merged={...(entry.snapshot||{}),...(live||{}),id:entry.flightId};
+   const open=handoverUi.changesOpen===`opp:${entry.id}`;
+
+   const dispatchable=live&&!live.archived&&handover.status==="pending";
+   const liveStatus=live?(live.archived?"已确认":live.status):(entry.snapshot?.status||"未派工");
+   const noteBody=entry.note?`<div class="handover-note-box"><strong>交接说明：</strong>${escapeHtml(entry.note)}</div>`:'<div class="handover-note-box muted">未填写交接说明</div>';
+   const summaryToggle=`<button class="handover-summary-toggle handover-detail-summary" type="button" data-hov-expand-detail="${escapeHtml(entry.id)}" aria-expanded="${open?"true":"false"}">${maintenanceOpportunityTag(merged)}<span class="handover-summary-dot" aria-hidden="true"> · </span><span>${escapeHtml(merged.aircraftNo||"—")}</span><span class="handover-summary-dot" aria-hidden="true"> · </span><span>${escapeHtml(merged.stand||"—")}</span><span class="handover-summary-dot" aria-hidden="true"> · </span><span>${escapeHtml(merged.date||"—")}</span><span class="handover-summary-dot" aria-hidden="true"> · </span>${handoverNonroutineCountsHtml(live)}</button>`;
+   const statusBadge=maintenanceStatusBadge(liveStatus,dispatchable?`flight:${escapeHtml(entry.flightId)}`:"","","",live);
+   const dispatchButton=dispatchable?`<button class="btn secondary" type="button" data-maint-dispatch="flight:${escapeHtml(entry.flightId)}">派工调整人员</button>`:"";
+   return `<article class="handover-note-card${handoverUi.tab==="pending"&&handover.status==="pending"?" handover-opportunity-set":""}${entry.removedAt?" removed":""}">
+      <div class="handover-opp-summary">${summaryToggle}${handoverRemarkIndicatorHtml(live)}${statusBadge}<span class="handover-summary-chevron" aria-hidden="true">${open?"▴":"▾"}</span></div>
+      ${entry.removedAt?`<small class="handover-meta">该机会已于 ${handoverTime(entry.removedAt)} 被取消勾选（历史保留）。</small>`:""}
+      ${open?`<div class="execute-flight-body">
+        ${handoverFlightTimesHtml(merged)}
+        ${!live?'<small class="handover-meta">该维修机会已不存在，以下为提交时快照；非例行数量无法实时读取。</small>':""}
+        ${handoverOpportunityBodyHtml(live||merged)}
+      </div>`:""}
+      ${noteBody}
+    </article>`;
+  }).join("");
+  const activeCount=detail.opportunities.filter(o=>!o.removedAt).length;
+  const actionButtons=[];
+  if(handover.status==="pending"&&isRecipient)actionButtons.push(`<button type="button" class="btn" data-hov-confirm="${escapeHtml(handover.id)}">确认接收（整单完成）</button>`);
+  if(canEdit)actionButtons.push(`<button type="button" class="btn secondary" data-hov-edit="${escapeHtml(handover.id)}">编辑</button>`);
+  actionButtons.push(`<button type="button" class="btn secondary" data-hov-export-id="${escapeHtml(handover.id)}">导出 Excel</button>`);
+  actionButtons.push(`<button type="button" class="btn secondary" data-hov-back>返回</button>`);
+  return `${handoverTabsHtml()}
+  <section class="data-panel handover-card">
+    <div class="handover-card-head"><h3 style="margin:0">${escapeHtml(handover.fromTeamName)} → ${escapeHtml(handover.toTeamName||"—")}</h3><span class="status-badge ${handoverStatusBadgeClass(handover.status)}">${escapeHtml(handoverStatusText(handover.status))}</span></div>
+    <small class="handover-meta">交班 ${escapeHtml(handover.createdByName||"")} · 提交 ${handoverTime(handover.submittedAt)} ${handover.confirmedByName?`· 确认 ${escapeHtml(handover.confirmedByName)} ${handoverTime(handover.confirmedAt)}`:""} · 版本 v${handover.version}</small>
+    <p class="handover-meta"><strong>接收人员：</strong>${recipientChips||"—"}</p>
+    <h4 style="margin:12px 0 4px">交接内容（${activeCount} 项维修机会）</h4>
+    ${opportunities||'<p class="status-line">本单未勾选维修机会。</p>'}
+    <h4 style="margin:12px 0 4px">其他交接事项</h4>
+    ${handover.otherItems?`<div class="handover-note-box">${escapeHtml(handover.otherItems)}</div>`:'<p class="status-line">—</p>'}
+    ${handoverUi.refreshError?`<div class="handover-refresh-error" role="alert">派工已保存，详情刷新失败<button type="button" class="btn secondary" data-hov-retry-refresh>重试</button></div>`:""}
+    <div class="handover-actions">${actionButtons.join("")}</div>
+  </section>`;
+}
+function handoverChangesBlockHtml(){
+  const detail=handoverUi.detail;if(!detail||!handoverUi.changesOpen)return "";
+  const changes=detail.changes.filter(change=>handoverUi.changesOpen==="all"||handoverUi.changesOpen===`opp:${change.entityId}`||(handoverUi.changesOpen.startsWith("opp:")&&change.entityType==="opportunity_note"&&change.entityId===handoverUi.changesOpen.slice(4)));
+  const rows=changes.map(change=>{
+    let text="";
+    if(change.entityType==="opportunity_note"||change.entityType==="other_items")text=`<small>「${escapeHtml(change.old?.text||"")}」→「${escapeHtml(change.new?.text||"（已删除）")}」</small>`;
+    else if(change.entityType==="recipient")text=`<small>${change.action==="add"?`加入 ${escapeHtml(change.new?.userName||"")}`:`移除 ${escapeHtml(change.old?.userName||"")}`}</small>`;
+    else if(change.entityType==="to_team")text=`<small>${escapeHtml(change.old?.teamName||"—")} → ${escapeHtml(change.new?.teamName||"—")}</small>`;
+    else if(change.entityType==="opportunity")text=`<small>${escapeHtml(change.new?.snapshot?.aircraftNo||change.old?.snapshot?.aircraftNo||change.new?.flightId||change.old?.flightId||"")}${change.old?.note?` · 说明「${escapeHtml(change.old.note)}」`:""}</small>`;
+    return `<li>${escapeHtml(handoverChangeText(change))} ${text} <small class="status-line">${handoverTime(change.changedAt)}</small></li>`;
+  }).join("");
+  return `<div class="handover-changes"><h4 style="margin:0 0 6px">${handoverUi.changesOpen==="all"?"全部变更":"修改记录"}</h4>${rows?`<ul>${rows}</ul>`:'<p class="status-line">暂无变更记录。</p>'}<button type="button" class="btn secondary" data-hov-changes="" style="margin-top:6px">收起</button></div>`;
+}
+async function saveHandoverDraft(){
+  const editor=handoverUi.editor;if(!editor)return false;
+  if(!editor.fromTeamId){editor.message="请选择交班班组。";handoverRepaint();return false;}
+  const payload={fromTeamId:editor.fromTeamId||null,toTeamId:editor.toTeamId||null,otherItems:editor.otherItems,recipients:editor.recipients.map(r=>({userId:r.userId})),opportunities:editor.opportunities.map(o=>({flightId:o.flightId,note:o.note})),expectedVersion:editor.version};
+  try{
+    const result=editor.id?await apiRequest(`/handover/${encodeURIComponent(editor.id)}`,{method:"PUT",body:payload}):await apiRequest("/handover",{method:"POST",body:payload});
+    handoverUi.editor={...editor,id:result.handover.id,version:result.handover.version,status:result.handover.status,message:"已保存。"};
+    if(editor.status==="pending")handoverUi.editor.message="已保存，修改已记录变更历史。";
+    handoverRepaint();
+    refreshHandoverView();
+    return true;
+  }catch(error){editor.message=`保存失败：${error.message}`;handoverRepaint();return false;}
+}
+function showHandoverSubmitted(){
+  const dialog=document.createElement("dialog");
+  dialog.id="handoverSubmittedDialog";
+  dialog.className="maintenance-remark-dialog";
+  dialog.setAttribute("aria-labelledby","handoverSubmittedTitle");
+  dialog.innerHTML='<div class="dialog-body"><div class="dialog-head"><h2 id="handoverSubmittedTitle">提交成功</h2></div><p class="handover-submitted-message">交接单已提交，等待接收。任一接收人确认后整单完成，可在“待接收”页签跟踪。</p><div class="form-actions"><button class="btn" type="button" data-hov-submitted-ok>确认</button></div></div>';
+  document.body.append(dialog);
+  dialog.addEventListener("cancel",event=>event.preventDefault());
+  dialog.addEventListener("close",()=>{unlockMaintenanceDataDetailBackground();dialog.remove();document.querySelector("[data-hov-submit]")?.focus({preventScroll:true});});
+  dialog.querySelector("button").addEventListener("click",()=>closeDialog(dialog));
+  lockMaintenanceDataDetailBackground();dialog.showModal();dialog.querySelector("button").focus();
+}
+async function submitHandover(){
+  const editor=handoverUi.editor;if(!editor||handoverUi.submitting)return;
+  if(!editor.toTeamId){editor.message="请先选择接班班组。";handoverRepaint();return;}
+  if(!editor.recipients.length){editor.message="请至少选择一名接收人。";handoverRepaint();return;}
+  if(!editor.opportunities.length&&!editor.otherItems.trim()){editor.message="请至少勾选一个维修机会或填写其他交接事项。";handoverRepaint();return;}
+  handoverUi.submitting=true;handoverRepaint();
+  try{
+    const saved=await saveHandoverDraft();
+    const current=handoverUi.editor;
+    if(!saved||!current?.id)return;
+    await apiRequest(`/handover/${encodeURIComponent(current.id)}/submit`,{method:"POST",body:{expectedVersion:current.version}});
+  }catch(error){if(handoverUi.editor)handoverUi.editor.message=`提交失败：${error.message}`;return;}
+  finally{handoverUi.submitting=false;handoverRepaint();}
+  // Submission has committed. UI reinitialization errors must never invite resubmission.
+  handoverUi.editor=null;handoverUi.tab="create";handoverUi.view={mode:"list"};
+  try{renderHandover();}catch{handoverUi.editor=newHandoverEditor();handoverUi.editor.message="交接已提交，页面刷新失败，请重新进入发起交接。";}
+  showHandoverSubmitted();
+}
+async function gotoHandoverMaintenance(flightId,snapshot){
+  if(!canView("maintenancePage")){alert("你没有维修管控页面的访问权限。");return;}
+  state.maintenanceTab="execute";
+  try{await maintenanceService.load();}catch(error){alert(`进入维修页面失败：${error.message}`);return;}
+  state.maintenanceExecuteOpenDate=snapshot?.date||"__undated__";
+  state.maintenanceExecuteOpenFlightId=flightId;
+  await showPage("maintenancePage");
+  try{await hydrateMaintenanceFlight(flightId);renderMaintenance();}catch{}
+  const target=document.querySelector(`[data-maint-execute-toggle="${cssEscapeValue(flightId)}"]`);
+  if(!target)alert("该机会可能不在执行页显示范围（未派工给你或已归档），你可在执行页检索查看。");
+}
+const handoverPanelElement=document.getElementById("handoverPanel");
+if(handoverPanelElement){
+ handoverPanelElement.addEventListener("click",async event=>{
+  const dispatch=event.target.closest("[data-hov-subtask-dispatch]");
+  if(dispatch){event.preventDefault();event.stopPropagation();await openHandoverSubtaskDispatch(dispatch.dataset.hovFlightId,dispatch.dataset.hovSubtaskDispatch);return;}
+  const remark=event.target.closest("[data-hov-remark]");
+  if(remark){event.preventDefault();event.stopPropagation();openHandoverRemark(remark.dataset.hovRemark,remark);return;}
+  const target=event.target.closest("[data-hov-tab],[data-hov-open],[data-hov-edit],[data-hov-confirm],[data-hov-save],[data-hov-submit],[data-hov-pick],[data-hov-expand],[data-hov-remove-recipient],[data-hov-remove-opp],[data-hov-back],[data-hov-changes],[data-hov-expand-detail],[data-hov-export],[data-hov-export-id],[data-hov-delete],[data-hov-retry-refresh]");
+  if(!target)return;
+  const editor=handoverUi.editor;
+  if(target.dataset.hovTab){handoverUi.tab=target.dataset.hovTab;handoverUi.view={mode:"list"};if(handoverUi.tab==="create"&&!handoverUi.editor)openHandoverEditor();else renderHandover();return;}
+  if(target.dataset.hovOpen)return openHandoverDetail(target.dataset.hovOpen);
+  if(target.dataset.hovEdit)return openHandoverEditor(target.dataset.hovEdit);
+  if(target.dataset.hovConfirm){target.disabled=true;try{handoverUi.detail=await apiRequest(`/handover/${encodeURIComponent(target.dataset.hovConfirm)}/confirm`,{method:"POST",body:{}});handoverUi.view={mode:"detail"};handoverRepaint();}catch(error){alert(`确认失败：${error.message}`);target.disabled=false;}return;}
+  if(target.dataset.hovSave!==undefined)return saveHandoverDraft();
+  if(target.dataset.hovSubmit!==undefined)return submitHandover();
+  if(target.dataset.hovPick){const flightId=target.dataset.hovPick;const editor2=handoverUi.editor;if(!editor2)return;const existing=editor2.opportunities.find(o=>o.flightId===flightId);if(existing)editor2.opportunities=editor2.opportunities.filter(o=>o.flightId!==flightId);else{const option=handoverUi.options.find(o=>o.id===flightId);editor2.opportunities.push({flightId,note:"",snapshot:option?{date:option.date,aircraftNo:option.aircraftNo,flightNo:option.flightNo,workKind:option.workKind,stand:option.stand,plannedArrival:option.plannedArrival,status:option.status}:{}});}handoverRepaint();return;}
+  if(target.dataset.hovExpand){const set=editor?.pickerOpen;if(!set)return;const id=target.dataset.hovExpand;set.has(id)?set.delete(id):set.add(id);handoverRepaint();return;}
+  if(target.dataset.hovRemoveRecipient){editor.recipients=editor.recipients.filter(r=>r.userId!==target.dataset.hovRemoveRecipient);handoverRepaint();return;}
+  if(target.dataset.hovRemoveOpp){editor.opportunities.splice(Number(target.dataset.hovRemoveOpp),1);handoverRepaint();return;}
+  if(target.dataset.hovExportId!==undefined||target.dataset.hovExport!==undefined){
+   const params=new URLSearchParams();
+   if(target.dataset.hovExportId)params.set("id",target.dataset.hovExportId);
+   else{const f=handoverUi.historyFilter;if(f.from)params.set("from",f.from);if(f.to)params.set("to",f.to);if(f.teamId)params.set("teamId",f.teamId);if(f.aircraft)params.set("aircraft",f.aircraft);if(f.q)params.set("q",f.q);}
+   window.open(`${API_BASE_URL}/handover/export.xlsx?${params}`);
+   return;
+  }
+  if(target.dataset.hovDelete){
+   const id=target.dataset.hovDelete;
+   if(!confirm("确定删除该草稿？删除后不可恢复。"))return;
+   try{await apiRequest(`/handover/${encodeURIComponent(id)}`,{method:"DELETE"});refreshHandoverView();if(handoverUi.editor?.id===id){handoverUi.editor=null;renderHandover();}}catch(error){alert(`删除失败：${error.message}`);}
+   return;
+  }
+  if(target.dataset?.hovDispatch){
+   const flightId=target.dataset.hovDispatch;
+   try{
+    await maintenanceService.load();
+    if(!findMaintenanceFlight(flightId)){alert("该维修机会不在你的派工管理范围。");return;}
+    await openMaintenanceDispatchDialog("flight",flightId);
+    document.getElementById("maintenanceDispatchDialog")?.addEventListener("close",()=>refreshHandoverView(),{once:true});
+   }catch(error){alert(`打开派工失败：${error.message}`);}
+   return;
+  }
+  if(target.dataset?.hovRetryRefresh!==undefined){handoverUi.refreshError="";handoverRepaint();refreshHandoverView({fromDispatch:true});return;}
+  if(target.dataset.hovBack!==undefined){handoverUi.view={mode:"list"};handoverUi.detail=null;renderHandover();return;}
+  if(target.dataset.hovChanges!==undefined){handoverUi.changesOpen=target.dataset.hovChanges;handoverRepaint();return;}
+  if(target.dataset.hovExpandDetail){handoverUi.changesOpen=handoverUi.changesOpen===`opp:${target.dataset.hovExpandDetail}`?"":`opp:${target.dataset.hovExpandDetail}`;handoverRepaint();return;}
+ });
+ handoverPanelElement.addEventListener("change",async event=>{
+  const target=event.target;
+  if(target.dataset?.hovFromTeam!==undefined){const editor=handoverUi.editor;if(!editor)return;editor.fromTeamId=target.value;editor.fromTeamName=target.selectedOptions[0]?.textContent||"";handoverRepaint();return;}
+  if(target.dataset?.hovToTeam!==undefined){const editor=handoverUi.editor;if(!editor)return;editor.toTeamId=target.value;await handoverLoadRecipientOptions(editor.toTeamId);handoverRepaint();return;}
+  if(target.dataset?.hovOppAircraft!==undefined){handoverUi.oppFilter.aircraft=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovOppKind!==undefined){handoverUi.oppFilter.kind=target.value;handoverRepaint();return;}
+  if(target.dataset?.hovAddRecipient!==undefined){const editor=handoverUi.editor;if(!editor||!target.value)return;const option=editor.available.find(r=>r.userId===target.value);if(option&&!editor.recipients.some(r=>r.userId===option.userId))editor.recipients.push({userId:option.userId,user_name:option.name});handoverRepaint();return;}
+  if(target.dataset?.hovFilterFrom!==undefined){handoverUi.historyFilter.from=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterTo!==undefined){handoverUi.historyFilter.to=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterTeam!==undefined){handoverUi.historyFilter.teamId=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterAircraft!==undefined){handoverUi.historyFilter.aircraft=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovFilterQ!==undefined){handoverUi.historyFilter.q=target.value;refreshHandoverView();return;}
+  if(target.dataset?.hovLeaderTeam){handoverUi.baselineLeaders[target.dataset.hovLeaderTeam]=target.value;return;}
+ });
+ handoverPanelElement.addEventListener("input",event=>{
+  const target=event.target;
+  if(target.dataset?.hovNote!==undefined){const editor=handoverUi.editor;if(editor?.opportunities[Number(target.dataset.hovNote)])editor.opportunities[Number(target.dataset.hovNote)].note=target.value;return;}
+  if(target.dataset?.hovOther!==undefined){const editor=handoverUi.editor;if(editor)editor.otherItems=target.value;return;}
+ });
+}
 async function showSubpage(subpage) {
   if (!canViewSubpage(subpage)) subpage = "infoListSubpage";
   state.activeSubpage = subpage;
@@ -6339,8 +7059,16 @@ function maintenanceHasOpenEditor() {
 
 async function refreshMaintenanceFromSync(version = 0) {
   const nextVersion = Number(version || 0);
+  // Home has its own snapshot version; loading the execution list must not consume its update.
+  if ((state.activePage === "homePage" || state.homeMaintenanceState)
+    && (!nextVersion || nextVersion > homeDataService.maintenanceVersion || state.homeMaintenanceState === "error")) {
+    homeDataService.loadMaintenance(true).catch(() => {});
+  }
   if (nextVersion && nextVersion <= Number(state.maintenanceSyncVersion || 0)) return;
   if (nextVersion) state.maintenanceSyncVersion = nextVersion;
+  if (typeof handoverUi !== "undefined" && handoverActive() && ((handoverUi.view.mode === "detail" && handoverUi.detail?.handover?.id) || (handoverUi.view.mode === "list" && handoverUi.tab === "create" && handoverUi.editor && !handoverUi.editor.needsInit))) {
+    refreshHandoverView();
+  }
   if (maintenanceHasOpenEditor()) {
     state.maintenanceRefreshPending = true;
     return;
@@ -6349,14 +7077,10 @@ async function refreshMaintenanceFromSync(version = 0) {
     if (state.loadedData instanceof Set) {
       for (const key of state.loadedData) if (key.startsWith("maintenance:")) state.loadedData.delete(key);
     }
-    if (["ready", "error"].includes(state.homeMaintenanceState)) {
-      homeDataService.loadMaintenance(true).catch(() => {});
-    }
     return;
   }
   state.maintenanceRefreshPending = false;
   await refreshMaintenance();
-  homeDataService.loadMaintenance(true).catch(() => {});
 }
 
 function flushMaintenancePendingRefresh() {
@@ -6433,7 +7157,7 @@ function ensureMaintenanceDialogs() {
   }
   if (!$("#maintenanceDispatchDialog")) {
     document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceDispatchDialog"><div id="maintenanceDispatchDialogBody" class="dialog-body"></div></dialog>`);
-    $("#maintenanceDispatchDialog").addEventListener("close", () => { state.maintenanceDispatchDraft = null; flushMaintenancePendingRefresh(); });
+    $("#maintenanceDispatchDialog").addEventListener("close", () => { state.maintenanceDispatchDraft = null; flushMaintenancePendingRefresh(); if(handoverUi.view.mode==="detail"&&handoverUi.detail?.handover?.status==="pending")refreshHandoverView({fromDispatch:$("#maintenanceDispatchDialog").dataset.handoverSaved==="true"}); });
   }
   if (!$("#maintenanceReviewDialog")) {
     document.body.insertAdjacentHTML("beforeend", `<dialog id="maintenanceReviewDialog" class="maintenance-review-dialog"><div id="maintenanceReviewDialogBody" class="dialog-body"></div></dialog>`);
@@ -6599,10 +7323,10 @@ function showMaintenanceLocationChoices({ open = true, all = false } = {}) {
   }
 }
 
-function maintenanceSubtaskFormHtml(flight, subtask = {}) {
+function maintenanceSubtaskFormHtml(flight, subtask = {}, towDefaultHours = 3) {
   const category = subtaskCategories.includes(subtask.category) ? subtask.category : "其他";
   const defaultChapter = !subtask.id && category === "拖机" ? "09" : (subtask.cardNo || "");
-  const defaultHours = !subtask.id && category === "拖机" ? maintenanceTowDefaultHours() : (subtask.standardHours || 0);
+  const defaultHours = !subtask.id && category === "拖机" ? towDefaultHours : (subtask.standardHours || 0);
   return `<div class="dialog-head"><h2>${subtask.id ? "修改非例行" : "新增非例行"}</h2><button class="icon-btn" data-close="maintenanceTaskDialog" type="button">×</button></div>
     <form id="maintenanceSubtaskForm" class="entry-grid">
       <input id="maintSubtaskId" type="hidden" value="${escapeHtml(subtask.id || "")}">
@@ -6669,18 +7393,40 @@ function renderMaintenanceLocationManager() {
 }
 
 async function openMaintenanceSubtaskDialog(flight, subtask = {}) {
+  if(!hasRbac("maintenance.content.manage")){alert("当前账号没有维护工作内容权限");return;}
+  if(!flight?.id){alert("维修机会已失效，请刷新后重试。");return;}
   ensureMaintenanceDialogs();
-  await ensureMaintenanceRules();
-  $("#maintenanceTaskDialogBody").innerHTML = maintenanceSubtaskFormHtml(flight, subtask);
-  $("#maintenanceTaskDialog").showModal();
+  const dialog=$("#maintenanceTaskDialog"),body=$("#maintenanceTaskDialogBody");
+  if(dialog.open)return;
+  const token=Symbol("nonroutine-options");dialog.nonroutineLoadToken=token;
+  delete dialog.dataset.towDefaultHours;
+  function status(message,failed=false){
+    body.innerHTML=`<div class="dialog-head"><h2>${subtask.id?"修改非例行":"新增非例行"}</h2><button class="icon-btn" type="button" data-close="maintenanceTaskDialog" aria-label="关闭">×</button></div><p class="status-line ${failed?"error":""}" role="${failed?"alert":"status"}"></p>${failed?'<button class="btn secondary" type="button" data-maint-subtask-retry>重试</button>':""}`;
+    body.querySelector("p").textContent=message;
+    body.querySelector("[data-maint-subtask-retry]")?.addEventListener("click",load);
+  }
+  async function load(){
+    status("正在读取非例行表单配置…");
+    try{
+      const options=await apiRequest("/maintenance/nonroutine-options");
+      if(!dialog.open||dialog.nonroutineLoadToken!==token)return;
+      const hours=Number(options.towDefaultHours);
+      if(!Number.isFinite(hours)||hours<=0)throw Error("拖机默认工时配置无效");
+      dialog.dataset.towDefaultHours=String(hours);
+      body.innerHTML=maintenanceSubtaskFormHtml(flight,subtask,hours);
+    }catch(error){if(dialog.open&&dialog.nonroutineLoadToken===token)status(`无法打开非例行表单：${error.message}`,true);}
+  }
+  status("正在读取非例行表单配置…");dialog.showModal();
+  return load();
 }
 
-async function openMaintenanceDispatchDialog(ownerType, ownerId) {
+async function openMaintenanceDispatchDialog(ownerType, ownerId, isCurrent = () => true) {
   ensureMaintenanceDialogs();
   await loadPersonnelDirectories(["maintenance_dispatch"]);
+  if(!isCurrent())return false;
   const flight = ownerType === "flight" ? findMaintenanceFlight(ownerId) : findMaintenanceSubtask(ownerId).flight;
   const item = ownerType === "flight" ? flight : findMaintenanceSubtask(ownerId).subtask;
-  if (!flight || !item) return;
+  if (!flight || !item) return false;
   const people = normalizePeople(state.maintenancePeople || []);
   const opportunity = flight.workKind || flight.workType || "其他";
   const availableRoles = maintenanceRolesForOwner(ownerType, opportunity, item.category || "");
@@ -6728,7 +7474,9 @@ async function openMaintenanceDispatchDialog(ownerType, ownerId) {
       <div class="form-actions"><button class="btn secondary" type="button" data-close="maintenanceDispatchDialog">取消</button><button class="btn" type="submit">${lockedRoles.size ? "保存未提报派工" : "保存派工"}</button></div>
     </form>`;
   renderMaintenanceDispatchPicker();
+  $("#maintenanceDispatchDialog").dataset.handoverSaved="";
   $("#maintenanceDispatchDialog").showModal();
+  return true;
 }
 
 // All roles come from the current opportunity's existing menu keys, not a fixed
@@ -8505,6 +9253,7 @@ document.addEventListener("click", async event => {
     event.preventDefault();
     const flight = findMaintenanceFlight(addonButton.dataset.maintAddSubtask);
     if (flight) await openMaintenanceSubtaskDialog(flight);
+    else alert("维修机会已失效，请刷新后重试。");
     return;
   }
   const nonroutineToggle = event.target.closest("[data-maint-toggle-subtasks]");
@@ -8554,7 +9303,11 @@ document.addEventListener("click", async event => {
   const dispatchButton = event.target.closest("[data-maint-dispatch]");
   if (dispatchButton) {
     const [ownerType, ownerId] = dispatchButton.dataset.maintDispatch.split(":");
-    openMaintenanceDispatchDialog(ownerType, ownerId);
+    (async () => {
+      try { if (ownerType === "flight") await hydrateMaintenanceFlight(ownerId); } catch {}
+      openMaintenanceDispatchDialog(ownerType, ownerId);
+      if (ownerType === "flight" && !findMaintenanceFlight(ownerId)) alert("该维修机会不在你的派工管理范围。");
+    })();
     return;
   }
   const reviewButton = event.target.closest("[data-maint-review]");
@@ -9026,6 +9779,7 @@ async function performLogout() {
   document.querySelector('[data-workflow-workbench]')?.remove();
   state.maintenanceCorrectionController?.destroy();state.maintenanceCorrectionController=null;state.maintenanceCorrectionControllerUser=null;
   document.querySelector('[data-correction-workbench]')?.remove();
+  stopActionTaskRealtime();
   stopMaintenanceSync();
   stopInfoSync();infoRealtime.cursor='';infoRealtime.newIds.clear();
   await authService.logout();
@@ -9036,6 +9790,13 @@ async function performLogout() {
 
 $$(".top-tab").forEach(tab => tab.addEventListener("click", () => showPage(tab.dataset.page)));
 $$(".subtab").forEach(tab => tab.addEventListener("click", () => showSubpage(tab.dataset.subpage)));
+if (bottomReserveObserver) {
+ const navEl = $("#bottomNav"), pagerEl = $("#pager");
+ if (navEl) bottomReserveObserver.observe(navEl);
+ if (pagerEl) bottomReserveObserver.observe(pagerEl);
+}
+window.addEventListener("resize", updateBottomReserve);
+window.addEventListener("orientationchange", updateBottomReserve);
 $$("#bottomNav .bottom-nav-item").forEach(item => item.addEventListener("click", () => {
   if (item.dataset.page === "__more__") {
     openBottomMoreSheet();
@@ -9060,7 +9821,7 @@ $("#homeInfoMetrics").addEventListener("click", event => {
 $("#homeAttendanceMetrics").addEventListener("click", event => {
   const button = event.target.closest("[data-home-attendance-action]");
   if (!button) return;
-  showPage("attendancePage");
+  openPersonalAttendance(apiRequest,button.dataset.homeAttendanceAction,()=>{homeDataService.loadAttendance(true);loadHomeActionTasks();},openHomeAttendanceDay);
 });
 $("#homeMaintenanceToggle").addEventListener("click", () => {
   if (!hasRbac("maintenance.execute.view")) return;
@@ -9079,7 +9840,6 @@ $("#homeMaintenanceList").addEventListener("click", event => {
   const item = event.target.closest("[data-home-maint-goto]");
   if (item) gotoMaintenanceFromHome(item.dataset.homeMaintGoto).catch(error => alert(error.message || "打开维修机会失败"));
 });
-$("#homeNotifyBtn").addEventListener("click", () => openInfoFromHome("未读"));
 $("#homeProfileBtn").addEventListener("click", event => {
   event.stopPropagation();
   const menu = $("#homeProfileMenu");
@@ -9285,6 +10045,8 @@ $("#cards").addEventListener("click", async event => {
       const willCollapse = !box.hidden;
       box.hidden = willCollapse;
       panelButton.textContent = box.hidden ? "展开原文" : "收起原文";
+      const metricsRow = article.querySelector(".metrics-row");
+      if (metricsRow) metricsRow.hidden = willCollapse;
       if (willCollapse && state.deferFilterRecordIds.has(record.id)) {
         clearDeferredReclassify(record.id);
         if (state.statusFilter === "未读") {
@@ -9931,8 +10693,9 @@ document.addEventListener("submit", event => {
         assignments,
         $("#maintDispatchExpectedUpdatedAt").value
       );
+      $("#maintenanceDispatchDialog").dataset.handoverSaved="true";
       closeDialog($("#maintenanceDispatchDialog"));
-      await refreshMaintenance();
+      try{await refreshMaintenance();}catch(error){alert(`派工已保存，维修数据刷新失败：${error.message}`);}
     })().catch(error => {
       if (error.status === 409 && error.code === "maintenance_dispatch_stale") {
         const conflict = $("#maintenanceDispatchConflict");
@@ -10089,7 +10852,7 @@ document.addEventListener("change", async event => {
       const chapter = $("#maintSubChapter");
       const hours = $("#maintSubHours");
       if (chapter) chapter.value = "09";
-      if (hours) hours.value = maintenanceTowDefaultHours();
+      if (hours) hours.value = $("#maintenanceTaskDialog").dataset.towDefaultHours;
     }
     return;
   }
@@ -10395,6 +11158,7 @@ setupDrop($("#recordDrop"), $("#recordFiles"), state.recordFiles, $("#recordPend
 setupDrop($("#fixedDrop"), $("#fixedFiles"), state.fixedFiles, $("#fixedPending"));
 renderFixedAtaOptions();
 window.addEventListener("popstate", event => {
+  if(Date.now()<(window.__suppressRouteGuard||0))return;
   restoreHomeMaintenanceHistory(event).then(handled=>handled||guardRoute()).catch(error => {
     document.body.innerHTML = `<main class="wrap" style="padding:24px"><div class="data-panel"><h1>页面切换失败</h1><p class="status-line">${escapeHtml(error.message)}</p></div></main>`;
   });
@@ -10444,6 +11208,13 @@ function prefetchAttendanceModules() {
   try { import("/attendance.mjs?v=2").catch(() => {}); } catch {}
 }
 
+let homeDayJumpSequence=0;
+async function openHomeAttendanceDay(target){
+ const identity=state.user?.id,seq=++homeDayJumpSequence;
+ if(!identity||target.personId!==state.user.personId||!hasRbac('attendance.read'))throw Error('当前账号无权查看该人员考勤');
+ const ui=await offsetUi();if(seq!==homeDayJumpSequence||state.user?.id!==identity)return;ui.closeOffsetSheets();
+ pendingHomeDayTarget={identity,target};await showPage('attendancePage');
+}
 async function renderAttendancePage() {
   const active=()=>isLoggedIn() && state.activePage==='attendancePage' && hasRbac('attendance.read');
   if(!active())return;
@@ -10453,6 +11224,7 @@ async function renderAttendancePage() {
     const module=await attendanceImport;
     if(!active())return;
     attendanceModule ||= module.createAttendanceModule({host,api:apiRequest,hasPermission:hasRbac,isActive:active,onAuthExpired:()=>handleAuthExpired('登录状态已失效，请重新登录。')});
-    attendanceModule.setActive(true);
+    const pending=pendingHomeDayTarget;pendingHomeDayTarget=null;
+    if(pending&&pending.identity===state.user?.id)await attendanceModule.openPersonDay(pending.target);else attendanceModule.setActive(true);
   } catch(error) { attendanceImport=null;host.textContent='考勤页面加载失败：'+error.message; }
 }

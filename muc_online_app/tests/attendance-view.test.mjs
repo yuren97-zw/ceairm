@@ -122,9 +122,11 @@ test('category predicate combines with personnel filters without treating absent
 });
 test('zero catalog columns show all people when fully selected and no people when selecting an unused leave',async()=>{
  const data={people:[{personId:'a',name:'甲',employeeNo:'001',days:[],counts:{白班:1},overtimeSeconds:null}],dates:[],month:'2026-09',categories:['白班','病假','事假'],leaveTypes:{names:['病假','事假'],status:'ready'}};
- const s=setup({data});assert.match(s.content.innerHTML,/甲/);assert.match(s.content.innerHTML,/病假/);assert.match(s.content.innerHTML,/事假/);assert.match(s.host.innerHTML,/按钉钉企业目录固定展示/);
+ const s=setup({data});assert.match(s.content.innerHTML,/甲/);assert.match(s.content.innerHTML,/病假/);assert.match(s.content.innerHTML,/事假/);assert.ok(!s.host.innerHTML.includes('按钉钉企业目录固定展示'));
+ await s.listeners.get('click')({target:s.button({tab:'sync'})});assert.match(s.host.innerHTML,/按钉钉企业目录固定展示/);assert.match(s.host.innerHTML,/本次读取/);
+ await s.listeners.get('click')({target:s.button({tab:'summary'})});assert.ok(!s.host.innerHTML.includes('按钉钉企业目录固定展示'));
  await s.listeners.get('click')({target:s.button({columnsAction:'none'})});s.listeners.get('change')({target:{dataset:{column:'病假'},checked:true,hasAttribute:()=>false}});assert.match(s.content.innerHTML,/当前条件没有数据/);assert.match(s.content.innerHTML,/0人/);s.view.destroy();
- const missing=setup({data:{...data,leaveTypes:{names:['事假'],status:'unavailable',error:'缺少权限'}}});assert.match(missing.host.innerHTML,/完整假期目录尚未读取/);missing.view.destroy();
+ const missing=setup({data:{...data,leaveTypes:{names:['事假'],status:'unavailable',error:'缺少权限'}}});assert.ok(!missing.host.innerHTML.includes('完整假期目录尚未读取'));await missing.listeners.get('click')({target:missing.button({tab:'sync'})});assert.match(missing.host.innerHTML,/完整假期目录尚未读取/);missing.view.destroy();
 });
 test('summary page size supports 20/50/100, resets page and leaves matrix at 30 with full-scope cards',async()=>{
  const people=Array.from({length:105},(_,i)=>({personId:String(i),name:'人'+i,employeeNo:String(i),days:[],counts:{},overtimeSeconds:60}));
@@ -180,4 +182,21 @@ test('directory exclusions have a separate escaped informational section, not a 
  assert.equal(attendanceDirectoryExcludedHtml([]),'');
  const html=attendanceDirectoryExcludedHtml([{topic:'attendance_check_record',count:12},{topic:'<script>',count:1}]);
  assert.match(html,/未在当前授权目录内/);assert.match(html,/不计入考勤或同步失败/);assert.match(html,/员工打卡：12条/);assert.doesNotMatch(html,/<script>/);
+});
+
+test('extended 2025 public leave is permanently excluded from discovery and choices',async()=>{const {attendanceCategoryAllowed,attendanceFixedCategoryOrder,attendanceOrderedCategories}=await import('../public/attendance-presentation.mjs');const {leaveGroup}=await import('../public/attendance-leave-model.mjs');const name='公休假（2025年度延长）';assert.equal(attendanceCategoryAllowed(name),false);assert.equal(attendanceFixedCategoryOrder.includes(name),false);assert.deepEqual(attendanceOrderedCategories([name,'公休假','新冠关爱假']),['公休假']);assert.equal(leaveGroup(name),null);assert.equal(leaveGroup('固定班制公休假'),'公休假');});
+
+test('work plan echo on a rest day appears only in the actual punch column',async()=>{
+ const {classifyDay}=await import('../attendance-rules.mjs');
+ const date='2026-11-09',actual=Date.parse(date+'T08:51:16+08:00'),now=Date.parse('2026-11-19T12:00:00+08:00');
+ const input={date,covered:true,rest:true,scheduleConflict:true,scheduleRestFlags:['N','Y'],points:[{type:'OnDuty',planned:actual,shiftId:'',shiftVersion:''}],punches:[{type:'OnDuty',actual,source:'USER'}],approvals:[]};
+ const previous={date:'2026-11-08',covered:true,points:[{type:'OnDuty',planned:Date.parse('2026-11-08T19:40:00+08:00')},{type:'OffDuty',planned:Date.parse(date+'T08:30:00+08:00')}]};
+ const day={...classifyDay(input,now,null,{previousWorkDays:[previous]}),input};
+ const data={people:[{personId:'p',name:'测试',employeeNo:'001',days:[day],counts:{休息:1},overtimeSeconds:null}],dates:[date],categories:['休息'],month:'2026-11',generatedAt:new Date(now).toISOString()};
+ const s=setup({data});await s.listeners.get('click')({target:s.button({day:`p|${date}`})});
+ const row=s.modal.innerHTML.match(/<tr[^>]*aria-current="date"[^>]*>(.*?)<\/tr>/s)?.[1];
+ const cells=[...(row||'').matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map(match=>match[1]);
+ assert.equal(cells[2],'休息');
+ assert.match(cells[3],/上班 2026-11-09 08:51:16<small>有效打卡（无排班）/);
+ s.view.destroy();
 });

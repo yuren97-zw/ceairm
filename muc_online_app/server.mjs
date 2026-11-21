@@ -1,3 +1,6 @@
+import {createActionTaskRealtime} from './action-task-realtime.mjs';
+import { createOffsetService } from './attendance-offset-service.mjs';
+import {createHandoverService} from './handover-service.mjs';
 import {MAINTENANCE_REVIEW_ADDITION_SOURCES_SCHEMA,createReviewAdditionSources} from './maintenance-review-addition-sources.mjs';
 import {MAINTENANCE_REPORT_SOURCE_JOURNAL_SCHEMA,createReportSourceJournal} from './maintenance-report-source-journal.mjs';
 import {reportParticipantSource} from './maintenance-report-participant-source.mjs';
@@ -19,8 +22,9 @@ import {NONROUTINE_CORRECTIONS_SCHEMA} from './nonroutine-corrections.mjs';
 import { evaluateMaintenanceTransition,coordinateMaintenanceTransition,MAINTENANCE_REPORT_DEFINITIONS } from './maintenance-opportunity-modules.mjs';
 import {MAINTENANCE_MODULE_INSTANCES_SCHEMA,createMaintenanceModuleInstances,readPersistedMaintenanceReportModules,readMaintenanceModuleIdentity,refreezeMaintenanceModuleIdentity} from './maintenance-module-instances.mjs';
 import {attendanceViewerSnapshot} from './attendance-response-policy.mjs';
-import {attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+import {attendanceIssueDay,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
 import {leaveXlsx,leaveHtml} from './attendance-leave-export.mjs';
+import {handoverXlsx} from './handover-export.mjs';
 import { createAttendanceService } from './attendance-service.mjs';
 import { exportXlsx as attendanceXlsx, exportHtml as attendanceHtml } from './attendance-export.mjs';
 import {AUTHORIZATION_HEADERS,AUTHORIZATION_SCHEMA,authorizationDate,migrateAuthorizationNine,createAuthorizationImport} from './authorization-import.mjs';
@@ -66,6 +70,7 @@ import {
 } from "./rbac-policy.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
+import { classifyPosition, identityQualityReport } from "./identity-classification.mjs";
 import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS, CADRE_GROUP_CODE } from "./personnel-access.mjs";
 import fs from "node:fs/promises";
 import fss from "node:fs";
@@ -3542,6 +3547,38 @@ function maintenanceReportProgress(flightId) {
     segments,
     batches: Object.fromEntries(maintenanceReportTypes.map(type => [type, batchMap.get(type)]))
   };
+}
+
+function maintenanceNonroutineDraftSummary(draftRow, people, {includeExplanation=false}={}) {
+  let nonroutineDraft = null;
+  if (draftRow) {
+    let payload = {};
+    try { payload = JSON.parse(draftRow.payload_json || "{}"); } catch {}
+    nonroutineDraft = {
+      id: draftRow.id,
+      flightId: draftRow.flight_id,
+      reportType: draftRow.report_type,
+      items: (Array.isArray(payload.items) ? payload.items : []).map(item => ({
+        id: String(item?.id || ""),
+        chapter: String(item?.chapter || item?.cardNo || ""),
+        title: String(item?.title || ""),
+        category: maintenanceNonroutineCategories.includes(String(item?.category || "")) ? String(item.category) : "其他",
+        standardHours: Number(item?.standardHours || 0),
+        reportExplanation: includeExplanation?String(item?.reportExplanation||item?.content||""):"",
+        entries: (item?.entries || []).map(entry => ({
+          role: String(entry?.role || ""),
+          personId: String(entry?.personId || ""),
+          userName: people.get(entry.personId)?.name || "",
+          team: people.get(entry.personId)?.team || "未设置"
+        }))
+      })),
+      version: Number(draftRow.version || 1),
+      updatedBy: draftRow.updated_by || "",
+      updatedByName: draftRow.updated_by_name || "",
+      updatedAt: draftRow.updated_at || ""
+    };
+  }
+  return nonroutineDraft;
 }
 
 function publicMaintenanceNonroutineDraft(flightId) {
@@ -7707,15 +7744,20 @@ function visibleImportBatch(batch,user,context=null) {
    return hasRbac(user,"personnel.actual_grade.manage") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
  });
 }
-function confirmPersonnelRows(batchId, rows) {
+function confirmPersonnelRows(batchId, rows, user = null) {
   const upsert = db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(employee_no) do update set name=excluded.name,department=excluded.department,home_team=excluded.home_team,is_instructor=excluded.is_instructor,position_code=excluded.position_code,actual_grade=excluded.actual_grade,employment_status=excluded.employment_status,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0, updated = 0, skipped = 0, selfPositionBlocked = 0;
   for (const row of rows) {
     const employeeNo = importEmployeeNo(row), importedName = importEmployeeNo(row) === SUPER_ACCOUNT_ID ? SUPER_ACCOUNT_NAME : importName(row);
     let name = importedName;
     if (!employeeNo || !name) { skipped++; continue; }
     const existing = findImportedPerson(employeeNo);
+    // D06-1：导入不得修改确认操作者本人的职位（值未变化时放行）。该行跳过，不阻断整批。
+    if (existing && user?.personId && user.personId === existing.id && existing.position_code !== undefined) {
+      const supplied = personnelImportPayload(row);
+      if (Object.hasOwn(supplied, "position") && String(supplied.position ?? "").trim() !== String(existing.position_code ?? "").trim()) { selfPositionBlocked++; skipped++; continue; }
+    }
     const values = {name,department:importDepartment(row),personnelGroup:importValue(row,["人员分组"]),administrativeTeam:importValue(row,["行政班组"]),isInstructor:["是","true","1"].includes(importValue(row,["是否教员"]).toLowerCase())?1:0,position:importValue(row,["职位"]),actualGrade:importValue(row,["实际岗级"]),employmentStatus:employeeNo===SUPER_ACCOUNT_ID?"在职":importValue(row,["用工状态"])||"在职"};
     const supplied=personnelImportPayload(row);
     if(existing)for(const [key,[column]] of Object.entries(personnelEditableFields))if(!Object.hasOwn(supplied,key))values[key]=existing[column];
@@ -7749,7 +7791,7 @@ function confirmPersonnelRows(batchId, rows) {
     ].forEach(([category, code, value]) => dictionaryValue(category, code, value, batchId));
     if (existing) updated++; else created++;
   }
-  return { created, updated, skipped };
+  return { created, updated, skipped, ...(selfPositionBlocked ? { selfPositionBlocked } : {}) };
 }
 
 function confirmLicenseRows(batchId, rows) {
@@ -7821,7 +7863,7 @@ function confirmPersonnelImport(batch, user, payload={}) {
       if (checked.errors) throw Object.assign(new Error("授权项目或人员数据已变化，请修复后重新上传检查"), { status: 409, details: { summary: checked, issues: checked.issues } });
       Object.assign(summary, checked);
     }
-    result = batch.import_type === "personnel" ? confirmPersonnelRows(batch.id, rows)
+    result = batch.import_type === "personnel" ? confirmPersonnelRows(batch.id, rows, user)
       : batch.import_type === "license" ? confirmLicenseRows(batch.id, rows)
         : batch.import_type === "authorization" ? authorizationImport.replace(batch, rows, user, summary.replacement)
           : confirmTrainingRows(batch.id, rows);
@@ -7856,13 +7898,18 @@ function publicPersonnelList(user=requestUser(), options={}) {
     left join organization_units at on at.id=p.administrative_team_id
     left join capability_current_states cs on cs.person_id=p.id
     left join organization_units wt on wt.id=cs.working_team_id
-    where p.data_status='active' and (${scope.sql}) ${options.where || ''} order by ${options.order || "p.employee_no"} ${options.limit ? 'limit ? offset ?' : ''}`).all(...scope.params,...(options.params || []),...(options.limit ? [options.limit,options.offset || 0] : [])).map(row => personnelAccess.redact(user,({
+    where p.data_status='active' and (${scope.sql}) ${options.where || ''} order by ${options.order || "p.employee_no"} ${options.limit ? 'limit ? offset ?' : ''}`).all(...scope.params,...(options.params || []),...(options.limit ? [options.limit,options.offset || 0] : [])).map(row => {
+      const identity = classifyPosition(row.position_code);
+      return personnelAccess.redact(user,({
       id:row.id,personId:row.id,departmentId:row.department_id||"",departmentName:row.department_name||"",personnelGroupId:row.personnel_group_id||"",personnelGroupName:row.personnel_group_name||"",maintenanceEligible:!!row.maintenance_eligible,administrativeTeamId:row.administrative_team_id||"",administrativeTeamName:row.administrative_team_name||"",currentWorkingTeamId:row.current_working_team_id||"",currentWorkingTeamName:row.current_working_team_name||"",organizationStatus:!row.department_id&&!row.personnel_group_id&&!row.administrative_team_id?"unclassified":row.department_id&&!row.personnel_group_id?"group_unassigned":row.department_id&&row.personnel_group_id?"complete":"review_required",hasAccount:!!row.account_id,employeeNo:row.employee_no,name:row.name,
       department:row.department_name||"未设置",homeTeam:row.administrative_team_name||"未设置",
       isInstructor: !!row.is_instructor, position: row.position_code || "", actualGrade: row.actual_grade || "", employmentStatus: row.employment_status || "在职",
+      identityClass: identity.identity, identityLabel: identity.identityLabel, identityQuality: identity.quality, suspectedCombined: identity.suspectedCombined || undefined,
+      identitySource: identity.source, identityRulesVersion: identity.rulesVersion,
       licenseCount: Number(row.license_count || 0), authorizationCount: Number(row.authorization_count || 0), trainingCount: Number(row.training_count || 0),
       account: row.account_id ? { id: row.account_id, username: row.account_username, status: row.account_status || "active" } : null, updatedAt: row.updated_at
-    })));
+    }));
+  });
 }
 
 function publicPersonnelPage(searchParams,user=requestUser()) {
@@ -8035,7 +8082,9 @@ function updatePersonnel(person, payload, manager) {
     if (account && account.id !== SUPER_ACCOUNT_ID && (orgChanged || updates.some(item => ["department", "home_team", "employment_status"].includes(item.column)))) {
       revokeUserSessions(account.id, { bumpCredentialVersion: true });
     }
-    audit(manager, "update_personnel", "personnel", person.id, JSON.stringify({ employeeNo: person.employee_no, fields: [...updates.map(item => item.apiField), ...(orgChanged ? ["departmentId","personnelGroupId","administrativeTeamId"] : [])], reason }));
+    const positionUpdate = updates.find(item => item.column === "position_code");
+    const identityChange = positionUpdate ? { from: classifyPosition(positionUpdate.previous), to: classifyPosition(positionUpdate.next) } : null;
+    audit(manager, "update_personnel", "personnel", person.id, JSON.stringify({ employeeNo: person.employee_no, fields: [...updates.map(item => item.apiField), ...(orgChanged ? ["departmentId","personnelGroupId","administrativeTeamId"] : [])], reason, ...(identityChange ? { identityChange: { fromIdentity: identityChange.from.identityLabel, fromPosition: identityChange.from.normalizedPosition, toIdentity: identityChange.to.identityLabel, toPosition: identityChange.to.normalizedPosition, rulesVersion: identityChange.to.rulesVersion } } : {}) }));
     db.exec("commit");
   } catch (error) {
     db.exec("rollback");
@@ -8150,7 +8199,2137 @@ async function route(req,res) {
  return requestContext.run({req}, () => routeRequest(req,res));
 }
 
-async function routeRequest(req, res) {
+async function routeRequestMain(req, res) {
+  const url = new URL(req.url, "http://localhost");
+  const method = req.method || "GET";
+  if (["POST","PUT","DELETE"].includes(method) && url.pathname.startsWith("/api/personnel")) {
+    // Refresh only after the master-data transaction and response succeeded.
+    // Sync failures must not turn a committed import into a misleading failed response.
+    res.once?.("finish", () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try { capabilityService.syncMaster(); } catch (error) { console.error("主数据已提交，能力快照待重试", error.message); }
+      }
+    });
+  }
+  try {
+    if (["POST","PUT","PATCH","DELETE"].includes(method) && !sameOriginWrite(req))
+      return send(res, 403, { error: "跨站或来源不明的写入请求已拒绝" });
+    if(["POST","PUT","DELETE"].includes(method) && String(req.headers["content-type"] || "").includes("application/json"))await bodyJson(req);
+    if (method === "OPTIONS") {
+      res.writeHead(204, corsHeaders());
+      res.end();
+      return;
+    }
+    if (method === "POST" && url.pathname === "/login") {
+      const payload = await bodyForm(req);
+      const address = loginAddress(req, { trustLocalProxy: process.env.TRUST_LOCAL_PROXY === "true" });
+      const allowance = loginProtection.check(payload.username, address);
+      if (!allowance.allowed) {
+        res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8", "Retry-After": String(allowance.retryAfter), "Cache-Control": "no-store" });
+        res.end("登录尝试过于频繁，请稍后再试");
+        return;
+      }
+      const row = db.prepare("select * from users where username=?").get(payload.username || "");
+      if (!row || !verifyPassword(payload.password || "", row) || (row.status || "active") === "disabled" || isDeletedAccountPerson(row)) {
+        loginProtection.failure(payload.username, address);
+        res.writeHead(303, { "Location": `/?login_error=${encodeURIComponent("账号或密码不正确")}`, "Cache-Control": "no-store" });
+        res.end();
+        return;
+      }
+      loginProtection.success(payload.username);
+      const { sid } = createLoginSession(row);
+      res.writeHead(303, {
+        "Location": "/",
+        "Cache-Control": "no-store",
+        "Set-Cookie": sessionCookie(sid)
+      });
+      res.end();
+      return;
+    }
+    if (!url.pathname.startsWith("/api/")) return serveStatic(req, res);
+
+    if(url.pathname.startsWith('/api/action-tasks')){
+      const actor=requireLogin(req,res);if(!actor)return;
+      if(method==='GET'&&url.pathname==='/api/action-tasks/events'){if(!actionTaskRealtime.connect(req,res,actor))return send(res,429,{error:'实时连接数量已达上限'});return;}
+      if(method==='GET'&&url.pathname==='/api/action-tasks/count')return send(res,200,offsetService.tasks.count(actor));
+      if(method==='GET'&&url.pathname==='/api/action-tasks')return send(res,200,offsetService.tasks.list(actor,{cursor:url.searchParams.get('cursor'),limit:Number(url.searchParams.get('limit')||20)}));
+      return send(res,404,{error:'接口不存在'});
+    }
+    if(url.pathname==='/api/handover'||url.pathname.startsWith('/api/handover/')){
+      const actor=requireLogin(req,res);if(!actor)return;
+      if(!requireRbacPermission(req,res,'handover.view'))return;
+      if(method==='POST'&&url.pathname==='/api/handover')return send(res,200,handoverService.create(actor,await bodyJson(req)));
+      if(method==='GET'&&url.pathname==='/api/handover')return send(res,200,handoverService.list(actor,{scope:url.searchParams.get('scope'),teamId:url.searchParams.get('teamId'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')}));
+      if(method==='GET'&&url.pathname==='/api/handover/shift-context')return send(res,200,handoverService.shiftContext(actor));
+      if(url.pathname.startsWith('/api/handover/shift-baseline')){
+        if(!requireRbacPermission(req,res,'handover.baseline.manage'))return;
+        if(method==='GET'&&url.pathname==='/api/handover/shift-baseline')return send(res,200,handoverService.baselineOverview(actor));
+        if(method==='POST'&&url.pathname==='/api/handover/shift-baseline/confirm')return send(res,200,handoverService.confirmBaseline(actor,await bodyJson(req)));
+        return send(res,404,{error:'接口不存在'});
+      }
+      if(method==='GET'&&url.pathname==='/api/handover/maintenance-options')return send(res,200,handoverService.maintenanceOptions(actor,{scope:url.searchParams.get('scope'),date:url.searchParams.get('date')}));
+      if(method==='GET'&&url.pathname==='/api/handover/recipient-options')return send(res,200,handoverService.recipientOptions(actor,{teamId:url.searchParams.get('teamId')}));
+      if(method==='GET'&&url.pathname==='/api/handover/export.xlsx'){
+        if(!hasRbac(actor,'handover.export')){audit(actor,'permission_denied','handover','export',JSON.stringify({}));return send(res,403,{error:'没有导出交接记录的权限'});}
+        const filters={id:url.searchParams.get('id'),from:url.searchParams.get('from'),to:url.searchParams.get('to'),teamId:url.searchParams.get('teamId'),aircraft:url.searchParams.get('aircraft'),q:url.searchParams.get('q')};
+        const data=handoverService.exportData(actor,filters);
+        if(!data.handovers.length)return send(res,404,{error:'没有匹配的交接单'});
+        const body=handoverXlsx(data.handovers);
+        const name=filters.id?`handover-${filters.id}`:`handover-${filters.from||'all'}-${filters.to||'all'}`;
+        audit(actor,'handover_export','handover',name,JSON.stringify({handovers:data.handovers.length}));
+        return sendBinary(res,200,body,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',{'Content-Disposition':`attachment; filename="export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}.xlsx`,'Cache-Control':'no-store'});
+      }
+      const seg=url.pathname.slice('/api/handover/'.length).split('/');
+      if(seg.length===1&&seg[0]){
+        if(method==='GET')return send(res,200,handoverService.detail(actor,seg[0]));
+        if(method==='PUT')return send(res,200,handoverService.update(actor,seg[0],await bodyJson(req)));
+        if(method==='DELETE')return send(res,200,handoverService.deleteDraft(actor,seg[0]));
+      }
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='submit')return send(res,200,handoverService.submit(actor,seg[0],await bodyJson(req)));
+      if(seg.length===2&&seg[0]&&method==='POST'&&seg[1]==='confirm')return send(res,200,handoverService.confirm(actor,seg[0]));
+      return send(res,404,{error:'接口不存在'});
+    }
+    if(url.pathname.startsWith('/api/attendance/offsets')){
+      let actor=requireLogin(req,res);if(!actor)return;
+      const path=url.pathname.slice('/api/attendance/offsets'.length),month=url.searchParams.get('month')||new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,7);
+      if(method==='GET'&&path==='/balance')return send(res,200,offsetService.balance(actor,month));
+      if(method==='GET'&&path==='/ledger')return send(res,200,offsetService.ledger(actor,month));
+      if(method==='GET'&&path==='/routing-issues')return send(res,200,offsetService.routingIssues(actor));
+      if(method==='GET'&&path==='/approval-candidates')return send(res,200,offsetService.approvalCandidates(actor));
+      if(method==='GET'&&path==='/responsibility-candidates')return send(res,200,offsetService.responsibilityCandidates(actor));
+      if(method==='GET'&&path==='/state')return send(res,200,offsetService.state(actor));
+      if(method==='GET'&&path==='/rules')return send(res,200,offsetService.monthlyRules(actor));
+      if(method==='GET'&&path==='/requests')return send(res,200,offsetService.ownRequests(actor,{month,limit:Number(url.searchParams.get('limit')||20),cursor:url.searchParams.get('cursor')}));
+      if(method==='GET'&&/^\/requests\/[^/]+$/.test(path))return send(res,200,offsetService.detail(actor,path.split('/')[2]));
+      if(method==='POST'){
+       const body=await bodyJson(req),key=req.headers['idempotency-key'];
+       if(!body||typeof body!=='object'||Array.isArray(body))return send(res,400,{error:'请提交有效对象'});
+       const current=requireLogin(req,res);if(!current)return;
+       if(current.id!==actor.id||current.personId!==actor.personId)return send(res,409,{error:'登录身份已变化，请刷新'});actor=current;
+       if(path.startsWith('/initialization/'))return send(res,409,{error:'首期初始化已停用，请设置月兑换规则'});
+
+       if(path==='/rules')return send(res,200,offsetService.saveMonthlyRule(actor,body,key));
+       if(path==='/trial')return send(res,200,offsetService.trial(actor,body));
+       if(path==='/issue')return send(res,200,offsetService.issue(actor,body,key));
+       if(path==='/responsibility')return send(res,200,offsetService.confirmResponsibility(actor,body,key));
+       if(path==='/reconcile')return send(res,200,offsetService.reconcile(actor,body.personId,body.date,key));
+       if(path==='/requests')return send(res,201,offsetService.submit(actor,body,key));
+       const match=/^\/requests\/([^/]+)\/(decide|withdraw|transfer)$/.exec(path);
+       if(match)return send(res,200,offsetService[match[2]](actor,match[1],body,key));
+      }
+      return send(res,404,{error:'接口不存在'});
+    }
+    if (url.pathname.startsWith('/api/attendance/')) {
+      const actor = requireRbacPermission(req,res,'attendance.read'); if(!actor)return;
+      const filters=Object.fromEntries(['month','query','department','team','personId'].map(k=>[k,url.searchParams.get(k)||'']));
+      if(method==='GET'&&['schedule','issues','accumulation'].some(kind=>url.pathname==='/api/attendance/self/'+kind)){
+        const kind=url.pathname.split('/').at(-1),data=attendanceService.selfDetails(actor,kind);if(kind==='accumulation')data.exchangeRule=data.month?offsetService.exchangeRuleForSource(actor,data.month):null;return send(res,200,offsetService.decorate({...data,people:actor.personId?[{personId:actor.personId,days:data.days}]:[]}));
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/self/leaves'){
+        if(!actor.personId)return send(res,200,{status:'identity_unbound',people:[]});
+        const year=url.searchParams.get('year');
+        return send(res,200,attendanceService.leave.snapshot(actor,{personId:actor.personId,...(year?{year}:{})},'attendance.read'));
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/self/summary'){const summary=attendanceService.selfSummary(actor),effective=summary.month?offsetService.effectiveMissingDates(actor,summary.month):[],effectiveExceptions=summary.month?offsetService.effectiveExceptionDates(actor,summary.month):[];return send(res,200,{...summary,exceptionOffsetCount:effectiveExceptions.filter(date=>(summary.exceptionDates||[]).includes(date)).length,missingOffsetCount:effective.filter(date=>(summary.missingDates||[]).includes(date)).length,credits:offsetService.balance(actor),...offsetService.versions()});}
+      if(url.pathname.startsWith('/api/attendance/leave-balances')){
+        const f={month:url.searchParams.get('month')||'',year:url.searchParams.get('year'),query:url.searchParams.get('query')||'',department:url.searchParams.get('department')||'',team:url.searchParams.get('team')||'',personId:url.searchParams.get('personId')||'',group:url.searchParams.get('group')||''};
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances'){const data=attendanceService.leave.snapshot(actor,f);if(attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...f,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}return send(res,200,data);}
+        if(method==='GET'&&url.pathname==='/api/attendance/leave-balances/details')return send(res,200,attendanceService.leave.details(actor,f));
+        if(method==='POST'&&url.pathname==='/api/attendance/leave-balances/refresh')return send(res,202,attendanceService.leave.refresh(actor,await bodyJson(req)));
+        if(method==='GET'&&['/api/attendance/leave-balances/export/xlsx','/api/attendance/leave-balances/export/html'].includes(url.pathname)){
+          const scope=url.searchParams.get('scope')||'filtered';if(!['all','filtered'].includes(scope))return send(res,400,{error:'导出范围无效'});
+          const selected=scope==='all'?{year:f.year}:f,data=attendanceService.leave.snapshot(actor,selected,'attendance.export');data.filters=selected;data.exportScope=scope==='all'?'全部有权查看人员':'当前筛选人员';data.exportedAt=new Date().toISOString();data.pageSize=attendanceService.displaySettings(actor).pageSize;
+          if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){const plans=attendanceService.approvalPlanDetails(actor,{...selected,month:f.month||undefined});data.approvalMonth=plans.month;const byId=new Map(plans.people.map(p=>[p.personId,p.approvalPlans]));data.people=data.people.map(p=>({...p,approvalPlans:byId.get(p.personId)||[]}));}
+          const format=url.pathname.endsWith('/xlsx')?'xlsx':'html',content=format==='xlsx'?leaveXlsx(data):Buffer.from(leaveHtml(data));audit(actor,'attendance_leave_export','attendance',String(data.year),JSON.stringify({format,scope,people:data.people.length}));
+          return sendBinary(res,200,content,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="leave-${data.year}.${format}"`});
+        }
+      }
+      if(method==='GET'&&url.pathname==='/api/attendance/approval-plans')return send(res,200,attendanceService.approvalPlanDetails(actor,filters));
+      if(method==='POST'&&url.pathname==='/api/attendance/approval-plans/refresh')return send(res,202,attendanceService.approvalPlanRefresh(actor,await bodyJson(req)));
+      if(method==='GET' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.displaySettings(actor));
+      if(method==='POST' && url.pathname==='/api/attendance/display-settings')return send(res,200,attendanceService.saveDisplaySettings(actor,await bodyJson(req)));
+      if(method==='GET' && url.pathname==='/api/attendance/status')return send(res,200,{...attendanceService.status(actor),...offsetService.versions()});
+      if(method==='GET' && ['/api/attendance/days','/api/attendance/summary','/api/attendance/exceptions','/api/attendance/person'].includes(url.pathname)){
+        const detailLevel=url.searchParams.get('view')||'full',timings=[];
+        if(!['full','summary','compact'].includes(detailLevel))return send(res,400,{error:'考勤明细级别无效'});
+        if(url.pathname.endsWith('/person')&&!filters.personId)return send(res,400,{error:'请选择人员'});
+        const snapshot=offsetService.decorate(attendanceViewerSnapshot(attendanceService.snapshot(actor,filters,url.pathname.endsWith('/summary')?'attendance.stats.read':'attendance.read',{detailLevel,onTiming:(name,ms)=>timings.push(`${name};dur=${ms.toFixed(1)}`)}),hasRbac(actor,'attendance.stats.read')));
+        if(url.pathname.endsWith('/exceptions'))snapshot.people=snapshot.people.map(p=>({...p,days:(p.days||[]).filter(attendanceIssueDay)}));
+        return send(res,200,snapshot,{'Server-Timing':timings.join(', ')});
+      }
+      if(method==='POST' && url.pathname==='/api/attendance/approval-reasons/backfill')return send(res,202,attendanceService.enqueueApprovalReasons(actor,await bodyJson(req)));
+      if(method==='POST' && url.pathname==='/api/attendance/leave-types/refresh')return send(res,200,await attendanceService.refreshLeaveTypes(actor));
+      if(method==='POST' && url.pathname==='/api/attendance/sync'){
+        const payload=await bodyJson(req);return send(res,202,attendanceService.enqueue({from:payload.from,to:payload.to,user:actor}));
+      }
+      if(method==='GET' && url.pathname==='/api/attendance/capability-statuses')return send(res,200,attendanceService.capabilityStatuses(actor,filters.personId));
+      if(method==='GET' && ['/api/attendance/export/xlsx','/api/attendance/export/html'].includes(url.pathname)){
+        if(!hasRbac(actor,'attendance.export'))return send(res,403,{error:'当前账号没有导出权限'});
+        const exportScope=url.searchParams.get('scope')||'filtered';if(!['all','filtered'].includes(exportScope))return send(res,400,{error:'导出范围无效'});
+        const selected=exportScope==='all'?{month:filters.month}:filters;
+        if(exportScope==='filtered'&&url.searchParams.has('categories')){
+          let categories;try{categories=JSON.parse(url.searchParams.get('categories'));}catch{return send(res,400,{error:'类别筛选格式无效'});}
+          if(!Array.isArray(categories)||categories.length>100||categories.some(c=>typeof c!=='string'||!c.trim()||c.length>100))return send(res,400,{error:'类别筛选格式无效'});
+          selected.categories=[...new Set(categories)];
+        }
+        const watermark=()=>({source:db.prepare("select id,value_json from attendance_sync_state where id in ('dataVersion','approvalPlanVersion','leaveVersion') order by id").all(),offsets:offsetService.versions(),principal:db.prepare('select id,person_id,status,credential_version from users where id=?').get(actor.id)});
+        let snapshot,exportExtras,stable=false;
+        for(let attempt=0;attempt<3;attempt++){
+         const before=watermark(),exportActor=currentUser(req);
+         if(!exportActor.id)return send(res,401,{error:'登录已失效，请重新登录'});
+         if(!hasRbac(exportActor,'attendance.read')||!hasRbac(exportActor,'attendance.export'))return send(res,403,{error:'当前账号没有导出权限'});
+         snapshot=offsetService.decorate(attendanceService.snapshot(exportActor,selected,'attendance.export',{fresh:true}));
+        if(url.pathname.endsWith('/html')&&attendanceService.config.approvalPlansEnabled){snapshot.people=snapshot.people.map(p=>attendanceService.approvalPlans.decorate(p,snapshot.month));snapshot.categories=attendanceOrderedCategories([...new Set([...snapshot.categories,...snapshot.people.flatMap(p=>Object.keys(p.pendingCounts||{}))])]);}
+         exportExtras={changes:attendanceService.changes(exportActor,{...selected,month:snapshot.month}),runs:attendanceService.status(exportActor).runs};
+         if(JSON.stringify(before)===JSON.stringify(watermark())){snapshot=JSON.parse(JSON.stringify(snapshot));snapshot.sourceVersion=Object.fromEntries(before.source.map(row=>[row.id,JSON.parse(row.value_json)]));snapshot.dataVersion=snapshot.sourceVersion.dataVersion||'';snapshot.offsetVersion=before.offsets.offsetVersion||0;snapshot.ledgerVersion=before.offsets.ledgerVersion||0;exportExtras=JSON.parse(JSON.stringify(exportExtras));stable=true;break;}
+        }
+        if(!stable)return send(res,409,{error:'数据正在变化，请稍后重新导出'});
+        snapshot.exportScope=exportScope==='all'?'全部有权查看人员':'当前筛选人员';snapshot.filters=selected;
+        const format=url.pathname.endsWith('/xlsx')?'xlsx':'html';
+        const body=format==='xlsx'?attendanceXlsx(snapshot,exportExtras):Buffer.from(attendanceHtml(snapshot));
+        audit(actor,'attendance_export','attendance',snapshot.month,JSON.stringify({format,people:snapshot.people.length,scope:exportScope}));
+        return sendBinary(res,200,body,format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/html; charset=utf-8',{'Cache-Control':'no-store','Content-Disposition':`attachment; filename="attendance-${snapshot.month}.${format}"`});
+      }
+      return send(res,404,{error:'未找到考勤接口'});
+    }
+    if (method === "GET" && url.pathname === "/api/health") {
+      let database = "unavailable";
+      try {
+        db.prepare("select 1 as ok").get();
+        database = db.kind || "unknown";
+      } catch {}
+      return send(res, 200, {
+        ok: true,
+        status: database === "unavailable" ? "degraded" : "ok",
+        service: "muc-online-app",
+        version: appVersion,
+        environment: isLocalDevelopment ? 'development-'+process.env.MUC_LOCAL_DEVELOPMENT_PROFILE : process.env.MUC_INTEGRATION === 'true' ? 'integration' : isProduction ? 'production' : 'test',
+        buildSha: /^[0-9a-f]{40}$/.test(process.env.MUC_BUILD_SHA||'') ? process.env.MUC_BUILD_SHA : null,
+        database,
+        cos: cosEnabled() ? "configured" : "disabled",
+        startedAt: serviceStartedAt,
+        time: new Date().toISOString()
+      });
+    }
+    if (method === "GET" && url.pathname === "/api/me") {
+      const user = currentUser(req);
+      if (!user.id) return send(res, 401, { error: "请先登录" });
+      return send(res, 200, { user });
+    }
+    if (method === "POST" && url.pathname === "/api/login") {
+      const payload = await bodyJson(req);
+      const address = loginAddress(req, { trustLocalProxy: process.env.TRUST_LOCAL_PROXY === "true" });
+      const allowance = loginProtection.check(payload.username, address);
+      if (!allowance.allowed) return send(res, 429, { error: "登录尝试过于频繁，请稍后再试" }, { "Retry-After": String(allowance.retryAfter) });
+      const row = db.prepare("select * from users where username=?").get(payload.username || "");
+      if (!row || !verifyPassword(payload.password || "", row)) {
+        loginProtection.failure(payload.username, address);
+        audit(null, "login_failed", "user", String(payload.username || "guest"), "invalid_credentials");
+        return send(res, 401, { error: "账号或密码不正确" });
+      }
+      if ((row.status || "active") === "disabled" || isDeletedAccountPerson(row)) {
+        loginProtection.failure(payload.username, address);
+        return send(res, 403, { error: "账号已停用或人员已删除" });
+      }
+      loginProtection.success(payload.username);
+      const { sid, user } = createLoginSession(row);
+      return send(res, 200, { user }, { "Set-Cookie": sessionCookie(sid) });
+    }
+    if (method === "POST" && url.pathname === "/api/change-password") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const payload = await bodyJson(req);
+      const oldPassword = String(payload.oldPassword || "");
+      const newPassword = String(payload.newPassword || "");
+      if (!oldPassword || !newPassword || newPassword.length < 6) {
+        return send(res, 400, { error: "请填写旧密码和至少6位新密码" });
+      }
+      const row = db.prepare("select * from users where id=?").get(login.id);
+      if (!row || (row.status || "active") === "disabled" || !verifyPassword(oldPassword, row)) {
+        return send(res, 401, { error: "旧密码不正确" });
+      }
+      const pass = hashPassword(newPassword);
+      db.prepare("update users set salt=?,password_hash=?,must_change_password=0,credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(pass.salt, pass.hash, now(), row.id);
+      db.prepare("delete from sessions where user_id=?").run(row.id);
+      for (const [sid, savedUserId] of sessions.entries()) {
+        if (savedUserId === row.id) sessions.delete(sid);
+      }
+      audit(toUser(row), "change_password", "user", row.id, row.username);
+      return send(res, 200, { ok: true });
+    }
+    if (method === "POST" && url.pathname === "/api/logout") {
+      const sid = parseCookies(req)[sessionCookieName];
+      if (sid) {
+        sessions.delete(sid);
+        db.prepare("delete from sessions where id=?").run(sid);
+      }
+      return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
+    }
+
+    const passwordGateUser = currentUser(req);
+    if (passwordGateUser.id && passwordGateUser.mustChangePassword) {
+      return send(res, 428, { error: "首次登录或密码重置后必须先修改密码", code: "PASSWORD_CHANGE_REQUIRED" });
+    }
+
+    if(method==="GET" && url.pathname==="/api/personnel/directory"){
+      const user=requireLogin(req,res);if(!user)return;
+      return send(res,200,personnelAccess.directory(user,url.searchParams.get("purpose"),url.searchParams));
+    }
+    const orgRoute=url.pathname.match(/^\/api\/personnel\/organizations(?:\/([^/]+))?$/);
+    if(orgRoute){
+      const user=requireLogin(req,res);if(!user)return;
+      if(method==="GET") return send(res,200,{organizations:personnelAccess.organizations(user).map(o=>({...o,referenceCount:personnelAccess.hasAll(user,"personnel")?personnelAccess.orgReferences(o.id):undefined}))});
+      if(!["POST","PUT","DELETE"].includes(method))return send(res,405,{error:"不支持的操作"});
+      return send(res,method==="POST"?201:200,personnelAccess.mutateOrganization(user,method,orgRoute[1]?routeParam(orgRoute[1]):"",await bodyJson(req)));
+    }
+    if (url.pathname.startsWith("/api/capability/")) {
+      const capabilityViewPermissions = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"];
+      const actor = requireAnyRbacPermission(req, res, capabilityViewPermissions);
+      if (!actor) return;
+      capabilityService.syncMaster();
+      capabilityService.schedule();
+      const space = url.searchParams.get("workspace") || "";
+      if (method === "GET" && url.pathname === "/api/capability/workspaces") return send(res, 200, { items:capabilityService.spaces(actor),organizationIssues:capabilityService.organizationIssues(actor),nonParticipants:capabilityService.nonParticipants(actor),readiness:capabilityService.readiness(),masterDataVersion:capabilityService.masterRevision(),capabilityVersion:capabilityService.revision() });
+      if (method === "GET" && url.pathname === "/api/capability/snapshot") return send(res, 200, capabilityService.snapshot(actor, space));
+      const capabilityAuthorizationRoute=url.pathname.match(/^\/api\/capability\/personnel\/([^/]+)\/authorizations$/);
+      if(method==="GET"&&capabilityAuthorizationRoute)return send(res,200,capabilityService.personAuthorizations(actor,space,routeParam(capabilityAuthorizationRoute[1]),url.searchParams.get("category")||"",url.searchParams.get("q")||""));
+      if (method === "GET" && url.pathname === "/api/capability/reports") return send(res, 200, capabilityService.report(actor, space));
+      if (method === "POST" && url.pathname === "/api/capability/commands") {
+        const payload = await bodyJson(req);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return send(res, 400, { error: "能力操作请求格式无效" });
+        return send(res, 200, capabilityService.command(actor, space, payload.operation, payload));
+      }
+      if (method === "GET" && url.pathname === "/api/capability/events") {
+        res.writeHead(200, { ...securityHeaders(), "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+        let lastVersion = "";
+        const push = () => {
+          const fresh = currentUser(req);
+          if (!fresh?.id || !hasAnyRbac(fresh, capabilityViewPermissions)) {
+            res.write('event: access-revoked\ndata: {}\n\n'); res.end(); return;
+          }
+          const version = JSON.stringify({ revision: capabilityService.revision(), masterDataVersion: capabilityService.masterRevision() });
+          if (version === lastVersion) { res.write(': heartbeat\n\n'); return; }
+          lastVersion = version;
+          res.write(`data: ${version}\n\n`);
+        };
+        push(); const unsubscribe = capabilityService.subscribe(push);
+        // The service listener handles same-process changes immediately.  The
+        // short revision poll also propagates commits made by another server
+        // process that shares the centre database.
+        const heartbeat = setInterval(push, 3000); heartbeat.unref?.();
+        res.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+        return;
+      }
+      return send(res, 404, { error: "能力配置接口不存在" });
+    }
+    if (method === "GET" && url.pathname === "/api/personnel") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      return send(res, 200, publicPersonnelPage(url.searchParams));
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/identity-quality") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      const scope = personnelAccess.predicate(manager, "personnel");
+      const rows = db.prepare(`select p.employee_no as employeeNo,p.name,p.position_code as position,(u.id is not null and u.status='active') as hasAccount from personnel p left join users u on u.person_id=p.id where p.data_status='active' and (${scope.sql}) order by p.employee_no`).all(...scope.params).map(row => ({ ...row, hasAccount: !!row.hasAccount }));
+      return send(res, 200, identityQualityReport(rows));
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/authorizations/overview") {
+      const viewer = requireRbacPermission(req, res, "personnel.list.view");
+      if (!viewer) return;
+      if (!hasRbac(viewer, "personnel.qualification.view")) return send(res, 403, { error: "当前账号没有查看人员授权的权限" });
+      return send(res, 200, publicPersonnelAuthorizationOverview(url.searchParams, viewer));
+    }
+    if (method === "POST" && url.pathname === "/api/personnel") {
+      const manager = requireRbacPermission(req, res, "personnel.profile.create");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const deprecated=["gender","age","demandUnit","highestEducation","englishLevel","entryChannel","dispatchFlag","workshop","workshopId","personnelCategory","personnelCategoryId"];
+      const suppliedDeprecated=deprecated.filter(key=>Object.hasOwn(payload,key));
+      if(suppliedDeprecated.length)return send(res,400,{error:`人员字段已停用：${suppliedDeprecated.join("、")}`});
+      const employeeNo = String(payload.employeeNo || "").trim();
+      const name = String(payload.name || "").trim();
+      if (!employeeNo || !name) return send(res, 400, { error: "工号和姓名为必填项" });
+      if (!isValidEmployeeNo(employeeNo)) return send(res, 400, { error: "工号必须为8位数字" });
+      const sameEmployee = db.prepare("select id,data_status from personnel where employee_no=?").get(employeeNo);
+      if (sameEmployee) return send(res, 409, { error: sameEmployee.data_status === "deleted" ? "该工号人员已删除，不能重新录入或恢复" : "该工号已存在" });
+      db.exec("begin immediate");
+      try {
+      if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+      const org=personnelAccess.checkMutation(manager,payload);
+      const personId = randomId("person");
+      const department=org.department||"";
+      const homeTeam=org.home_team||"";
+      const position = String(payload.position || "").trim();
+      const employmentStatus = String(payload.employmentStatus || "在职").trim() || "在职";
+      if(!["在职","停职","离职"].includes(employmentStatus))throw Object.assign(new Error("在职状态无效"),{status:400});
+      db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
+        values(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(personId, employeeNo, name, department, homeTeam, payload.isInstructor ? 1 : 0, position, String(payload.actualGrade || ""), employmentStatus, "manual", "active", now(), now());
+      personnelAccess.saveOrganization(personId,org);
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),personId,org.department_id,org.personnel_group_id,org.administrative_team_id,now());
+      dictionaryValue("department", "", org.department, "manual");
+      dictionaryValue("position", "", position, "manual");
+      dictionaryValue("employment_status", "", employmentStatus, "manual");
+      audit(manager, "create_personnel_manual", "personnel", personId, JSON.stringify({ employeeNo, name }));
+      db.exec("commit");
+      return send(res, 201, { person: publicPersonnelList().find(item => item.id === personId) });
+      } catch(error){db.exec("rollback");throw error;}
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/dictionaries") {
+      const manager = requireRbacPermission(req, res, "personnel.list.view");
+      if (!manager) return;
+      const values = []; // Values derived from personnel/imports must not expose out-of-scope personal attributes.
+      if(hasRbac(manager,"personnel.qualification.view")) values.push(...authorizationProjects.dictionaries());
+      return send(res, 200, { values });
+    }
+    const projectRoute = url.pathname.match(/^\/api\/personnel\/authorization-projects(?:\/([^/]+))?$/);
+    if (projectRoute) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (method === "GET" && !projectRoute[1]) {
+        if (!hasAnyRbac(manager, ["personnel.qualification.view", "personnel.qualification.manage"])) return send(res, 403, { error: "没有查看授权项目的权限" });
+        return send(res, 200, authorizationProjects.list(url.searchParams));
+      }
+      if (!hasRbac(manager, "personnel.qualification.manage")) {
+        audit(manager, method === "DELETE" ? "reject_delete_authorization_project" : "deny_authorization_project_write", "authorizationProject", projectRoute[1] ? routeParam(projectRoute[1]) : "", "缺少人员资质维护权限");
+        return send(res, 403, { error: "没有维护授权项目的权限" });
+      }
+      const id = projectRoute[1] ? routeParam(projectRoute[1]) : "";
+      if (method === "POST" && id === "import") return send(res, 200, authorizationProjects.importRows(await bodyJson(req), manager));
+      if (method === "POST" && !id) return send(res, 201, { project: authorizationProjects.create(await bodyJson(req), manager) });
+      if (method === "PUT" && id === "categories") return send(res, 200, authorizationProjects.updateCategories(await bodyJson(req), manager));
+      if (method === "PUT" && id) return send(res, 200, { project: authorizationProjects.update(id, await bodyJson(req), manager) });
+      if (method === "DELETE" && id) return send(res, 200, authorizationProjects.remove(id, manager));
+      return send(res, 405, { error: "不支持的授权项目操作" });
+    }
+    const deletionPreviewRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/deletion-preview$/);
+    if (deletionPreviewRoute && method === "GET") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      return send(res, 200, personnelDeletion.preview(routeParam(deletionPreviewRoute[1]), manager));
+    }
+    const personnelDetailRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)$/);
+    if (personnelDetailRoute && method === "DELETE") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      return send(res, 200, personnelDeletion.remove(routeParam(personnelDetailRoute[1]), await bodyJson(req), manager));
+    }
+    if (personnelDetailRoute && method === "GET" && !["imports", "dictionaries"].includes(routeParam(personnelDetailRoute[1]))) {
+      const manager = requireRbacPermission(req, res, "personnel.detail.view");
+      if (!manager) return;
+      const personId = routeParam(personnelDetailRoute[1]);
+      const person = publicPersonnelList().find(item => item.id === personId);
+      if (!person) return send(res, 404, { error: "未找到人员" });
+      const canReadQualifications = hasRbac(manager, "personnel.qualification.view");
+      const englishLevels = canReadQualifications
+        ? [...new Set(db.prepare(`select license_english_level from personnel_licenses
+          where person_id=? and coalesce(data_status,'active')='active'
+          and lower(trim(coalesce(is_valid,''))) in ('是','有效','true','1')`)
+          .all(personId).map(row => String(row.license_english_level || "").trim()).filter(Boolean))]
+          .sort((a, b) => a.localeCompare(b, "zh-Hans-CN", { numeric: true }))
+        : undefined;
+      const qualificationCounts = canReadQualifications ? {
+        license: Number(db.prepare("select count(*) as count from personnel_licenses where person_id=? and coalesce(data_status,'active')='active'").get(personId).count),
+        authorization: Number(db.prepare("select count(*) as count from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active'").get(personId).count),
+        training: Number(db.prepare("select count(*) as count from personnel_training_records where person_id=? and coalesce(data_status,'active')='active'").get(personId).count)
+      } : { license: 0, authorization: 0, training: 0 };
+      const authorizationCategoryCounts = canReadQualifications
+        ? Object.assign({ release: 0, test_run: 0, maintenance: 0, special: 0, third_party: 0, other: 0 }, Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count
+          from personnel_authorizations a join capability_catalog c on c.project_code=a.project_code
+          where a.person_id=? and coalesce(a.data_status,'active')='active' and c.project_category in ('release','test_run','maintenance','special','third_party','other')
+          group by c.project_category`).all(personId).map(row => [row.category, Number(row.count)])))
+        : undefined;
+      return send(res, 200, { person, qualificationCounts, qualificationVisible: canReadQualifications, ...(canReadQualifications ? { authorizationCategoryCounts, englishLevels } : {}) });
+    }
+    if (personnelDetailRoute && method === "PUT" && !["imports", "dictionaries"].includes(routeParam(personnelDetailRoute[1]))) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      const personId = routeParam(personnelDetailRoute[1]);
+      const person = personnelAccess.requirePerson(manager,"personnel",personId,true);
+      const payload = await bodyJson(req);
+      updatePersonnel(person, payload, manager);
+      return send(res, 200, { person: publicPersonnelList().find(item => item.id === personId) });
+    }
+    const personnelChangesRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/changes$/);
+    if (personnelChangesRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.audit.view");
+      if (!manager) return;
+      const personId = routeParam(personnelChangesRoute[1]);
+      personnelAccess.requirePerson(manager,"personnel",personId);
+      const changes = db.prepare(`select id,field_name as fieldName,field_label as fieldLabel,old_value as oldValue,new_value as newValue,
+        source_type as sourceType,source_batch_id as sourceBatchId,reason,operator_id as operatorId,operator_name as operatorName,created_at as createdAt
+        from personnel_change_logs where person_id=? order by created_at desc limit 200`).all(personId);
+      const visibleChanges = changes
+        .filter(row => hasRbac(manager,"personnel.qualification.view") || !/^(license|authorization|training)\./.test(row.fieldName))
+        .map(row => SENSITIVE_FIELDS.includes(row.fieldName) && !personnelAccess.canViewActualGrade(manager, personId)
+          ? { ...row, oldValue:"***", newValue:"***", masked:true }
+          : { ...row, masked:false });
+      return send(res, 200, { changes: visibleChanges });
+    }
+    const qualificationListRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/qualifications$/);
+    if (qualificationListRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.qualification.view");
+      if (!manager) return;
+      const personId = routeParam(qualificationListRoute[1]);
+      personnelAccess.requirePerson(manager, "personnel", personId);
+      const type = String(url.searchParams.get("type") || "authorization");
+      if (!["license", "authorization", "training"].includes(type)) return send(res, 400, { error: "资质类型无效" });
+      const positive = (value, fallback) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+      const pageSize = Math.min(100, positive(url.searchParams.get("pageSize"), 20));
+      const requestedPage = positive(url.searchParams.get("page"), 1);
+      const q = String(url.searchParams.get("q") || "").trim().toLowerCase().replace(/[!%_]/g, "!$&"), pattern = `%${q}%`;
+      let where, args, select, order, facets = {};
+      if (type === "authorization") {
+        const category = String(url.searchParams.get("category") || "").trim(), status = String(url.searchParams.get("status") || "").trim();
+        const validCategories = ["release", "test_run", "maintenance", "special", "third_party", "other"];
+        if (category && !validCategories.includes(category)) return send(res, 400, { error: "授权项目分类无效" });
+        where = "from personnel_authorizations a left join capability_catalog c on c.project_code=a.project_code where a.person_id=? and coalesce(a.data_status,'active')='active' and (lower(a.project_code) like ? escape '!' or lower(coalesce(c.project_name,a.project_name,'')) like ? escape '!' or lower(coalesce(a.authorization_type,'')) like ? escape '!' or lower(coalesce(a.authorization_unit,'')) like ? escape '!')";
+        args = [personId, pattern, pattern, pattern, pattern];
+        if (category) { where += " and c.project_category=?"; args.push(category); }
+        if (status) { where += " and a.authorization_status=?"; args.push(status); }
+        select = `select a.id,a.project_code as projectCode,case when c.status='active' and trim(c.project_name)<>'' then c.project_name else '待配置名称（' || a.project_code || '）' end as projectName,
+          c.project_category as category,case c.project_category when 'release' then '放行' when 'test_run' then '试车' when 'maintenance' then '维修' when 'special' then '专项' when 'third_party' then '三方' when 'other' then '其他' else '待分类' end as categoryLabel,
+          coalesce(c.third_party_company,'') as thirdPartyCompany,
+          a.authorization_type as authorizationType,a.authorization_unit as authorizationUnit,a.authorized_at as authorizedAt,a.authorization_expires_at as authorizationExpiresAt,a.authorization_status as authorizationStatus`;
+        order = " order by c.project_category,a.project_code,a.authorization_unit";
+        facets = {
+          categories: Object.fromEntries(db.prepare(`select c.project_category as category,count(*) as count ${where.replace(/ and c\.project_category=\?/, "").replace(/ and a\.authorization_status=\?/, "")} group by c.project_category`).all(...[personId, pattern, pattern, pattern, pattern]).map(row => [row.category || "", Number(row.count)])),
+          statuses: db.prepare("select distinct authorization_status as value from personnel_authorizations where person_id=? and coalesce(data_status,'active')='active' and trim(coalesce(authorization_status,''))<>'' order by authorization_status").all(personId).map(row => row.value)
+        };
+      } else if (type === "license") {
+        where = "from personnel_licenses where person_id=? and coalesce(data_status,'active')='active' and (lower(coalesce(license_no,'')) like ? escape '!' or lower(coalesce(license_type,'')) like ? escape '!')";
+        args = [personId, pattern, pattern];
+        select = "select id,license_no as licenseNo,license_type as licenseType,license_english_level as licenseEnglishLevel,issued_at as issuedAt,renewed_at as renewedAt,expires_at as expiresAt,is_valid as isValid,remark";
+        order = " order by license_type,expires_at";
+      } else {
+        where = "from personnel_training_records where person_id=? and coalesce(data_status,'active')='active' and (lower(coalesce(course_code,'')) like ? escape '!' or lower(coalesce(course_name,'')) like ? escape '!')";
+        args = [personId, pattern, pattern];
+        select = "select id,course_code as courseCode,course_name as courseName,course_version as courseVersion,course_nature as courseNature,started_at as startedAt,completed_at as completedAt,training_result as trainingResult,attendance_status as attendanceStatus,qualification_status as qualificationStatus,class_no as classNo";
+        order = " order by started_at desc,course_code";
+      }
+      const total = Number(db.prepare(`select count(*) as count ${where}`).get(...args).count), page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
+      const items = db.prepare(`${select} ${where}${order} limit ? offset ?`).all(...args, pageSize, (page - 1) * pageSize);
+      return send(res, 200, { items, total, page, pageSize, facets });
+    }
+    const qualificationRoute = url.pathname.match(/^\/api\/personnel\/([^/]+)\/qualifications\/(license|authorization|training)\/([^/]+)$/);
+    if (qualificationRoute && ["PUT", "DELETE"].includes(method)) {
+      const manager = requireRbacPermission(req, res, "personnel.qualification.manage");
+      if (!manager) return;
+      const personId = routeParam(qualificationRoute[1]), kind = qualificationRoute[2], recordId = routeParam(qualificationRoute[3]);
+      const person = personnelAccess.requirePerson(manager,"personnel",personId,true);
+      const payload = await bodyJson(req);
+      changeQualification(person, kind, recordId, payload, manager, method === "DELETE");
+      return send(res, 200, { ok: true });
+    }
+    if (method === "GET" && url.pathname === "/api/personnel/imports") {
+      const manager = requireRbacPermission(req, res, "personnel.import.view");
+      if (!manager) return;
+      const rows = db.prepare("select id,import_type,import_type as importType,file_name as fileName,status,rows_json,summary_json as summaryJson,created_by,created_by_name as createdByName,created_at as createdAt from personnel_import_batches order by created_at desc,id desc").all();
+      const context = importHistoryContext(db,personnelAccess,manager,rows,importEmployeeNo);
+      const visible = rows.filter(row=>visibleImportBatch(row,manager,context));
+      const page = Math.max(1,Number.parseInt(url.searchParams.get('page')||'1',10)||1);
+      const pageSize = Math.max(1,Math.min(100,Number.parseInt(url.searchParams.get('pageSize')||'50',10)||50));
+      const batches = visible.slice((page-1)*pageSize,page*pageSize).map(row => ({ id:row.id,importType:row.importType,fileName:row.fileName,status:row.status,createdAt:row.createdAt,createdByName:row.createdByName,summary: json(row.summaryJson, {}) }));
+      const summary = visible.reduce((result,row)=>{result.pending += Number(row.status==='pending');result.errors += Number(json(row.summaryJson,{}).errors||0);return result;},{pending:0,errors:0});
+      return send(res, 200, { batches,total:visible.length,page,pageSize,summary });
+    }
+    if (method === "POST" && url.pathname === "/api/personnel/imports") {
+      const manager = requireRbacPermission(req, res, "personnel.import.execute");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const type = String(payload.type || "");
+      if (!personnelImportTypes.has(type)) return send(res, 400, { error: "导入类别无效" });
+      const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (!rawRows.length) return send(res, 400, { error: "导入文件没有内容" });
+      const rawHeaders = Array.isArray(rawRows[0]) ? rawRows[0].map(normalizedHeader) : Object.keys(rawRows[0] || {}).map(normalizedHeader);
+      if(type==="authorization"){const unknown=rawHeaders.filter(h=>!AUTHORIZATION_HEADERS.includes(h));if(unknown.length)return send(res,400,{error:"授权模板不支持列："+unknown.join("、")});}
+      const missingGroups = importRequiredHeaders(type).filter(group => !group.some(name => rawHeaders.includes(normalizedHeader(name))));
+      if (missingGroups.length) return send(res, 400, { error: `缺少必填列：${missingGroups.map(group => group.join("/")).join("、")}` });
+      const rows = tabularRowsToObjects(rawRows, payload.rowNumbers);
+      if (!rows.length) return send(res, 400, { error: "文件只有表头，没有可导入的数据记录" });
+      db.exec("begin immediate");
+      try {
+      if(db.kind==="postgres")db.exec("select pg_advisory_xact_lock(54002010,31)");
+      validatePersonnelImportAccess(type,rows,manager);
+      const analysis = analyzePersonnelImport(type, rows);
+      const replacement=type==="authorization"?authorizationImport.preview(rows):undefined;
+      const id = randomId("pimport");
+      const fileHash = crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+      db.prepare("insert into personnel_import_batches(id,import_type,file_name,file_hash,status,rows_json,summary_json,created_by,created_by_name,confirmed_by,confirmed_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, type, String(payload.fileName || ""), fileHash, "pending", JSON.stringify(rows), JSON.stringify({ total: analysis.total, valid: analysis.valid, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }), manager.id, manager.name, "", "", now(), now());
+      insertImportIssues(id, analysis.issues);
+      audit(manager, "stage_personnel_import", "personnelImport", id, JSON.stringify({ type, total: rows.length, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }));
+      db.exec("commit");
+      return send(res, 201, { batch: { id, importType: type, fileName: String(payload.fileName || ""), status: "pending", summary: { total: analysis.total, valid: analysis.valid, errors: analysis.errors, warnings: analysis.warnings, ...(replacement?{replacement}:{}) }, issues: analysis.issues } });
+      }catch(e){db.exec("rollback");throw e;}
+    }
+    const workspaceRoute=url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)\/workspace$/);
+    if(workspaceRoute && ["GET","POST"].includes(method)) {
+      const manager=requireRbacPermission(req,res,method==="GET"?"personnel.import.view":"personnel.import.execute");if(!manager)return;
+      const workspace=createImportWorkspace({db,permission:personnelAccess.permission,hasAll:user=>personnelAccess.hasAll(user,"personnel"),visible:visibleImportBatch,employeeNo:importEmployeeNo,findPerson:findImportedPerson,analyze:analyzePersonnelImport,validateAccess:validatePersonnelImportAccess,preview:authorizationImport.preview,projects:authorizationProjects,audit,now,insertIssues:insertImportIssues});
+      const id=routeParam(workspaceRoute[1]);
+      return send(res,200,{workspace:method==="GET"?workspace.view(id,manager):workspace.mutate(id,await bodyJson(req),manager)});
+    }
+    const personnelImportRoute = url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)$/);
+    if (personnelImportRoute && method === "GET") {
+      const manager = requireRbacPermission(req, res, "personnel.import.view");
+      if (!manager) return;
+      const id = routeParam(personnelImportRoute[1]);
+      const batch = db.prepare("select * from personnel_import_batches where id=?").get(id);
+      if (!batch || !visibleImportBatch(batch,manager)) return send(res, 404, { error: "未找到导入批次" });
+      const issues = db.prepare("select id,row_number as rowNumber,issue_type as issueType,severity,employee_no as employeeNo,detail,status,resolution from personnel_import_issues where batch_id=? order by row_number,id").all(id);
+      return send(res, 200, { batch: { id: batch.id, importType: batch.import_type, fileName: batch.file_name, status: batch.status, summary: json(batch.summary_json, {}), issues, createdAt: batch.created_at, confirmedAt: batch.confirmed_at } });
+    }
+    const personnelImportActionRoute = url.pathname.match(/^\/api\/personnel\/imports\/([^/]+)\/(confirm|cancel)$/);
+    if (personnelImportActionRoute && method === "POST") {
+      const manager = requireRbacPermission(req, res, "personnel.import.execute");
+      if (!manager) return;
+      const id = routeParam(personnelImportActionRoute[1]);
+      const action = personnelImportActionRoute[2];
+      const batch = db.prepare("select * from personnel_import_batches where id=?").get(id);
+      if (!batch || !visibleImportBatch(batch,manager)) return send(res, 404, { error: "未找到导入批次" });
+      if (action === "cancel") {
+        if(batch.created_by!==manager.id && !personnelAccess.hasAll(manager,"personnel"))return send(res,403,{error:"只能取消本人创建的批次"});
+        if (batch.status !== "pending") return send(res, 409, { error: "当前批次不能取消" });
+        db.prepare("update personnel_import_batches set status='cancelled',updated_at=? where id=?").run(now(), id);
+        audit(manager, "cancel_personnel_import", "personnelImport", id, batch.import_type);
+        return send(res, 200, { ok: true });
+      }
+      const result = confirmPersonnelImport(batch, manager, await bodyJson(req));
+      let capabilitySync = "ready", capabilitySyncMessage = "";
+      try { capabilityService.syncMaster(); }
+      catch (error) { capabilitySync = "pending"; capabilitySyncMessage = error.message; console.error("人员主数据已提交，能力数据待刷新", error.message); }
+      return send(res, 200, { ok: true, result, personnel: batch.import_type === "personnel" ? publicPersonnelList() : undefined, capabilitySync, capabilitySyncMessage, masterDataVersion: capabilityService.masterRevision(), capabilityVersion: capabilityService.revision() });
+    }
+
+    if (method === "GET" && url.pathname === "/api/admin/rbac") {
+      const manager = requireRbacPermission(req, res, "roles.read");
+      if (!manager) return;
+      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
+      const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
+      return send(res, 200, { roles: rolesOut, permissions });
+    }
+    if (method === "POST" && url.pathname === "/api/admin/roles") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const payload = validatedRolePayload(await bodyJson(req));
+      const roleId = randomId("role");
+      const code = `custom_${crypto.randomBytes(8).toString("hex")}`;
+      db.exec("begin immediate");
+      try {
+        db.prepare("insert into rbac_roles(id,code,name,description,system_role,status,created_at,updated_at) values(?,?,?,?,0,'active',?,?)")
+          .run(roleId, code, payload.name, payload.description, now(), now());
+        replaceRolePermissions(roleId, payload.permissionRows);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "create_role", "role", roleId, JSON.stringify({ name: payload.name, permissions: payload.permissionRows.map(item => item.code) }));
+      return send(res, 201, { role: publicRbacRole(db.prepare("select * from rbac_roles where id=?").get(roleId)) });
+    }
+    const roleManageRoute = url.pathname.match(/^\/api\/admin\/roles\/([^/]+)$/);
+    if (roleManageRoute && method === "PUT") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const roleId = routeParam(roleManageRoute[1]);
+      const existing = db.prepare("select * from rbac_roles where id=? and status='active'").get(roleId);
+      if (!existing) return send(res, 404, { error: "未找到角色" });
+      if (existing.code === "system_admin") return send(res, 403, { error: "系统管理员角色必须保持全部权限，不允许修改" });
+      if (existing.system_role && manager.id !== SUPER_ACCOUNT_ID) return send(res, 403, { error: "只有超级管理员54002010可以调整系统预置角色" });
+      const payload = validatedRolePayload(await bodyJson(req), roleId);
+      const before = publicRbacRole(existing);
+      db.exec("begin immediate");
+      try {
+        db.prepare("update rbac_roles set name=?,description=?,updated_at=? where id=?").run(payload.name, payload.description, now(), roleId);
+        replaceRolePermissions(roleId, payload.permissionRows);
+        if (existing.system_role) setSetting(`rbacRoleControlledEdit:${existing.code}`, true);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      const affectedUserIds = revokeRoleUserSessions(roleId);
+      audit(manager, existing.system_role ? "controlled_update_system_role" : "update_role", "role", roleId, JSON.stringify({ before: { name: before.name, description: before.description, permissions: before.permissions }, after: { name: payload.name, description: payload.description, permissions: payload.permissionRows.map(item => item.code) }, affectedUserIds }));
+      return send(res, 200, { role: publicRbacRole(db.prepare("select * from rbac_roles where id=?").get(roleId)), sessionRevoked: affectedUserIds.includes(manager.id) && manager.id !== SUPER_ACCOUNT_ID });
+    }
+    if (roleManageRoute && method === "DELETE") {
+      const manager = requireRbacPermission(req, res, "roles.manage");
+      if (!manager) return;
+      const roleId = routeParam(roleManageRoute[1]);
+      const existing = db.prepare("select * from rbac_roles where id=? and status='active'").get(roleId);
+      if (!existing) return send(res, 404, { error: "未找到角色" });
+      if (existing.system_role) {
+        audit(manager, "reject_delete_system_role", "role", roleId, existing.name);
+        return send(res, 400, { error: "系统预置角色不可删除" });
+      }
+      const assignedUserCount = Number(db.prepare("select count(*) as count from rbac_user_roles where role_id=?").get(roleId)?.count || 0);
+      if (assignedUserCount) {
+        audit(manager, "reject_delete_assigned_role", "role", roleId, JSON.stringify({ name: existing.name, assignedUserCount }));
+        return send(res, 409, { error: `该角色仍有 ${assignedUserCount} 个账户使用，请先调整账户角色`, assignedUserCount });
+      }
+      db.exec("begin immediate");
+      try {
+        db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
+        db.prepare("delete from rbac_roles where id=?").run(roleId);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "delete_role", "role", roleId, existing.name);
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === "/api/admin/users" || url.pathname.startsWith("/api/admin/users/")) {
+      return send(res, 410, { error: "旧账户接口已移除，请使用纯 RBAC 账户接口" });
+    }
+    const user = currentUser(req);
+    if(user.id && url.pathname.startsWith("/api/maintenance/")){
+      let flightId=url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)/)?.[1];
+      const subtaskId=url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)/)?.[1];
+      const assignmentId=url.pathname.match(/^\/api\/maintenance\/assignments\/([^/]+)/)?.[1];
+      if(subtaskId)flightId=db.prepare("select flight_id from maintenance_subtasks where id=?").get(routeParam(subtaskId))?.flight_id;
+      if(assignmentId)flightId=db.prepare("select flight_id from maintenance_assignments where id=?").get(routeParam(assignmentId))?.flight_id;
+      if(flightId && !["import","export"].includes(flightId)){
+        flightId=routeParam(flightId);
+        const flight=db.prepare("select * from maintenance_flights where id=?").get(flightId);
+        if(flight){
+          const assigned=db.prepare("select person_id from maintenance_assignments where flight_id=?").all(flightId);
+          const own=assigned.some(a=>a.person_id===user.personId);
+          const isDispatchRequest=method==="POST" && /^\/api\/maintenance\/(?:flights|subtasks)\/[^/]+\/dispatch$/.test(url.pathname);
+          let staleSharedDispatch=false;
+          if(isDispatchRequest && hasRbac(user,"maintenance.assignment.manage") && maintenanceSharesCreatorDepartment(user,flight.created_by)){
+            const expectedUpdatedAt=String((await bodyJson(req)).expectedUpdatedAt||"");
+            staleSharedDispatch=!!expectedUpdatedAt && expectedUpdatedAt!==flight.updated_at;
+          }
+          const sharedUnassigned=maintenanceSharedUnassignedRouteAllowed(user,flight,method,url);
+          if(!personnelAccess.hasAll(user,"maintenance") && !own && flight.created_by!==user.id && !assigned.some(a=>personnelAccess.allows(user,"maintenance",a.person_id)) && !dataScopeAllowsUser(user,flight.created_by,"maintenance") && !sharedUnassigned && !staleSharedDispatch)return send(res,404,{error:"未找到维修机会"});
+          if(!["GET","OPTIONS"].includes(method) && /(?:dispatch|review|archive)|^DELETE$/.test(url.pathname+" "+method) && assigned.some(a=>!personnelAccess.allows(user,"maintenance",a.person_id)) && !staleSharedDispatch)return send(res,403,{error:"任务包含维修管理范围外人员，不能修改"});
+        }
+      }
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/version") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      return send(res, 200, { version: maintenanceSyncVersion() });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/events") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
+      });
+      res.write(`retry: 3000\nevent: maintenance\ndata: ${JSON.stringify({ type: "maintenance.connected", version: maintenanceSyncVersion() })}\n\n`);
+      maintenanceEventClients.add(res);
+      const heartbeat = setInterval(() => { try { res.write(": keepalive\n\n"); } catch {} }, 25000);
+      req.on("close", () => { clearInterval(heartbeat); maintenanceEventClients.delete(res); });
+      return;
+    }
+    if (url.pathname === "/api/maintenance/locations" && method === "GET") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      return send(res, 200, { locations: maintenanceWorkLocations(), defaultLocationId: defaultMaintenanceLocationId });
+    }
+    if (url.pathname === "/api/maintenance/locations" && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有地点目录维护权限" });
+      const input = await bodyJson(req);
+      const name = String(input.name || "").trim();
+      if (!name || name.length > 80) return send(res, 400, { error: "地点名称需为1至80字" });
+      if (db.prepare("select id from maintenance_work_locations where name=?").get(name)) return send(res, 409, { error: "地点名称已存在" });
+      const id = randomId("mloc");
+      db.prepare("insert into maintenance_work_locations(id,name,status,created_at,updated_at) values(?,?,'active',?,?)").run(id, name, now(), now());
+      audit(manager, "maintenance_location_create", "maintenance_location", id, name);
+      return send(res, 201, { locations: maintenanceWorkLocations() });
+    }
+    const maintenanceLocationRoute = url.pathname.match(/^\/api\/maintenance\/locations\/([^/]+)$/);
+    if (maintenanceLocationRoute && ["PUT", "DELETE"].includes(method)) {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有地点目录维护权限" });
+      const id = routeParam(maintenanceLocationRoute[1]);
+      const existing = db.prepare("select * from maintenance_work_locations where id=?").get(id);
+      if (!existing) return send(res, 404, { error: "未找到作业地点" });
+      const references = db.prepare("select count(*) as count from maintenance_flights where location_id=?").get(id).count;
+      if (method === "DELETE") {
+        if (references) return send(res, 409, { error: `已有${references}条维修机会使用该地点，请先停用` });
+        db.prepare("delete from maintenance_work_locations where id=?").run(id);
+        audit(manager, "maintenance_location_delete", "maintenance_location", id, existing.name);
+        return send(res, 200, { locations: maintenanceWorkLocations() });
+      }
+      const input = await bodyJson(req);
+      const name = String(input.name ?? existing.name).trim();
+      const status = String(input.status ?? existing.status);
+      const reason = String(input.reason || "").trim();
+      if (!name || name.length > 80 || !["active", "inactive"].includes(status)) return send(res, 400, { error: "地点名称或状态无效" });
+      if ((name !== existing.name || status !== existing.status) && !reason) return send(res, 400, { error: "请填写变更原因" });
+      if (db.prepare("select id from maintenance_work_locations where name=? and id<>?").get(name, id)) return send(res, 409, { error: "地点名称已存在" });
+      db.prepare("update maintenance_work_locations set name=?,status=?,updated_at=? where id=?").run(name, status, now(), id);
+      audit(manager, "maintenance_location_update", "maintenance_location", id, JSON.stringify({ before: existing.name, after: name, status, reason }));
+      return send(res, 200, { locations: maintenanceWorkLocations() });
+    }
+    const maintenanceLocationCorrection = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/location$/);
+    if (maintenanceLocationCorrection && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.archive.modify")) return send(res, 403, { error: "当前账号没有历史地点修正权限" });
+      const id = routeParam(maintenanceLocationCorrection[1]);
+      const input = await bodyJson(req);
+      const reason = String(input.reason || "").trim();
+      if (!reason) return send(res, 400, { error: "请填写地点修正原因" });
+      const existing = db.prepare("select * from maintenance_flights where id=?").get(id);
+      if (!existing) return send(res, 404, { error: "未找到维修机会" });
+      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有维修管理权限" });
+      if (!maintenanceVisibleFlights(manager, "dispatch", { flightId: id, limit: 1 }).rows.length) return send(res, 403, { error: "该维修机会不在当前维修管控范围内" });
+      const location = maintenanceLocationForInput({ locationId: input.locationId || input.locationName });
+      maintenanceTransaction(() => {
+        db.prepare("update maintenance_flights set location_id=?,location_name_snapshot=?,updated_by=?,updated_at=? where id=?").run(location.id, location.name, manager.id, now(), id);
+        audit(manager, "maintenance_location_correction", "maintenance_flight", id, JSON.stringify({ oldLocationId: existing.location_id || "", newLocationId: location.id, reason }));
+      });
+      bumpMaintenanceVersion(id, "maintenance.location.corrected");
+      return send(res, 200, { flight: publicMaintenanceFlight(db.prepare("select * from maintenance_flights where id=?").get(id)) });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/flights") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      const scope = url.searchParams.get("scope") || "dispatch";
+      const opportunities = url.searchParams.getAll("opportunity").flatMap(value => value.split(",")).map(value => value.trim()).filter(Boolean);
+      const locationIds = url.searchParams.getAll("locationId").flatMap(value => value.split(",")).map(value => value.trim()).filter(Boolean);
+      const requestedLimit = Number(url.searchParams.get("limit"));
+      const result = maintenanceVisibleFlights(login, scope, {
+        dateFrom: url.searchParams.get("dateFrom") || "",
+        dateTo: url.searchParams.get("dateTo") || "",
+        opportunities,
+        locationIds,
+        search: String(url.searchParams.get("search") || "").trim(),
+        limit: Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : undefined,
+        cursor: Number(url.searchParams.get("cursor") || 0)
+      });
+      const flights = url.searchParams.get("view") === "summary"
+        ? publicMaintenanceBatch(result.rows, scope, login)
+        : result.rows.map(row => scope === "execute" ? publicMaintenanceFlightForExecution(row, login) : publicMaintenanceFlight(row)).filter(Boolean);
+      return send(res, 200, { flights, nextCursor: result.nextCursor, version: maintenanceSyncVersion() });
+    }
+    const maintenanceReportDraftRoute = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/reports\/(routine|nonroutine)\/draft$/);
+    if (maintenanceReportDraftRoute && method === "DELETE") {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      if (!maintenanceCanExecute(executor, true) || !hasRbac(executor, "maintenance.nonroutine.delete.own")) return send(res, 403, { error: "当前账号没有删除本人非例行草稿的权限" });
+      const flightId = routeParam(maintenanceReportDraftRoute[1]);
+      const reportType = maintenanceReportDraftRoute[2];
+      if (reportType !== "nonroutine") return send(res, 405, { error: "当前草稿不支持删除" });
+      const payload = await bodyJson(req);
+      const deleted = deleteMaintenanceNonroutineDraft(flightId, payload, executor);
+      if (deleted) bumpMaintenanceVersion(flightId, "maintenance.nonroutine.draft.deleted");
+      return send(res, 200, { ok: true, deleted });
+    }
+    if (maintenanceReportDraftRoute && method === "PUT") {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
+      const flightId = routeParam(maintenanceReportDraftRoute[1]);
+      const reportType = maintenanceReportDraftRoute[2];
+      const payload = await bodyJson(req);
+      const result = reportType === "routine"
+        ? saveMaintenanceRoutineDraft(flightId, payload, executor)
+        : saveMaintenanceNonroutineDraft(flightId, payload, executor);
+      bumpMaintenanceVersion(flightId, `maintenance.${reportType}.draft.saved`);
+      return send(res, 200, reportType === "routine" ? result : { draft: result });
+    }
+    const maintenanceReportsRoute = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/reports(?:\/(release|routine|nonroutine))?$/);
+    if (maintenanceReportsRoute && method === "GET" && !maintenanceReportsRoute[2]) {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      if (!maintenanceCanExecute(executor)) return send(res, 403, { error: "当前账号没有查看本人维修任务的权限" });
+      const report = maintenanceReportsView(routeParam(maintenanceReportsRoute[1]), executor);
+      if (!report) return send(res, 404, { error: "未找到维修机会" });
+      return send(res, 200, { report });
+    }
+    if (maintenanceReportsRoute && method === "PUT" && maintenanceReportsRoute[2]) {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
+      const flightId = routeParam(maintenanceReportsRoute[1]);
+      const payload = await bodyJson(req);
+      const type = maintenanceReportsRoute[2];
+      const saveOnly = type === "nonroutine" && payload?.mode === "save";
+      const flight = type === "release" ? submitMaintenanceRelease(flightId, payload, executor)
+        : type === "routine" ? submitMaintenanceRoutine(flightId, payload, executor)
+          : saveOnly ? saveMaintenanceNonroutine(flightId, payload, executor)
+            : submitMaintenanceNonroutine(flightId, payload, executor);
+      bumpMaintenanceVersion(flightId, saveOnly ? "maintenance.nonroutine.saved" : `maintenance.${type}.submitted`);
+      return send(res, 200, { flight, report: maintenanceReportsView(flightId, executor) });
+    }
+    const maintenanceFinalizeRoute = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/report-confirmation$/);
+    if (maintenanceFinalizeRoute && method === "POST") {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      const flightId = routeParam(maintenanceFinalizeRoute[1]);
+      const payload = await bodyJson(req);
+      const saveOnly = payload?.mode === "save";
+      const flight = saveOnly
+        ? saveMaintenanceReportConfirmation(flightId, payload, executor, { finalize: false })
+        : finalizeMaintenanceReports(flightId, payload, executor);
+      bumpMaintenanceVersion(flightId, saveOnly ? "maintenance.report.confirmation.saved" : "maintenance.report.finalized");
+      return send(res, 200, { flight });
+    }
+    if (method === "POST" && ['/api/maintenance/dispatch-import/preview','/api/maintenance/dispatch-import/commit'].includes(url.pathname)) {
+      const manager = requireLogin(req,res);
+      if (!manager) return;
+      if (!hasRbac(manager,'maintenance.assignment.manage') || !hasRbac(manager,'maintenance.dispatch.view')) return send(res,403,{error:'当前账号没有派工导入权限'});
+      const payload = await bodyJson(req), rows = payload.rows;
+      if (!Array.isArray(rows) || !rows.length || rows.length>1000) return send(res,400,{error:'每批须包含1～1000条派工记录'});
+      const commit = url.pathname.endsWith('/commit');
+      if (commit && !/^[a-zA-Z0-9_-]{8,100}$/.test(payload.requestId || '')) return send(res,400,{error:'缺少有效导入请求编号'});
+      const digest = crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+      const ledgerKey = `dispatch_import:${manager.id}:${payload.requestId}`;
+      const identities = rows.map(raw => { try { return dispatchImportIdentity(raw); } catch { return null; } });
+      const counts = new Map();
+      identities.filter(Boolean).forEach(item=>counts.set(item.key,(counts.get(item.key)||0)+1));
+      const results = [];
+      for (let index=0;index<rows.length;index++) {
+        try {
+          const processRow = ()=> {
+            const saved = commit ? json(db.prepare('select value from settings where key=?').get(ledgerKey)?.value,null) : null;
+            if (saved && saved.digest!==digest) throw new Error('请求编号已用于不同文件，请重新上传');
+            if (saved?.results?.[index]) {
+              const result=saved.results[index], visible=new Set(allPeople('maintenance').map(p=>p.id));
+              if(result.assignments.some(a=>!visible.has(a.personId))) throw new Error('原导入人员已不在当前维修范围内');
+              return result;
+            }
+            const raw = rows[index], identity = dispatchImportIdentity(raw);
+            if (counts.get(identity.key)>1) throw new Error('同一文件重复包含该维修机会，请合并为一行');
+            const candidates = maintenanceVisibleFlights(manager,'dispatch',{dateFrom:identity.date,dateTo:identity.date}).rows.filter(f=>
+              (f.work_kind||f.work_type)===identity.workKind && (!identity.arrival || String(f.flight_no||'').trim().toUpperCase()===identity.arrival) && (!identity.departure || String(f.departure_flight_no||'').trim().toUpperCase()===identity.departure));
+            if (candidates.length!==1) throw new Error(candidates.length ? '匹配到多个维修机会，不能自动选择' : '未找到可派工的维修机会');
+            const flight=candidates[0];
+            if (flight.status!=='未派工') throw new Error('仅允许导入未派工维修机会');
+            assertMaintenanceTreeDirectEditAllowed(flight.id);
+            if (db.prepare('select id from maintenance_assignments where flight_id=?').get(flight.id) || db.prepare('select id from maintenance_report_batches where flight_id=?').get(flight.id)) throw new Error('维修机会已有派工或报工内容，请人工检查');
+            const assignments=dispatchImportAssignments(raw,allPeople('maintenance'));
+            normalizeMaintenanceAssignments('flight',flight,assignments);
+            if (commit && (raw.matchedFlightId!==flight.id || raw.expectedUpdatedAt!==flight.updated_at)) throw new Error('维修机会已更新，请重新校验');
+            const result={rowNumber:raw.rowNumber || index+2,ok:true,flightId:flight.id,expectedUpdatedAt:flight.updated_at,aircraftNo:flight.aircraft_no,date:flight.date,workKind:identity.workKind,assignments};
+            if (commit) {
+              setMaintenanceAssignments('flight',flight.id,assignments,manager,flight.updated_at,true);
+              const status=db.prepare('select status from maintenance_flights where id=?').get(flight.id)?.status;
+              if(status!=='已派工') throw new Error('状态无法变为已派工，本条已回滚，请人工检查');
+              maintenanceLog(manager,'dispatch_import','flight',flight.id,flight.id,JSON.stringify({requestId:payload.requestId,rowNumber:result.rowNumber}));
+              const record=saved||{digest,results:{}};
+              record.results[index]=result;
+              setSetting(ledgerKey,record);
+            }
+            return result;
+          };
+          const result = commit ? maintenanceTransaction(processRow) : processRow();
+          results.push(result);
+        } catch(error) { results.push({rowNumber:rows[index]?.rowNumber || index+2,ok:false,error:error.message}); }
+      }
+      if(commit && results.some(item=>item.ok)) bumpMaintenanceVersion('','maintenance.dispatch.imported');
+      return send(res,200,{results,success:results.filter(item=>item.ok).length,failed:results.filter(item=>!item.ok).length});
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/subtasks/import") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.opportunity.import")) return send(res, 403, { error: "当前账号没有导入维修机会权限" });
+      const payload = await bodyJson(req);
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      if (!rows.length) return send(res, 400, { error: "未识别到有效附加工作，请检查表格内容" });
+      const prepare = () => {
+      const prepared=[], errors=[], seen=new Map();
+      for (const [index,raw] of rows.entries()) {
+        const rowNumber = Number.isInteger(raw?.rowNumber) && raw.rowNumber>0 ? raw.rowNumber : index + 2;
+        try {
+        const date = normalizeMaintenanceStatsDate(raw?.date ?? raw?.["日期"]);
+        const flightNo = String(raw?.flightNo ?? raw?.flight_no ?? raw?.["进港航班号"] ?? raw?.["航班号"] ?? "").trim();
+        const departureFlightNo = String(raw?.departureFlightNo ?? raw?.departure_flight_no ?? raw?.["出港航班号"] ?? "").trim();
+        const aircraftNo = String(raw?.aircraftNo ?? raw?.aircraft_no ?? raw?.["机号"] ?? "").trim();
+        const workKind = String(raw?.workKind ?? raw?.work_kind ?? raw?.["维修机会"] ?? "").trim();
+        const location = maintenanceLocationForInput(raw);
+        const chapter = String(raw?.chapter ?? raw?.["章节"] ?? "").trim();
+        const category = String(raw?.category ?? raw?.["非例行类别"] ?? raw?.["类别"] ?? raw?.["工作类别"] ?? "").trim();
+        const title = String(raw?.title ?? raw?.cardName ?? raw?.card_name ?? raw?.["工作标题"] ?? raw?.["工卡名称"] ?? "").trim();
+        const standardHours = Number(raw?.standardHours ?? raw?.standard_hours ?? raw?.["标准工时"]);
+        const priority = String(raw?.priority ?? raw?.["优先级"] ?? "普通").trim() || "普通";
+        const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+        if (!parsedDate || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw maintenanceReviewError(`第 ${rowNumber} 行日期无效`);
+        const identityError = maintenanceFlightValidationError({ date, flightNo, departureFlightNo, aircraftNo, workKind });
+        if (identityError) throw maintenanceReviewError(`第 ${rowNumber} 行${identityError}`);
+        if (!aircraftNo) throw maintenanceReviewError(`第 ${rowNumber} 行缺少机号`);
+        if (!maintenanceOpportunityCategories.includes(workKind)) throw maintenanceReviewError(`第 ${rowNumber} 行维修机会无效`);
+        if (!chapter) throw maintenanceReviewError(`第 ${rowNumber} 行缺少章节`);
+        if (!title) throw maintenanceReviewError(`第 ${rowNumber} 行缺少工作标题`);
+        if (!maintenanceNonroutineCategories.includes(category)) throw maintenanceReviewError(`第 ${rowNumber} 行非例行类别无效`);
+        if (!Number.isFinite(standardHours) || !(standardHours > 0) || Math.abs(standardHours * 10 - Math.round(standardHours * 10)) > 1e-8) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行标准工时必须大于0且以0.1小时为单位`);
+        }
+        if (!["普通", "重要", "紧急"].includes(priority)) throw maintenanceReviewError(`第 ${rowNumber} 行优先级无效`);
+        const useDeparture = ["航前", "三方航前"].includes(workKind) || !flightNo && !!departureFlightNo;
+        const primaryNo = useDeparture ? departureFlightNo : flightNo;
+        const numberColumn = useDeparture ? "departure_flight_no" : "flight_no";
+        const matches = db.prepare(`select * from maintenance_flights
+          where date=? and lower(trim(aircraft_no))=? and work_kind=? and location_id=?
+            and (?='' or lower(trim(${numberColumn}))=?)`)
+          .all(date, aircraftNo.toLowerCase(), workKind, location.id, primaryNo, primaryNo.toLowerCase());
+        if (!matches.length) throw maintenanceReviewError(`第 ${rowNumber} 行未找到对应维修机会`);
+        if (matches.length > 1) throw maintenanceReviewError(`第 ${rowNumber} 行匹配到多个维修机会，请先核对航班计划`);
+        const flight = matches[0];
+        if (!personnelAccess.hasAll(manager,'maintenance') && flight.created_by!==manager.id && !dataScopeAllowsUser(manager,flight.created_by,'maintenance') && !maintenanceVisibleFlights(manager,'dispatch',{flightId:flight.id,limit:1}).rows.length) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行维修机会不在当前维修管控范围内`,403);
+        }
+        if (flightNo && flight.flight_no && flightNo.toLowerCase() !== String(flight.flight_no).trim().toLowerCase()) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行进港航班号与维修机会不一致`);
+        }
+        if (departureFlightNo && flight.departure_flight_no && departureFlightNo.toLowerCase() !== String(flight.departure_flight_no).trim().toLowerCase()) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行出港航班号与维修机会不一致`);
+        }
+        if (!["未派工", "已派工"].includes(flight.status || "未派工") || flight.report_finalized_at || flight.archived_at) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行对应维修机会已进入报工或复核，不能导入附加工作`, 409);
+        }
+        const subtask = maintenanceSubtaskPayload({ ...raw, chapter, category, title, standardHours, priority, status: "未派工" });
+        const key=JSON.stringify([flight.id,subtask.cardNo,subtask.title,subtask.category]);
+        const existing=db.prepare('select standard_hours from maintenance_subtasks where flight_id=? and trim(card_no)=? and trim(title)=? and trim(category)=?').all(flight.id,subtask.cardNo,subtask.title,subtask.category);
+        if(existing.some(item=>Math.abs(Number(item.standard_hours)-subtask.standardHours)>1e-8) || seen.has(key) && Math.abs(seen.get(key)-subtask.standardHours)>1e-8) {
+          throw maintenanceReviewError(`第 ${rowNumber} 行重复项目的标准工时不一致，请人工核对，未覆盖已有任务`);
+        }
+        const skip=existing.length>0 || seen.has(key);
+        seen.set(key,subtask.standardHours);
+        prepared.push({ rowNumber, flight, subtask, skip });
+        } catch(error) {errors.push({rowNumber,detail:error.message.replace(/^第 \d+ 行/,''),status:error.status||400});}
+      }
+      const summary={total:rows.length,matched:prepared.length,created:prepared.filter(item=>!item.skip).length,skipped:prepared.filter(item=>item.skip).length,abnormal:errors.length};
+      return {prepared,errors,summary};
+      };
+      if (payload.validateOnly) {const checked=prepare();return send(res,200,{valid:!checked.errors.length,count:checked.prepared.length,summary:checked.summary,errors:checked.errors});}
+      const result = maintenanceTransaction(() => {
+        const {prepared,errors,summary}=prepare();
+        if(errors.length)throw Object.assign(maintenanceReviewError('附加工作校验失败，未导入任何数据',errors[0].status),{details:{errors,summary}});
+        const matchedFlightIds = [...new Set(prepared.map(item => item.flight.id))];
+        const stamp = now();
+        for (const item of prepared) {
+          if(item.skip)continue;
+          const id = randomId("mtns");
+          const subtask = item.subtask;
+          db.prepare(`insert into maintenance_subtasks(id,flight_id,external_work_no,card_no,title,content,category,standard_hours,priority,status,remark,created_by,updated_by,created_at,updated_at)
+            values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .run(id, item.flight.id, "", subtask.cardNo, subtask.title, subtask.content, subtask.category, subtask.standardHours, subtask.priority, "未派工", subtask.remark, manager.id, manager.id, stamp, stamp);
+          maintenanceLog(manager, "import_subtask", "subtask", id, item.flight.id, JSON.stringify({ chapter: subtask.cardNo, rowNumber: item.rowNumber }));
+        }
+        const auditId = audit(manager, "maintenance_subtask_import", "maintenance", "subtasks", JSON.stringify({ ...summary, matchedFlightIds }));
+        return { auditId,summary,created:summary.created,skipped:summary.skipped,matchedFlights:matchedFlightIds.length };
+      });
+      if(result.created)bumpMaintenanceVersion("", "maintenance.subtasks.imported");
+      return send(res, 200, result);
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/flights/import") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.opportunity.import")) return send(res, 403, { error: "当前账号没有导入维修机会权限" });
+      const p = await bodyJson(req);
+      const rows = Array.isArray(p.rows) ? p.rows : [];
+      if (p.validateOnly) {
+        const checked=prepareMaintenanceFlightImport(rows);
+        return send(res,200,{valid:rows.length>0 && !checked.errors.length,summary:checked.summary,errors:checked.errors});
+      }
+      let created = 0;
+      let subCreated = 0;
+      let skipped = 0;
+      const imported = new Map();
+      let summary;
+      maintenanceTransaction(() => {
+      const checked=prepareMaintenanceFlightImport(rows);
+      if(!rows.length || checked.errors.length)throw Object.assign(maintenanceReviewError('航班计划校验失败，未导入任何数据'),{details:{errors:checked.errors,summary:checked.summary}});
+      summary=checked.summary;
+      const importRows=checked.prepared;
+      for (const { raw, payload } of importRows) {
+        const primaryNo = ["航前", "三方航前"].includes(payload.workKind) ? payload.departureFlightNo : payload.flightNo || payload.departureFlightNo || "";
+        const matchKey = [payload.date, payload.aircraftNo.toLowerCase(), payload.workKind, primaryNo.toLowerCase(), payload.location.id].join("|");
+        let flight = imported.get(matchKey);
+        if (!flight) {
+          const numberColumn = ["航前", "三方航前"].includes(payload.workKind) || !payload.flightNo && payload.departureFlightNo ? "departure_flight_no" : "flight_no";
+          const matches = db.prepare(`select * from maintenance_flights where date=? and lower(trim(aircraft_no))=? and work_kind=? and lower(trim(${numberColumn}))=? and location_id=?`).all(payload.date, payload.aircraftNo.toLowerCase(), payload.workKind, primaryNo.toLowerCase(), payload.location.id);
+          if (matches.length > 1) throw maintenanceReviewError("匹配到多个维修机会，请先核对航班计划");
+          const existing = matches[0];
+          flight = existing ? publicMaintenanceFlight(existing) : insertMaintenanceFlight(payload, manager);
+          if (!existing) created++;
+          imported.set(matchKey, flight);
+        }
+        if (flight && !flight.departureFlightNo && payload.departureFlightNo) {
+          const updated = db.prepare("update maintenance_flights set departure_flight_no=?,updated_by=?,updated_at=? where id=? and coalesce(departure_flight_no,'')=''")
+            .run(payload.departureFlightNo, manager.id, now(), flight.id);
+          if (updated.changes) flight.departureFlightNo = payload.departureFlightNo;
+        }
+        const subPayload = maintenanceSubtaskPayload(raw);
+        if (subPayload.title || subPayload.cardNo || subPayload.content) {
+          subPayload.title ||= subPayload.cardNo || `${payload.workKind}非例行`;
+          insertMaintenanceSubtask(flight.id, subPayload, manager);
+          subCreated++;
+        }
+      }
+      audit(manager, "maintenance_import", "maintenance", "flights", `维修机会 ${created} 条，非例行 ${subCreated} 条`);
+      });
+      bumpMaintenanceVersion("", "maintenance.imported");
+      return send(res, 200, { created, subCreated, skipped, summary });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/flights") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.opportunity.create")) return send(res, 403, { error: "当前账号没有新建维修机会权限" });
+      const payload = maintenanceFlightPayload(await bodyJson(req));
+      const validationError = maintenanceFlightValidationError(payload);
+      if (validationError) return send(res, 400, { error: validationError });
+      const flight = insertMaintenanceFlight(payload, manager);
+      bumpMaintenanceVersion(flight.id, "maintenance.flight.created");
+      return send(res, 201, { flight });
+    }
+    const maintenanceRemark = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/remark$/);
+    if (maintenanceRemark && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!maintenanceCanManage(manager)) return send(res, 403, { error: "当前账号没有编辑备注权限" });
+      const flightId = routeParam(maintenanceRemark[1]);
+      const payload = await bodyJson(req);
+      if (typeof payload.remark !== "string" || typeof payload.originalRemark !== "string" || payload.remark.length > 2000) {
+        return send(res, 400, { error: "备注必须为文本，且不超过2000字" });
+      }
+      const remark = payload.remark.trim();
+      db.exec("begin immediate");
+      try {
+        const row = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+        if (!row) throw maintenanceReviewError("未找到维修机会", 404);
+        if (row.archived_at || !["未派工", "已派工", "已提报"].includes(row.status)) throw maintenanceReviewError("当前状态不允许修改备注", 409);
+        if ((row.remark || "") !== payload.originalRemark) throw maintenanceReviewError("备注已被其他人员修改，请关闭后重新打开并核对内容", 409);
+        const updated = db.prepare("update maintenance_flights set remark=?,updated_by=?,updated_at=? where id=? and coalesce(remark,'')=? and status=? and coalesce(archived_at,'')=''").run(remark, manager.id, now(), flightId, payload.originalRemark, row.status);
+        if (!updated.changes) throw maintenanceReviewError("维修机会已发生变化，请关闭后重新打开并核对内容", 409);
+        audit(manager, "maintenance_update_remark", "maintenanceFlight", flightId, JSON.stringify({ before: row.remark || "", after: remark }));
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      bumpMaintenanceVersion(flightId, "maintenance.remark.updated");
+      return send(res, 200, { remark });
+    }
+    const maintenanceReview = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/review$/);
+    if (maintenanceReview && method === "GET") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.review.view")) return send(res, 403, { error: "当前账号没有查看维修复核权限" });
+      const review = maintenanceReviewTree(routeParam(maintenanceReview[1]));
+      if (!review) return send(res, 404, { error: "未找到航班任务" });
+      return send(res, 200, { review });
+    }
+    if (maintenanceReview && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.review.submit")) return send(res, 403, { error: "当前账号没有提交维修复核权限" });
+      const flightId = routeParam(maintenanceReview[1]);
+      const review = saveMaintenanceReview(flightId, await bodyJson(req), manager);
+      bumpMaintenanceVersion(flightId, "maintenance.review.saved");
+      return send(res, 200, { review });
+    }
+    const maintenanceWorkReportRoute = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/work-report$/);
+    if (maintenanceWorkReportRoute && ["GET", "PUT"].includes(method)) {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      return send(res, 410, { error: "旧版整合报工接口已停用，请刷新页面后使用例行或非例行报工" });
+    }
+    const maintenanceFlight = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)$/);
+    if (maintenanceFlight && method === "GET") {
+      const viewer = requireLogin(req, res);
+      if (!viewer) return;
+      if (!maintenanceHasAccess(viewer)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      const flightId = routeParam(maintenanceFlight[1]);
+      const row = db.prepare("select * from maintenance_flights where id=?").get(flightId);
+      if (!row) return send(res, 404, { error: "未找到航班任务" });
+      const scope = url.searchParams.get("scope") || "dispatch";
+      const full = scope === "execute" ? publicMaintenanceFlightForExecution(row, viewer) : publicMaintenanceFlight(row);
+      if (!full || (!maintenanceCanManage(viewer) && !maintenanceTaskTreeAssignments(flightId).some(item => item.person_id === viewer.personId))) {
+        return send(res, 403, { error: "无权查看该维修机会" });
+      }
+      return send(res, 200, { flight: full, version: maintenanceSyncVersion() });
+    }
+    if (maintenanceFlight && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.opportunity.update")) return send(res, 403, { error: "当前账号没有修改维修机会权限" });
+      const flightId = routeParam(maintenanceFlight[1]);
+      const existing = assertMaintenanceTreeDirectEditAllowed(flightId);
+      if (!existing) return send(res, 404, { error: "未找到航班任务" });
+      const payload = maintenanceFlightPayload(await bodyJson(req), existing);
+      const validationError = maintenanceFlightValidationError({ ...payload, departureFlightNo: payload.departureFlightNo ?? existing.departure_flight_no });
+      if (validationError) return send(res, 400, { error: validationError });
+      if ((payload.workKind || payload.workType) !== (existing.work_kind || existing.work_type)) {
+        invalidateMaintenanceReportCategory(flightId, "release", manager, "维修机会类别已修改");
+        invalidateMaintenanceReportCategory(flightId, "routine", manager, "维修机会类别已修改");
+      }
+      const flight = updateMaintenanceFlight(flightId, payload, manager);
+      if (!flight) return send(res, 404, { error: "未找到航班任务" });
+      bumpMaintenanceVersion(flight.id, "maintenance.flight.updated");
+      return send(res, 200, { flight });
+    }
+    if (maintenanceFlight && method === "DELETE") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.opportunity.delete")) return send(res, 403, { error: "当前账号没有删除维修机会权限" });
+      const flightId = routeParam(maintenanceFlight[1]);
+      const payload = await bodyJson(req);
+      const deleted = deleteMaintenanceFlight(flightId, manager, payload?.reason);
+      if (!deleted) return send(res, 404, { error: "未找到航班任务" });
+      bumpMaintenanceVersion(flightId, "maintenance.flight.deleted");
+      return send(res, 200, { ok: true });
+    }
+    const maintenanceSubtasks = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/subtasks$/);
+    if (maintenanceSubtasks && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
+      const flightId = routeParam(maintenanceSubtasks[1]);
+      const parent = assertMaintenanceTreeDirectEditAllowed(flightId);
+      if (!parent) return send(res, 404, { error: "未找到航班任务" });
+      const payload = maintenanceSubtaskPayload(await bodyJson(req));
+      if (!payload.title) return send(res, 400, { error: "请填写非例行标题" });
+      invalidateMaintenanceReportCategory(flightId, "nonroutine", manager, "新增非例行");
+      db.prepare("delete from maintenance_report_drafts where flight_id=? and report_type='nonroutine'").run(flightId);
+      const flight = insertMaintenanceSubtask(flightId, payload, manager);
+      if (!flight) return send(res, 404, { error: "未找到航班任务" });
+      bumpMaintenanceVersion(flightId, "maintenance.nonroutine.created");
+      return send(res, 201, { flight });
+    }
+    const maintenanceSubtask = url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)$/);
+    if (maintenanceSubtask && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
+      const subtaskId = routeParam(maintenanceSubtask[1]);
+      const existing = db.prepare("select * from maintenance_subtasks where id=?").get(subtaskId);
+      if (!existing) return send(res, 404, { error: "未找到非例行" });
+      assertMaintenanceTreeDirectEditAllowed(existing.flight_id);
+      invalidateMaintenanceReportCategory(existing.flight_id, "nonroutine", manager, "修改非例行");
+      const flight = updateMaintenanceSubtask(subtaskId, maintenanceSubtaskPayload(await bodyJson(req)), manager);
+      if (!flight) return send(res, 404, { error: "未找到非例行" });
+      bumpMaintenanceVersion(flight.id, "maintenance.nonroutine.updated");
+      return send(res, 200, { flight });
+    }
+    if (maintenanceSubtask && method === "DELETE") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.content.manage")) return send(res, 403, { error: "当前账号没有维护工作内容权限" });
+      const subtaskId = routeParam(maintenanceSubtask[1]);
+      const row = db.prepare("select flight_id from maintenance_subtasks where id=?").get(subtaskId);
+      if (!row) return send(res, 404, { error: "未找到非例行" });
+      const payload = await bodyJson(req);
+      const flight = deleteMaintenanceSubtask(subtaskId, manager, payload?.reason);
+      bumpMaintenanceVersion(row.flight_id, "maintenance.nonroutine.deleted");
+      return send(res, 200, { flight });
+    }
+    const maintenanceDispatch = url.pathname.match(/^\/api\/maintenance\/(flights|subtasks)\/([^/]+)\/dispatch$/);
+    if (maintenanceDispatch && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.assignment.manage")) return send(res, 403, { error: "当前账号没有派工权限" });
+      const p = await bodyJson(req);
+      const ownerType = maintenanceDispatch[1] === "flights" ? "flight" : "subtask";
+      const ownerId = routeParam(maintenanceDispatch[2]);
+      const owner = maintenanceOwner(ownerType, ownerId);
+      if (!owner) return send(res, 404, { error: "未找到任务" });
+      assertMaintenanceTreeDirectEditAllowed(ownerType === "flight" ? owner.id : owner.flight_id);
+      const flight = setMaintenanceAssignments(ownerType, ownerId, Array.isArray(p.assignments) ? p.assignments : [], manager, String(p.expectedUpdatedAt || ""));
+      if (!flight) return send(res, 404, { error: "未找到任务" });
+      const assigned = ownerType === "flight" ? flight.assignments : (flight.subtasks || []).find(item => item.id === ownerId)?.assignments || [];
+      if (!assigned.length) return send(res, 400, { error: "请选择派工人员" });
+      bumpMaintenanceVersion(flight.id, "maintenance.dispatched");
+      return send(res, 200, { flight });
+    }
+    const maintenanceAssignmentAction = url.pathname.match(/^\/api\/maintenance\/assignments\/([^/]+)\/complete$/);
+    if (maintenanceAssignmentAction && method === "POST") {
+      const executor = requireLogin(req, res);
+      if (!executor) return;
+      if (!maintenanceCanExecute(executor, true)) return send(res, 403, { error: "当前账号没有提交维修报工的权限" });
+      const assignmentId = routeParam(maintenanceAssignmentAction[1]);
+      const assignment = db.prepare("select * from maintenance_assignments where id=?").get(assignmentId);
+      if (!assignment) return send(res, 404, { error: "未找到派工任务" });
+      if (assignment.person_id !== executor.personId && !personnelAccess.allows(executor, "maintenance", assignment.person_id)) return send(res, 403, { error: "只能反馈派给自己的任务" });
+      if (assignment.owner_type !== "flight" || assignment.role !== "放行") return send(res, 409, { error: assignment.owner_type === "subtask" ? "非例行请使用汇总报工" : "例行工作请使用例行报工" });
+      const flight = submitMaintenanceRelease(assignment.flight_id, await bodyJson(req), executor);
+      bumpMaintenanceVersion(assignment.flight_id, "maintenance.release.submitted");
+      return send(res, 200, { flight });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/nonroutine-options") {
+      const actor = requireLogin(req, res);
+      if (!actor) return;
+      if (!hasRbac(actor,"maintenance.content.manage")) return send(res,403,{error:"当前账号没有维护工作内容权限"});
+      return send(res,200,{towDefaultHours:maintenanceTowDefaultHours()});
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/rules") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!hasAnyRbac(login, ["maintenance.rules.view", "maintenance.rules.manage"])) return send(res, 403, { error: "当前账号没有查看工时规则的权限" });
+      return send(res, 200, { rules: maintenanceRulesResponse(), aircraftHours: maintenanceAircraftConfig() });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/rules/aircraft-preview") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
+      const p = await bodyJson(req);
+      const config = normalizeAircraftHours(p.aircraftHours, maintenanceOpportunityOrder);
+      const affected = maintenanceAircraftImpact(config);
+      const visible = new Set(maintenanceVisibleFlights(manager).rows.map(flight => flight.id));
+      return send(res, 200, { affected: affected.filter(flight => visible.has(flight.id)), affectedCount: affected.length, confirmation: crypto.createHash("sha256").update(JSON.stringify(affected)).digest("hex") });
+    }
+    if (method === "PUT" && url.pathname === "/api/maintenance/rules") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.rules.manage")) return send(res, 403, { error: "当前账号没有工时规则维护权限" });
+      const p = await bodyJson(req);
+      const rows = Array.isArray(p.rules) ? p.rules : [];
+      if (rows.some(row => String(row.rule_type || row.ruleType || "").trim() === "workType")) {
+        throw maintenanceDispatchError("旧标准工时已停止维护，请使用机型组配置。未保存任何修改。");
+      }
+      const upsert = db.prepare("insert into maintenance_hour_rules(id,rule_type,name,value,created_at,updated_at) values(?,?,?,?,?,?) on conflict(rule_type,name) do update set value=excluded.value,updated_at=excluded.updated_at");
+      const routineRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "routineRatio");
+      const combinationRows = rows.filter(row => String(row.rule_type || row.ruleType || "").trim() === "nonroutineCombinationRatio");
+      validateMaintenanceRoutineRules(routineRows);
+      if (combinationRows.length) validateMaintenanceNonroutineCombinationRules(combinationRows);
+      maintenanceTransaction(() => {
+        if (p.aircraftHours) {
+          const previous = maintenanceAircraftConfig();
+          if (Number(p.aircraftHours.version) !== previous.version) throw maintenanceReviewError("工时机型组已被修改，请刷新后重试", 409);
+          const next = normalizeAircraftHours(p.aircraftHours, maintenanceOpportunityOrder);
+          const reason = String(p.reason || "").trim();
+          if (!reason || reason.length > 1000) throw maintenanceDispatchError("修改机型组须填写原因（最多1000字）");
+          const affected = maintenanceAircraftImpact(next);
+          const confirmation = crypto.createHash("sha256").update(JSON.stringify(affected)).digest("hex");
+          if (affected.length && p.confirmation !== confirmation) throw maintenanceReviewError("受影响未报工航班已变化，请重新预览确认", 409);
+          setSetting("maintenance_aircraft_hours_v1", { ...next, version: previous.version + 1 });
+          audit(manager, "maintenance_aircraft_hours_update", "maintenance", "rules", JSON.stringify({ reason, before: previous, after: next, affected }));
+        }
+        for (const row of rows) {
+          const ruleType = String(row.rule_type || row.ruleType || "").trim();
+          let name = String(row.name || "").trim();
+          if (!["roleRatio", "routineRatio", "nonroutineCategoryHours", "nonroutineCombinationRatio"].includes(ruleType)) continue;
+          if (ruleType === "routineRatio") name = maintenanceRoutineRuleName(String(row.opportunity || "").trim(), String(row.role || "").trim());
+          if (ruleType === "nonroutineCombinationRatio") name = `${String(row.combination || "").trim()}::${String(row.role || "").trim()}`;
+          if (!name || (ruleType === "roleRatio" && name === "放行")) continue;
+          const value = Number(row.value);
+          if (!Number.isFinite(value) || value < 0) throw maintenanceDispatchError("工时和分配比例不能为负数");
+          if (ruleType === "nonroutineCategoryHours" && (name !== "拖机" || value <= 0 || Math.abs(value * 10 - Math.round(value * 10)) > 1e-8)) {
+            throw maintenanceDispatchError("拖机默认总工时必须大于0且以0.1小时为单位");
+          }
+          upsert.run(row.id || randomId("mtnr"), ruleType, name, value, now(), now());
+        }
+      });
+      audit(manager, "maintenance_update_rules", "maintenance", "rules", `${rows.length} 条`);
+      bumpMaintenanceVersion("", "maintenance.rules.updated");
+      return send(res, 200, { rules: maintenanceRulesResponse(), aircraftHours: maintenanceAircraftConfig() });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/stats") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!hasRbac(login, "maintenance.stats.manage.view")) return send(res, 403, { error: "当前账号没有管理范围维修统计权限" });
+      return send(res, 200, maintenanceStats(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/stats/personal") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!hasRbac(login, "maintenance.stats.self.view")) return send(res, 403, { error: "当前账号没有本人维修统计权限" });
+      return send(res, 200, maintenancePersonalStats(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/stats/personal/details") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!hasAnyRbac(login, ["maintenance.stats.self.view", "maintenance.stats.manage.view"])) return send(res, 403, { error: "当前账号没有维修统计权限" });
+      return send(res, 200, maintenancePersonalDetails(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    const nonroutineAuditMatch = url.pathname.match(/^\/api\/maintenance\/subtasks\/([^/]+)\/hour-audit$/);
+    if (method === "GET" && nonroutineAuditMatch) {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceHasAccess(login) && !maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有维修管控权限" });
+      const detail = maintenanceNonroutineAuditDetail(routeParam(nonroutineAuditMatch[1]), login);
+      if (detail === null) return send(res, 404, { error: "未找到非例行工作" });
+      if (detail === false) return send(res, 403, { error: "只能查看自己参与的非例行工作" });
+      return send(res, 200, { detail });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/report") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
+      return send(res, 200, maintenanceReport(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/report/options") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
+      return send(res, 200, maintenanceReportOptions(Object.fromEntries(url.searchParams.entries()), login));
+    }
+    const opportunityAuditMatch = url.pathname.match(/^\/api\/maintenance\/flights\/([^/]+)\/report-detail$/);
+    if (method === "GET" && opportunityAuditMatch) {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有查看综合报表的权限" });
+      const detail = maintenanceOpportunityAuditDetail(routeParam(opportunityAuditMatch[1]), maintenanceReportAllowedPersonIds(login));
+      return detail ? send(res, 200, { detail }) : send(res, 404, { error: "未找到维修机会" });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/report/export.xlsx") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!maintenanceCanManage(login)) return send(res, 403, { error: "当前账号没有导出综合报表的权限" });
+      const params = Object.fromEntries(url.searchParams.entries());
+      const sections = String(params.sections || "").split(",").map(item => item.trim()).filter(Boolean);
+      const data = maintenanceReportDataset(params, login);
+      if (sections.includes("opportunities")) data.opportunitiesAudit = maintenanceReportDataset({ ...params, view: "opportunities" }, login).opportunities;
+      if (sections.includes("nonroutine")) {
+        const filters = maintenanceReportFilters({ ...params, view: "nonroutine" });
+        if (filters.dateFrom > filters.dateTo) [filters.dateFrom, filters.dateTo] = [filters.dateTo, filters.dateFrom];
+        data.nonroutineAudit = maintenanceNonroutineAuditQuery(filters, { paged: false, user: login }).rows;
+      }
+      const workbook = maintenanceReportXlsx(data, sections);
+      const filename = `维修管控综合报表_${data.filters.dateFrom}_${data.filters.dateTo}.xlsx`;
+      return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}` });
+    }
+    const maintenanceHour = url.pathname.match(/^\/api\/maintenance\/hours\/([^/]+)$/);
+    if (maintenanceHour && method === "PUT") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.hours.adjust")) return send(res, 403, { error: "当前账号没有工时调整权限" });
+      const p = await bodyJson(req);
+      const hourId = routeParam(maintenanceHour[1]);
+      const target=db.prepare("select person_id from maintenance_hour_results where id=?").get(hourId);
+      personnelAccess.requirePerson(manager,"maintenance",target?.person_id);
+      db.prepare("update maintenance_hour_results set adjusted_hours=?,updated_at=? where id=?").run(Number(p.adjustedHours ?? p.adjusted_hours ?? 0), now(), hourId);
+      audit(manager, "maintenance_adjust_hours", "maintenanceHour", hourId, String(p.adjustedHours ?? ""));
+      const adjusted = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
+      bumpMaintenanceVersion(adjusted?.flight_id || "", "maintenance.hours.adjusted");
+      return send(res, 200, { hour: publicMaintenanceHour(adjusted) });
+    }
+    const maintenanceConfirmHour = url.pathname.match(/^\/api\/maintenance\/hours\/([^/]+)\/confirm$/);
+    if (maintenanceConfirmHour && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有工时确认权限" });
+      const hourId = routeParam(maintenanceConfirmHour[1]);
+      const hour = db.prepare("select * from maintenance_hour_results where id=?").get(hourId);
+      maintenanceTransaction(()=>{
+      personnelAccess.requirePerson(manager,"maintenance",hour?.person_id);
+      if(hour.status!=='待复核')throw maintenanceReviewError('工时尚未进入待复核或已经确认，不能直接确认',409);
+      db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), hourId);
+      db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), hourId);
+      if (hour) syncMaintenanceOwnerConfirmation(hour.owner_type, hour.owner_id, manager.id);
+      });
+      audit(manager, "maintenance_confirm_hours", "maintenanceHour", hourId);
+      bumpMaintenanceVersion(hour?.flight_id || "", "maintenance.hours.confirmed");
+      return send(res, 200, { hour: publicMaintenanceHour(db.prepare("select * from maintenance_hour_results where id=?").get(hourId)) });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/hours/confirm-batch") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有批量确认权限" });
+      const p = await bodyJson(req);
+      const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
+      const hours = ids.length ? db.prepare(`select * from maintenance_hour_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
+      if(hours.length!==ids.length || hours.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"工时不存在或超出范围"});
+      if(hours.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选工时包含未完成报工确认或已确认记录，请刷新后重试'});
+      maintenanceTransaction(()=>{
+      ids.forEach(id => db.prepare("update maintenance_hour_results set status='已确认',confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), id));
+      ids.forEach(id => db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=(select assignment_id from maintenance_hour_results where id=?)").run(now(), id));
+      const owners = new Map(hours.map(row => [`${row.owner_type}:${row.owner_id}`, row]));
+      owners.forEach(row => syncMaintenanceOwnerConfirmation(row.owner_type, row.owner_id, manager.id));
+      });
+      audit(manager, "maintenance_batch_confirm_hours", "maintenanceHour", "batch", `${ids.length} 条`);
+      bumpMaintenanceVersion("", "maintenance.hours.confirmed");
+      return send(res, 200, { confirmed: ids.length });
+    }
+    const maintenanceConfirmSortie = url.pathname.match(/^\/api\/maintenance\/sorties\/([^/]+)\/confirm$/);
+    if (maintenanceConfirmSortie && method === "POST") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有架次确认权限" });
+      const sortieId = routeParam(maintenanceConfirmSortie[1]);
+      const sortie = db.prepare("select * from maintenance_sortie_results where id=?").get(sortieId);
+      if (!sortie) return send(res, 404, { error: "未找到放行架次记录" });
+      maintenanceTransaction(()=>{
+      personnelAccess.requirePerson(manager,"maintenance",sortie.person_id);
+      if(sortie.status!=='待复核')throw maintenanceReviewError('架次尚未进入待复核或已经确认，不能直接确认',409);
+      db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortieId);
+      db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
+      syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
+      });
+      audit(manager, "maintenance_confirm_sortie", "maintenanceSortie", sortieId);
+      bumpMaintenanceVersion(sortie.flight_id || "", "maintenance.sorties.confirmed");
+      return send(res, 200, { sortie: publicMaintenanceSortie(db.prepare("select * from maintenance_sortie_results where id=?").get(sortieId)) });
+    }
+    if (method === "POST" && url.pathname === "/api/maintenance/sorties/confirm-batch") {
+      const manager = requireLogin(req, res);
+      if (!manager) return;
+      if (!hasRbac(manager, "maintenance.hours.confirm")) return send(res, 403, { error: "当前账号没有批量确认架次权限" });
+      const p = await bodyJson(req);
+      const ids = Array.from(new Set((Array.isArray(p.ids) ? p.ids : []).map(item => String(item))));
+      const sorties = ids.length ? db.prepare(`select * from maintenance_sortie_results where id in (${ids.map(() => "?").join(",")})`).all(...ids) : [];
+      if(sorties.length!==ids.length || sorties.some(row=>!personnelAccess.allows(manager,"maintenance",row.person_id)))return send(res,404,{error:"架次不存在或超出范围"});
+      if(sorties.some(row=>row.status!=='待复核'))return send(res,409,{error:'所选架次包含未完成报工确认或已确认记录，请刷新后重试'});
+      maintenanceTransaction(()=>{
+      for (const sortie of sorties) {
+        db.prepare("update maintenance_sortie_results set status='已确认',sorties=1,confirmed_by=?,confirmed_at=?,updated_at=? where id=?").run(manager.id, now(), now(), sortie.id);
+        db.prepare("update maintenance_assignments set status='已确认',confirmed_at=? where id=?").run(now(), sortie.assignment_id);
+        syncMaintenanceOwnerConfirmation(sortie.owner_type, sortie.owner_id, manager.id);
+      }
+      });
+      audit(manager, "maintenance_batch_confirm_sorties", "maintenanceSortie", "batch", `${sorties.length} 条`);
+      bumpMaintenanceVersion("", "maintenance.sorties.confirmed");
+      return send(res, 200, { confirmed: sorties.length });
+    }
+    if (method === "GET" && url.pathname === "/api/maintenance/export.xlsx") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!hasRbac(login, "maintenance.export")) return send(res, 403, { error: "当前账号没有导出权限" });
+      const workbook = maintenanceXlsx(maintenanceStats(Object.fromEntries(url.searchParams.entries()), login));
+      return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("维修管控工时统计.xlsx")}` });
+    }
+    if (method === "GET" && url.pathname === "/api/stats/reading") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
+      return send(res, 200, readingStats(Object.fromEntries(url.searchParams.entries())));
+    }
+    if (method === "GET" && url.pathname === "/api/stats/reading/export.csv") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
+      const csv = "\ufeff" + statsCsv(readingStats(Object.fromEntries(url.searchParams.entries())));
+      return sendText(res, 200, csv, "text/csv; charset=utf-8", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("信息阅读统计.csv")}` });
+    }
+    if (method === "GET" && url.pathname === "/api/stats/reading/export.xlsx") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      if (!canUseStats(login)) return send(res, 403, { error: "当前账号没有统计权限" });
+      const workbook = statsXlsx(readingStats(Object.fromEntries(url.searchParams.entries())));
+      return sendBinary(res, 200, workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("信息阅读统计.xlsx")}` });
+    }
+    if (method === "GET" && url.pathname === "/api/settings") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      return send(res, 200, { settings: publicSettings() });
+    }
+    if (method === "PUT" && url.pathname === "/api/settings") {
+      const admin = requireRbacPermission(req, res, "settings.manage");
+      if (!admin) return;
+      const p = await bodyJson(req);
+      const categories = normalizeCategoryList(p.categories);
+      const syncedCategories = syncRecordCategories(categories);
+      setSetting("categories", syncedCategories);
+      setSetting("overdueDays", Math.max(1, Number(p.overdueDays || 3)));
+      setSetting("reminderDays", Math.max(1, Number(p.reminderDays || 1)));
+      audit(admin, "update_settings", "settings", "system", `${syncedCategories.length} 个分类`);
+      return send(res, 200, { settings: publicSettings() });
+    }
+    if (url.pathname === '/api/info/sync' && method === 'POST') {
+      const login=requireRbacPermission(req,res,'info.read'); if(!login)return;const user=withInfoAccess(login);
+      const input=await bodyJson(req);
+      if(!Array.isArray(input.knownIds) || input.knownIds.length>50000)return send(res,400,{error:'同步记录数量无效'});
+      const delta=infoSync.changes(user,input.cursor,input.knownIds);
+      const details=input.details===true && hasRbac(user,'info.stats.read');
+      const content=publicRecords(details?[...delta.content,...delta.receipt]:delta.content,user,{summary:!details});
+      const receiptData=publicRecords(delta.receipt,user,{summary:true});
+      const updates=receiptData.records.map(record=>{
+        return {id:record.id,feedbackSummary:record.feedbackSummary,
+          ownReceipts:record.receipts.filter(r=>r.userId===user.id)};
+      });
+      return send(res,200,{reset:delta.reset,cursor:delta.cursor,records:content.records,receipts:content.receipts,updates:details?[]:updates,removed:delta.removed});
+    }
+    if (url.pathname === '/api/info/events' && method === 'GET') {
+      const login=requireRbacPermission(req,res,'info.read'); if(!login)return;const user=withInfoAccess(login);
+      const active=[...infoEventClients].filter(c=>c.user.id===user.id);
+      if(active.length>=5)return send(res,429,{error:'实时连接数量已达上限'});
+      res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no','Connection':'keep-alive'});
+      const known=new Set(db.prepare('select * from records').all().filter(r=>canViewRecord(user,r)).map(r=>r.id));
+      const client={req,res,user,known}; infoEventClients.add(client);
+      res.write('retry: 10000\nevent: info\ndata: {"kind":"connected"}\n\n');
+      res.on('close',()=>infoEventClients.delete(client));
+      return;
+    }
+    if (method === "GET" && url.pathname === "/api/records") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const version=infoSync.latest();
+      const viewer=withInfoAccess(login);
+      const rows = db.prepare("select * from records").all().filter(row => canViewRecord(viewer, row)).sort(compareRecordsDesc);
+      const result = publicRecords(rows, viewer,{summary:url.searchParams.get('summary')==='1'});
+      return send(res, 200, { ...result, cursor:infoSync.encode(viewer,version), settings: publicSettings() });
+    }
+    if (method === "POST" && url.pathname === "/api/records") {
+      const editor = requireRbacPermission(req, res, "info.create");
+      if (!editor) return;
+      const p = await bodyJson(req);
+      const rid = randomId("rec");
+      maintenanceTransaction(() => {
+      const selectedRecipients = recipientsFromPayload(p);
+      db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(rid, p.date, editor.name, p.category, p.title, "", p.original, "后台录入", editor.id, editor.id, now(), now(), p.deadline || deadlineFor(p.date), p.priority || "普通", p.publishStatus || "已发布", editor.id, 0);
+      saveRecipients(rid, selectedRecipients);
+      audit(editor, "create_record", "record", rid, p.title);
+      });
+      return send(res, 201, { record: publicRecord(db.prepare("select * from records where id=?").get(rid), editor) });
+    }
+    const rec = url.pathname.match(/^\/api\/records\/([^/]+)$/);
+    if(rec && method==='GET'){
+      const user=requireRbacPermission(req,res,'info.read'); if(!user)return;
+      const row=db.prepare('select * from records where id=?').get(routeParam(rec[1]));
+      if(!canViewRecord(user,row))return send(res,404,{error:'未找到信息'});
+      return send(res,200,{record:publicRecord(row,user)});
+    }
+    if (rec && method === "PUT") {
+      const editor = requireLogin(req, res);
+      if (!editor) return;
+      const p = await bodyJson(req);
+      const recordId = routeParam(rec[1]);
+      const existing = db.prepare("select * from records where id=?").get(recordId);
+      if (!existing) return send(res, 404, { error: "未找到信息" });
+      if (!canEditRecord(editor, existing)) return send(res, 403, { error: "当前账号无权修改该信息" });
+      if(String(p.expectedUpdatedAt||'')!==existing.updated_at)return send(res,409,{error:'信息已被更新，请重新核对后保存',code:'INFO_EDIT_CONFLICT'});
+      maintenanceTransaction(() => {
+      const stamp=new Date(Math.max(Date.now(),Date.parse(existing.updated_at)+1||0)).toISOString();
+      const changed=db.prepare("update records set date=?,category=?,title=?,original=?,updated_by=?,updated_at=?,deadline=?,priority=?,publish_status=? where id=? and updated_at=?")
+        .run(p.date, p.category, p.title, p.original, editor.id, stamp, p.deadline || existing.deadline || deadlineFor(p.date), p.priority || existing.priority || "普通", p.publishStatus || existing.publish_status || "已发布", recordId,existing.updated_at);
+      if(!changed.changes)throw Object.assign(new Error('信息已被更新，请重新核对后保存'),{status:409,code:'INFO_EDIT_CONFLICT'});
+      if (Array.isArray(p.recipients) || p.allInScope === true) saveRecipients(recordId, recipientsFromPayload(p));
+      audit(editor, "update_record", "record", recordId, p.title);
+      });
+      return send(res, 200, { record: publicRecord(db.prepare("select * from records where id=?").get(recordId), editor) });
+    }
+    if (rec && method === "DELETE") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const recordId = routeParam(rec[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if (!canDeleteRecord(login, row)) return send(res, 403, { error: "当前账号无权删除该信息" });
+      await removeOwnerAttachmentFiles("record", recordId);
+      maintenanceTransaction(()=>{
+      db.prepare("delete from records where id=?").run(recordId);
+      db.prepare("delete from record_recipients where record_id=?").run(recordId);
+      db.prepare("delete from read_receipts where record_id=?").run(recordId);
+      db.prepare("delete from attachments where owner_type='record' and owner_id=?").run(recordId);
+      db.prepare("delete from favorites where record_id=?").run(recordId);
+      audit(login, "delete_record", "record", recordId, row.title);
+      });
+      return send(res, 200, { ok: true });
+    }
+    const voidRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/void$/);
+    if (voidRecord && method === "POST") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const recordId = routeParam(voidRecord[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if (!canVoidRecord(login, row)) return send(res, 403, { error: "只能作废自己发布的信息" });
+      db.prepare("update records set publish_status='作废',updated_by=?,updated_at=? where id=?").run(login.id, now(), recordId);
+      audit(login, "void_record", "record", recordId, row.title);
+      return send(res, 200, { record: publicRecord(db.prepare("select * from records where id=?").get(recordId), login) });
+    }
+    const restoreRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/restore$/);
+    if (restoreRecord && method === "POST") {
+      const admin = requireRbacPermission(req, res, "info.restore");
+      if (!admin) return;
+      const recordId = routeParam(restoreRecord[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if ((row.publish_status || "已发布") !== "作废") return send(res, 400, { error: "只有作废信息可以恢复" });
+      if(!isRecordOwner(admin,row) && !dataScopeAllowsUser(admin,row.publisher_id || row.created_by,"info"))return send(res,404,{error:"未找到信息"});
+      const restoredAt = now();
+      maintenanceTransaction(()=>{
+      db.prepare("update records set date=?,deadline=?,publish_status='已发布',updated_by=?,updated_at=? where id=?")
+        .run(restoredAt, deadlineFor(restoredAt), admin.id, restoredAt, recordId);
+      db.prepare("delete from read_receipts where record_id=?").run(recordId);
+      audit(admin, "restore_record", "record", recordId, row.title);
+      });
+      return send(res, 200, { record: publicRecord(db.prepare("select * from records where id=?").get(recordId), admin) });
+    }
+    const read = url.pathname.match(/^\/api\/records\/([^/]+)\/read$/);
+    if (read && method === "POST") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const recordId = routeParam(read[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if (!canViewRecord(login, row)) return send(res, 403, { error: "无权阅读该信息" });
+      if ((row.publish_status || "已发布") === "作废" || !isRecordRecipient(login, row)) {
+        return send(res, 200, { receipt: null, skipped: true, reason: "非接收对象无需记录阅读状态" });
+      }
+      const existing = db.prepare("select * from read_receipts where record_id=? and user_id=?").get(recordId, login.id);
+      if (!existing?.read_at) {
+        const isOverdue = parseRecordDate(row.deadline)?.getTime() < Date.now() ? 1 : 0;
+        db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values(?,?,?,?,?,?) on conflict(record_id,user_id) do update set read_at=excluded.read_at,is_overdue=excluded.is_overdue")
+          .run(recordId, login.id, now(), isOverdue, existing?.remind_count || 0, existing?.last_reminded_at || "");
+        audit(login, "read_record", "record", recordId);
+      }
+      return send(res, 200, { receipt: receipts(recordId).find(item => item.userId === login.id) });
+    }
+    const receiptEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts\/([^/]+)$/);
+    if (receiptEdit && method === "PUT") {
+      const admin = requireRbacPermission(req, res, "info.receipt.manage");
+      if (!admin) return;
+      const recordId = routeParam(receiptEdit[1]);
+      const userId = routeParam(receiptEdit[2]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if ((row.publish_status || "已发布") === "作废") return send(res, 400, { error: "作废信息不能修改阅读状态" });
+      if (!db.prepare("select 1 from record_recipients where record_id=? and user_id=?").get(recordId, userId)) return send(res, 400, { error: "该人员不是此信息接收者" });
+      const p = await bodyJson(req);
+      updateReceiptStatus(recordId, userId, p.status);
+      audit(admin, "update_receipt_status", "record", recordId, `${userId}:${p.status}`);
+      return send(res, 200, { receipts: publicReceiptsFor(admin,[recordId]) });
+    }
+    const receiptBatchEdit = url.pathname.match(/^\/api\/records\/([^/]+)\/receipts$/);
+    if (receiptBatchEdit && method === "PUT") {
+      const admin = requireRbacPermission(req, res, "info.receipt.manage");
+      if (!admin) return;
+      const recordId = routeParam(receiptBatchEdit[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if ((row.publish_status || "已发布") === "作废") return send(res, 400, { error: "作废信息不能修改阅读状态" });
+      const p = await bodyJson(req);
+      const userIds = Array.from(new Set((Array.isArray(p.userIds) ? p.userIds : []).map(item => String(item))));
+      if (!userIds.length) return send(res, 400, { error: "请选择接收者" });
+      const recipientSet = new Set(db.prepare("select user_id from record_recipients where record_id=?").all(recordId).map(item => item.user_id));
+      if (userIds.some(userId => !recipientSet.has(userId))) return send(res, 400, { error: "包含非此信息接收者" });
+      if(userIds.some(id=>!dataScopeAllowsUser(admin,id,"info")))return send(res,403,{error:"接收人员不在信息管理范围内"});
+      maintenanceTransaction(()=>userIds.forEach(userId => updateReceiptStatus(recordId, userId, p.status)));
+      audit(admin, "batch_update_receipt_status", "record", recordId, `${userIds.length}:${p.status}`);
+      return send(res, 200, { receipts: publicReceiptsFor(admin,[recordId]) });
+    }
+    const remind = url.pathname.match(/^\/api\/records\/([^/]+)\/remind$/);
+    if (remind && method === "POST") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const recordId = routeParam(remind[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if (!hasRbac(login, "info.remind.any") && !(hasRbac(login, "info.remind.own") && isRecordOwner(login, row))) return send(res, 403, { error: "当前账号无权催办该信息" });
+      const p = await bodyJson(req);
+      const userIds = Array.isArray(p.userIds) ? p.userIds : [];
+      const eligible=new Set(recipients(recordId).filter(r=>dataScopeAllowsUser(login,r.accountId,"info")).map(r=>r.accountId));
+      if(userIds.some(id=>!eligible.has(id)))return send(res,403,{error:"包含不可催办的接收人员"});
+      const upsert = db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values(?,?,?,?,?,?) on conflict(record_id,user_id) do update set remind_count=coalesce(remind_count,0)+1,last_reminded_at=excluded.last_reminded_at");
+      userIds.forEach(userId => upsert.run(recordId, String(userId), "", 0, 1, now()));
+      audit(login, "remind_record", "record", recordId, `${userIds.length} 人`);
+      return send(res, 200, { reminded: userIds.length, receipts: publicReceiptsFor(login,[recordId]) });
+    }
+    const fav = url.pathname.match(/^\/api\/records\/([^/]+)\/favorite$/);
+    if (fav && (method === "POST" || method === "DELETE")) {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const recordId = routeParam(fav[1]);
+      const row = db.prepare("select * from records where id=?").get(recordId);
+      if (!row) return send(res, 404, { error: "未找到信息" });
+      if (!canViewRecord(login, row)) return send(res, 403, { error: "无权收藏该信息" });
+      db.prepare("delete from favorites where user_id=? and record_id=?").run(login.id, recordId);
+      if (method === "POST") db.prepare("insert into favorites(user_id,record_id,created_at) values(?,?,?)").run(login.id, recordId, now());
+      audit(login, method === "POST" ? "favorite" : "unfavorite", "record", recordId);
+      return send(res, 200, { ok: true, favorite: method === "POST" });
+    }
+    if (method === "POST" && url.pathname === "/api/records/import") {
+      const admin = requireRbacPermission(req, res, "info.create");
+      if (!admin) return;
+      const p = await bodyJson(req);
+      const rows = Array.isArray(p.rows) ? p.rows : [];
+      const people = allLoginPeople();
+      const insertRecord = db.prepare("insert into records(id,date,publisher,category,title,summary,original,source_set,created_by,updated_by,created_at,updated_at,deadline,priority,publish_status,publisher_id,imported_read) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      const insertRecipient = db.prepare("insert into record_recipients(record_id,user_id,person_id,name,department,team) values(?,?,?,?,?,?)");
+      const insertReceipt = db.prepare("insert into read_receipts(record_id,user_id,read_at,is_overdue,remind_count,last_reminded_at) values(?,?,?,?,?,?)");
+      let created = 0;
+      let skipped = 0;
+      const importedAt = now();
+      for (const row of rows) {
+        const date = String(row.date || "").trim();
+        const category = String(row.category || "").trim();
+        const title = String(row.title || "").trim();
+        const original = String(row.original || "").trim();
+        if (!date || !category || !title || !original) {
+          skipped++;
+          continue;
+        }
+        const rid = randomId("rec");
+        const publisher = String(row.publisher || "").trim() || admin.name;
+        insertRecord.run(rid, date, publisher, category, title, "", original, "batchImport", admin.id, admin.id, importedAt, importedAt, deadlineFor(date), row.priority || "普通", "已发布", admin.id, 1);
+        people.forEach(person => {
+          insertRecipient.run(rid, person.accountId, person.personId, person.name, person.department || "未设置", person.team || "未设置");
+          insertReceipt.run(rid, person.id, importedAt, 0, 0, "");
+        });
+        created++;
+      }
+      audit(admin, "import_records", "record", "bulk", `${created} 条，跳过 ${skipped} 行`);
+      return send(res, 201, { created, skipped, receiptCount: created * people.length });
+    }
+
+    if (method === "GET" && url.pathname === "/api/fixed-projects") {
+      if (!hasRbac(currentUser(req), "fixed.read")) return send(res, 403, { error: "当前账号没有权限" });
+      const rows = db.prepare("select * from fixed_projects order by ata asc,title asc").all();
+      return send(res, 200, { projects: publicProjects(rows) });
+    }
+    if (method === "POST" && url.pathname === "/api/fixed-projects") {
+      const admin = requireRbacPermission(req, res, "fixed.manage");
+      if (!admin) return;
+      const p = await bodyJson(req);
+      const pid = randomId("fix");
+      db.prepare("insert into fixed_projects(id,ata,title,content_html,references_text,created_by,updated_by,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)")
+        .run(pid, p.ata, p.title, sanitizeRichHtml(p.contentHtml || ""), p.references || "", admin.id, admin.id, now(), now());
+      audit(admin, "create_fixed_project", "fixedProject", pid, p.title);
+      return send(res, 201, { project: publicProject(db.prepare("select * from fixed_projects where id=?").get(pid)) });
+    }
+    const fix = url.pathname.match(/^\/api\/fixed-projects\/([^/]+)$/);
+    if (fix && method === "PUT") {
+      const admin = requireRbacPermission(req, res, "fixed.manage");
+      if (!admin) return;
+      const p = await bodyJson(req);
+      const projectId = routeParam(fix[1]);
+      db.prepare("update fixed_projects set ata=?,title=?,content_html=?,references_text=?,updated_by=?,updated_at=? where id=?")
+        .run(p.ata, p.title, sanitizeRichHtml(p.contentHtml || ""), p.references || "", admin.id, now(), projectId);
+      audit(admin, "update_fixed_project", "fixedProject", projectId, p.title);
+      return send(res, 200, { project: publicProject(db.prepare("select * from fixed_projects where id=?").get(projectId)) });
+    }
+    if (fix && method === "DELETE") {
+      const admin = requireRbacPermission(req, res, "fixed.manage");
+      if (!admin) return;
+      const projectId = routeParam(fix[1]);
+      await removeOwnerAttachmentFiles("fixedProject", projectId);
+      db.prepare("delete from fixed_projects where id=?").run(projectId);
+      db.prepare("delete from attachments where owner_type='fixedProject' and owner_id=?").run(projectId);
+      audit(admin, "delete_fixed_project", "fixedProject", projectId);
+      return send(res, 200, { ok: true });
+    }
+
+    const cosPresign = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments\/presign$/);
+    if (cosPresign && method === "POST") {
+      await createCosUpload(req, res, cosPresign[1] === "records" ? "record" : "fixedProject", routeParam(cosPresign[2]));
+      return;
+    }
+    const cosComplete = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments\/complete$/);
+    if (cosComplete && method === "POST") {
+      await completeCosUpload(req, res, cosComplete[1] === "records" ? "record" : "fixedProject", routeParam(cosComplete[2]));
+      return;
+    }
+    const upload = url.pathname.match(/^\/api\/(records|fixed-projects)\/([^/]+)\/attachments$/);
+    if (upload && method === "POST") {
+      await addUploadedAttachments(req, res, upload[1] === "records" ? "record" : "fixedProject", routeParam(upload[2]));
+      return;
+    }
+    const attAccess = url.pathname.match(/^\/api\/attachments\/([^/]+)\/access$/);
+    if (attAccess && method === "GET") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const attachmentId = routeParam(attAccess[1]);
+      const row = attachmentRow(attachmentId);
+      if (!row || !row.path) return send(res, 404, { error: "未找到附件" });
+      if (!canViewAttachment(login, row)) return send(res, 403, { error: "无权访问该附件" });
+      const download = url.searchParams.get("download") === "1";
+      if (row.storage === "cos") return send(res, 200, signedCosAttachment(row, 300, download));
+      return send(res, 200, {
+        url: `/api/attachments/${encodeURIComponent(row.id)}${download ? '?download=1' : ''}`,
+        expiresAt: "",
+        expiresIn: 0,
+        fileName: row.name || "附件",
+        mimeType: contentTypeForAttachment(row),
+        size: Number(row.size || 0)
+      });
+    }
+    const att = url.pathname.match(/^\/api\/attachments\/([^/]+)$/);
+    if (att && method === "GET") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const attachmentId = routeParam(att[1]);
+      const row = attachmentRow(attachmentId);
+      if (!row || !row.path) return sendText(res, 404, "未找到附件");
+      if (!canViewAttachment(login, row)) return sendText(res, 403, "无权访问该附件");
+      if (row.storage === "cos") {
+        res.writeHead(302, { ...securityHeaders(), "Location": signedCosAttachment(row, 300, url.searchParams.get("download") === "1").url, "Cache-Control": "private, no-store" });
+        return res.end();
+      }
+      const filePath = safeUploadPath(row.path);
+      if (!filePath) return sendText(res, 403, "附件路径无效");
+      try {
+        return await streamAttachment(req, res, row, filePath, url.searchParams.get("download") === "1");
+      } catch {
+        return sendText(res, 404, "未找到附件文件");
+      }
+    }
+    if (att && method === "DELETE") {
+      const login = requireLogin(req, res);
+      if (!login) return;
+      const attachmentId = routeParam(att[1]);
+      const row = attachmentRow(attachmentId);
+      if (!row) return send(res, 404, { error: "未找到附件" });
+      if (!canManageAttachment(login, row)) return send(res, 403, { error: "无权删除该附件" });
+      if (row.storage === "cos") await deleteCosObject(row.path);
+      else {
+        const filePath = row.path ? safeUploadPath(row.path) : "";
+        if (filePath) await fs.rm(filePath, { force: true });
+      }
+      db.prepare("delete from attachments where id=?").run(attachmentId);
+      audit(login, "delete_attachment", row.owner_type, row.owner_id, row.name);
+      return send(res, 200, { ok: true });
+    }
+
+    if (method === "GET" && url.pathname === "/api/admin/accounts") {
+      const manager = requireRbacPermission(req, res, "accounts.read");
+      if (!manager) return;
+      return send(res, 200, { accounts: db.prepare("select * from users order by created_at").all().filter(row=>personnelAccess.allows(manager,"accounts",row.person_id)).map(adminUser) });
+    }
+    if (method === "GET" && url.pathname === "/api/admin/accounts/availability") {
+      const manager = requireRbacPermission(req, res, "accounts.create");
+      if (!manager) return;
+      const personId = String(url.searchParams.get("personId") || "").trim();
+      const username = String(url.searchParams.get("username") || "").trim();
+      if (!personId) return send(res, 400, { error: "必须选择关联人员" });
+      personnelAccess.requirePerson(manager, "accounts", personId, true);
+      const person = db.prepare("select id,employee_no,employment_status from personnel where id=? and data_status='active'").get(personId);
+      if (!person) return send(res, 404, { error: "未找到可管理的人员" });
+      const personEligible = !["离职", "停职"].includes(person.employment_status);
+      const linked = personEligible ? db.prepare("select 1 from users where person_id=?").get(personId) : null;
+      const usernameTaken = username ? !!db.prepare("select 1 from users where username=?").get(username) : false;
+      const personAvailable = personEligible && !linked;
+      const usernameAvailable = !!username && !usernameTaken;
+      const conflicts = [];
+      if (!personEligible) conflicts.push("PERSON_UNAVAILABLE");
+      else if (linked) conflicts.push("PERSON_LINKED");
+      if (!username) conflicts.push("USERNAME_REQUIRED");
+      else if (usernameTaken) conflicts.push("USERNAME_TAKEN");
+      const message = conflicts.includes("PERSON_LINKED") ? "该人员已关联登录账号，无法重复注册"
+        : conflicts.includes("PERSON_UNAVAILABLE") ? "该人员已离职、停职或失效，无法注册"
+        : conflicts.includes("USERNAME_TAKEN") ? "登录账号已存在，无法注册"
+        : conflicts.includes("USERNAME_REQUIRED") ? "登录账号不能为空"
+        : "登录账号可用";
+      return send(res, 200, { available: personAvailable && usernameAvailable, suggestedUsername: person.employee_no, personAvailable, usernameAvailable, conflicts, message });
+    }
+    if (method === "POST" && url.pathname === "/api/admin/accounts") {
+      const manager = requireRbacPermission(req, res, "accounts.create");
+      if (!manager) return;
+      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
+      if (!hasRbac(manager, "accounts.scopes.assign")) return send(res, 403, { error: "当前账号没有分配数据范围权限", permission: "accounts.scopes.assign" });
+      const payload = await bodyJson(req);
+      const username = String(payload.username || "").trim();
+      const password = String(payload.password || "");
+      if (!username) return send(res, 400, { error: "登录账号不能为空" });
+      if (password.length < 6) return send(res, 400, { error: "初始密码至少需要6位" });
+      if (db.prepare("select id from users where username=?").get(username)) return send(res, 409, { error: "登录账号已存在" });
+      const person = validateAccountIdentity(payload);
+      const access = validateAccountAccess(payload,person.id);
+      const userId = randomId("u");
+      const pass = hashPassword(password);
+      db.exec("begin immediate");
+      try {
+        if (db.prepare("select id from users where username=?").get(username)) throw Object.assign(new Error("登录账号已存在"), { status: 409 });
+        validateAccountIdentity(payload);
+        db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
+          values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
+          .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
+        replaceAccountAccess(userId, access);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      audit(manager, "create_account", "user", userId, JSON.stringify({ username, personId: person.id, roles: access.roleCodes, scopes: access.scopes }));
+      return send(res, 201, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
+    if (accountRoute && method === "PUT") {
+      const manager = requireRbacPermission(req, res, "accounts.update");
+      if (!manager) return;
+      const userId = routeParam(accountRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_update_super_account", "user", userId);
+        return send(res, 403, { error: "唯一超级账号不可修改；仅允许本人修改密码" });
+      }
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      const payload = await bodyJson(req);
+      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
+      if (!hasRbac(manager, "accounts.scopes.assign")) return send(res, 403, { error: "当前账号没有分配数据范围权限", permission: "accounts.scopes.assign" });
+      const person = validateAccountIdentity(payload, existing);
+      const access = validateAccountAccess(payload,person.id);
+      const status = normalizeStatus(payload.status ?? existing.status);
+      if(status!==existing.status && !hasRbac(manager,"accounts.disable"))return send(res,403,{error:"没有变更账户启用状态的权限",permission:"accounts.disable"});
+      db.exec("begin immediate");
+      try {
+        validateAccountIdentity(payload, existing);
+        db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
+          .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
+        replaceAccountAccess(userId, access);
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      revokeUserSessions(userId, { bumpCredentialVersion: true });
+      audit(manager, "update_account", "user", userId, JSON.stringify({ personId: person.id, status, roles: access.roleCodes, scopes: access.scopes }));
+      return send(res, 200, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    if (accountRoute && method === "DELETE") {
+      const manager = requireRbacPermission(req, res, "accounts.disable");
+      if (!manager) return;
+      const userId = routeParam(accountRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_disable_super_account", "user", userId);
+        return send(res, 403, { error: "唯一超级账号不可删除或停用" });
+      }
+      if (userId === manager.id) return send(res, 400, { error: "不能停用当前登录账号" });
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      db.prepare("update users set status='disabled',credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(now(), userId);
+      revokeUserSessions(userId);
+      audit(manager, "disable_account", "user", userId, existing.username);
+      return send(res, 200, { ok: true, retainedHistory: true });
+    }
+    const accountResetRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)\/reset-password$/);
+    if (accountResetRoute && method === "POST") {
+      const manager = requireRbacPermission(req, res, "accounts.password.reset");
+      if (!manager) return;
+      const userId = routeParam(accountResetRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_reset_super_password", "user", userId);
+        return send(res, 403, { error: "超级账号密码只能由本人修改" });
+      }
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      if (isDeletedAccountPerson(existing)) return send(res, 409, { error: "关联人员已删除，账户仅保留历史，不可重置密码" });
+      const payload = await bodyJson(req);
+      const password = String(payload.password || "");
+      if (password.length < 6) return send(res, 400, { error: "新密码至少需要6位" });
+      const pass = hashPassword(password);
+      db.prepare("update users set salt=?,password_hash=?,must_change_password=1,credential_version=coalesce(credential_version,1)+1,updated_at=? where id=?").run(pass.salt, pass.hash, now(), userId);
+      revokeUserSessions(userId);
+      audit(manager, "reset_account_password", "user", userId, existing.username);
+      return send(res, 200, { ok: true });
+    }
+
+    if (method === "POST" && url.pathname === "/api/admin/accounts/bulk-open") {
+      const admin = requireRbacPermission(req, res, "accounts.bulk_open");
+      if (!admin) return;
+      const requiredBulkAccountPermissions = ["accounts.roles.assign", "accounts.scopes.assign"];
+      const missingPermission = requiredBulkAccountPermissions.find(permission => !hasRbac(admin, permission));
+      if (missingPermission) {
+        audit(admin, "permission_denied", "permission", missingPermission, "bulk_open_accounts");
+        return send(res, 403, { error: "当前账号没有批量开通和配置账户的完整权限", permission: missingPermission });
+      }
+      const p = await bodyJson(req);
+      const inputRows = Array.isArray(p.rows) ? p.rows : [];
+      if (!inputRows.length) return send(res, 400, { error: "没有可处理的账户数据" });
+      const errors = [];
+      const seenEmployeeNos = new Set(), seenUsernames = new Set(), prepared = [];
+      inputRows.forEach((raw, index) => {
+        const rowNumber = Number(raw.rowNumber || index + 2);
+        const employeeNo = String(raw.employeeNo || raw["员工工号"] || raw["工号"] || "").trim();
+        const username = String(raw.username || raw["登录账号"] || raw["账号"] || "").trim();
+        const password = String(raw.password || raw["初始密码"] || "").trim();
+        const roleValues = importSelections(raw.roles || raw.role || raw["角色"] || raw["RBAC角色"]);
+        const rowErrors = [];
+        let scopes=[];
+        try {
+          if(raw["数据范围"])throw new Error("请使用分模块数据范围列，旧数据范围列已移除");
+          if(raw.scopes !== undefined && !Array.isArray(raw.scopes)) throw Object.assign(new Error("数据范围必须使用分模块数组格式"),{status:400});
+          let input=raw.scopes || [];
+          if(!input.length)for(const module of SCOPE_MODULES){
+            const value=raw[MODULE_LABELS[module]+"范围"];
+            for(const token of importSelections(value || "本人")){
+              const separator=token.search(/[:：]/), label=(separator<0?token:token.slice(0,separator)).trim(), path=separator<0?"":token.slice(separator+1).trim();
+              const scopeType=accountImportScope(label)||({"指定行政班组":"specified_teams","指定班组":"specified_teams","指定人员分组":"specified_groups"}[label]||"");
+              const specified=["specified_teams","specified_groups"].includes(scopeType);
+              if(!specified&&path)throw new Error("该范围不接受组织路径");
+              const scopeId=specified?resolveOrganizationPath(db,path,scopeType==="specified_teams"?"administrative_team":"personnel_group"):"";
+              input.push({module,scopeType,scopeId,validFrom:raw[MODULE_LABELS[module]+"范围开始日期"],validTo:raw[MODULE_LABELS[module]+"范围结束日期"]});
+            }
+          }
+          const scopedPerson=employeeNo?db.prepare("select id from personnel where employee_no=? and data_status='active'").get(employeeNo):null;
+          scopes=personnelAccess.normalizeScopes(input,scopedPerson?.id||"");
+        }catch(e){rowErrors.push(e.message);}
+
+        if (!employeeNo) rowErrors.push("员工工号不能为空");
+        else if (!isValidEmployeeNo(employeeNo)) rowErrors.push("员工工号必须为8位数字");
+        if (!username) rowErrors.push("登录账号不能为空");
+        if (!roleValues.length) rowErrors.push("至少选择一个角色");
+        if (employeeNo && seenEmployeeNos.has(employeeNo)) rowErrors.push("工号在导入文件中重复");
+        if (username && seenUsernames.has(username)) rowErrors.push("登录账号在导入文件中重复");
+        seenEmployeeNos.add(employeeNo); seenUsernames.add(username);
+        const person = employeeNo ? db.prepare("select * from personnel where employee_no=? and data_status='active'").get(employeeNo) : null;
+        if (employeeNo && !person) rowErrors.push(db.prepare("select data_status from personnel where employee_no=?").get(employeeNo)?.data_status === "deleted" ? "该工号人员已删除，不能开通或恢复账户" : "未在人员主数据中找到该工号");
+        if(person && !personnelAccess.allows(admin,"accounts",person.id)){errors.push({rowNumber,employeeNo,detail:"该行不在账户管理范围内"});return;}
+        if (person && ["离职", "停职"].includes(person.employment_status)) rowErrors.push("离职或停职人员不能开通账户");
+        const roleRows = roleValues.map(value => db.prepare("select id,code,name from rbac_roles where status='active' and (code=? or name=?)").get(value, value)).filter(Boolean);
+        if (roleRows.length !== roleValues.length) rowErrors.push("包含不存在的角色");
+        else { try { validateAccountRoleCombination(roleRows.map(role => role.code)); } catch (error) { rowErrors.push(error.message); } }
+        const accountByPerson = person ? db.prepare("select * from users where person_id=?").get(person.id) : null;
+        const accountByUsername = username ? db.prepare("select * from users where username=?").get(username) : null;
+        if (accountByPerson && accountByPerson.username !== username) rowErrors.push(`该人员已关联账号 ${accountByPerson.username}`);
+        if (accountByUsername && accountByUsername.person_id !== person?.id) rowErrors.push("登录账号已关联其他人员");
+        const existing = accountByPerson || accountByUsername;
+        if(existing)rowErrors.push("人员或登录账号已开通，请在账户管理中维护，不能通过批量开通覆盖");
+        if (!existing && password.length < 6) rowErrors.push("新账户的初始密码至少6位");
+        if (existing && password && password.length < 6) rowErrors.push("如需重置密码，新密码至少6位");
+        if (rowErrors.length) errors.push({ rowNumber, employeeNo, username, detail: rowErrors.join("；") });
+        else prepared.push({ person, username, password, roleRows, scopes, status: normalizeStatus(raw.status || raw["账户状态"] || raw["状态"]), existing });
+      });
+      if (errors.length) {
+        audit(admin, "reject_bulk_open_accounts", "user", "bulk", JSON.stringify({ errors }));
+        return send(res, 400, { error: `发现 ${errors.length} 行异常，未开通任何账户`, errors });
+      }
+      let created = 0, updated = 0;
+      const updatedUserIds = [];
+      db.exec("begin immediate");
+      try {
+        for (const item of prepared) {
+          validateAccountIdentity({ personId: item.person.id }, item.existing);
+          let userId = item.existing?.id || randomId("u");
+          if (userId === SUPER_ACCOUNT_ID) throw Object.assign(new Error("批量开通不能修改唯一超级账号"), { status: 403 });
+          if (item.existing) {
+            db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
+              .run(item.person.name, item.person.department || "未设置", item.person.home_team || "未设置", item.status, item.person.id, item.password ? 1 : Number(item.existing.must_change_password || 0), now(), userId);
+            if (item.password) {
+              const pass = hashPassword(item.password);
+              db.prepare("update users set salt=?,password_hash=? where id=?").run(pass.salt, pass.hash, userId);
+            }
+            updatedUserIds.push(userId); updated++;
+          } else {
+            const pass = hashPassword(item.password);
+            db.prepare("insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at) values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,1,1,?,?)")
+              .run(userId, item.username, item.person.name, pass.salt, pass.hash, item.person.department || "未设置", item.person.home_team || "未设置", "维修", item.status, item.person.id, now(), now());
+            created++;
+          }
+          db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
+          item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
+          db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
+          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+        }
+        db.exec("commit");
+      } catch (error) {
+        db.exec("rollback");
+        throw error;
+      }
+      updatedUserIds.forEach(userId => revokeUserSessions(userId, { bumpCredentialVersion: true }));
+      audit(admin, "bulk_open_accounts", "user", "bulk", JSON.stringify({ created, updated }));
+      return send(res, 201, { created, updated, skipped: 0, errors: [] });
+    }
+
+    send(res, 404, { error: "接口不存在" });
+  } catch (error) {
+    const status = error.status || (error.message?.includes("人员已删除，不能恢复或新增关联") ? 409 : 500);
+    if (status >= 500) console.error(error);
+    send(res, status, { error: error.message || "服务异常", ...(error.code === "MAINTENANCE_REPORT_CONFLICT" ? { code: error.code } : {}), ...(error.details || {}) });
+  }
+}
+async function routeRequestMaintenance(req, res) {
   const url = new URL(req.url, "http://localhost");
   const method = req.method || "GET";
   if (["POST","PUT","DELETE"].includes(method) && url.pathname.startsWith("/api/personnel")) {
@@ -10621,13 +12800,21 @@ async function routeRequest(req, res) {
       return send(res, 201, { created, updated, skipped: 0, errors: [] });
     }
 
-    send(res, 404, { error: "接口不存在" });
+    // B5-3：B 线分发器未覆盖的维修子路由（main 侧双引号风格新增）回退 main 分发器处理。
+    return await routeRequestMain(req, res);
   } catch (error) {
     const status = error.status || (error.message?.includes("人员已删除，不能恢复或新增关联") ? 409 : 500);
     if (status >= 500) console.error(error);
     send(res, status, { error: error.message || "服务异常", ...(error.code === "MAINTENANCE_REPORT_CONFLICT" ? { code: error.code } : {}), ...(error.details || {}) });
   }
 }
+// B5-3 双分发器：维修家族（/api/maintenance，main 侧自 B 分叉后零演进）走 B 线 V10.1 分发器；
+// 其余路由走 main 分发器（人员/RBAC/交接/考勤最新演进）。两版分发器各自保持原函数体不变。
+async function routeRequest(req, res) {
+  if (String(req.url||'').startsWith('/api/maintenance')) return routeRequestMaintenance(req, res);
+  return routeRequestMain(req, res);
+}
+
 
 async function measuredRoute(req, res) {
   const requestId = crypto.randomBytes(8).toString("hex");
@@ -10693,7 +12880,48 @@ installPersonnelDeletionGuards(db);
 db.exec(IMPORT_WORKSPACE_SCHEMA);
 capabilityService.init();
 installInfoSync(db);
-const attendanceService = createAttendanceService({ db, personnelAccess, hasRbac, audit, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+let lastOffsetMaintenance=0;
+const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<5000)return;lastOffsetMaintenance=Date.now();try{offsetService.drain(offsetSystemActor);offsetService.repairTasks(offsetSystemActor);offsetService.settleDue(offsetSystemActor);}catch{ /* Keep durable ranges for retry; writes remain disabled unless explicitly configured. */ }}, db, personnelAccess, hasRbac, audit, onSourceUpdated:(personId,date)=>{try{offsetService.markDirty(personId,date);offsetService.drain(offsetSystemActor);}catch{ /* Durable dirty range remains for the next successful source update. */ }}, isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+const offsetSystemActor={id:'system-attendance-offset'};
+function currentOffsetActor(user){
+ if(user===offsetSystemActor)return user;
+ const row=db.prepare('select * from users where id=?'+(db.kind==='postgres'?' for share':'')).get(user?.id||'');
+ if(!row||row.status!=='active'||isDeletedAccountPerson(row)||row.person_id!==user.personId||Number(row.credential_version||1)!==Number(user.credentialVersion||1))return null;
+ return toUser(row);
+}
+
+const offsetService=createOffsetService({db,listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
+
+const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
+
+const handoverService=createHandoverService({db,audit,hasRbac,clock:Date.now,actionTask:offsetService.tasks,
+  loadRoutineReports(flightIds){
+    if(!flightIds.length)return new Map();
+    const marks=flightIds.map(()=>'?').join(',');
+    const batches=new Map(db.prepare(`select flight_id,feedback,status from maintenance_report_batches where report_type='routine' and flight_id in (${marks})`).all(...flightIds).map(row=>[row.flight_id,row]));
+    const drafts=new Map(db.prepare(`select flight_id,payload_json from maintenance_report_drafts where report_type='routine' and flight_id in (${marks})`).all(...flightIds).map(row=>[row.flight_id,row]));
+    return new Map(flightIds.map(id=>{
+      const batch=batches.get(id),draft=drafts.get(id);
+      let payload={};try{payload=JSON.parse(draft?.payload_json||"{}");}catch{}
+      // Match the execution report's nullish precedence, including an explicitly cleared batch feedback.
+      const fromBatch=batch?.feedback!==null&&batch?.feedback!==undefined;
+      return [id,{feedback:batch?.feedback??String(payload.feedback||""),source:fromBatch?"report":draft?"draft":"none",status:fromBatch?batch.status:draft?"草稿":""}];
+    }));
+  },
+  loadNonroutineDrafts(flightIds){
+    if(!flightIds.length)return new Map();
+    const rows=db.prepare(`select * from maintenance_report_drafts where report_type='nonroutine' and flight_id in (${flightIds.map(()=>'?').join(',')})`).all(...flightIds);
+    if(!rows.length)return new Map();
+    const people=new Map(allPeople().map(person=>[person.id,person]));
+    return new Map(rows.map(row=>{
+      const summary=maintenanceNonroutineDraftSummary(row,people,{includeExplanation:true});
+      // 交接投影（V1.1 §5.6）：派工人员仅保留角色与姓名，不携带内部人员标识或人员当前班组。
+      if(summary)for(const item of summary.items||[])item.entries=(item.entries||[]).map(({role,userName})=>({role,userName}));
+      return [row.flight_id,summary];
+    }));
+  }
+});
+
 db.prepare('update info_sync_meta set cursor_key=? where id=1 and cursor_key is null').run(crypto.randomBytes(32).toString('hex'));
 infoSync=createInfoSync({db,canView:canViewRecord,canFeedback:(user,actorId)=>hasAnyRbac(user,['info.receipt.manage','info.stats.read']) && dataScopeAllowsUser(user,actorId,'info'),signKey:Buffer.from(db.prepare('select cursor_key from info_sync_meta where id=1').get().cursor_key,'hex')});
 let infoVersion=infoSync.latest(),infoHeartbeat=Date.now();
@@ -10735,7 +12963,7 @@ function pumpInfoSync(forceHeartbeat=false){
 }
 if (process.env.MUC_NO_LISTEN !== "1") {
   attendanceService.start();
-  const infoTimer=setInterval(()=>pumpInfoSync(),2000);infoTimer.unref();
+  const infoTimer=setInterval(()=>{pumpInfoSync();actionTaskRealtime.pump();},2000);infoTimer.unref();
   const standardReviewNotificationTimer=setInterval(()=>{try{pumpStandardReviewNotifications();}catch(error){process.stderr.write(JSON.stringify({type:'standard_review_notification_pump_failed',error:error.message})+'\n');}},30000);standardReviewNotificationTimer.unref();
   const nonroutineNotificationTimer=setInterval(()=>{try{pumpNonroutineNotifications();}catch(error){process.stderr.write(JSON.stringify({type:'nonroutine_notification_pump_failed',error:error.message})+'\n');}},30000);nonroutineNotificationTimer.unref();
   const capabilityScheduler = setInterval(() => {
@@ -10771,4 +12999,4 @@ if (process.env.MUC_NO_LISTEN !== "1") {
 // are applied now; idempotent (audit unique key). No-op on an empty/fresh database.
 try{refreshMaintenanceStandardEffectiveReferences({id:'system',personId:'',name:'标准生效引用核对'});}catch(error){console.error('标准生效引用核对失败',error.message);}
 
-export { attendanceService, route, measuredRoute, pumpInfoSync, pumpNonroutineNotifications, pumpStandardReviewNotifications, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService, refreshMaintenanceStandardEffectiveReferences, maintenanceOvernightFeedbackService };
+export { actionTaskRealtime, attendanceService, route, measuredRoute, pumpInfoSync, pumpNonroutineNotifications, pumpStandardReviewNotifications, db, parseRangeHeader, cosSignedUrl, verifyCosUploadedAttachment, attachmentDisposition, seedRbac, authorizationProjects, personnelDeletion, personnelAccess, capabilityService, refreshMaintenanceStandardEffectiveReferences, maintenanceOvernightFeedbackService };

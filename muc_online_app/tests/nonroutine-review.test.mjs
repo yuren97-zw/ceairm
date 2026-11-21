@@ -38,7 +38,7 @@ function fixture(t) {
 test('review schema matches the additive migration and preserves one immutable application per source', t => {
   const { db, service, id, input } = fixture(t);
   const other = new DatabaseSync(':memory:'); t.after(() => other.close());
-  const sql = fs.readFileSync(new URL('../migrations/035_nonroutine_review.sql',import.meta.url),'utf8');
+  const sql = fs.readFileSync(new URL('../migrations/065_nonroutine_review.sql',import.meta.url),'utf8');
   other.exec(sql); other.exec(sql);
   const suggestionsSql = fs.readFileSync(new URL('../migrations/038_nonroutine_review_suggestions.sql',import.meta.url),'utf8');
   other.exec(suggestionsSql); other.exec(suggestionsSql);

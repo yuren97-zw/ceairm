@@ -258,6 +258,8 @@ function createMaintenanceTestAccount(template, { id, username = id, name }) {
 }
 
 test("maintenance hour rules are hidden from workers and dispatchers unless explicitly authorized", async () => {
+  // 交接待办以班组长身份办理（V1.1 §5.1）：把超账人员临时设为一组班组长，以便本用例通过交接单读取维修装配。
+  db.prepare("update personnel set position_code='班组长',administrative_team_id=(select id from organization_units where code='TEAM-LINE-1') where id=(select person_id from users where id='54002010')").run();
   const template = db.prepare("select * from users where id='54002010'").get();
   const worker = createMaintenanceTestAccount(template, { id: "hour-rule-worker", name: "规则工作者" });
   const dispatcher = createMaintenanceTestAccount(template, { id: "hour-rule-dispatcher", name: "规则派工人" });
@@ -279,6 +281,33 @@ test("maintenance hour rules are hidden from workers and dispatchers unless expl
   assert.equal((await request("/api/maintenance/rules", { cookie: workerCookie })).res.statusCode, 403);
   assert.equal((await request("/api/maintenance/rules", { cookie: dispatcherCookie })).res.statusCode, 403);
   assert.equal((await request("/api/maintenance/rules", { cookie: managerCookie })).res.statusCode, 200);
+  assert.equal((await request('/api/maintenance/nonroutine-options')).res.statusCode,401);
+  assert.equal((await request('/api/maintenance/nonroutine-options',{cookie:workerCookie})).res.statusCode,403);
+  const formOptions=await request('/api/maintenance/nonroutine-options',{cookie:dispatcherCookie});
+  assert.equal(formOptions.res.statusCode,200,JSON.stringify(formOptions.payload));
+  assert.deepEqual(Object.keys(formOptions.payload),['towDefaultHours']);
+  assert.ok(formOptions.payload.towDefaultHours>0);
+  const newFlight=await request('/api/maintenance/flights',{method:'POST',cookie:dispatcherCookie,body:{date:'2026-11-16',flightNo:'MUNONROUTINE',aircraftNo:'B-NRO',aircraftType:'A320',workKind:'短停'}});
+  assert.equal(newFlight.res.statusCode,201,JSON.stringify(newFlight.payload));
+  const newWork=await request(`/api/maintenance/flights/${newFlight.payload.flight.id}/subtasks`,{method:'POST',cookie:dispatcherCookie,body:{cardNo:'05',title:'未提交工作',category:'其他',standardHours:1}});
+  assert.equal(newWork.res.statusCode,201,JSON.stringify(newWork.payload));
+  const initialAdmin=await login(template);
+  const workHandover=await request('/api/handover',{method:'POST',cookie:initialAdmin,body:{fromTeamId:'TEAM-LINE-1',opportunities:[{flightId:newFlight.payload.flight.id,note:'未提交也可见'}]}});
+  assert.equal(workHandover.res.statusCode,200,JSON.stringify(workHandover.payload));
+  assert.ok(workHandover.payload.opportunities[0].live.subtasks.some(item=>item.title==='未提交工作'&&item.status==='未派工'));
+  const createdSubtask=newWork.payload.flight.subtasks.find(item=>item.title==='未提交工作');
+  const assignmentBody={assignments:[{personId:dispatcher.personId,role:'主做'}],expectedUpdatedAt:newWork.payload.flight.updatedAt};
+  const deniedAssignment=await request(`/api/maintenance/subtasks/${createdSubtask.id}/dispatch`,{method:'POST',cookie:workerCookie,body:assignmentBody});
+  assert.equal(deniedAssignment.res.statusCode,403);
+  const savedAssignment=await request(`/api/maintenance/subtasks/${createdSubtask.id}/dispatch`,{method:'POST',cookie:dispatcherCookie,body:assignmentBody});
+  assert.equal(savedAssignment.res.statusCode,200,JSON.stringify(savedAssignment.payload));
+  const dispatchedHandover=await request(`/api/handover/${workHandover.payload.handover.id}`,{cookie:initialAdmin});
+  const dispatchedWork=dispatchedHandover.payload.opportunities[0].live.subtasks.find(item=>item.id===createdSubtask.id);
+  assert.equal(dispatchedWork.status,'已派工');assert.equal(dispatchedWork.assignments[0].userName,dispatcher.name);
+  const staleAssignment=await request(`/api/maintenance/subtasks/${createdSubtask.id}/dispatch`,{method:'POST',cookie:dispatcherCookie,body:{...assignmentBody,expectedUpdatedAt:'stale-version'}});
+  assert.equal(staleAssignment.res.statusCode,409);
+
+
   assert.equal((await request("/api/maintenance/rules", { method: "PUT", cookie: managerCookie, body: { rules: [] } })).res.statusCode, 403);
   assignRole(worker.id, "addon_maintenance_rules");
   const authorizedCookie = await login(worker);
@@ -348,6 +377,8 @@ test("read-only personnel authorization overview searches within current personn
 });
 
 test("self-scoped participants can report eligible people across teams without widening dispatch", async () => {
+  // 同上：超账人员临时设为班组长以满足交接办理身份。
+  db.prepare("update personnel set position_code='班组长',administrative_team_id=(select id from organization_units where code='TEAM-LINE-1') where id=(select person_id from users where id='54002010')").run();
   const adminLogin = await request("/api/login", { method: "POST", body: { username: "54002010", password: "muc2026" } });
   const adminCookie = String(adminLogin.res.headers["Set-Cookie"]).split(";")[0];
   const template = db.prepare("select * from users where id='54002010'").get();
@@ -416,8 +447,13 @@ test("self-scoped participants can report eligible people across teams without w
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie: viewerCookie, body: { entries: [], version: 0 } })).res.statusCode, 403);
   assert.equal((await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie: viewerCookie, body: { entries: [] } })).res.statusCode, 403);
   const entries = [{ role: "接机", personId: worker.personId }, { role: "送机", personId: secondWorker.personId }, { role: "接机", personId: colleague.personId }];
-  const saved = await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie, body: { entries, version: 0 } });
+  const saved = await request(`/api/maintenance/flights/${flightId}/reports/routine/draft`, { method: "PUT", cookie, body: { entries, feedback:"例行草稿说明", version: 0 } });
   assert.equal(saved.res.statusCode, 200, JSON.stringify(saved.payload));
+  const routineHandover=await request('/api/handover',{method:'POST',cookie:adminCookie,body:{fromTeamId:'TEAM-LINE-1',opportunities:[{flightId,note:'例行说明同步测试'}]}});
+  assert.equal(routineHandover.res.statusCode,200,JSON.stringify(routineHandover.payload));
+  assert.equal(routineHandover.payload.opportunities[0].live.routineReport.feedback,'例行草稿说明');
+  assert.equal(routineHandover.payload.opportunities[0].live.routineReport.source,'draft');
+
   const updated = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie });
   assert.ok(updated.payload.report.routine.entries.some(p => p.personId === colleague.personId && p.userName === colleague.name));
   const version = updated.payload.report.routine.draft.version;
@@ -430,17 +466,44 @@ test("self-scoped participants can report eligible people across teams without w
   const rejected = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
   assert.equal(rejected.res.statusCode, 400, JSON.stringify(rejected.payload));
   db.prepare("update personnel set employment_status='在职' where id=?").run(colleague.personId);
-  const submitted = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
+  const submitted = await request(`/api/maintenance/flights/${flightId}/reports/routine`, { method: "PUT", cookie, body: { entries, feedback:"例行正式说明", draftVersion: version, expectedUpdatedAt: updated.payload.report.flight.updatedAt } });
   assert.equal(submitted.res.statusCode, 200, JSON.stringify(submitted.payload));
-  const nonroutineItems = [{ temporary: true, title: "跨范围非例行", category: "其他", standardHours: 2, entries: [{ role: "主做", personId: colleague.personId }] }];
+  const routineAfter=await request(`/api/handover/${routineHandover.payload.handover.id}`,{cookie:adminCookie});
+  const executionAfter=await request(`/api/maintenance/flights/${flightId}/reports`,{cookie});
+  assert.equal(routineAfter.payload.opportunities[0].live.routineReport.feedback,executionAfter.payload.report.routine.feedback);
+  assert.equal(routineAfter.payload.opportunities[0].live.routineReport.source,'report');
+  assert.equal(routineAfter.payload.opportunities[0].note,'例行说明同步测试');
+  db.prepare("update maintenance_report_batches set feedback='' where flight_id=? and report_type='routine'").run(flightId);
+  const clearedRoutine=await request(`/api/handover/${routineHandover.payload.handover.id}`,{cookie:adminCookie});
+  assert.equal(clearedRoutine.payload.opportunities[0].live.routineReport.feedback,'','正式说明清空后不回退到旧草稿');
+
+  const nonroutineItems = [{ temporary: true, title: "跨范围非例行", reportExplanation:"草稿工作内容需可查看", category: "其他", standardHours: 2, entries: [{ role: "主做", personId: colleague.personId }] }];
   const draft = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine/draft`, { method: "PUT", cookie: secondCookie, body: { items: nonroutineItems, version: 0 } });
+  const handoverRead = await request('/api/handover', {method:'POST',cookie:adminCookie,body:{fromTeamId:'TEAM-LINE-1',opportunities:[{flightId,note:'保留交接说明'}]}});
+  assert.equal(handoverRead.res.statusCode,200,JSON.stringify(handoverRead.payload));
+  const liveDraft=handoverRead.payload.opportunities[0].live.nonroutineDraft;
+  assert.equal(liveDraft.items.length,nonroutineItems.length,'交接只读数据包含同一共享草稿');
+  assert.equal(liveDraft.items[0].reportExplanation,'草稿工作内容需可查看');
+  assert.ok(liveDraft.items[0].entries.every(entry=>typeof entry.userName==='string'));
   assert.equal(draft.res.statusCode, 200, JSON.stringify(draft.payload));
   const beforeNonroutine = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie });
   const savedNonroutine = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine`, { method: "PUT", cookie: secondCookie, body: { mode: "save", items: nonroutineItems, revision: beforeNonroutine.payload.report.nonroutine.revision } });
   assert.equal(savedNonroutine.res.statusCode, 200, JSON.stringify(savedNonroutine.payload));
   const formal = db.prepare("select id from maintenance_subtasks where flight_id=?").get(flightId);
+  const handoverBeforeSubmit=await request(`/api/handover/${handoverRead.payload.handover.id}`,{cookie:adminCookie});
+  const unsubmittedWork=handoverBeforeSubmit.payload.opportunities[0].live.subtasks.find(item=>item.id===formal.id);
+  assert.ok(unsubmittedWork,'保存但尚未提报的非例行出现在交接明细');
+  assert.ok(['未派工','已派工'].includes(unsubmittedWork.status),unsubmittedWork.status);
+  assert.equal(unsubmittedWork.content,'草稿工作内容需可查看');
+  assert.ok(unsubmittedWork.assignments.length>0,'未提报工作也包含派工人员');
+
   const latest = await request(`/api/maintenance/flights/${flightId}/reports`, { cookie: secondCookie });
   const submittedNonroutine = await request(`/api/maintenance/flights/${flightId}/reports/nonroutine`, { method: "PUT", cookie: secondCookie, body: { mode: "submit", items: [{ ...nonroutineItems[0], temporary: false, id: formal.id }], revision: latest.payload.report.nonroutine.revision, draftVersion: latest.payload.report.nonroutine.draft?.version } });
+  const handoverAfterSubmit=await request(`/api/handover/${handoverRead.payload.handover.id}`,{cookie:adminCookie});
+  assert.equal(handoverAfterSubmit.res.statusCode,200);
+  assert.equal(handoverAfterSubmit.payload.opportunities[0].live.nonroutineDraft,null,'提交后草稿不重复计数');
+  assert.ok(handoverAfterSubmit.payload.opportunities[0].live.subtasks.some(item=>item.id===formal.id));
+  assert.equal(handoverAfterSubmit.payload.opportunities[0].note,'保留交接说明');
   assert.equal(submittedNonroutine.res.statusCode, 200, JSON.stringify(submittedNonroutine.payload));
 });
 
@@ -6275,4 +6338,57 @@ test('definition or category substantive change never auto-reclassifies and requ
     assert.equal(frozen(),before,'explicit new binding must not rewrite the original item');
     assert.equal(Number(db.prepare('select count(*) n from maintenance_standard_effective_refreshes where subtask_id=?').get(subtask.id).n),0);
   } finally { flags.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];}); }
+});
+test('V1.4 public tasks require authentication and offset write paths fail closed without expanding attendance scope',async()=>{
+ assert.equal((await request('/api/action-tasks/count')).res.statusCode,401);
+ assert.equal((await request('/api/action-tasks/events')).res.statusCode,401);
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const count=await request('/api/action-tasks/count',{cookie});assert.equal(count.res.statusCode,200);assert.equal(count.payload.count,0);
+ const summary=await request('/api/attendance/self/summary?personId=another',{cookie});assert.equal(summary.res.statusCode,200);assert.equal('people' in summary.payload,false);
+ const balance=await request('/api/attendance/offsets/balance',{cookie});assert.equal(balance.res.statusCode,200);assert.equal(balance.payload.available,null);
+ const write=await request('/api/attendance/offsets/rules',{cookie,method:'POST',body:{}});assert.ok([403,409].includes(write.res.statusCode));
+});
+
+test('R18 export refuses mixed versions even when another instance bypasses the local state cache',async()=>{
+ const {attendanceService}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const previous=db.prepare("select * from attendance_sync_state where id='dataVersion'").get();const original=attendanceService.changes;let attempts=0;
+ attendanceService.hybrid.state('dataVersion');
+ attendanceService.changes=(...args)=>{const result=original(...args);attempts++;db.prepare("insert into attendance_sync_state values('dataVersion',?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at").run(JSON.stringify('external-export-race-'+attempts),new Date().toISOString());return result;};
+ try{const req=Readable.from([]);req.method='GET';req.url='/api/attendance/export/html?month=2026-09';req.headers={host:'127.0.0.1:8788',origin:'http://127.0.0.1:8788',cookie};const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,409);assert.equal(attempts,3);assert.match(res.body.toString(),/重新导出/);}finally{attendanceService.changes=original;if(previous)db.prepare("update attendance_sync_state set value_json=?,updated_at=? where id='dataVersion'").run(previous.value_json,previous.updated_at);else db.prepare("delete from attendance_sync_state where id='dataVersion'").run();attendanceService.hybrid.state('dataVersion',{fresh:true});}
+});
+
+test('R18 export retries once then materializes matching uncached source metadata when updates settle',async()=>{
+ const {attendanceService}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const previous=db.prepare("select * from attendance_sync_state where id='dataVersion'").get();const original=attendanceService.changes;let attempts=0;
+ attendanceService.hybrid.state('dataVersion');attendanceService.changes=(...args)=>{const result=original(...args);if(++attempts===1)db.prepare("insert into attendance_sync_state values('dataVersion',?,?) on conflict(id) do update set value_json=excluded.value_json,updated_at=excluded.updated_at").run(JSON.stringify('external-export-settled'),new Date().toISOString());return result;};
+ try{const req=Readable.from([]);req.method='GET';req.url='/api/attendance/export/html?month=2026-09';req.headers={host:'127.0.0.1:8788',origin:'http://127.0.0.1:8788',cookie};const res=new MockResponse();await measuredRoute(req,res);assert.equal(res.statusCode,200);assert.equal(attempts,2);const data=JSON.parse(res.body.toString().match(/<script id="attendanceSeed" type="application\/json">([\s\S]*?)<\/script>/)[1]);assert.equal(data.sourceVersion.dataVersion,'external-export-settled');assert.equal(data.dataVersion,'external-export-settled');assert.equal(typeof data.offsetVersion,'number');assert.equal(typeof data.ledgerVersion,'number');}finally{attendanceService.changes=original;if(previous)db.prepare("update attendance_sync_state set value_json=?,updated_at=? where id='dataVersion'").run(previous.value_json,previous.updated_at);else db.prepare("delete from attendance_sync_state where id='dataVersion'").run();attendanceService.hybrid.state('dataVersion',{fresh:true});}
+});
+
+test('removed initialization HTTP endpoints reject writes and preserve legacy rules',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];const person=db.prepare('select id from personnel limit 1').get();assert.ok(person);
+ const body={personIds:[person.id]},before=db.prepare('select count(*) n from attendance_offset_rules').get().n;
+ assert.equal((await request('/api/attendance/offsets/initialization/preview',{method:'POST',body})).res.statusCode,401);
+ const preview=await request('/api/attendance/offsets/initialization/preview',{method:'POST',cookie,body});assert.equal(preview.res.statusCode,409);assert.match(preview.payload.error,/已停用/);assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
+ const confirm=await request('/api/attendance/offsets/initialization/confirm',{method:'POST',cookie,body:{...body,previewHash:preview.payload.previewHash}});assert.equal(confirm.res.statusCode,409);assert.equal(db.prepare('select count(*) n from attendance_offset_rules').get().n,before);
+});
+
+test('task SSE authenticates, sends committed recipient changes without content, and closes revoked sessions',async()=>{
+ const {actionTaskRealtime}=await import('../server.mjs');
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const req=Readable.from([]);req.method='GET';req.url='/api/action-tasks/events';req.headers={host:'127.0.0.1:8788',cookie};const res=new MockResponse();
+ const userId='54002010',original=db.prepare('select * from action_task_revisions where user_id=?').get(userId),stamp=new Date().toISOString();
+ try{
+  await measuredRoute(req,res);assert.equal(res.statusCode,200);assert.equal(res.headers['Content-Type'],'text/event-stream; charset=utf-8');assert.equal(res.headers['X-Accel-Buffering'],'no');assert.match(res.body.toString(),/"kind":"connected"/);
+  db.exec('begin immediate');
+  db.prepare("insert into attendance_offset_requests values(?,?,?,?,'{}',?,'pending',1,?,?)").run('sse-task-request','sse-other-person','2026-11',userId,'private-note',stamp,stamp);
+  db.prepare("insert into action_tasks values(?,?,?,?,?,?,?,'pending','{}',?,?)").run('sse-task','attendance','offset_approval','sse-task-request','approve',userId,'private-title',stamp,stamp);
+  db.prepare('insert into action_task_revisions values(?,1) on conflict(user_id) do update set version=action_task_revisions.version+1').run(userId);db.exec('commit');
+  actionTaskRealtime.pump();assert.match(res.body.toString(),/"kind":"changed"/);assert.doesNotMatch(res.body.toString(),/private-title|private-note|sse-task-request/);
+  req.headers.cookie='';db.prepare('update action_task_revisions set version=version+1 where user_id=?').run(userId);actionTaskRealtime.pump();assert.match(res.body.toString(),/access-revoked/);
+ }finally{
+  res.emit('close');actionTaskRealtime.close();db.prepare('delete from action_tasks where id=?').run('sse-task');db.prepare('delete from attendance_offset_requests where id=?').run('sse-task-request');
+  if(original)db.prepare('update action_task_revisions set version=? where user_id=?').run(original.version,userId);else db.prepare('delete from action_task_revisions where user_id=?').run(userId);
+ }
 });

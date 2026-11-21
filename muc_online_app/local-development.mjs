@@ -55,7 +55,7 @@ export function validateRegisteredDevelopmentWorktree(appDir,profile) {
 }
 
 export const LOCAL_DEVELOPMENT_PROFILES = Object.freeze({
-  'info-rbac': Object.freeze({branch:'codex/info-rbac',port:8787,label:'信息通报、账户、角色与RBAC'}),
+  'info-rbac': Object.freeze({branch:'codex/team-handover',port:8787,label:'信息传达、权限与班组交接'}),
   'maintenance-personnel': Object.freeze({branch:'codex/maintenance-personnel',port:8788,label:'维修管控、人员能力、审计与备份'}),
   'attendance-leave': Object.freeze({branch:'codex/attendance-leave',port:8792,label:'考勤与假期'})
 });

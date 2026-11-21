@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';
 import crypto from 'node:crypto';
 import {dayOf,stamp,datesBetween,monthDates,tripPurpose} from './attendance-rules.mjs';
 import {readApprovalReason} from './attendance-approval-reasons.mjs';
@@ -47,6 +48,7 @@ export function normalizeApprovalPlan(detail,config={}){
   kind='外出';category='外出';segments=[{start:approvalBusinessTime(get('开始时间')),end:approvalBusinessTime(get('结束时间'),true)}];
   duration={value:get('时长'),unit:'原表时长'};
  }else return {state:'unsupported',error:'未适配的考勤审批表单；不根据标题推断',kind:null,category:null,segments:[]};
+ if(category&&!attendanceCategoryAllowed(category))return {ignored:true,state:'unsupported',error:'该假种已永久忽略',kind,category:null,segments:[],dates:[]};
  const reason=effect?{reason:null,reasonStatus:'not_applicable'}:readApprovalReason(detail,kind,config);
  if(!effect&&(!category||category.length>100))issue='审批类别未唯一识别';
  if(!issue&&(!segments.length||segments.some(s=>!s.start||!s.end||s.end<=s.start||s.end-s.start>366*dayMs)))issue='审批业务日期缺失、无效或超出366天';
@@ -225,7 +227,7 @@ export function createApprovalPlanService({db,client,config,clock,hybrid,enqueue
   const ids=[...new Set(personIds)];
   if(!ids.length)return new Map();
   const marks=ids.map(()=>'?').join(',');
-  const rows=db.prepare(`select a.*,q.generation,q.applied_generation,q.error as queue_error from attendance_approval_plans a left join attendance_approval_plan_queue q on q.id=a.id where a.person_id in (${marks})`).all(...ids);
+  const rows=db.prepare(`select a.*,q.generation,q.applied_generation,q.error as queue_error from attendance_approval_plans a left join attendance_approval_plan_queue q on q.id=a.id where a.person_id in (${marks})`).all(...ids).filter(r=>{const plan=parse(r.plan_json,{});return !plan.ignored&&attendanceCategoryAllowed(plan.category);});
   const planIds=rows.map(r=>r.id),planMarks=planIds.map(()=>'?').join(',');
   const historyRows=planIds.length?db.prepare(`select instance_id,after_json,source,changed_at from attendance_approval_plan_history where instance_id in (${planMarks}) order by id desc`).all(...planIds):[];
   const histories=new Map();

@@ -1,4 +1,5 @@
-import fs from 'node:fs';import {leaveGroups,leaveGroup,leaveNote,normalizeLeaveData,leaveCell} from './public/attendance-leave-model.mjs';
+import fs from 'node:fs';
+import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';import {leaveGroups,leaveGroup,leaveNote,normalizeLeaveData,leaveCell} from './public/attendance-leave-model.mjs';
 const parse=(s,f=null)=>{try{return JSON.parse(s);}catch{return f;}};
 const failure=(m,status=400)=>Object.assign(Error(m),{status});
 export function createLeaveService({db,client,config,clock,people,permission,audit,hybrid}){
@@ -33,7 +34,7 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
   const savedBy=new Map(),queueBy=new Map();
   for(const s of savedRows){const list=savedBy.get(s.person_id)||[];list.push(s);savedBy.set(s.person_id,list);}
   for(const q of queueRows)queueBy.set(q.person_id,q);
-  const rows=members.map(p=>{const saved=savedBy.get(p.personId)||[];const sources=saved.filter(s=>types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=queueBy.get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
+  const rows=members.map(p=>{const saved=savedBy.get(p.personId)||[];const sources=saved.filter(s=>leaveGroup(s.type_name)&&types.some(t=>t.code===s.leave_code)).map(s=>({name:s.type_name,code:s.leave_code,quotas:parse(s.quotas_json,[]),records:parse(s.records_json,[]),syncedAt:s.synced_at}));sources.forEach(s=>s.quotas.forEach(q=>years.add(q.year)));const queue=queueBy.get(p.personId);const cells=leaveGroups.map(g=>{const cell=leaveCell(sources,year,g,clock());const needed=types.filter(t=>leaveGroup(t.name)===g);cell.coverage=needed.length?needed.every(t=>saved.some(s=>s.leave_code===t.code))?'complete':'partial':'catalog_missing';return cell;});
    return {...p,userId:undefined,identityIssue:p.identityIssue||(!p.userId?'人员尚未匹配钉钉用户':null),cells,syncedAt:sources.map(s=>s.syncedAt).sort()[0]||null,syncStatus:queue?.status||'not_synced',error:queue?.error||null};});
   const value={year,years:[...years].sort((a,b)=>b-a),groups:leaveGroups,note:leaveNote,people:rows,generatedAt:now(),dataVersion:hybrid.state('leaveVersion')||'',eventError:hybrid.state('leaveEventError')||null,catalogMissing:leaveGroups.filter(g=>!types.some(t=>leaveGroup(t.name)===g)),catalogNames:[...availableNames],pageSize:20,historyWarning:'仅展示钉钉接口实际返回的额度年度；查询不到不代表历史余额为0。缺少额度关联的消费记录不强行归属年度。'};
   snapshotCache.set(cacheKey,{value});
@@ -65,7 +66,7 @@ export function createLeaveService({db,client,config,clock,people,permission,aud
   const types=supportedTypes();client.requestContext=tasks.some(t=>t.source==='leave_event')?'leave_event':tasks[0].source;
   let error=null;
   try{
-   if(!types.length||types.some(t=>!t.code)){const fresh=await client.leaveTypes();db.prepare("insert into attendance_leave_catalog(id,types_json,last_synced_at,last_attempt_at) values('enterprise',?,?,?) on conflict(id) do update set types_json=excluded.types_json,last_synced_at=excluded.last_synced_at,last_attempt_at=excluded.last_attempt_at,error=null").run(JSON.stringify(fresh),now(),now());}
+   if(!types.length||types.some(t=>!t.code)){const fresh=(await client.leaveTypes()).filter(t=>attendanceCategoryAllowed(t.name));db.prepare("insert into attendance_leave_catalog(id,types_json,last_synced_at,last_attempt_at) values('enterprise',?,?,?) on conflict(id) do update set types_json=excluded.types_json,last_synced_at=excluded.last_synced_at,last_attempt_at=excluded.last_attempt_at,error=null").run(JSON.stringify(fresh),now(),now());}
    const catalog=supportedTypes();if(!catalog.length||catalog.some(t=>!t.code))throw failure('假期目录缺少唯一标识',502);
    for(const t of catalog){const quotas=await client.leaveQuotas(tasks.map(t=>t.user_id),t.code),records=await client.leaveRecords(tasks.map(t=>t.user_id),t.code);const users=new Set(tasks.map(t=>t.user_id));if(quotas.some(q=>!users.has(String(q.userid))||q.leave_code!==t.code)||records.some(r=>!users.has(String(r.userId))||r.leaveCode!==t.code))throw failure('假期响应超出查询范围',502);
     const normalized=tasks.map(task=>({task,data:normalizeLeaveData(quotas.filter(q=>String(q.userid)===task.user_id),records.filter(r=>String(r.userId)===task.user_id),t.code,task.user_id)}));

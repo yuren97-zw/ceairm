@@ -220,3 +220,4 @@ test('unknown relations, cross-person operation and unfinished linked reads neve
  for(const p of f.service.snapshot(admin,{month:'2026-10'}).people)assert.equal(p.pendingCounts['外出']||0,0);
  assert.equal(ap.plansFor('p1','2026-10').find(a=>a.id==='root').state,'unresolved');f.db.close();
 });
+test('ignored extended leave never creates a future approval category',()=>{const detail={status:'COMPLETED',result:'agree',formComponentValues:[{componentType:'DDHolidayField',value:JSON.stringify(['2026-11-01','2026-11-02',2,'天','公休假（2025年度延长）'])}]};const plan=normalizeApprovalPlan(detail);assert.equal(plan.state,'unsupported');assert.equal(plan.ignored,true);assert.equal(plan.category,null);assert.deepEqual(plan.dates,[]);});

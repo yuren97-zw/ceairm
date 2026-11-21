@@ -94,3 +94,36 @@ test('24-hour shift is defined by plan and paired valid records, not actual over
 test('follow-along is mutually exclusive with remaining outing and cannot replace reliable work or rest carry',()=>{
  const out={...trip(),kind:'外出',reason:'参加跟班工作',reasonStatus:'ok'};const a=input();a.punches=[];a.approvals=[out];assert.equal(classifyDay(a,now).category,'跟班');a.approvals=[{...out,reason:'外出办公'}];assert.equal(classifyDay(a,now).category,'外出');a.punches=input().punches;a.approvals=[out];assert.equal(classifyDay(a,now).category,'夜班');const approval={...out,end:t('2026-09-22T02:05:00')};a.approvals=[approval];const rest={date:'2026-09-22',covered:true,rest:true,points:[],punches:[],approvals:[approval]};assert.equal(classifyDay(rest,now,null,{previousWorkDays:[a]}).category,'休息');a.punches=[];a.approvals=[out,{...out,id:'other',reason:'办事'}];assert.equal(classifyDay(a,now).category,'跟班');a.approvals=[{...out,revoked:true}];assert.equal(classifyDay(a,now).category,'缺卡');
 });
+test('permanently ignored leave cannot recreate a category or manufacture absence; raw input stays intact',()=>{const a=input();a.punches=[];a.approvals=[{...trip(),kind:'请假',subType:'公休假（2025年度延长）'}];const before=JSON.stringify(a),r=classifyDay(a,now);assert.equal(r.category,'待核对');assert.match(r.reason,/已忽略/);assert.equal(JSON.stringify(a),before);});
+
+test('night-following rest requires all valid starts before Shanghai noon and preserves source/overtime',()=>{
+ const date='2026-09-22',prev={...input(),punches:[]},punch=time=>({type:'OnDuty',actual:t(date+'T'+time),source:'USER',recordId:'a',timeResult:'Normal'});
+ const rest={date,covered:true,rest:true,points:[],punches:[punch('11:59:59')],approvals:[]};
+ const classify=(a=rest,p=prev)=>classifyDay(a,now,null,{previousWorkDays:p?[p]:[]});const before=JSON.stringify(rest);
+ assert.equal(classify().category,'休息');assert.match(classify().reason,/12:00前/);assert.deepEqual(classify().overtime,calculateOvertime(rest,now));assert.equal(JSON.stringify(rest),before);
+ for(const time of ['12:00:00','12:00:01','18:00:00'])assert.equal(classify({...rest,punches:[punch(time)]}).category,'待核对');
+ assert.equal(classify({...rest,punches:[punch('08:00:00'),punch('12:00:00')]}).category,'待核对');
+ assert.equal(classify({...rest,punches:[punch('08:00:00'),punch('11:59:59')]}).category,'休息');
+ assert.equal(classify({...rest,punches:[...rest.punches,{...punch('09:00:00'),type:'OffDuty'}]}).category,'待核对');
+ for(const ignored of [{source:'SYSTEM'},{source:'AUTO_CHECK'},{valid:false},{timeResult:'NotSigned'}])assert.equal(classify({...rest,punches:[...rest.punches,{...punch('09:00:00'),type:'OffDuty',...ignored}]}).category,'休息');
+ for(const p of [null,{...prev,covered:false},{...prev,scheduleConflict:true},{...prev,identityIssue:'冲突'},{...prev,rest:true},{...prev,points:[]},{...prev,date:'2026-09-20'},{...prev,points:[{type:'OnDuty',planned:on-12*3600000},{type:'OffDuty',planned:on}]},{...prev,points:[{type:'OnDuty',planned:on},{type:'OffDuty',planned:on+86400000}]}])assert.equal(classify(rest,p).category,'待核对');
+ for(const flag of ['scheduleConflict','identityIssue'])assert.equal(classify({...rest,[flag]:true}).category,'待核对');
+ assert.equal(classify({...rest,approvals:[{kind:'请假',subType:'婚假',approved:true,start:t(date+'T00:00:00'),end:t(date+'T23:59:59')}]}).category,'婚假');
+});
+test('morning-rest rule handles month and year boundary with previous scheduled night despite missing punches',()=>{
+ for(const [previousDate,date] of [['2026-10-31','2026-11-01'],['2026-12-31','2027-01-01']]){
+  const prev={date:previousDate,covered:true,points:[{type:'OnDuty',planned:t(previousDate+'T19:40:00')},{type:'OffDuty',planned:t(date+'T08:30:00')}],punches:[]};
+  const rest={date,covered:true,rest:true,points:[],punches:[{type:'OnDuty',actual:t(date+'T08:40:00'),source:'USER'}]};
+  assert.equal(classifyDay(rest,t('2027-02-01T00:00:00'),null,{previousWorkDays:[prev]}).category,'休息');
+ }
+});
+
+test('shiftless schedule echo of morning punch on explicit rest is interpreted without altering original sync evidence',()=>{
+ const date='2026-09-22',morning=t(date+'T08:51:16');
+ const n=normalizeDay({date,userId:'u',config:configuration({}),day:{attendance_result_list:[{check_type:'OnDuty',plan_check_time:morning,user_check_time:morning,source_type:'USER',record_id:'p'}],check_record_list:[],approve_list:[]},schedules:[{userid:'u',work_date:morning,is_rest:'N',check_type:'OnDuty',plan_check_time:morning,id:'plan'},{userid:'u',work_date:morning,is_rest:'Y'}]});
+ const before=JSON.stringify(n),context={previousWorkDays:[{...input(),punches:[]}]};
+ const result=classifyDay(n,now,null,context);assert.equal(n.scheduleConflict,true);assert.equal(result.category,'休息');assert.equal(result.scheduleInterpretation.ignoredPlanPoints.length,1);assert.equal(result.overtime.seconds,null);assert.equal(result.punchDetails[0].planned,null);assert.equal(result.punchDetails[0].actual,morning);assert.equal(JSON.stringify(n),before);
+ for(const point of [{...n.points[0],shiftId:'real-shift'},{...n.points[0],shiftVersion:'version'},{...n.points[0],type:'OffDuty'},{...n.points[0],planned:morning-60000},{type:'OnDuty',planned:morning}])assert.equal(classifyDay({...n,points:[point]},now,null,context).category,'待核对');
+ for(const patch of [{scheduleRestFlags:[]},{scheduleRestFlags:['N','N','Y']},{identityIssue:'冲突'},{punches:[...n.punches,{...n.punches[0],type:'OffDuty'}]},{punches:[{...n.punches[0],actual:t(date+'T12:00:00')}]}])assert.equal(classifyDay({...n,...patch},now,null,context).category,'待核对');
+ assert.equal(classifyDay(n,now).category,'待核对');
+});

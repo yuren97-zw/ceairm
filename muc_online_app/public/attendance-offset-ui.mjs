@@ -1,0 +1,183 @@
+import {attendanceCategoryAllowed,attendanceCategoryBadge,ensureAttendanceBadgeStyles,legalLeaveCategories,punchSummary,attendanceProcessingCells} from './attendance-presentation.mjs';
+// randomUUID is restricted to secure contexts; LAN-only disposable previews also need safe IDs.
+export function offsetOperationId(random=globalThis.crypto){
+ if(typeof random?.randomUUID==='function')return random.randomUUID();
+ if(typeof random?.getRandomValues!=='function')throw Error('当前浏览器缺少安全随机数，请使用受支持的浏览器或HTTPS地址');
+ const bytes=random.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+ const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const time=v=>v?new Date(typeof v==='number'||/^\d+$/.test(String(v))?Number(v):Date.parse(v)).toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'}):'—';
+const statusText=value=>({pending:'待审批',approved:'已批准',partial:'部分批准',rejected:'已拒绝',withdrawn:'已撤回',source_invalid:'源异常已消除',issued:'已发放',not_issued:'尚未发放',difference_review:'待差异复核',not_configured:'未配置',freeze:'冻结',approve:'使用',release:'释放',refund:'退回',grant:'发放',submit:'提交申请',decide:'审批结案',withdraw:'撤回申请',transfer:'授权转办',source_evidence_changed:'源依据更新',source_invalidated:'源异常消除并释放／退回',ready:'可结算',queued:'待分批结算',pending_review:'待核算',not_closed:'来源月未结束',identity_unbound:'未关联人员'}[value]||value);
+let depth=0,previousOverflow='';
+const sheets=new Map();
+if(typeof window!=='undefined')window.addEventListener('popstate',event=>{
+ const target=event.state?.offsetSheet;
+ if(target&&(!sheets.has(target)||sheets.get(target).closed)){history.back();return;}
+ for(const [id,entry] of [...sheets].reverse()){
+  if(entry.closed)continue;if(id===target)break;
+  entry.fromHistory=true;entry.dialog.close();entry.release();
+ }
+});
+export function closeOffsetSheets(){
+ for(const entry of [...sheets.values()].reverse())if(!entry.closed){entry.fromHistory=true;entry.dialog.close();entry.release();}
+ if(typeof history!=='undefined'&&history.state?.offsetSheet){const next={...history.state};delete next.offsetSheet;history.replaceState(next,'');}
+}
+
+export function availableOffsetItems(day){return (day.eligibility?.items||[]).filter(item=>!(day.offset?.items||[]).some(current=>current.eventId===item.eventId&&(current.decision==='pending'||current.decision==='approved'&&current.effective)));}
+
+export function openOffsetSheet(title,html){
+ const historyId=offsetOperationId();
+ const dialog=document.createElement('dialog');dialog.className='offset-sheet';
+ dialog.setAttribute('aria-labelledby','offset-title-'+historyId);
+ dialog.innerHTML=`<header class="dialog-head offset-sheet-head"><h2 id="offset-title-${historyId}">${esc(title)}</h2><button class="icon-btn offset-sheet-close" type="button" data-close aria-label="关闭" title="关闭">×</button></header><section>${html}</section>`;
+ if(!document.querySelector('#offset-sheet-style')){const style=document.createElement('style');style.id='offset-sheet-style';style.textContent=`.offset-sheet{border:0;border-radius:20px;box-shadow:0 26px 80px rgba(16,24,40,.24);max-width:calc(100vw - 24px);font:inherit;width:min(680px,calc(100vw - 24px));max-height:85dvh;padding:0;color:inherit;background:var(--card,#fff)}.offset-sheet[open]{display:flex;flex-direction:column}.offset-sheet::backdrop{background:rgba(17,24,39,.30);backdrop-filter:blur(6px)}.offset-sheet>.offset-sheet-head{display:flex;flex-shrink:0;justify-content:space-between;align-items:center;gap:12px;position:relative;top:0;margin:0;padding:12px 18px;border-bottom:1px solid rgba(229,231,235,.75);background:rgba(255,255,255,.96)}.offset-sheet-head h2{flex:1;min-width:0;margin:0;font-size:19px;line-height:1.3;font-weight:750;color:#111827;overflow-wrap:anywhere}.offset-sheet .offset-sheet-close{display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:44px;height:44px;min-height:44px;padding:0;border:1px solid #D7DDE5;border-radius:999px;background:#fff;color:#4B5563;box-shadow:0 1px 2px rgba(16,24,40,.04);font:inherit;font-size:20px;line-height:1;cursor:pointer}.offset-sheet .offset-sheet-close:hover{background:#F8FAFC;box-shadow:0 8px 18px rgba(16,24,40,.08)}.offset-sheet .offset-sheet-close:focus:not(:focus-visible){outline:none}.offset-sheet .offset-sheet-close:focus-visible{outline:2px solid var(--brand,#0f5f7a);outline-offset:2px}.offset-sheet>section{padding:18px;min-height:0;flex:1 1 auto;overflow:auto;overscroll-behavior:contain}.offset-sheet button,.offset-sheet input,.offset-sheet select{min-height:44px}.offset-sheet textarea{width:100%;min-height:80px;box-sizing:border-box}.offset-sheet article{padding:10px 0;border-bottom:1px solid #e4e9ed}.offset-sheet small{display:block}.offset-sheet .offset-points{white-space:pre-wrap;overflow-wrap:anywhere}.offset-sheet footer{position:sticky;bottom:0;background:inherit;padding:8px 0 calc(8px + env(safe-area-inset-bottom))}.offset-credit-values{display:flex;justify-content:center;align-items:center;gap:2px}.offset-credit-values button{border:0;background:none;color:inherit;min-height:44px;padding:2px;font:inherit}.offset-table-sheet{width:min(1040px,calc(100vw - 24px))}.home-att-table{width:100%;overflow-x:auto;overscroll-behavior-x:contain;border:1px solid #e4ebf2;border-radius:8px;color:#1c3046}.home-att-table table{border-collapse:separate;border-spacing:0;font-size:13px;line-height:1.55;min-width:864px;width:100%}.home-att-table th,.home-att-table td{padding:6px 8px;border-bottom:1px solid #e8eef4;border-right:1px solid #eef3f7;vertical-align:top;text-align:left;white-space:normal;overflow-wrap:anywhere}.home-att-table th{white-space:nowrap;background:#eef3f8;color:#3c556e;font-weight:600}.home-att-table tbody tr:hover td{background:#f8fbfd}.home-att-table small{font-size:12px;color:#65758a;line-height:1.55}.home-att-table td:first-child{min-width:80px;white-space:nowrap}.home-att-table td:nth-child(2){min-width:96px}.home-schedule-table td:nth-child(3){min-width:72px}.home-schedule-table td:nth-child(4){min-width:104px}.home-schedule-table td:nth-child(5),.home-schedule-table td:nth-child(6){min-width:160px;white-space:nowrap}.home-schedule-table td:nth-child(7){min-width:80px}.home-issues-table td:nth-child(3),.home-issues-table td:nth-child(4){min-width:160px}.home-issues-table td:nth-child(5),.home-issues-table td:nth-child(6){min-width:120px}.home-att-table table.home-leave-quota-table{min-width:420px}.home-att-table .home-leave-quota-table td:first-child{white-space:normal;min-width:118px}.home-leave-quota-table td:nth-child(2),.home-leave-quota-table td:nth-child(3){min-width:128px}.home-att-table table.home-leave-record-table{min-width:520px}.home-att-table .home-leave-record-table td:first-child{white-space:normal;min-width:104px}.home-leave-record-table td:nth-child(2),.home-leave-record-table td:nth-child(3){min-width:128px}.home-leave-record-table td:nth-child(5){min-width:110px}.offset-sheet nav.offset-sheet-tabs{display:flex;gap:8px;margin:2px 0 10px}.offset-sheet-tabs button{flex:1;min-height:44px;padding:6px 12px;border:1px solid #D7DDE5;border-radius:999px;background:#fff;color:#4B5563;font:inherit;font-size:13px;font-weight:600;cursor:pointer;text-align:center}.offset-sheet-tabs button[aria-current="true"]{background:var(--brand,#0f5f7a);border-color:var(--brand,#0f5f7a);color:#fff}.home-att-table button{border:0;background:none;color:inherit;font:inherit;text-decoration:none;cursor:pointer;text-align:left}.offset-sheet [role=alert]{color:#8c3f22}@media(max-width:600px){.offset-sheet{margin:auto 0 0;width:100%;max-width:100%;border-radius:20px 20px 0 0;box-sizing:border-box}.offset-sheet>.offset-sheet-head{padding:10px 14px}.offset-sheet>section{padding:14px;padding-bottom:calc(14px + env(safe-area-inset-bottom))}}`;document.head.append(style);}
+ document.body.append(dialog);if(depth++===0){previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';}
+ const restoreFocus=document.activeElement;let released=false;
+ const entry={dialog,closed:false,fromHistory:false,release:null};sheets.set(historyId,entry);
+ try{history.pushState({...history.state,offsetSheet:historyId},'');}catch{entry.fromHistory=true;}
+ const release=()=>{if(released)return;released=true;dialog.remove();if(--depth===0)document.body.style.overflow=previousOverflow;restoreFocus?.focus?.({preventScroll:true});const fromHistory=entry.fromHistory;sheets.set(historyId,{closed:true});if(!fromHistory&&history.state?.offsetSheet===historyId)history.back();if(sheets.size>256)for(const [key,value] of sheets){if(sheets.size<=256)break;if(value.closed)sheets.delete(key);}};entry.release=release;
+ dialog.querySelector('[data-close]').onclick=()=>{dialog.close();release();};
+ dialog.addEventListener('close',release,{once:true});
+ dialog.showModal();return dialog;
+}
+const pointText=day=>(day.punchDetails||[]).map(p=>`${p.type==='OffDuty'?'下班':'上班'} 计划${time(p.planned)}／实际${time(p.actual)} ${p.status} ${p.reason}`).join('\n');
+export async function openOffsetRequest(api,id,onChange=()=>{}){
+ const dialog=openOffsetSheet('考勤抵消申请','加载中…'),body=dialog.querySelector('section');
+ try{
+  const data=await api('/attendance/offsets/requests/'+encodeURIComponent(id));if(!dialog.open)return;
+  body.innerHTML=`<p>额度状态：${esc(statusText(data.creditStatus))}</p><p>申请状态：${esc(statusText(data.status))} · 申请人 ${esc(data.applicant?.name||data.person_id)}</p><p>当前审批人：${esc(data.assignee?.name||data.assignee_user_id)}</p><p>${esc(data.note)}</p><small>提交时推荐排班：${esc(JSON.parse(data.responsibility_json).team)}</small><details><summary>提交时依据与流转记录</summary><p>${data.submittedEvidence?'已保存提交时的独立证据快照':'历史提交时详细证据未保存，不补造原始依据'}</p>${(data.submittedEvidence||[]).map(e=>`<div class="offset-points">${esc(pointText({punchDetails:[e.evidence]}))}</div>`).join('')}${(data.history||[]).map(h=>`<small>${esc(time(h.created_at))} · ${esc(statusText(h.action))} · ${esc(h.actor_id)}</small>`).join('')}</details><details><summary>当天完整考勤依据</summary>${(data.dayEvidence||[]).map(d=>`<article>${esc(d.date)} · ${esc(d.result.category)}<p>${esc(d.result.reason)}</p><div class="offset-points">${esc(pointText(d.result))}</div>${d.approvals.map(a=>`<p>${esc(a.subType||a.kind)}：${esc(a.reason||'未取得事由')}</p>`).join('')}</article>`).join('')}</details><form>${data.items.map(i=>`<article><strong>${esc(i.event.work_date)} ${i.event.kind==='day_off_missing'?'白班下班缺卡':'白班早退'}</strong><p>${esc(statusText(i.decision))}${i.effective?' · 已抵消':i.decision==='approved'?' · 抵消已失效／已退回':''}</p><small>计划：${time(i.event.planned)}，1项／1次</small>${data.canApprove&&i.decision==='pending'?`<select name="decision-${esc(i.id)}" required><option value="">待决定</option><option value="approved">批准</option><option value="rejected">拒绝</option></select><textarea name="reason-${esc(i.id)}" placeholder="拒绝原因（拒绝必填）" maxlength="2000"></textarea>`:`<p>${esc(i.reason||'')}</p>`}</article>`).join('')}<p role="alert"></p>${data.canWithdraw?'<button type="button" data-withdraw>撤回本人申请</button>':''}${data.canApprove?'<footer><button type="button" data-all="approved">全部批准</button><button type="button" data-all="rejected">全部拒绝</button><button type="submit">确认审批并结案</button></footer>':''}</form>`;
+  for(const button of body.querySelectorAll('[data-all]'))button.onclick=()=>body.querySelectorAll('select').forEach(select=>select.value=button.dataset.all);
+  const key=offsetOperationId();const withdrawal=body.querySelector('[data-withdraw]');if(withdrawal)withdrawal.onclick=async()=>{withdrawal.disabled=true;try{await api('/attendance/offsets/requests/'+id+'/withdraw',{method:'POST',headers:{'Idempotency-Key':key},body:{version:data.version}});dialog.close();onChange();}catch(e){body.querySelector('[role=alert]').textContent=e.message;withdrawal.disabled=false;}};body.querySelector('form').onsubmit=async event=>{event.preventDefault();const button=body.querySelector('[type=submit]');if(!button)return;button.disabled=true;
+   const decisions=data.items.filter(i=>i.decision==='pending').map(i=>({id:i.id,decision:body.querySelector(`[name="decision-${i.id}"]`).value,reason:body.querySelector(`[name="reason-${i.id}"]`).value}));
+   try{await api('/attendance/offsets/requests/'+id+'/decide',{method:'POST',headers:{'Idempotency-Key':key},body:{version:data.version,decisions}});dialog.close();onChange();}catch(e){body.querySelector('[role=alert]').textContent=e.message;button.disabled=false;}
+  };
+ }catch(e){body.textContent=e.message;}
+}
+const actionTaskLists=new Set();
+export async function refreshActionTaskLists(){const results=await Promise.allSettled([...actionTaskLists].map(refresh=>refresh()));return results.every(r=>r.status==='fulfilled'&&r.value!==false);}
+export async function openActionTasks(api,onChange=()=>{},openExternalTask=null){
+ const dialog=openOffsetSheet('待处理','加载中…'),body=dialog.querySelector('section');
+ let sequence=0,targetCount=20;
+ const renderItems=items=>items.map(item=>`<article><button type="button" data-task="${esc(item.sourceId)}">${esc(item.title)} ›</button><small>${esc(time(item.createdAt))}</small></article>`).join('');
+ async function refresh(){
+  if(!dialog.open)return true;const current=++sequence;
+  try{
+   const items=[];let cursor=null;taskIndex.clear();
+   do{
+    const query=new URLSearchParams({limit:String(Math.min(100,targetCount-items.length))});if(cursor)query.set('cursor',cursor);
+    const page=await api('/action-tasks?'+query);if(current!==sequence||!dialog.open)return true;
+    items.push(...page.items);for(const item of page.items)taskIndex.set(item.sourceId,item);cursor=page.nextCursor||null;
+   }while(cursor&&items.length<targetCount);
+   const scroll=body.scrollTop,focused=body.contains(document.activeElement)?document.activeElement?.dataset?.task:null;
+   body.innerHTML=`<div data-task-list>${items.length?renderItems(items):'<p>暂无待处理</p>'}</div><button type="button" data-more-tasks ${cursor?'':'hidden'}>加载更多</button><p role="status"></p>`;
+   body.querySelector('[data-more-tasks]').onclick=()=>{targetCount+=20;refresh();};
+   body.scrollTop=scroll;
+   if(focused)[...body.querySelectorAll('[data-task]')].find(b=>b.dataset.task===focused)?.focus({preventScroll:true});
+   return true;
+  }catch(error){
+   if(current!==sequence||!dialog.open)return true;
+   let status=body.querySelector('[role=status]');if(!status){body.textContent='';status=document.createElement('p');status.setAttribute('role','status');body.append(status);}
+   status.textContent='待处理更新失败，请重试：'+error.message;
+   if(!body.querySelector('[data-retry-tasks]')){const retry=document.createElement('button');retry.type='button';retry.dataset.retryTasks='';retry.textContent='重新读取';retry.onclick=refresh;body.append(retry);}
+   return false;
+  }
+ }
+ const taskIndex=new Map();
+ actionTaskLists.add(refresh);dialog.addEventListener('close',()=>{sequence++;actionTaskLists.delete(refresh);},{once:true});
+ body.onclick=event=>{const button=event.target.closest('[data-task]');if(!button)return;const item=taskIndex.get(button.dataset.task);if(item&&item.sourceModule!=='attendance'&&openExternalTask){try{window.__suppressRouteGuard=Date.now()+800;}catch{}dialog.close();openExternalTask(item);refreshActionTaskLists();return;}openOffsetRequest(api,button.dataset.task,()=>{onChange();refreshActionTaskLists();});};
+ await refresh();return dialog;
+}
+const ownLeaveTableHtml=(headers,rows,cls,incomplete,notes,empty)=>`${incomplete?'<p>部分假期数据尚未同步或未完整，以下仅显示已取得的记录。</p>':''}${notes.map(n=>`<p>${esc(n)}</p>`).join('')}<small>表格可左右滑动查看完整内容。</small><div class="home-att-table" tabindex="0" aria-label="可横向滚动的假期表格"><table class="${cls}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${empty}</td></tr>`}</tbody></table></div>`;
+export function ownLeaveQuotaTable(cells){
+ const positive=v=>Number.isFinite(v)&&v>0,rows=[];
+ for(const cell of cells)for(const q of cell.quotas||[]){
+  const values=(q.values||[]).filter(v=>positive(v.quota));if(!values.length)continue;
+  const source=(q.names||[]).filter(attendanceCategoryAllowed).join('、');
+  const availability={active:'生效中',expired:'已过期，非当前可休余额',future:'尚未生效'}[q.availability]||'有效期待核对';
+  rows.push([`${esc(cell.group)}<small>${esc(source&&source!==cell.group?source+' · ':'')}${esc(q.year)}年度</small>`,values.map(v=>`${esc(v.used)}/${esc(v.quota)} · ${esc(v.remaining)}${esc(v.unit)}`).join('<br>'),`${time(q.start)}—${time(q.end)}<small>${availability}</small>`]);
+ }
+ const incomplete=!cells.length||cells.some(c=>c.coverage&&c.coverage!=='complete'||!c.status||c.status==='not_synced');
+ const notes=[];
+ return ownLeaveTableHtml(['假期','已用／额度·剩余','有效期／可用状态'],rows,'home-leave-quota-table',incomplete,notes,'暂无已发放额度的假期');
+}
+export function ownLeaveRecordEntries(cellLists,year){
+ const byId=new Map();
+ for(const cells of cellLists)for(const cell of cells||[])for(const [records,unassigned] of [[cell.records||[],false],[cell.unassigned||[],true]])
+  for(const record of records){
+   if(!attendanceCategoryAllowed(record.name))continue;
+   const values=(record.values||[]).filter(v=>Number.isFinite(v.amount)&&v.amount!==0);if(!values.length)continue;
+   if(record.start!=null){const startYear=Number(new Date(typeof record.start==='number'||/^\d+$/.test(String(record.start))?Number(record.start):Date.parse(record.start)).toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,4));if(startYear!==year&&startYear!==year-1)continue;}
+   const prior=byId.get(record.id);
+   byId.set(record.id,{...(prior||record),group:cell.group,unassigned:prior?.unassigned||unassigned});
+  }
+ return [...byId.values()].sort((a,b)=>Number(b.start||0)-Number(a.start||0));
+}
+export function ownLeaveRecordTable(entries,{incomplete=false,notes=[],empty='暂无前一年及当年的休假记录'}={}){
+ const rows=entries.map(record=>[`${esc(record.group)}${record.name&&record.name!==record.group?`<small>${esc(record.name)}</small>`:''}`,`${esc(record.period||{leave:'休假扣减',modify_quota:'额度调整'}[record.type]||'平台变更')} · ${esc({success:'已生效',abort:'已撤销／退回',init:'平台记录',pending:'待生效'}[record.status]||'状态待核对')}${record.operation?` · ${esc({insert:'初始化',add:'增加',delete:'删除',update:'调整'}[record.operation]||'调整')}`:''}${record.unassigned?'<small>年度归属待核对</small>':''}`,`${time(record.start)}<br>至 ${time(record.end)}`,record.values.map(v=>`${esc(v.amount)}${esc(v.unit)}`).join('<br>')]);
+ return ownLeaveTableHtml(['假期','类型／状态','期间','数量'],rows,'home-leave-record-table',incomplete,notes,empty);
+}
+
+export function exchangeRuleText(rule){
+ if(!rule)return '兑换规则尚未设置';
+ if(rule.cap===0)return '兑换规则：当前暂停兑换';
+ const hours=new Intl.NumberFormat('zh-CN',{useGrouping:false,maximumFractionDigits:12}).format(rule.hours);
+ return `兑换规则：每累计${hours}小时兑换${rule.count}次，每月最多${rule.cap}次，下月使用。`;
+}
+
+export function homeAttendanceTable(days,kind,{canApply=false}={}){
+ const leaves=legalLeaveCategories({people:[{days}]});
+ const category=d=>`<button type="button" data-open-day="${esc(d.date)}">${attendanceCategoryBadge(d.category,leaves)}${d.offset?.label?`<small>${esc(d.offset.label)}</small>`:''}</button>${canApply&&kind==='issues'&&availableOffsetItems(d).length?`<button type="button" data-apply="${esc(d.date)}">申请抵消</button>`:''}`;
+ const schedule=kind==='schedule'||kind==='accumulation',headers=schedule?['日期','类别','班次','出差用途','有效实际上班','有效实际下班','当日加班']:['日期','类别','原因','问题','处理结果','审批人'];
+ const rows=days.map(d=>{const {on,off,multiple}=punchSummary(d),actual=v=>`${v.actual?`<span class="home-punch-date">${esc(time(v.actual).split(' ')[0])}</span><span class="home-punch-time">${esc(time(v.actual).split(' ').slice(1).join(' '))}</span>`:'—'}<small>${esc(v.status)}${multiple?' · 多段':''}</small>`;
+ return [esc(d.date),category(d),...(schedule?[esc(d.shift||'—'),esc((d.purposes||[]).map(a=>a.category||a.status).join('；')||'—'),actual(on),actual(off),d.overtime?.seconds==null?`—<small>${esc(d.overtime?.reason||'无法计算')}</small>`:`${Math.floor(d.overtime.seconds/3600)}小时${Math.floor(d.overtime.seconds%3600/60)}分`]:[esc(d.reason),esc([...(d.issues||[]),d.syncError].filter(Boolean).join('；')||'—'),...attendanceProcessingCells(d,esc)])];});
+ const order=kind==='accumulation'?[0,1,2,6,4,5,3]:headers.map((_,index)=>index);
+ return `${['schedule','accumulation'].includes(kind)?'':'<small>表格可左右滑动查看完整内容。</small>'}<div class="home-att-table${schedule?' home-att-fit':''}" tabindex="0" aria-label="${schedule?'':'可横向滚动的'}${kind==='issues'?'异常':kind==='accumulation'?'考勤':'排班'}表格"><table class="${schedule?'home-schedule-table':'home-issues-table'}${kind==='accumulation'?' home-accumulation-table':''} home-personal-table" data-home-attendance-kind="${esc(kind)}"><thead><tr>${order.map(index=>`<th>${headers[index]}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(cells=>`<tr>${order.map(index=>`<td>${cells[index]}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">${kind==='accumulation'?'本月暂无记录':'本月暂无考勤异常'}</td></tr>`}</tbody></table></div>`;
+}
+
+export async function openPersonalAttendance(api,kind,onChange=()=>{},onOpenDay=null){
+ const titles={schedule:'前后三天排班',issues:'我的全部考勤异常',accumulation:'本月累计明细',credits:'本月额度与流水',leaves:'我的假期'};
+ const dialog=openOffsetSheet(titles[kind]||'我的考勤','加载中…'),body=dialog.querySelector('section');
+ try{
+  if(kind==='credits'){
+   const month=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,7),[account,ledger,requests]=await Promise.all([api('/attendance/offsets/balance'),api('/attendance/offsets/ledger?month='+month),api('/attendance/offsets/requests')]);
+   if(!dialog.open)return;const requestRows=Array.isArray(requests)?requests:requests.items;body.innerHTML=`<p>${esc(month)}：${account.sourceKind==='initial_fixed'?'首期固定发放':'上月兑换'}${account.granted??'—'}次，已用${account.used??'—'}，冻结${account.frozen??'—'}，可用${account.available??'—'}次。</p><p>状态：${esc(statusText(account.status))}。不同月份额度不自动结转或清零。</p>${ledger.map(r=>`<article>${esc(statusText(r.kind))} ${r.amount}次<small>${esc(time(r.created_at))}</small></article>`).join('')}<h3>本人申请</h3><div data-request-list>${requestRows.map(r=>`<button data-request="${esc(r.id)}">${esc(statusText(r.status))} · ${esc(time(r.created_at))}</button>`).join('')}</div>${requests.nextCursor?'<button data-more-requests>加载更多申请</button>':''}`;
+   let cursor=requests.nextCursor;body.onclick=async e=>{const b=e.target.closest('[data-request]');if(b){openOffsetRequest(api,b.dataset.request,onChange);return;}const more=e.target.closest('[data-more-requests]');if(!more)return;more.disabled=true;try{const next=await api('/attendance/offsets/requests?month='+month+'&cursor='+encodeURIComponent(cursor));body.querySelector('[data-request-list]').insertAdjacentHTML('beforeend',next.items.map(r=>`<button data-request="${esc(r.id)}">${esc(statusText(r.status))} · ${esc(time(r.created_at))}</button>`).join(''));cursor=next.nextCursor;more.hidden=!cursor;}catch(error){more.textContent=error.message;}finally{more.disabled=false;}};return;
+  }
+  if(kind==='leaves'){
+   dialog.classList.add('offset-table-sheet');
+   const prevYear=Number(new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}).slice(0,4))-1;
+   const [data,previous]=await Promise.all([api('/attendance/self/leaves'),api('/attendance/self/leaves?year='+prevYear).catch(()=>null)]);
+   if(!dialog.open)return;const cells=data.people?.[0]?.cells||[];
+   const previousCells=previous&&previous.year===data.year-1?previous.people?.[0]?.cells||[]:null;
+   const entries=ownLeaveRecordEntries(previousCells?[cells,previousCells]:[cells],data.year);
+   const incomplete=!cells.length||cells.some(c=>c.coverage&&c.coverage!=='complete'||!c.status||c.status==='not_synced');
+   body.innerHTML=`<small>最近成功同步：${time(data.people?.[0]?.syncedAt)}${data.people?.[0]?.error?' · '+esc(data.people[0].error):''}${data.people?.[0]?.identityIssue?' · '+esc(data.people[0].identityIssue):''}</small><nav class="offset-sheet-tabs"><button type="button" data-tab="quota">假期额度</button><button type="button" data-tab="records">休假记录</button></nav><div data-leave-body></div>`;
+   const render=tab=>{body.querySelector('[data-leave-body]').innerHTML=tab==='quota'?ownLeaveQuotaTable(cells):ownLeaveRecordTable(entries,{incomplete:incomplete||!previousCells,notes:previousCells?[]:[`前一年（${data.year-1}）记录未取得，仅显示当年条目`]});for(const b of body.querySelectorAll('[data-tab]'))b.setAttribute('aria-current',String(b.dataset.tab===tab));};
+   body.onclick=e=>{const b=e.target.closest('[data-tab]');if(b)render(b.dataset.tab);};render('quota');return;
+  }
+  const data=await api('/attendance/self/'+kind);if(!dialog.open)return;
+  const days=data.people?.[0]?.days||data.days||[];
+  ensureAttendanceBadgeStyles(document);dialog.classList.add('offset-table-sheet');
+  body.innerHTML=`${kind==='schedule'?'':`<small>${esc(kind==='accumulation'?exchangeRuleText(data.exchangeRule):data.note||'按归属工作日展示；时间差额不是已批准加班时长。')}</small>`}${homeAttendanceTable(days,kind,{canApply:data.offsetWritesEnabled})}<p role="alert"></p>`;
+  body.onclick=async event=>{const target=event.target.closest('[data-open-day]');if(target&&onOpenDay){target.disabled=true;try{await onOpenDay({personId:data.personId||data.people?.[0]?.personId,date:target.dataset.openDay});}catch(error){if(dialog.open){body.querySelector('[role=alert]').textContent=error.message;target.disabled=false;}}return;}const b=event.target.closest('[data-apply]');if(!b)return;const day=days.find(d=>d.date===b.dataset.apply);let selection,balance;try{[selection,balance]=await Promise.all([api('/attendance/offsets/approval-candidates'),api('/attendance/offsets/balance')]);}catch(error){body.querySelector('[role=alert]').textContent=error.message;return;}if(!dialog.open)return;const form=openOffsetSheet('本人申请抵消',`<form><p>本月可用次数：${balance.available??'待核算'}。每个事项占用1次，提交后冻结。</p>${availableOffsetItems(day).map(i=>`<label><input type="checkbox" name="item" data-kind="${esc(i.type)}" value="${esc(i.eventId)}">${esc(i.type==='day_off_missing'?'白班下班缺卡':'白班早退')} · 1次</label>`).join('')}<textarea required name="note" maxlength="2000" placeholder="申请说明"></textarea><p class="offset-route-hint" hidden>所选事项均为缺卡：提交后由系统按规则路由（普通员工→异常日值班班组长；班组长／干部本人→其他干部共同审批），无需选择审批人。</p><label class="offset-approver">审批人<select name="assigneeUserId" required><option value="">请选择审批人</option>${selection.candidates.map(c=>`<option value="${esc(c.id)}" ${c.id===selection.defaultUserId?'selected':''}>${esc(c.name)}${c.employeeNo?'／'+esc(c.employeeNo):''}${c.recommended?'（同排班班组长）':''}</option>`).join('')}</select><small>${selection.defaultUserId?'根据'+esc(selection.date)+'当日排班 '+esc(selection.shift)+' 推荐，可修改':selection.candidates.length?'未能唯一确定同排班班组长，请选择审批人':'暂无可用审批人，请联系管理员'}</small></label><p role="alert"></p><footer><button type="submit" >确认并冻结次数</button></footer></form>`),key=offsetOperationId();
+  const refreshRouteHint=()=>{const checked=[...form.querySelectorAll('[name=item]:checked')];const missingOnly=checked.length>0&&checked.every(v=>v.dataset.kind==='day_off_missing');const approver=form.querySelector('.offset-approver');const hint=form.querySelector('.offset-route-hint');if(approver)approver.hidden=missingOnly;if(hint)hint.hidden=!missingOnly;};
+  form.querySelectorAll('[name=item]').forEach(box=>box.addEventListener('change',refreshRouteHint));refreshRouteHint();
+   form.querySelector('form').onsubmit=async e=>{e.preventDefault();const submit=form.querySelector('[type=submit]');submit.disabled=true;try{await api('/attendance/offsets/requests',{method:'POST',headers:{'Idempotency-Key':key},body:{events:[...form.querySelectorAll('[name=item]:checked')].map(v=>v.value),note:form.querySelector('textarea').value,assigneeUserId:form.querySelector('.offset-approver').hidden?'':form.querySelector('[name=assigneeUserId]').value}});form.close();dialog.close();onChange();}catch(error){form.querySelector('[role=alert]').textContent=error.message;submit.disabled=false;}};
+  };
+ }catch(e){if(dialog.open)body.textContent=e.message;}
+}
+
+export async function openOffsetAdministration(api,people,permissions){
+ const dialog=openOffsetSheet('月兑换规则','加载中…'),body=dialog.querySelector('section');
+ if(!permissions.includes('attendance.offset.rules.manage')){body.textContent='当前账号没有月兑换规则管理权限';return dialog;}
+ try{
+  const [rules,state]=await Promise.all([api('/attendance/offsets/rules'),api('/attendance/offsets/state')]);if(!dialog.open)return dialog;
+  const rule=rules[0];
+  body.innerHTML=`<form class="offset-rule-form"><div class="offset-rule-note">对全部人员生效，无需选择人员。从2026年10月累计时间开始计算11月次数，以后每月使用上月累计时间自动兑换。</div><div class="offset-rule-fields"><label>每累计小时<input name="hours" inputmode="decimal" required value="${rule?esc(rule.threshold_seconds/3600):''}" placeholder="请输入累计小时"></label><label>兑换次数<input name="count" type="number" min="1" max="2147483647" step="1" required value="${rule?rule.unit_count:''}"></label><label>月上限次数<input name="cap" type="number" min="0" max="2147483647" step="1" required value="${rule?rule.monthly_cap:''}"><small>0表示停发</small></label></div><p>${rule?'规则修改从下一个使用月份生效，历史月份保留原规则。':'首次保存后自动核算已到使用月份的次数。'}不足一档不兑换，各月独立核算。</p><div class="offset-rule-note">排队中 ${state.queuedAccounts??0} 人月 · 已生成 ${state.issuedAccounts??0} 人月 · 待核算 ${state.pendingAccounts??0} 人月 · 待差异复核 ${state.differenceAccounts??0} 人月。缺失数据不会按0计算。${state.activeRule?esc(state.currentMonth)+'月使用'+esc(state.currentSourceMonth)+'月累计换算。':'当前月尚无生效规则。'}</div><p role="alert"></p><footer><button type="button" data-refresh>刷新状态</button><button type="submit">保存规则</button></footer></form>`;
+  const form=body.querySelector('form');let key=offsetOperationId();
+  form.querySelector('[data-refresh]').onclick=async()=>{try{const data=await api('/attendance/offsets/state');form.querySelector('[role=alert]').textContent=`排队中 ${data.queuedAccounts} 人月，已生成 ${data.issuedAccounts} 人月，待核算 ${data.pendingAccounts} 人月，待差异复核 ${data.differenceAccounts} 人月`;}catch(e){form.querySelector('[role=alert]').textContent=e.message;}};
+  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;try{const payload=Object.fromEntries(new FormData(form));payload.count=Number(payload.count);payload.cap=Number(payload.cap);const result=await api('/attendance/offsets/rules',{method:'POST',headers:{'Idempotency-Key':key},body:payload});key=offsetOperationId();form.querySelector('[role=alert]').textContent=`规则${result.unchanged?'未变更，无需重复保存':'已保存'}：${result.sourceMonth}月累计用于${result.usageMonth}月次数。${state.activeRule?state.currentMonth+'月按'+state.currentSourceMonth+'月累计自动核算，点击刷新状态查看进度。':'将自动核算，请刷新状态查看进度。'}`;}catch(error){form.querySelector('[role=alert]').textContent=error.message;}finally{button.disabled=false;}};
+ }catch(e){if(dialog.open)body.textContent=e.message;}
+ return dialog;
+}
