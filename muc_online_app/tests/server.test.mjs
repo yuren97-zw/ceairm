@@ -6407,9 +6407,9 @@ test("A16 组合权限不串范围：查看权限与复核动作的范围相互�
   insertPerson("person-a16-two-" + tag, tag + "02", "他班机械师", teamTwo.id);
   const mkAccount = (username, personId, roles, scopeType, scopeId) => request("/api/admin/accounts", { method: "POST", cookie, body: { personId, username, password: "123456", status: "active", mustChangePassword: false, roles, scopes: [{ module: "maintenance", scopeType, scopeId }] } });
   const scoped = await mkAccount("a16-scoped", "person-a16-one-" + tag, ["manager", "addon_hours_confirm"], "specified_teams", teamOne.id);
-  assert.equal(scoped.res.statusCode, 201, JSON.stringify(scoped.payload));
+  assert.equal(scoped.res.statusCode, 201, "A16-scoped: " + JSON.stringify(scoped.payload));
   const wide = await mkAccount("a16-wide", "person-a16-two-" + tag, ["manager", "addon_hours_confirm"], "all", "");
-  assert.equal(wide.res.statusCode, 201, JSON.stringify(wide.payload));
+  assert.equal(wide.res.statusCode, 201, "A16-wide: " + JSON.stringify(wide.payload));
   const auth = async username => String((await request("/api/login", { method: "POST", body: { username, password: "123456" } })).res.headers["Set-Cookie"]).split(";")[0];
   const scopedCookie = await auth("a16-scoped"), wideCookie = await auth("a16-wide");
   const insertHour = (id, personId, name, teamName) => db.prepare(`insert into maintenance_hour_results(id,owner_type,owner_id,flight_id,assignment_id,person_id,user_name,team,role,source,hours,status,created_at,updated_at) values(?,'subtask',?,null,?,?,?,?,?,'nonroutine',2,'待复核',?,?)`).run(id, "owner-" + id, "assign-" + id, personId, name, teamName, "主做", stamp, stamp);
