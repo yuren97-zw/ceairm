@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {installAccumulation,singleCapHoursToSeconds} from './attendance-accumulation.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {createOffsetRegister} from './attendance-offset-register.mjs';
 import {createActionTaskService} from './action-task-service.mjs';
@@ -17,8 +18,7 @@ export function hoursToSeconds(value){
 }
 export function createOffsetService({db,clock=Date.now,hasPermission,canViewPerson,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled,listPeople=()=>[],allowLegacySettlement=false,listApproverIds=()=>db.prepare("select id from users where status='active'").all().map(r=>r.id)}){
  const register=createOffsetRegister({db,clock});
- db.exec(fs.readFileSync(new URL('./migrations/033_attendance_monthly_exchange.sql',import.meta.url),'utf8'));
- // B4 路由候选表（V1.1 §6.3；036 编号预留给未合并的考勤单日封顶迁移）。
+ installAccumulation(db);
  db.exec(fs.readFileSync(new URL('./migrations/037_attendance_offset_routes.sql',import.meta.url),'utf8'));
  const CADRE_POSITIONS=['主任','副主任','助理','书记'];
  const routeOf=row=>{try{const parsed=JSON.parse(row.responsibility_json||'{}');return parsed.route_kind||parsed.status||'applicant_selected';}catch{return 'applicant_selected';}};
@@ -142,13 +142,17 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   saveMonthlyRule(user,body,key){
    requirePermission(user,'attendance.offset.rules.manage');writable();
    const seconds=hoursToSeconds(body.hours);
+   let singleCap=singleCapHoursToSeconds(body.singleCapHours);
+   if(singleCap!==null&&singleCap>2147483647)throw fail('单次上限超出整数秒范围');
    if(seconds>2147483647||!Number.isSafeInteger(body.count)||body.count<1||body.count>2147483647||!Number.isSafeInteger(body.cap)||body.cap<0||body.cap>2147483647)throw fail('次数或月上限无效');
    return op(user,'rule',key,body,()=>{
+    if(db.kind==='postgres')db.prepare('select pg_advisory_xact_lock(7412036)').get();
     const previous=db.prepare('select * from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').get();
-    if(previous&&previous.threshold_seconds===seconds&&previous.unit_count===body.count&&previous.monthly_cap===body.cap)return {id:previous.id,sourceMonth:previous.source_month,usageMonth:nextMonth(previous.source_month),unchanged:true};
-    const current=dayOf(clock()).slice(0,7),sourceMonth=previous?(current<'2026-10'?'2026-10':current):'2026-10';
+    if(!Object.hasOwn(body,'singleCapHours'))singleCap=previous?.single_cap_seconds??null;
+    if(previous&&previous.threshold_seconds===seconds&&previous.unit_count===body.count&&previous.monthly_cap===body.cap&&(previous.single_cap_seconds??null)===singleCap)return {id:previous.id,sourceMonth:previous.source_month,usageMonth:nextMonth(previous.source_month),unchanged:true};
+    const current=dayOf(clock()).slice(0,7),sourceMonth=previous||singleCap!==null?(current<'2026-10'?'2026-10':current):'2026-10';
     const id='monthly:'+randomUUID();
-    db.prepare('insert into attendance_monthly_exchange_rules values(?,?,?,?,?,?,?)').run(id,sourceMonth,seconds,body.count,body.cap,user.id,new Date(Math.max(clock(),Date.parse(previous?.created_at||'1970-01-01')+1)).toISOString());
+    db.prepare('insert into attendance_monthly_exchange_rules(id,source_month,threshold_seconds,unit_count,monthly_cap,created_by,created_at,single_cap_seconds) values(?,?,?,?,?,?,?,?)').run(id,sourceMonth,seconds,body.count,body.cap,user.id,new Date(Math.max(clock(),Date.parse(previous?.created_at||'1970-01-01')+1)).toISOString(),singleCap);
     audit(user,'monthly_rule',id,{...body,sourceMonth,usageMonth:nextMonth(sourceMonth),scope:'all'});
     return {id,sourceMonth,usageMonth:nextMonth(sourceMonth)};
    });
@@ -156,7 +160,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   exchangeRuleForSource(user,sourceMonth){
    requirePermission(user,'attendance.read');monthDates(sourceMonth);
    const rule=monthlyRule(sourceMonth);
-   return rule?{sourceMonth,usageMonth:nextMonth(sourceMonth),hours:rule.threshold_seconds/3600,count:rule.unit_count,cap:rule.monthly_cap}:null;
+   return rule?{sourceMonth,usageMonth:nextMonth(sourceMonth),hours:rule.threshold_seconds/3600,count:rule.unit_count,cap:rule.monthly_cap,singleCapHours:rule.single_cap_seconds==null?null:rule.single_cap_seconds/3600}:null;
   },
   monthlyRules(user){requirePermission(user,'attendance.offset.rules.manage');return db.prepare('select * from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').all();},
   responsibilityCandidates(user){
@@ -339,10 +343,10 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   trial(user,{personId,sourceMonth},{lock=false,ruleOverride=null}={}){
    requirePermission(user,'attendance.offset.rules.manage');if(!canViewPerson(user,personId))throw fail('人员不在数据范围',403);
    const dates=monthDates(sourceMonth),days=readDays(personId,dates[0],dates.at(-1),{lock});
-   const coverage=accumulatedCoverage(days,clock(),{expectedDates:dates});
    const rule=ruleOverride||monthlyRule(sourceMonth)||db.prepare('select * from attendance_offset_rules where source_month=?').get(sourceMonth);
+   const coverage=accumulatedCoverage(days,clock(),{expectedDates:dates,accumulationRule:rule});
    const applicable=rule&&(rule.id.startsWith('monthly:')||JSON.parse(rule.people_json).includes(personId));
-   return {personId,sourceMonth,usageMonth:nextMonth(sourceMonth),coverage,ruleId:applicable?rule.id:null,sourceVersion:hash({facts:days.map(d=>[d.date,d.sourceRevision||hash(d.input)]),coverage}),earned:applicable?exchangeSeconds(coverage.seconds,rule.threshold_seconds,rule.unit_count,rule.monthly_cap):null,status:!applicable?'not_configured':sourceMonth>=dayOf(clock()).slice(0,7)?'not_closed':coverage.status==='complete'?'ready':'pending_review'};
+   return {personId,sourceMonth,usageMonth:nextMonth(sourceMonth),coverage,ruleId:applicable?rule.id:null,sourceVersion:hash({facts:days.map(d=>[d.date,d.sourceRevision||hash(d.input)]),coverage,...(rule?.single_cap_seconds!=null?{accumulationRule:rule.id}:{})}),earned:applicable?exchangeSeconds(coverage.seconds,rule.threshold_seconds,rule.unit_count,rule.monthly_cap):null,status:!applicable?'not_configured':sourceMonth>=dayOf(clock()).slice(0,7)?'not_closed':coverage.status==='complete'?'ready':'pending_review'};
   },
   issue(user,body,key){
    requirePermission(user,'attendance.offset.rules.manage');writable();

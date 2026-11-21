@@ -1,3 +1,4 @@
+import {capAccumulation} from './attendance-accumulation.mjs';
 import {createHash} from 'node:crypto';
 import {dayOf, describePunches, calculateOvertime, stamp, validPunch, plannedShift} from './attendance-rules.mjs';
 
@@ -50,7 +51,7 @@ export function resolveOffsetFacts(personId, input, {now = Date.now(), sourceRea
   return {eligibility:items.length?'eligible':'ineligible', reason:items.length?'可信白班独立下班异常':'无白名单异常', shift:'白班', items};
 }
 
-export function accumulatedCoverage(days, now = Date.now(), {expectedDates = null} = {}) {
+export function accumulatedCoverage(days, now = Date.now(), {expectedDates = null, accumulationRule = null} = {}) {
   let seconds = 0;
   const unresolved = [];
   const excludedDays = [];
@@ -67,7 +68,7 @@ export function accumulatedCoverage(days, now = Date.now(), {expectedDates = nul
     // from accumulation rather than inventing hours or treating it as missing.
     const exemptWholeShift=points.some(p=>p.type==='OnDuty')&&lastOff>0&&points.every(p=>(input.approvals||[]).some(a=>a.approved&&!a.revoked&&['请假','外出','出差'].includes(a.kind)&&a.start<=p.planned&&a.end>=p.planned));
     if(exemptWholeShift&&!(input.punches||[]).some(validPunch)&&lastOff<=now&&stamp(sourceReadAt)>=lastOff){excludedDays.push({date,reason:'整班已批准审批免打卡，无真实打卡累计依据，不参与累计'});continue;}
-    const value = calculateOvertime({...input, points:input.points || [], punches:input.punches || []}, now);
+    const value = capAccumulation(calculateOvertime({...input, points:input.points || [], punches:input.punches || []}, now),accumulationRule);
     if (value.seconds === null || !stamp(sourceReadAt) || stamp(sourceReadAt) < value.planned) {
       unresolved.push({date, reason:value.reason || '查询时点不足'}); continue;
     }

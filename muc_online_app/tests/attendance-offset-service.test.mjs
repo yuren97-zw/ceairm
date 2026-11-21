@@ -309,8 +309,34 @@ test('read-only accumulation rule uses displayed source month without management
  f.service.saveMonthlyRule(f.admin,{hours:'2.5',count:2,cap:4},'nov-rule');
  const reader={...f.employee,permissions:['attendance.read']};
  const counts=()=>['attendance_offset_accounts','attendance_offset_ledger','attendance_offset_assessments','attendance_offset_audit'].map(t=>f.db.prepare('select count(*) n from '+t).get().n),before=counts();
- assert.deepEqual(f.service.exchangeRuleForSource(reader,'2026-10'),{sourceMonth:'2026-10',usageMonth:'2026-11',hours:2,count:1,cap:3});
- assert.deepEqual(f.service.exchangeRuleForSource(reader,'2026-11'),{sourceMonth:'2026-11',usageMonth:'2026-12',hours:2.5,count:2,cap:4});
+ assert.deepEqual(f.service.exchangeRuleForSource(reader,'2026-10'),{sourceMonth:'2026-10',usageMonth:'2026-11',hours:2,count:1,cap:3,singleCapHours:null});
+ assert.deepEqual(f.service.exchangeRuleForSource(reader,'2026-11'),{sourceMonth:'2026-11',usageMonth:'2026-12',hours:2.5,count:2,cap:4,singleCapHours:null});
  assert.equal(f.service.exchangeRuleForSource(reader,'2026-09'),null);assert.deepEqual(counts(),before);
  assert.throws(()=>f.service.exchangeRuleForSource(f.employee,'2026-11'),{status:403});assert.throws(()=>f.service.exchangeRuleForSource(null,'2026-11'),{status:401});f.db.close();
+});
+
+test('single cap starts this source month, preserves historical policy and existing accounts, and saves idempotently',()=>{
+ const f=fixture();f.setNow(Date.parse('2026-11-20T12:00:00+08:00'));
+ f.service.saveMonthlyRule(f.admin,{hours:'2',count:1,cap:4},'base');
+ const tables=['attendance_offset_accounts','attendance_offset_ledger','attendance_offset_requests'];
+ const before=tables.map(t=>f.db.prepare('select * from '+t).all());
+ const body={hours:'2',count:1,cap:4,singleCapHours:'2'},saved=f.service.saveMonthlyRule(f.admin,body,'cap');
+ assert.equal(saved.sourceMonth,'2026-11');assert.equal(saved.usageMonth,'2026-12');
+ assert.equal(f.service.monthlyRules(f.admin)[0].single_cap_seconds,7200);
+ assert.equal(f.service.exchangeRuleForSource({...f.employee,permissions:['attendance.read']},'2026-10').singleCapHours,null);
+ assert.equal(f.service.saveMonthlyRule(f.admin,body,'same').unchanged,true);
+ for(const value of ['0','-1','garbage','0.00001'])assert.throws(()=>f.service.saveMonthlyRule(f.admin,{...body,singleCapHours:value},'bad'+value));
+ assert.throws(()=>f.service.saveMonthlyRule(f.employee,body,'denied'),{status:403});
+ assert.deepEqual(tables.map(t=>f.db.prepare('select * from '+t).all()),before);
+ assert.equal(f.service.saveMonthlyRule(f.admin,{...body,singleCapHours:''},'unlimited').sourceMonth,'2026-11');
+ assert.equal(f.service.monthlyRules(f.admin)[0].single_cap_seconds,null);f.db.close();
+});
+test('first explicit cap never backdates to October and old clients cannot clear it accidentally',()=>{
+ const f=fixture();f.setNow(Date.parse('2026-11-20T12:00:00+08:00'));
+ const body={hours:'2',count:1,cap:4,singleCapHours:'0.000277777778'};
+ assert.equal(f.service.saveMonthlyRule(f.admin,body,'first-cap').sourceMonth,'2026-11');
+ assert.equal(f.service.monthlyRules(f.admin)[0].single_cap_seconds,1);
+ const reader={...f.employee,permissions:['attendance.read']};assert.equal(f.service.exchangeRuleForSource(reader,'2026-10'),null);
+ assert.equal(f.service.saveMonthlyRule(f.admin,{hours:'2',count:1,cap:4},'old-client').unchanged,true);
+ assert.equal(f.service.monthlyRules(f.admin)[0].single_cap_seconds,1);f.db.close();
 });

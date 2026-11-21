@@ -1,3 +1,4 @@
+import {installAccumulation,accumulationPolicies,capAttendanceDay} from './attendance-accumulation.mjs';
 import {attendanceExceptionDay,resolveOffsetFacts,reliableScheduledShift} from './attendance-offset-facts.mjs';
 import {createApprovalPlanService} from './attendance-approval-plans.mjs';
 import {createLeaveService} from './attendance-leave-service.mjs';
@@ -21,7 +22,7 @@ const iso=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
 export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));if(db.kind==='postgres')db.exec(fs.readFileSync(new URL('./migrations/031_attendance_event_instance_index.sql',import.meta.url),'utf8'));}
 export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now(),onSourceUpdated=()=>{},onLocalMaintenance=()=>{}}){
- installAttendance(db);
+ installAttendance(db);installAccumulation(db);
  const iso=()=>new Date(clock()).toISOString();
  const owner=uid();let busy=false,timer,lastReapAt=0;
  // 分类结果快照缓存：键由规则/数据/审批/假期版本与请求形态组成；当天"未到下班"等
@@ -428,7 +429,8 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   const s=scope(user);
   const personSql=filters.personId?' and d.person_id=?':'',personParams=filters.personId?[filters.personId]:[];
   // 分类结果只由数据版本与请求形态决定；categories 在分类之后过滤，不参与缓存键。
-  const cacheKey=json(['attendanceSnapshotV1',RULE_VERSION,hybrid.state('dataVersion')||'',hybrid.state('approvalPlanVersion')||'',hybrid.state('leaveVersion')||'',detailLevel,permissionCode,dates[0],s.sql,json(s.params),filters.personId||'',filters.department||'',filters.team||'',filters.query||'',dayOf(at),Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS)]);
+  const accumulation=accumulationPolicies(db);
+  const cacheKey=json([accumulation.version,'attendanceSnapshotV1',RULE_VERSION,hybrid.state('dataVersion')||'',hybrid.state('approvalPlanVersion')||'',hybrid.state('leaveVersion')||'',detailLevel,permissionCode,dates[0],s.sql,json(s.params),filters.personId||'',filters.department||'',filters.team||'',filters.query||'',dayOf(at),Math.floor(clock()/SNAPSHOT_CACHE_BUCKET_MS)]);
   const cached=fresh?null:snapshotCache.get(cacheKey)||null;
   if(cached){snapshotCache.delete(cacheKey);snapshotCache.set(cacheKey,cached);onTiming('attendance_cache_hit',1);onTiming('attendance_read',0);onTiming('attendance_classify',0);}
   let peopleRows=cached?.peopleRows||null,updatedAtByPerson=cached?.updatedAtByPerson||null;
@@ -480,7 +482,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     while(classifyCache.size>CLASSIFY_CACHE_MAX)classifyCache.delete(classifyCache.keys().next().value);
     return day;
    };
-   const days=dates.map(makeDay),contextDays=contextDates.map(makeDay);
+   const days=dates.map(date=>capAttendanceDay(makeDay(date),accumulation.forDate(date))),contextDays=contextDates.map(date=>capAttendanceDay(makeDay(date),accumulation.forDate(date)));
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
    return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
@@ -492,7 +494,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
   snapshotCache.set(cacheKey,{peopleRows,updatedAtByPerson});
   while(snapshotCache.size>SNAPSHOT_CACHE_MAX)snapshotCache.delete(snapshotCache.keys().next().value);
   }
-  if(selfOnly)return {month:dates[0].slice(0,7),people:peopleRows,generatedAt:iso(),dataVersion:hybrid.state('dataVersion')||''};
+  if(selfOnly)return {month:dates[0].slice(0,7),people:peopleRows,generatedAt:iso(),accumulationVersion:sourceHash(accumulation.version),dataVersion:hybrid.state('dataVersion')||''};
   const classifiedAt=performance.now();
   const leaveTypes=leaveCatalog(user);
   const settings=displaySettings(user);
@@ -511,7 +513,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    return {...totals,...plans,contextDays:[],days:days.map(({input,approvalPlans,...d})=>({...d,purposes:d.purposes.map(({category,status})=>({category,status})),punchDetails:d.punchDetails.map(({type,planned,actual,status,reason,rawStatus})=>({type,planned,actual,status,reason,rawStatus}))}))};
   });
   onTiming('attendance_metadata',performance.now()-classifiedAt);
-  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,dataVersion:hybrid.state('dataVersion')||'',historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额累计，不代表审批认可时长。',capabilityStatusEnabled:false};
+  return {...(detailLevel==='full'?{}:{detailLevel}),approvalPlanStatus:all(user)&&hasRbac(user,'attendance.record.manage')?approvalPlans.status():config.approvalPlansEnabled?{enabled:true}:null,approvalReasonCoverage,month:dates[0].slice(0,7),dates,people:projected,categories,leaveTypes,displaySettings:settings,generatedAt:iso(),lastSyncedAt:last,ruleVersion:RULE_VERSION,accumulationVersion:sourceHash(accumulation.version),dataVersion:hybrid.state('dataVersion')||'',historyWarning:'当前通讯录不能证明历史全员完整；历史缺失保持可见，不推断缺勤。',overtimeNote:'按末次计划下班点与对应有效实际打卡的差额按所属月份规则的单次上限累计；详情保留原始差额，不代表审批认可时长。',capabilityStatusEnabled:false};
  }
  const statusCache=new Map(),STATUS_CACHE_MAX=8,STATUS_CACHE_BUCKET_MS=10000;
  function status(user){

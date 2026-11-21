@@ -11228,3 +11228,5 @@ async function renderAttendancePage() {
     if(pending&&pending.identity===state.user?.id)await attendanceModule.openPersonDay(pending.target);else attendanceModule.setActive(true);
   } catch(error) { attendanceImport=null;host.textContent='考勤页面加载失败：'+error.message; }
 }
+
+window.addEventListener('attendance-offset-policy-saved',()=>{homeDataService.loadAttendance(true);});

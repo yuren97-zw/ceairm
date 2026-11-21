@@ -39,10 +39,18 @@ export function attendanceRefreshColumns(categories,previousCategories,selected,
  return new Set(categories.filter(attendanceCategoryAllowed).filter(c=>newMonth||!previousCategories.has(c)||selected.has(c)));
 }
 export function punchSummary(day){
- const details=(day.punchDetails||[]).filter(p=>p.planned&&!['未配对'].includes(p.status));
+ const punches=day.punchDetails||[];
+ const details=punches.filter(p=>p.planned&&p.status!=='未配对');
  const endpoint=(type,last)=>{
   const ps=details.filter(p=>p.type===type);
-  if(!ps.length)return {planned:null,actual:null,status:'无排班',reason:'没有对应计划打卡点'};
+  if(!ps.length){
+   // Only punches explicitly accepted by the attendance rules can appear without a plan.
+   const unscheduled=punches.filter(p=>p.type===type&&!p.planned&&p.actual&&(p.status==='有效打卡（无排班）'||p.status==='有效打卡（排班待核对）'));
+   if(!unscheduled.length)return {planned:null,actual:null,status:'无排班',reason:'没有对应计划打卡点'};
+   const actual=(last?Math.max:Math.min)(...unscheduled.map(p=>p.actual));
+   const punch=unscheduled.find(p=>p.actual===actual);
+   return {planned:null,actual,status:punch.status,reason:punch.reason};
+  }
   const planned=(last?Math.max:Math.min)(...ps.map(p=>p.planned)),rows=ps.filter(p=>p.planned===planned);
   const actuals=[...new Set(rows.map(p=>p.actual).filter(Boolean))];
   return {planned,actual:actuals.length===1&&rows.every(p=>p.actual)?actuals[0]:null,status:actuals.length>1?'配对冲突':[...new Set(rows.map(p=>p.status))].join('；'),reason:[...new Set(rows.map(p=>p.reason))].join('；')};
@@ -92,3 +100,9 @@ const attendanceBadgeEscape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&'
 export function attendanceCategoryBadge(category,leaves=[]){const tone=attendanceTone(category,leaves);return `<span class="att-tag att-tone" style="--att-tone-bg:${tone.background};--att-tone-fg:${tone.foreground};--att-tone-border:${tone.border||tone.background}">${attendanceBadgeEscape(category)}</span>`;}
 export const attendanceBadgeStyles='.attendance .att-tag.att-tone,.offset-table-sheet .att-tag.att-tone{display:inline-block;padding:3px 8px;border-radius:5px;border:1px solid var(--att-tone-border);background:var(--att-tone-bg);color:var(--att-tone-fg);font-size:12px;font-weight:600;white-space:nowrap;line-height:1.55}';
 export function ensureAttendanceBadgeStyles(doc){if(!doc?.getElementById||doc.getElementById('attendance-shared-badge-style'))return;const style=doc.createElement('style');style.id='attendance-shared-badge-style';style.textContent=attendanceBadgeStyles;doc.head.append(style);}
+
+export function accumulationExplanation(o){
+ if(o?.capSeconds==null)return '';
+ const fmt=s=>s==null?'—':`${Math.floor(s/3600)}小时${Math.floor(s%3600/60)}分${s%60}秒`;
+ return `原始差额：${fmt(o.rawSeconds)}；计入累计：${fmt(o.seconds)}；适用上限：${fmt(o.capSeconds)}；超出未计入：${fmt(o.excessSeconds)}`;
+}

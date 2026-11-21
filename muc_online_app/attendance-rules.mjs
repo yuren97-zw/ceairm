@@ -1,6 +1,6 @@
 import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';
 // Canonical attendance model: timestamps are milliseconds, work dates are Asia/Shanghai.
-export const RULE_VERSION = 'attendance-api-1.4';
+export const RULE_VERSION = 'attendance-api-1.5';
 const workDateFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'});
 export const dayOf=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'Invalid Date':workDateFormatter.format(date);};
 export const stamp = value => {
@@ -85,26 +85,36 @@ function restAfterNightMorning(input,context){
     &&valid.every(p=>p.type==='OnDuty'&&stamp(p.actual)>=start&&stamp(p.actual)<start+12*3600000)
     &&previous?.covered&&!previous.rest&&!previous.scheduleConflict&&!previous.identityIssue&&plannedShift(previous.points)==='夜班';
 }
-function restPunchPlanEvidence(input,context){
-  if(!input.scheduleConflict||!restAfterNightMorning(input,context))return null;
-  const points=input.points||[],flags=input.scheduleRestFlags||[],valid=(input.punches||[]).filter(validPunch);
+function restPunchPlanEvidence(input){
+  if(!input.covered||!input.rest||!input.scheduleConflict||input.identityIssue)return null;
+  const points=input.points||[],flags=input.scheduleRestFlags||[],valid=(input.punches||[]).filter(p=>p.type==='OnDuty'&&validPunch(p)&&dayOf(stamp(p.actual))===input.date);
   // Require explicit rest plus complete, shiftless start rows matching real punches exactly.
   // A real shift, an off-duty plan, or an unrepresented work row remains a conflict.
   if(!points.length||!flags.includes('Y')||flags.some(f=>!['Y','N'].includes(f))||flags.filter(f=>f==='N').length!==points.length)return null;
   if(!points.every(p=>p.type==='OnDuty'&&Object.hasOwn(p,'shiftId')&&Object.hasOwn(p,'shiftVersion')&&!p.shiftId&&!p.shiftVersion
     &&valid.some(v=>stamp(v.actual)===stamp(p.planned))))return null;
-  return {kind:'rest_morning_punch_not_work_schedule',reason:'明确休息排班中的无班次上班点与实际打卡完全一致，按打卡依据保留，不作为工作排班',ignoredPlanPoints:points.map(p=>({...p}))};
+  return {kind:'rest_punch_not_work_schedule',reason:'明确休息排班中的无班次上班点与实际打卡完全一致，按打卡依据保留，不作为工作排班',ignoredPlanPoints:points.map(p=>({...p}))};
 }
 export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}) {
-  const scheduleInterpretation=restPunchPlanEvidence(input,context);
-  if(scheduleInterpretation)input={...input,points:[],scheduleConflict:false};
+  const scheduleInterpretation=input.date<=dayOf(now)?restPunchPlanEvidence(input):null;
+  // Recognizing a duplicated punch is enough to fix the display, but only the
+  // existing night-shift exception can clear the conflict for classification.
+  if(scheduleInterpretation)input={...input,points:[],scheduleConflict:!restAfterNightMorning(input,context)};
   const {date, points=[], punches=[], approvals=[]} = input;
   input = {...input,points,punches,approvals};
   const issues=[];
   const result={date,category:'待核对',shift:null,purposes:[],issues,reason:'',punchDetails:context.includePunchDetails===false?[]:describePunches(input,now),overtime:calculateOvertime(input,now),ruleVersion:RULE_VERSION};
   if(scheduleInterpretation){
     result.scheduleInterpretation=scheduleInterpretation;
-    result.punchDetails=result.punchDetails.map(p=>p.actual?{...p,planned:null,status:'有效打卡（无排班）',reason:scheduleInterpretation.reason}:{...p,planned:null});
+    const status=input.scheduleConflict?'有效打卡（排班待核对）':'有效打卡（无排班）';
+    const displayed=new Map();
+    result.punchDetails=result.punchDetails.flatMap(p=>{
+      if(!p.actual||dayOf(p.actual)!==date)return [{...p,planned:null}];
+      const key=p.type+'|'+p.actual,existing=displayed.get(key);
+      if(existing){existing.rawStatus=unique([...existing.rawStatus,...p.rawStatus]);return [];}
+      const row={...p,planned:null,status,reason:scheduleInterpretation.reason};
+      displayed.set(key,row);return [row];
+    });
   }
   const finish=(category,reason)=>({...result,category:attendanceCategoryAllowed(category)?category:'待核对',reason:attendanceCategoryAllowed(category)?reason:'关联已忽略的假种，不归入该类别；原始依据保留，考勤待核对'});
   if (date>dayOf(now)) return finish('未来日期','日期尚未发生');

@@ -13,6 +13,8 @@ export function createAttendanceModule({host,api,hasPermission,isActive,onAuthEx
  const flushDeferred=()=>{clearTimeout(blurTimer);blurTimer=setTimeout(()=>{if(!disposed&&isActive()&&pendingReload&&!loading&&!searchFocused()&&!host.querySelector('dialog[open]'))void load();},0);};
  const onSearchBlur=event=>{if(event.target.matches?.('[data-filter="query"],[data-lquery]'))flushDeferred();};
  host.addEventListener?.('focusout',onSearchBlur);
+ const onPolicySaved=()=>{overviewMemo.key='';if(isActive())void load();};
+ globalThis.addEventListener?.('attendance-offset-policy-saved',onPolicySaved);
  function schedulePoll(){clearTimeout(poll);if(isActive())poll=setTimeout(checkStatus,30000);}
  async function checkStatus(){
   if(!isActive())return;
@@ -45,5 +47,5 @@ export function createAttendanceModule({host,api,hasPermission,isActive,onAuthEx
   }catch(e){if(seq!==sequence||!isActive())return;if(e.status===401)onAuthExpired?.(e);else if(view&&searchFocused()){pendingReload=true;view.setStatusError('考勤刷新失败，当前内容仍可查看；离开搜索框后重试。');schedulePoll();}else{savedViewState=view?.getState()||savedViewState;view?.destroy();view=null;host.textContent='考勤读取失败：'+e.message;const b=document.createElement('button');b.textContent='重试';b.onclick=()=>load({target});host.append(b);}}
   finally{if(seq===sequence)loading=false;}
  }
- return {load,async openPersonDay(target){if(!target?.personId||!/^\d{4}-\d{2}-\d{2}$/.test(target.date)||Number.isNaN(Date.parse(target.date+'T00:00:00Z'))||new Date(target.date+'T00:00:00Z').toISOString().slice(0,10)!==target.date)throw Error('人员或日期无效');month=target.date.slice(0,7);await load({target});},setActive(active){if(active){if(!loading)load();}else{savedViewState=null;pendingReload=false;clearTimeout(blurTimer);sequence++;loading=false;clearTimeout(poll);view?.destroy();view=null;host.textContent='';}},destroy(){disposed=true;pendingReload=false;clearTimeout(blurTimer);host.removeEventListener?.('focusout',onSearchBlur);savedViewState=null;sequence++;loading=false;clearTimeout(poll);view?.destroy();view=null;}};
+ return {load,async openPersonDay(target){if(!target?.personId||!/^\d{4}-\d{2}-\d{2}$/.test(target.date)||Number.isNaN(Date.parse(target.date+'T00:00:00Z'))||new Date(target.date+'T00:00:00Z').toISOString().slice(0,10)!==target.date)throw Error('人员或日期无效');month=target.date.slice(0,7);await load({target});},setActive(active){if(active){if(!loading)load();}else{savedViewState=null;pendingReload=false;clearTimeout(blurTimer);sequence++;loading=false;clearTimeout(poll);view?.destroy();view=null;host.textContent='';}},destroy(){disposed=true;globalThis.removeEventListener?.('attendance-offset-policy-saved',onPolicySaved);pendingReload=false;clearTimeout(blurTimer);host.removeEventListener?.('focusout',onSearchBlur);savedViewState=null;sequence++;loading=false;clearTimeout(poll);view?.destroy();view=null;}};
 }
