@@ -10084,6 +10084,53 @@ async function routeRequestMain(req, res) {
       if (!manager) return;
       return send(res, 200, { accounts: db.prepare("select * from users order by created_at").all().filter(row=>personnelAccess.allows(manager,"accounts",row.person_id)).map(adminUser) });
     }
+    if (method === "GET" && url.pathname === "/api/admin/accounts/effective-permissions") {
+      // B6 有效权限预览（V1.1 §4.1/S5）：显示指定账户的最终权限、来源角色、范围与身份。
+      const manager = requireRbacPermission(req, res, "roles.read");
+      if (!manager) return;
+      const targetUserId = String(url.searchParams.get("userId") || "").trim();
+      if (!targetUserId) return send(res, 400, { error: "缺少 userId" });
+      const target = db.prepare("select u.id,u.username,u.status,u.person_id,p.name,p.position_code from users u left join personnel p on p.id=u.person_id where u.id=?").get(targetUserId);
+      if (!target) return send(res, 404, { error: "账户不存在" });
+      if (!personnelAccess.allows(manager, "accounts", target.person_id)) return send(res, 403, { error: "该账户不在您的数据范围内" });
+      const snapshot = rbacSnapshot(targetUserId);
+      const rolePermissions = {};
+      for (const role of snapshot.roles) {
+        const perms = db.prepare(`select distinct p.code, p.name, p.module from rbac_permissions p
+          join rbac_role_permissions rp on rp.permission_id=p.id
+          join rbac_roles r on r.id=rp.role_id
+          where r.code=? and r.status='active' order by p.module, p.code`).all(role.code);
+        rolePermissions[role.code] = perms;
+      }
+      const permissionSources = {};
+      for (const [roleCode, perms] of Object.entries(rolePermissions)) {
+        for (const perm of perms) {
+          if (!permissionSources[perm.code]) permissionSources[perm.code] = { name: perm.name, module: perm.module, roles: [] };
+          permissionSources[perm.code].roles.push(roleCode);
+        }
+      }
+      const identity = classifyPosition(target.position_code);
+      const now = Date.now();
+      const scopesByModule = {};
+      for (const scope of snapshot.scopes) {
+        if (!scopesByModule[scope.module]) scopesByModule[scope.module] = [];
+        const expired = scope.validTo && Date.parse(scope.validTo) < now;
+        const pending = scope.validFrom && Date.parse(scope.validFrom) > now;
+        scopesByModule[scope.module].push({ ...scope, status: expired ? "expired" : pending ? "pending" : "active" });
+      }
+      const baseRoles = snapshot.roles.filter(r => ["worker", "dispatcher", "manager"].includes(r.code));
+      const baseRoleIssues = baseRoles.length !== 1 && snapshot.roles[0]?.code !== "system_admin" ? ["基础角色数量异常（应为恰好一个）"] : [];
+      return send(res, 200, {
+        account: { id: target.id, username: target.username, status: target.status, personName: target.name, position: target.position_code },
+        identity: { class: identity.identity, label: identity.identityLabel, source: identity.source, quality: identity.quality },
+        roles: snapshot.roles.map(r => ({ code: r.code, name: r.name, permissionCount: rolePermissions[r.code]?.length || 0 })),
+        effectivePermissions: snapshot.permissions.map(code => permissionSources[code]).filter(Boolean),
+        permissionCount: snapshot.permissions.length,
+        scopesByModule,
+        baseRoleIssues,
+        isSuperAccount: targetUserId === SUPER_ACCOUNT_ID
+      });
+    }
     if (method === "GET" && url.pathname === "/api/admin/accounts/availability") {
       const manager = requireRbacPermission(req, res, "accounts.create");
       if (!manager) return;

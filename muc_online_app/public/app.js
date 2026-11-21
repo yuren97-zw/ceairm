@@ -796,6 +796,41 @@ function personnelCadreBadgeHtml(person) {
 }
 
 // 身份分类徽标（V1.1 §3.1）：来源是人员主数据职位 position_code，与上方按人员分组的干部判定相互独立。
+// B6 有效权限预览面板（V1.1 S5）：显示账户的角色来源、权限明细、范围与身份。
+async function showEffectivePermissions(userId, username) {
+  try {
+    const data = await userService.effectivePermissions(userId);
+    const sections = [];
+    // 身份
+    if (data.identity?.label) {
+      sections.push(`<div class="perm-section"><h4>身份分类</h4><p>${esc(data.identity.label)}（来源：${esc(data.identity.source || "职位")}）${data.identity.quality !== "matched" ? `<span class="perm-warning">职位值异常（${esc(data.identity.quality)}）</span>` : ""}</p></div>`);
+    }
+    // 角色
+    if (data.roles?.length) {
+      sections.push(`<div class="perm-section"><h4>角色（${data.roles.length} 个）</h4>${data.roles.map(r => `<span class="perm-role${["worker","dispatcher","manager"].includes(r.code) ? " perm-role-base" : ""}">${esc(r.name)}（${r.permissionCount} 项权限）</span>`).join("")}</div>`);
+    }
+    if (data.isSuperAccount) sections.push(`<div class="perm-section"><h4>超级账户</h4><p>拥有全部权限与全部数据范围，业务身份限制（自审禁止、班组长资格）不豁免。</p></div>`);
+    // 权限按模块分组
+    if (data.effectivePermissions?.length) {
+      const byModule = {};
+      for (const perm of data.effectivePermissions) {
+        if (!byModule[perm.module]) byModule[perm.module] = [];
+        byModule[perm.module].push(perm);
+      }
+      const moduleNames = { info: "信息传达", maintenance: "维修管控", personnel: "人员管理", accounts: "账号角色", attendance: "考勤假期", capability: "能力看板", handover: "班组交接", settings: "系统配置" };
+      sections.push(`<div class="perm-section"><h4>有效权限（${data.permissionCount} 项）</h4>${Object.entries(byModule).map(([mod, perms]) => `<details><summary>${esc(moduleNames[mod] || mod)}（${perms.length} 项）</summary>${perms.map(p => `<div class="perm-item">${esc(p.name)} <small>← ${esc(p.roles.join(", "))}</small></div>`).join("")}</details>`).join("")}</div>`);
+    }
+    // 数据范围
+    if (data.scopesByModule && Object.keys(data.scopesByModule).length) {
+      const scopeLabels = { all: "全部", self: "本人", administrative_team: "行政班组", personnel_group: "人员分组", department: "部门", specified_teams: "指定班组", specified_groups: "指定分组" };
+      sections.push(`<div class="perm-section"><h4>数据范围</h4>${Object.entries(data.scopesByModule).map(([mod, scopes]) => `<p><b>${esc(moduleNames[mod] || mod)}</b>：${scopes.map(sc => `<span class="perm-scope${sc.status === "expired" ? " perm-scope-expired" : sc.status === "pending" ? " perm-scope-pending" : ""}">${esc(scopeLabels[sc.scopeType] || sc.scopeType)}${sc.validTo ? `（至 ${esc(sc.validTo.slice(0, 10))}）` : ""}${sc.status === "expired" ? " ⚠已过期" : sc.status === "pending" ? " ⏳未生效" : ""}</span>`).join("、")}</p>`).join("")}</div>`);
+    }
+    // 基础角色校验
+    if (data.baseRoleIssues?.length) sections.push(`<div class="perm-section perm-warning"><h4>⚠ 配置异常</h4>${data.baseRoleIssues.map(i => `<p>${esc(i)}</p>`).join("")}</div>`);
+    openDialog(`有效权限：${username || data.account?.username || ""}`, `${sections.join("") || "<p>暂无权限数据。</p>"}`);
+  } catch (error) { alert("获取权限信息失败：" + error.message); }
+}
+
 function personnelIdentityBadgeHtml(person) {
   if (!person?.identityClass) return "";
   const unknown = person.identityQuality === "unknown_value" || person.identityQuality === "empty";
@@ -1089,6 +1124,12 @@ const userService = {
   },
   async importRows(rows) {
     return await apiRequest("/admin/accounts/bulk-open", { method: "POST", body: { rows } });
+  },
+  async effectivePermissions(userId) {
+    return await apiRequest(`/admin/accounts/effective-permissions?userId=${encodeURIComponent(userId)}`);
+  },
+  async effectivePermissions(userId) {
+    return await apiRequest(`/admin/accounts/effective-permissions?userId=${encodeURIComponent(userId)}`);
   }
 };
 
@@ -2673,7 +2714,7 @@ function renderUserManagement() {
       const locked = user.id === SUPER_ACCOUNT_ID;
       const roles = (user.rbacRoles || []).map(role => role.name || role.code).join("、") || "未配置";
       const scopes = (user.dataScopes || []).map(scope => `${scopeModuleLabels[scope.module] || ""}：${scopeLabels[scope.scopeType]}${scope.scopeId ? " · "+(state.organizations.find(o=>o.id===scope.scopeId)?.name || "未配置组织") : ""}`).join("；") || "未配置";
-      const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
+      const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-view-perms="${escapeHtml(user.id)}" data-view-perms-name="${escapeHtml(user.username)}">查看权限</button><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
       return `<div class="user-row admin-user-row"><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}<small>${escapeHtml(user.employeeNo || "")}</small></span><span>${escapeHtml(user.department || "未设置")}<small>${escapeHtml(user.team || "未设置")}</small></span><span>${escapeHtml(roles)}</span><span>${escapeHtml(scopes)}</span><span>${escapeHtml(statusLabels[user.status] || user.status)}</span><span>${user.mustChangePassword ? "是" : "否"}</span><span class="user-actions">${actions}</span></div>`;
     }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}</div></div>`;
 }
@@ -10362,6 +10403,8 @@ document.addEventListener("click", async event => {
     }
   }
   if (event.target.id === "userImportBtn") await importUserFile();
+  const viewPerms = event.target.closest("[data-view-perms]");
+  if (viewPerms) { void showEffectivePermissions(viewPerms.dataset.viewPerms, viewPerms.dataset.viewPermsName); return; }
   const editUser = event.target.closest("[data-edit-user]");
   if (editUser) {
     const user = state.users.find(item => item.id === editUser.dataset.editUser);
