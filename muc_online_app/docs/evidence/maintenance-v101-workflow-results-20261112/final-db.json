@@ -1,0 +1,111 @@
+{
+  "flight": {
+    "id": "mtnf-1794440664881-3f31a019486f",
+    "date": "2026-11-12",
+    "flight_no": "SIMUI001",
+    "departure_flight_no": "",
+    "aircraft_no": "B-SIMUI",
+    "aircraft_type": "A320",
+    "stand": "",
+    "location_id": "maintenance-location-qingdao",
+    "location_name_snapshot": "青岛",
+    "planned_arrival": "",
+    "planned_departure": "",
+    "work_type": "停场",
+    "card_no": "",
+    "card_name": "",
+    "work_kind": "停场",
+    "standard_hours": 0,
+    "priority": null,
+    "status": "未派工",
+    "remark": "",
+    "source": "手工录入",
+    "created_by": "54002010",
+    "updated_by": "54002010",
+    "created_at": "2026-11-11T23:44:24.881Z",
+    "updated_at": "2026-11-11T23:44:24.883Z",
+    "report_finalized_by": null,
+    "routine_hours_snapshot": null,
+    "report_finalized_by_name": null,
+    "report_finalized_at": null,
+    "report_finalized_mode": null,
+    "archived_at": null,
+    "routine_electronic_signed": null,
+    "nonroutine_electronic_signed": null
+  },
+  "hours": [],
+  "workflows": [
+    {
+      "id": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+      "module_instance_id": "[\"mtnf-1794440664881-3f31a019486f\",\"extension_workflow_simulation\",1,\"browser_new\"]",
+      "template_code": "nonsettlement_simulation",
+      "template_version": 1,
+      "template_json": "{\"code\":\"nonsettlement_simulation\",\"outcomes\":[\"PASS\",\"FAIL\"],\"resultType\":\"CHECK_RESULT\",\"tasks\":[{\"key\":\"feedback\",\"title\":\"模拟检查反馈\"}],\"version\":1}",
+      "template_sha256": "4ee17e8fae449feeccca2f8d856736e473af21a5036a9a741d9953cf5591e997",
+      "result_type": "CHECK_RESULT",
+      "state": "COMPLETED",
+      "revision": 3,
+      "created_by": "workflow-ui-manager",
+      "created_at": "2026-11-11T23:45:29.505Z",
+      "updated_at": "2026-11-11T23:45:30.213Z"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "b092798b-de5c-41d2-8b5e-58cdcb6efcb6",
+      "workflow_id": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+      "task_key": "feedback",
+      "title": "模拟检查反馈",
+      "account_id": "workflow-ui-worker",
+      "person_id": "person-workflow-ui-worker",
+      "qualification_json": "{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]}",
+      "state": "SUBMITTED",
+      "revision": 3,
+      "result_json": "{\"note\":\"浏览器模拟异常反馈，仅供隔离验收\",\"outcome\":\"FAIL\",\"type\":\"CHECK_RESULT\"}",
+      "submitted_at": "2026-11-11T23:45:30.213Z",
+      "created_at": "2026-11-11T23:45:29.505Z",
+      "updated_at": "2026-11-11T23:45:30.213Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "c2859a1f-3069-4a41-9492-6d93f29c7ef3",
+      "workflow_id": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+      "task_id": null,
+      "event_type": "CREATE",
+      "actor_id": "workflow-ui-manager",
+      "qualification_json": "{\"accountId\":\"workflow-ui-manager\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.module.manage\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.manage\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-manager\",\"scopes\":[{\"id\":\"scope-workflow-ui-manager\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"all\",\"validFrom\":\"\",\"validTo\":\"\"}]}",
+      "client_id": "b90eda95-cf58-49a6-b4a8-e654420014f4",
+      "request_hash": "7b64e1e3a170dbc3b24aa25888691c5ee802c60dee06f14375b0ac7ce05dda9b",
+      "response_json": "{\"replayed\":false,\"revision\":1,\"state\":\"OPEN\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "detail_json": "{\"action\":\"CREATE\",\"actor\":{\"accountId\":\"workflow-ui-manager\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.module.manage\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.manage\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-manager\",\"scopes\":[{\"id\":\"scope-workflow-ui-manager\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"all\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"after\":{\"replayed\":false,\"revision\":1,\"state\":\"OPEN\",\"tasks\":[{\"accountId\":\"workflow-ui-worker\",\"personId\":\"person-workflow-ui-worker\",\"qualification\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"revision\":1,\"state\":\"ASSIGNED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskKey\":\"feedback\"}],\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"},\"before\":null,\"id\":\"c2859a1f-3069-4a41-9492-6d93f29c7ef3\",\"moduleInstanceId\":\"[\\\"mtnf-1794440664881-3f31a019486f\\\",\\\"extension_workflow_simulation\\\",1,\\\"browser_new\\\"]\",\"opportunityId\":\"mtnf-1794440664881-3f31a019486f\",\"reason\":\"浏览器隔离验证启动依据\",\"ruleSnapshot\":\"0b5ffbb33ba7226a7f6ecd5584fb7a977cd9a1b4ed7270970da14d6fd0b34c92\",\"taskId\":null,\"templateSha256\":\"4ee17e8fae449feeccca2f8d856736e473af21a5036a9a741d9953cf5591e997\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "created_at": "2026-11-11T23:45:29.505Z"
+    },
+    {
+      "id": "fa32ff8b-0293-45a1-9cc5-868d48959659",
+      "workflow_id": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+      "task_id": "b092798b-de5c-41d2-8b5e-58cdcb6efcb6",
+      "event_type": "CLAIM",
+      "actor_id": "workflow-ui-worker",
+      "qualification_json": "{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]}",
+      "client_id": "4e8b05bb-d4e2-4812-ae5c-76f01c8e8f7f",
+      "request_hash": "63aac7be510e2cd4592f87a9d2551e1f892b18958f524e4fabd8873f268d1586",
+      "response_json": "{\"replayed\":false,\"revision\":2,\"state\":\"OPEN\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskRevision\":2,\"taskState\":\"CLAIMED\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "detail_json": "{\"action\":\"CLAIM\",\"actor\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"after\":{\"replayed\":false,\"revision\":2,\"state\":\"OPEN\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskRevision\":2,\"taskState\":\"CLAIMED\",\"tasks\":[{\"accountId\":\"workflow-ui-worker\",\"personId\":\"person-workflow-ui-worker\",\"qualification\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"revision\":2,\"state\":\"CLAIMED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskKey\":\"feedback\"}],\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"},\"before\":{\"accountId\":\"workflow-ui-worker\",\"personId\":\"person-workflow-ui-worker\",\"qualification\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"revision\":1,\"state\":\"ASSIGNED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskKey\":\"feedback\"},\"id\":\"fa32ff8b-0293-45a1-9cc5-868d48959659\",\"moduleInstanceId\":\"[\\\"mtnf-1794440664881-3f31a019486f\\\",\\\"extension_workflow_simulation\\\",1,\\\"browser_new\\\"]\",\"opportunityId\":\"mtnf-1794440664881-3f31a019486f\",\"reason\":null,\"ruleSnapshot\":\"0b5ffbb33ba7226a7f6ecd5584fb7a977cd9a1b4ed7270970da14d6fd0b34c92\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"templateSha256\":\"4ee17e8fae449feeccca2f8d856736e473af21a5036a9a741d9953cf5591e997\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "created_at": "2026-11-11T23:45:30.105Z"
+    },
+    {
+      "id": "831084a3-a154-46d5-8a50-b156609cbc82",
+      "workflow_id": "ee2b9932-804f-49e6-b553-597e3008f3f2",
+      "task_id": "b092798b-de5c-41d2-8b5e-58cdcb6efcb6",
+      "event_type": "SUBMIT",
+      "actor_id": "workflow-ui-worker",
+      "qualification_json": "{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]}",
+      "client_id": "1d573950-fbb6-4956-b347-cadfcf856c2b",
+      "request_hash": "3baf94c98ae172bd2d3327ac8f8a7d930cb3815d0ce3bd95979f99c8d97e923d",
+      "response_json": "{\"replayed\":false,\"revision\":3,\"state\":\"COMPLETED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskRevision\":3,\"taskState\":\"SUBMITTED\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "detail_json": "{\"action\":\"SUBMIT\",\"actor\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"after\":{\"replayed\":false,\"revision\":3,\"state\":\"COMPLETED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskRevision\":3,\"taskState\":\"SUBMITTED\",\"tasks\":[{\"accountId\":\"workflow-ui-worker\",\"personId\":\"person-workflow-ui-worker\",\"qualification\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"revision\":3,\"state\":\"SUBMITTED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskKey\":\"feedback\"}],\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"},\"before\":{\"accountId\":\"workflow-ui-worker\",\"personId\":\"person-workflow-ui-worker\",\"qualification\":{\"accountId\":\"workflow-ui-worker\",\"permissions\":[\"info.read\",\"maintenance.execute.submit\",\"maintenance.execute.view\",\"maintenance.nonroutine.create.own\",\"maintenance.nonroutine.delete.own\",\"maintenance.nonroutine.review.view\",\"maintenance.nonroutine.update.own\",\"maintenance.standard.view\",\"maintenance.stats.self.view\",\"maintenance.view\",\"maintenance.workflow.submit\",\"maintenance.workflow.view\"],\"personId\":\"person-workflow-ui-worker\",\"scopes\":[{\"id\":\"scope-workflow-ui-worker\",\"module\":\"maintenance\",\"scopeId\":\"\",\"scopeType\":\"self\",\"validFrom\":\"\",\"validTo\":\"\"}]},\"revision\":2,\"state\":\"CLAIMED\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"taskKey\":\"feedback\"},\"id\":\"831084a3-a154-46d5-8a50-b156609cbc82\",\"moduleInstanceId\":\"[\\\"mtnf-1794440664881-3f31a019486f\\\",\\\"extension_workflow_simulation\\\",1,\\\"browser_new\\\"]\",\"opportunityId\":\"mtnf-1794440664881-3f31a019486f\",\"reason\":null,\"ruleSnapshot\":\"0b5ffbb33ba7226a7f6ecd5584fb7a977cd9a1b4ed7270970da14d6fd0b34c92\",\"taskId\":\"b092798b-de5c-41d2-8b5e-58cdcb6efcb6\",\"templateSha256\":\"4ee17e8fae449feeccca2f8d856736e473af21a5036a9a741d9953cf5591e997\",\"workflowId\":\"ee2b9932-804f-49e6-b553-597e3008f3f2\"}",
+      "created_at": "2026-11-11T23:45:30.213Z"
+    }
+  ]
+}

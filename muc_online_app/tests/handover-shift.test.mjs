@@ -56,12 +56,14 @@ test('recipient options only list 班组长 positions with team recommendation',
  assert.deepEqual(options.recommended.map(r=>r.user_name),['二组组长']);
  assert.equal(service.recipientOptions(me,{}).recommended.length,0,'未指定接班班组时不推荐');
 });
-test('create accepts an explicit from team and org-row ids map to fixed codes',()=>{
+test('create locks the from team to the leaders own team and org-row ids still map to fixed codes',()=>{
  const {service,db}=fixture();
- db.prepare("insert into personnel(id,employee_no,name,administrative_team_id) values('p-x','19990001','外来','org-TEAM-LINE-3')");
- db.prepare("insert into users(id,person_id) values('u-X','p-x')");
- const created=service.create({id:'u-X',permissions:['handover.view','handover.create']},{fromTeamId:'org-TEAM-LINE-3',toTeamId:'TEAM-LINE-1',otherItems:'跨班组发起'});
+ db.prepare("insert into personnel(id,employee_no,name,position_code,administrative_team_id) values('p-x','19990001','外来','班组长','org-TEAM-LINE-3')").run();
+ db.prepare("insert into users(id,person_id) values('u-X','p-x')").run();
+ // V1.1 §5.1：交班班组锁定为班组长本人行政班组；组织行 id 仍解析为固定代码。
+ const created=service.create({id:'u-X',permissions:['handover.view','handover.create']},{toTeamId:'TEAM-LINE-1',otherItems:'本班发起'});
  assert.equal(created.handover.fromTeamId,'TEAM-LINE-3','组织行 id 映射到固定代码');
  assert.equal(created.handover.fromTeamName,'三组');
- assert.throws(()=>service.create({id:'u-X',permissions:['handover.view','handover.create']},{fromTeamId:'org-nope'}),/未知班组/);
+ const explicit=service.create({id:'u-X',permissions:['handover.view','handover.create']},{fromTeamId:'TEAM-LINE-1',toTeamId:'TEAM-LINE-1',otherItems:'显式传他组应被忽略'});
+ assert.equal(explicit.handover.fromTeamId,'TEAM-LINE-3','显式传入他组不再改变交班班组');
 });

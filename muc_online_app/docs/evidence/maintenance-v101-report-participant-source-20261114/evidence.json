@@ -1,0 +1,21 @@
+{
+  "stage": "report-participant-source-contract-foundation",
+  "date": "2026-11-14",
+  "sourceSha256": {
+    "maintenance-report-participant-source.mjs": "bed3d3f30aaced9a9a8dc1f76c19542e01063cde082c10d89b5715a615e54d21",
+    "tests/maintenance-report-participant-source.test.mjs": "2a947a5c8fda6089dba375dfb648ed76095c294a9fe25f14c2bc14823b96d292",
+    "tests/server.test.mjs": "ac408204ed4c36dbf178c0c59d4f3b2c40a8cef60321192b919017ea324c509e",
+    "server.mjs": "66e5faf4f7c0df4222f1002cecbcbfcabf46b9da94b12c0f90da2591dce274a0"
+  },
+  "sqliteDefaultPassed": 791,
+  "sqliteCoordinatorEnabledPassed": 791,
+  "newModuleActivatedInPosting": false,
+  "postgres": "Not run for this new contract/API regression; prior87 belongs to prior test set",
+  "limits": [
+    "Not yet wired to allocator, hour/sortie writes, review or state derivation",
+    "Current formal submission still rewrites original assignments; not fixed by a standalone source adapter",
+    "Original batch entries are mutable across explicit revisions; output snapshots are frozen, not historical batch repair",
+    "No role/scope authorization provided by adapter; callers must use persisted rows after original permission checks",
+    "No automatic historical migration, new browser/device or deployment"
+  ]
+}

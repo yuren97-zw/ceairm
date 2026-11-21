@@ -1,0 +1,28 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalPage": true,
+  "flightId": "mtnf-1794619809810-2386558ccefd",
+  "omissionPreservesRecords": true,
+  "cancelPreservesRecords": true,
+  "explicitRemovalLeavesReleaseId": "mtnas-1794619809817-1d12c0cde2f4",
+  "removedId": "mtnas-1794619809817-2e64f96efd60",
+  "layout": {
+    "viewport": 390,
+    "width": 390,
+    "dialogWidth": 366.59375
+  },
+  "dialogs": [
+    {
+      "type": "prompt",
+      "message": "删除派工：赵威 · 接机\n无已有报工草稿。\n请填写删除原因："
+    },
+    {
+      "type": "prompt",
+      "message": "删除派工：赵威 · 接机\n无已有报工草稿。\n请填写删除原因："
+    },
+    {
+      "type": "confirm",
+      "message": "确认只删除 赵威 的“接机”关联？\n仅删除这条正式派工关联。已有草稿保持原样，后续报工前须重新核对草稿人员。\n本窗口尚未保存的选择将放弃。"
+    }
+  ]
+}

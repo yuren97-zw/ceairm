@@ -1,0 +1,5 @@
+# 后续当前资格覆盖
+
+saveMaintenanceReportConfirmation有独立confirm闭包，锁内重新读取机会和批次，但仍将旧user传入assertMaintenanceReportConfirmationReady；该服务同时供原手工确认和inTransaction自动完成调用。后续先分别复现，不能把内部automatic当成客户端可用绕过开关。例行正式提报和放行提报另有服务，不能以本轮非例行四入口修复宣称已经覆盖。
+
+本轮矩阵是四入口×账户停用/人员停职/全部角色撤销，尚无单独CRUD丢失但execute保留、人员绑定替换、单项删除，以及实际多进程撤权竞争的专属证明。先补真实路由及事务不写事实断言，再按必要范围统一原服务当前操作者，保留原自动状态门槛和放行签署来源。正式报工结果仍与原maintenance_assignments桥接，完整业务分离亦未完成。

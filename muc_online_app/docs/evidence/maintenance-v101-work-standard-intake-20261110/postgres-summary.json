@@ -1,0 +1,27 @@
+{
+  "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+  "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-sumWVl",
+  "port": 15432,
+  "fixtureOnly": false,
+  "populatedLegacyRefused": true,
+  "upgrade": true,
+  "repeatedMigration": true,
+  "serverTests": true,
+  "restore": {
+    "tables": 131,
+    "rows": 2964,
+    "dataEqual": true,
+    "indexesEqual": true,
+    "constraintsEqual": true,
+    "viewsEqual": true,
+    "functionsEqual": true,
+    "triggersEqual": true,
+    "sequencesEqual": true,
+    "sourceUnchanged": true,
+    "uniquenessEnforced": true,
+    "cascadeRollback": true,
+    "closedChannelReplay": true,
+    "snapshotSha256": "8a9227e4d15bbb25108b0c898ba886812ae93a8198ba4944d2cc6307bbca7fb6"
+  },
+  "stopped": true
+}

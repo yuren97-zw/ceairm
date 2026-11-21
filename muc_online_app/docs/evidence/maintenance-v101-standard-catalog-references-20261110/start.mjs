@@ -1,0 +1,43 @@
+import fs from 'node:fs';
+import http from 'node:http';
+process.env.MUC_NO_LISTEN='1';process.env.NODE_ENV='test';process.env.DATABASE_URL='';process.env.DB_PATH='/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-standard-catalog-ui-aw_q0yal/synthetic.sqlite';process.env.UPLOAD_DIR='/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-standard-catalog-ui-aw_q0yal/uploads';
+for(const key of ['ATTENDANCE_SYNC_ENABLED','ATTENDANCE_WORKER_ENABLED','ATTENDANCE_EVENTS_ENABLED','ATTENDANCE_APPROVAL_PLANS_ENABLED'])process.env[key]='false';
+process.env.MUC_MAINTENANCE_V101='draft';for(const key of ['MUC_NONROUTINE_REVIEW_ENABLED','MUC_NONROUTINE_SUBMISSION_ENABLED','MUC_NONROUTINE_MANUAL_ENABLED','MUC_STANDARDS_REVIEW_ENABLED','MUC_STANDARDS_PUBLICATION_ENABLED','MUC_STANDARDS_MANAGEMENT_ENABLED','MUC_STANDARDS_IMPORT_ENABLED'])process.env[key]='1';
+const {db,measuredRoute}=await import('/Users/zhaowei/.codex/worktrees/maintenance-personnel-8788/MUC收集信息/muc_online_app/server.mjs');
+const stamp=new Date().toISOString(),user=db.prepare("select * from users where id='54002010'").get(),person=db.prepare('select * from personnel where id=?').get(user.person_id);
+db.prepare("insert into maintenance_flights(id,date,flight_no,aircraft_no,aircraft_type,work_kind,status,created_by,created_at,updated_at) values('qa-manual-flight','2026-11-10','QA901','B-QA','A320','停场','已派工',?,?,?)").run(user.id,stamp,stamp);
+db.prepare("insert into maintenance_assignments(id,owner_type,owner_id,flight_id,person_id,user_name,role,status,assigned_by,assigned_at) values('qa-manual-assignment','flight','qa-manual-flight','qa-manual-flight',?,?,'例行检查','已派工',?,?)").run(user.person_id,user.name,user.id,stamp);
+for(const [index,code]of ['A320','B737'].entries()){const id='qa-manual-standard-'+index;db.prepare("insert into maintenance_standards(id,status,revision,created_by,created_at,updated_at) values(?,'PUBLISHED',1,?,?,?)").run(id,user.id,stamp,stamp);db.prepare("insert into maintenance_standard_versions(id,standard_id,version,category,chapter,title,work_scope,standard_hours,aircraft_codes_json,generic_aircraft,status,admission_decision,effective_at,published_by,published_at,created_at) values(?,?,1,'试车','995',?,'机型精确匹配及合法0测试范围',0,?,0,'PUBLISHED','INCLUDE',?,?,?,?)").run(id+'-v1',id,'手工浏览器零工时'+code,JSON.stringify([code]),stamp,user.id,stamp,stamp);}
+fs.writeFileSync(new URL('./person-id.txt',import.meta.url),user.person_id);
+console.log('QA_PERSON '+user.person_id);const insert=(table,row)=>db.prepare(`insert into ${table}(${Object.keys(row).join(',')}) values(${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));
+insert('personnel',{...person,id:'qa-publisher-person',employee_no:'88009999',name:'测试独立发布负责人'});
+insert('users',{...user,id:'qa-publisher',username:'88009999',person_id:'qa-publisher-person',name:'测试独立发布负责人',role:'receiver'});
+for(const code of ['worker','addon_maintenance_standard_publisher'])insert('rbac_user_roles',{user_id:'qa-publisher',role_id:db.prepare('select id from rbac_roles where code=?').get(code).id,created_at:stamp});
+insert('rbac_user_scopes',{user_id:'qa-publisher',module:'maintenance',scope_type:'all',scope_id:'',valid_from:'',valid_to:'',created_at:stamp,updated_at:stamp});
+db.prepare("insert into settings(key,value,updated_at) values('maintenance_aircraft_hours_v1',?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at").run(JSON.stringify({version:1,groups:[{id:'qa-exact-a320',name:'测试精确机型',codes:['A320'],enabled:true,hours:{}}]}),stamp);
+const {publicationFixture}=await import('/Users/zhaowei/.codex/worktrees/maintenance-personnel-8788/MUC收集信息/muc_online_app/tests/fixtures/maintenance-standard-publication.mjs');
+const memberAccounts={};const members=[];
+for(let index=0;index<12;index++){
+ const id='qa-revision-member-'+index,personId=id+'-person',username=String(88008000+index);
+ insert('personnel',{...person,id:personId,employee_no:username,name:'合成修订评议'+index});
+ insert('users',{...user,id,username,person_id:personId,name:'合成修订评议'+index,role:'receiver'});
+ for(const code of ['worker','addon_nonroutine_reviewer'])insert('rbac_user_roles',{user_id:id,role_id:db.prepare('select id from rbac_roles where code=?').get(code).id,created_at:stamp});
+ insert('rbac_user_scopes',{user_id:id,module:'maintenance',scope_type:'all',scope_id:'',valid_from:'',valid_to:'',created_at:stamp,updated_at:stamp});
+ memberAccounts['member-'+index]={id,personId};members.push({id,username});
+}
+const fixture=publicationFixture({after(){}},{db,accounts:{admin:{id:user.id,personId:user.person_id},publisher:{id:'qa-publisher',personId:'qa-publisher-person'},finalizer:{id:user.id,personId:user.person_id},...memberAccounts}});
+fs.writeFileSync(new URL('./revision-accounts.json',import.meta.url),JSON.stringify({members,finalizerId:user.id}));
+fs.writeFileSync(new URL('./publication-source.json',import.meta.url),JSON.stringify({standardId:fixture.id,versionId:fixture.versionId}));
+insert('personnel',{...person,id:'qa-standard-manager-person',employee_no:'88007777',name:'合成标准维护负责人'});
+insert('users',{...user,id:'qa-standard-manager',username:'88007777',person_id:'qa-standard-manager-person',name:'合成标准维护负责人',role:'receiver'});
+for(const code of ['worker','addon_maintenance_standard_manager'])insert('rbac_user_roles',{user_id:'qa-standard-manager',role_id:db.prepare('select id from rbac_roles where code=?').get(code).id,created_at:stamp});
+insert('rbac_user_scopes',{user_id:'qa-standard-manager',module:'maintenance',scope_type:'all',scope_id:'',valid_from:'',valid_to:'',created_at:stamp,updated_at:stamp});
+const reference={id:'qa-manual-standard-0',versionId:'qa-manual-standard-0-v1',version:1,standardHours:0};
+insert('maintenance_nonroutine_manual_sources',{fingerprint:'qa-reference-source',flight_id:'qa-manual-flight',client_id:'qa-reference-client',state:'ACTIVE',standard_snapshot_json:JSON.stringify(reference),subtask_id:null,created_at:stamp,updated_at:stamp});
+insert('maintenance_report_drafts',{id:'qa-reference-draft',flight_id:'qa-manual-flight',report_type:'nonroutine',payload_json:JSON.stringify({items:[{clientId:'qa-reference-client',standardId:reference.id,standardVersion:1,standardSnapshot:reference}]}),version:1,updated_by:user.id,updated_by_name:user.name,created_at:stamp,updated_at:stamp});
+insert('maintenance_standards',{id:'qa-unreferenced-standard',status:'DRAFT',revision:1,created_by:user.id,created_at:stamp,updated_at:stamp});
+insert('maintenance_standard_versions',{id:'qa-unreferenced-standard-v1',standard_id:'qa-unreferenced-standard',version:1,category:'单项工作',chapter:'29',title:'可撤回的标准草稿',work_scope:'没有实际工作引用的合成草稿',standard_hours:0,aircraft_codes_json:'["A320"]',generic_aircraft:0,status:'DRAFT',admission_decision:'PENDING',created_at:stamp});
+fs.writeFileSync(new URL('./published-before.json',import.meta.url),JSON.stringify(db.prepare("select * from maintenance_standard_versions where status='PUBLISHED' order by id").all()));
+const protectedTables=['maintenance_flights','maintenance_subtasks','maintenance_assignments','maintenance_report_batches','maintenance_report_entries','maintenance_hour_results','maintenance_nonroutine_review_cases','maintenance_standard_review_cases','maintenance_standard_review_finals','maintenance_standard_publications','maintenance_standard_work_publications','maintenance_nonroutine_manual_sources','maintenance_report_drafts'];
+fs.writeFileSync(new URL('./protected-before.json',import.meta.url),JSON.stringify(Object.fromEntries(protectedTables.map(table=>[table,db.prepare(`select * from ${table}`).all()]))));
+http.createServer(measuredRoute).listen(18888,'127.0.0.1',()=>console.log('QA_READY'));

@@ -1,0 +1,180 @@
+{
+  "scope": "separate CSV/XLSX standard-library draft maintenance; preview, explicit new/update, duplicate review, row atomic receipts and restored retry",
+  "defaultEnabled": false,
+  "gate": "MUC_STANDARDS_MANAGEMENT_ENABLED=1 and MUC_STANDARDS_IMPORT_ENABLED=1",
+  "sqlite": {
+    "tests": 634,
+    "pass": 634,
+    "fail": 0,
+    "skipped": 0
+  },
+  "targetedTests": 22,
+  "serverTests": {
+    "tests": 67,
+    "pass": 67,
+    "fail": 0,
+    "skipped": 0
+  },
+  "behavior": {
+    "xlsxSparseSourceRows": true,
+    "zeroDraftHours": true,
+    "previewTechnicalWritesOnly": true,
+    "existingPublishedAndReviewedDefinitionsProtected": true,
+    "explicitIdAndVersionForDraftUpdate": true,
+    "sameNameRequiresComparisonAndReason": true,
+    "staleRevisionOrComparisonConflicts": true,
+    "partialRowSuccess": true,
+    "sourceAuditFailureRollsBackRow": true,
+    "attemptAuditFailureRollsBackWholeRequest": true,
+    "repeatFileSourceDoesNotCreateAgain": true,
+    "currentAuthorityAndBatchOwnerChecked": true,
+    "workReviewAndPublicationTablesUnchanged": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "ordinaryDraftManager": true,
+    "fileSelectedThroughBrowser": true,
+    "previewReady": 1,
+    "previewDuplicates": 1,
+    "previewErrors": 1,
+    "zeroReadonly": true,
+    "explicitSameNameDistinction": true,
+    "partialSuccess": true,
+    "batchResume": true,
+    "csvTemplateDownloaded": true,
+    "allRowsCsvExported": true,
+    "mobile": {
+      "width": 390,
+      "scrollWidth": 390,
+      "font": "16px"
+    },
+    "batch": {
+      "batchId": "std-import-1794317566141-e270c1d0cf2b",
+      "filename": "standards.csv",
+      "sheetName": "CSV",
+      "fileSha256": "b973d36aa13cfec2e0b32bdde44c962dba870e3b9f19a588854e58ed9ff49994",
+      "revision": 3,
+      "items": [
+        {
+          "rowNumber": 2,
+          "status": "ALREADY_IMPORTED",
+          "title": "标准文件零工时",
+          "receipt": {
+            "standardId": "mst-1794317566314-86d2202076b0",
+            "versionId": "msv-1794317566314-175f9e3d9dbc",
+            "action": "CREATE_DRAFT"
+          }
+        },
+        {
+          "rowNumber": 3,
+          "status": "BLOCKED",
+          "title": "缺少工时的标准",
+          "reason": "标准工时须为0至10000小时且最多一位小数"
+        },
+        {
+          "rowNumber": 4,
+          "status": "ALREADY_IMPORTED",
+          "title": "手工浏览器零工时A320",
+          "receipt": {
+            "standardId": "mst-1794317566420-683dc97a9ed4",
+            "versionId": "msv-1794317566420-73dab6e1d9ba",
+            "action": "CREATE_DRAFT"
+          }
+        }
+      ],
+      "summary": {
+        "total": 3,
+        "ready": 0,
+        "needsReview": 0,
+        "blocked": 1,
+        "imported": 2
+      }
+    },
+    "returnRefreshShowsImportedDraft": true,
+    "desktopWidth": 1440,
+    "realDeviceOrPWA": false,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true,
+    "reloadNote": "First upload/commit/export flow completed; reload continuation initially observed old app-ready DOM, then resumed after checking the new document timeOrigin. Final return-to-list refresh checked against existing synthetic records."
+  },
+  "databaseProof": {
+    "syntheticOnly": true,
+    "protectedTables": [
+      "maintenance_flights",
+      "maintenance_subtasks",
+      "maintenance_assignments",
+      "maintenance_report_batches",
+      "maintenance_report_entries",
+      "maintenance_hour_results",
+      "maintenance_nonroutine_review_cases",
+      "maintenance_standard_review_cases",
+      "maintenance_standard_review_finals",
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications"
+    ],
+    "originalWorkReviewPublicationFactsUnchanged": true,
+    "createdDrafts": [
+      {
+        "standard_hours": 0.0,
+        "status": "DRAFT",
+        "review_final_id": null,
+        "published_at": null
+      },
+      {
+        "standard_hours": 1.0,
+        "status": "DRAFT",
+        "review_final_id": null,
+        "published_at": null
+      }
+    ],
+    "sources": 2
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 67,
+    "pass": 67,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-051",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 135,
+      "rows": 3146,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "3f788cce630ff5e5a62f579581612f116daf60222df122963ac6e8eb16df631c"
+    },
+    "stopped": true,
+    "finalRequestTypeValidationIncluded": true
+  },
+  "sourceSha256": {
+    "maintenance-standard-import.mjs": "9e737d775ad2b11260ecb7fa3201e19f786a639e9ba5fb4b39b3d9066c2dcefa",
+    "maintenance-import-file.mjs": "6e60aa68c0ed29bcb454d2bc262430db85cfbb5e497df67aef17726373278bb8",
+    "public/maintenance-standard-import-workbench.mjs": "32a60a31b911ca3077cf2a562febef6ffba1eebe7fc1403dd305946abf4c6888",
+    "public/maintenance-standard-management-workbench.mjs": "9b4c8a5e7876bdfe75ce4a2df04befe75047ed64d3a19304bf846d8aa153f1ba",
+    "public/app.js": "145ce46e52850a0a7fb77fdbbbd6e8cf1510f1dd1d613dc35a189d4f0fe78186",
+    "server.mjs": "4a07e3440d43516167bbcb70fd848bc0761047e06093428647f98892655e852c",
+    "migrations/051_maintenance_standard_import.sql": "95fba5cfac57bd5551b0bcb5b036e17289944c97721a0b9bc1065f4609dae823",
+    "scripts/migrate-sqlite-to-postgres.mjs": "8828902c9605840936f43412af05b9787b0ef2923e31c00fe220d0390b0691f5",
+    "scripts/check-maintenance-v101-restored.mjs": "626bc7cbdfc4ca5919b9ca3ae8c5b466c02dea7d5b5580c617c9f098e6322749",
+    "tests/maintenance-standard-import.test.mjs": "956ef872d479cb0bc00a8bdefb31ec5219fdb8b803cd04efd11fb4e915a4cd9d",
+    "tests/maintenance-standard-import-workbench.test.mjs": "9ce0dd85fab21606a57d0e32e524851d5b29c3e3449d28215121c1d625e9d568",
+    "tests/server.test.mjs": "d848f388b636c2d39f8c7be11384f3ce2b628ff616f53e35afd360f21da99666"
+  },
+  "limitations": [
+    "hard deletion/cancellation and reference safeguards still require complete source audit",
+    "general standard catalog advanced filters and reference counts not complete",
+    "all multi-process concurrency, physical device/PWA and Linux release checks remain open",
+    "complete 210-case business acceptance not finished",
+    "no actual user role grant, live 8788 database change or deployment"
+  ]
+}

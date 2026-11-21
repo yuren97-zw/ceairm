@@ -1,0 +1,336 @@
+{
+  "stage": "actual-two-process-http-finalization-and-confirmation-concurrency",
+  "date": "2026-11-13",
+  "sourceSha256": {
+    "scripts/check-maintenance-v101-concurrency.mjs": "c3473dfdee440b219857210d375d5be5c887ebb5b91d340252a485f1145359dd",
+    "scripts/check-maintenance-v101-postgres.mjs": "53a96e63011126157f6656de990ec0e95252683ce24d6277ec7f95ad2e59ff93",
+    "scripts/check-maintenance-v101-restored.mjs": "af4e1190da94ae660e3443dadd830d172d236ccd6bb68ba327c47845572c9726",
+    "server.mjs": "4a2461b91a6010c2b6c5568d9ac19c004522fd2f20ca05b42a28b39af262f7c2",
+    "nonroutine-review.mjs": "35afe59051bbdda816fd0942b781292592751d824fb8b1f7ff99072fd5e8d0dc",
+    "nonroutine-finalization.mjs": "3ae06c46fe6ef4c78da952df512d5f7bf99886e63abb33c68c2c9c84e291b4be",
+    "nonroutine-delivery.mjs": "76c2b07012f42040b3f7ca2825dcc22fe54291f427e7e64a8333845c55d6be4d",
+    "nonroutine-frozen-policy.mjs": "b295b48edf86516a9c3305721310e972ad6391e42a1017479a3ec0e8cb1789b0",
+    "maintenance-standard-publication.mjs": "9339ba7ba84c1a05c7a87f481bf3f273bbdfaaaffac743d947ffe66e45f7c9a7",
+    "tests/server.test.mjs": "7190eaba0429f4fd14f14f053ec335a88e448399142e166ce7e39c87c5e37510"
+  },
+  "originalProductSourcesUnchanged": {
+    "maintenance-rule-history.mjs": true,
+    "migrations/055_maintenance_rule_history.sql": true,
+    "server.mjs": true,
+    "public/app.js": true,
+    "public/maintenance-rule-history-view.mjs": true,
+    "tests/maintenance-rule-history.test.mjs": true,
+    "tests/maintenance-rule-history-view.test.mjs": true,
+    "tests/server.test.mjs": true,
+    "scripts/migrate-sqlite-to-postgres.mjs": true
+  },
+  "fullPostgresRegression": {
+    "passed": 77,
+    "summary": "full-regression-summary.json",
+    "note": "Full run passed 77 original server cases, then failed in the new observer before its pg_stat snapshot refresh was corrected. Its cluster and API workers stopped cleanly."
+  },
+  "baselineSqlite": {
+    "defaultPassed": 771,
+    "coordinatorEnabledPassed": 771,
+    "evidence": "../maintenance-v101-rule-history-20261113/evidence.json",
+    "note": "Previously completed checks, not rerun in this QA-only stage; product and test sources remain identical."
+  },
+  "finalRun": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-VVapON",
+    "port": 15432,
+    "fixtureOnly": true,
+    "coordinatorEnabled": true,
+    "populatedLegacyRefused": false,
+    "upgrade": false,
+    "repeatedMigration": false,
+    "serverTests": false,
+    "restore": {
+      "tables": 146,
+      "rows": 4301,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "14461e80f6f92a6044b061a2f703ac545e6377ba239d95a27cf8f0061983dafd"
+    },
+    "stopped": true,
+    "fixtureSha256": "fc67b1f52b19fb95c425a4a9398020e3655657b0c54871bb270ee65791c97beb",
+    "concurrency": {
+      "syntheticOnly": true,
+      "processes": [
+        {
+          "port": 18890,
+          "backendPid": 51433,
+          "processId": 51432
+        },
+        {
+          "port": 18891,
+          "backendPid": 51435,
+          "processId": 51434
+        }
+      ],
+      "overlaps": [
+        {
+          "label": "DUPLICATE:last-opinion",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:42.681Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:42.717Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "duplicate-finalization",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:42.773Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:42.803Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "FINALIZE:last-opinion",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:43.391Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:43.421Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "finalize-first",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:43.478Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:43.508Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "confirm-opportunity",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "CONFIRM:last-opinion",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.058Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.087Z"
+            }
+          ],
+          "firstCommand": "last-seat-opinion",
+          "secondCommand": "last-seat-opinion",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            409
+          ]
+        },
+        {
+          "label": "confirm-first",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.145Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.176Z"
+            }
+          ],
+          "firstCommand": "confirm-opportunity",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        },
+        {
+          "label": "confirmed-adjustment-finalization-retries",
+          "waiting": [
+            {
+              "pid": 51433,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.246Z"
+            },
+            {
+              "pid": 51435,
+              "state": "active",
+              "wait_event_type": "Lock",
+              "wait_event": "advisory",
+              "xact_start": "2026-11-13T09:11:44.275Z"
+            }
+          ],
+          "firstCommand": "finalize-review",
+          "secondCommand": "finalize-review",
+          "releasedOnlyAfterBothWaiting": true,
+          "responseStatuses": [
+            200,
+            200
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "label": "duplicate-finalization",
+          "opportunityId": "mtnf-1794561102201-3f3a67fc18f1",
+          "caseId": "nrc-1794561102305-7b22469cce45",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "593d1785fc85e3177c16e8ce4ad88377c929bab0aaa6f431f3c1db30d3063b5f"
+        },
+        {
+          "label": "finalize-first",
+          "opportunityId": "mtnf-1794561102920-a7db89c22e3e",
+          "caseId": "nrc-1794561103014-265748d541c6",
+          "channelState": "MERGED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "3d81d5f587b7f3fd406fbe0a26d77e27b90bebb05e3b087735311c720e65d562"
+        },
+        {
+          "label": "confirm-first",
+          "opportunityId": "mtnf-1794561103593-aa6a0835fd5f",
+          "caseId": "nrc-1794561103686-420b1a09a8f6",
+          "channelState": "ADJUSTED_CLOSED",
+          "effectiveRows": 1,
+          "effectiveHours": 2,
+          "confirmedOriginalFactsUnchanged": true,
+          "confirmedOriginalSnapshotSha256": "8ec711036c336dfbc80f0d2b27176cbd2521fb1ffc617c9efca30c012c55eb78"
+        }
+      ],
+      "workersStopped": true,
+      "month": "2026-11",
+      "personalMetrics": {
+        "before": {
+          "todayHours": 0,
+          "pendingTodayHours": 0,
+          "weekHours": 0,
+          "pendingWeekHours": 0,
+          "monthHours": 0,
+          "pendingMonthHours": 0,
+          "monthSorties": 0,
+          "pendingMonthSorties": 0
+        },
+        "after": {
+          "todayHours": 0,
+          "pendingTodayHours": 0,
+          "weekHours": 6,
+          "pendingWeekHours": 0,
+          "monthHours": 6,
+          "pendingMonthHours": 0,
+          "monthSorties": 3,
+          "pendingMonthSorties": 0
+        },
+        "addedHours": 6,
+        "addedSorties": 3,
+        "pendingHoursUnchanged": true
+      },
+      "workersCleanExit": true,
+      "observationObjectsRemoved": true
+    }
+  },
+  "limits": [
+    "Open original period, one sole main-worker participant, same test root finalizer; not the complete category/role/scope/period matrix.",
+    "Last of 12 distinct seats submitted concurrently twice; not 12 distinct seats all submitting concurrently.",
+    "Two independent Node processes and separate persistent PG clients, real HTTP and actual observed advisory-lock waits; no production concurrency or browser/device acceptance.",
+    "Cold isolated backup/restore, not online cutover or live backup acceptance.",
+    "No product data, actual role grants, production deployment or 8788 live writes.",
+    "210 design cases remain incomplete."
+  ],
+  "fixtureSourceEvidence": "../maintenance-v101-rule-history-20261113/evidence.json"
+}

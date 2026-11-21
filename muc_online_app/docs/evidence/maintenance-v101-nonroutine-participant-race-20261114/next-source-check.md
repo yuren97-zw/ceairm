@@ -1,0 +1,7 @@
+# 非例行保存当前资格复查缺口
+
+saveMaintenanceNonroutine在进入原maintenanceTransaction前后调用assertMaintenanceNonroutineEditable，但传入同一个旧user对象。该校验依赖原派工参与、hasRbac(user,非例行CRUD)和旧角色快照，未重新核对账户有效状态、账户/人员绑定及当前执行权限。
+
+隔离原路由探针在第一次begin immediate之前提交合成账户status=inactive，原保存仍200，明确CURRENT_NONROUTINE_ACTOR_MUST_BE_RECHECKED断言失败。仅证明确定性事务入口复现，不冒充实际PG双服务撤权竞争。临时测试副本已删除，探针及失败日志保留。
+
+下一步须在原锁内重读当前账户/人员/RBAC，校验execute.submit及当前CRUD，所有后续规范化/审计使用新对象；同查原共享draft保存入口persistMaintenanceNonroutineDraft，不能只修旧mode=save。真实请求上下文的人员选择授权也需复核当前快照，避免外层旧权限放宽。补人员停职/绑定失效/权限撤销竞争及失败不写任何来源、草稿、原工作或工时的证据。当前这一缺口未修复，不将人员草稿并发通过等同于权限完备。

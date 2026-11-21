@@ -1,0 +1,58 @@
+{
+  "scope": "independent standard-version admission/publication domain foundation; no public endpoint or role assignment",
+  "sqlite": {
+    "tests": 589,
+    "pass": 589,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "serverTests": 64,
+    "pass": 64,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-048",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 127,
+      "rows": 2848,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "9d5a6a996fa459b69ad88a03d1bd12c43a66a259f2994130d85021c6f80ab74e"
+    },
+    "stopped": true,
+    "qualification": "publication domain foundation uses synthetic injected authority and applicability; no public publication API is enabled"
+  },
+  "policyPending": true,
+  "authorityAndApplicabilityInTests": "explicit synthetic injected policy, not approved business authority",
+  "publicationPermissionRegistered": false,
+  "publicationEndpointInstalled": false,
+  "businessDatabaseChanged": false,
+  "limitations": [
+    "business assignment of publication authority awaits user decision",
+    "authoritative aircraft dictionary/approval not connected; default callback denies publication",
+    "WORK final recognition intake to a standard not implemented",
+    "no publication UI or browser acceptance",
+    "in-flight applicability remains frozen; no retroactive enablement",
+    "no production deploy or full 210 case acceptance"
+  ],
+  "sourceSha256": {
+    "maintenance-standard-publication.mjs": "c8d72bf97086de9124ac68e1ebb69fd024860da04d969e2beeaa345cdfc1c467",
+    "migrations/048_maintenance_standard_publication.sql": "d56487f64f1c479412ce5a7ea8cd0e2a8e772a9e977902577b5e1b5b9620d3c9",
+    "server.mjs": "c34131e6b2a9ffa6095ab59cb7d1974cc19a81379abbc55da399e26998c557fd",
+    "scripts/migrate-sqlite-to-postgres.mjs": "991b8dbb8a811cfef9f4d06b5138d1a20a1a9443e8bedb488746ff6064822fe5",
+    "tests/fixtures/maintenance-standard-publication.mjs": "c26ed2d52c98ba50ab655d9dd362b00d88be6ba26ca82c2e18f0a1b253333a2d",
+    "tests/maintenance-standard-publication.test.mjs": "226db5c1b80ebb02fef856d29585a4f66e41aeeed916e8296130aa92dbb634ea",
+    "tests/server.test.mjs": "621a50e319fb2aaade9c7814b9e08a5d411b7275e3ba0d8a993c6a6a5e3806a7"
+  }
+}

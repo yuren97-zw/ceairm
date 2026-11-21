@@ -6,6 +6,9 @@ import {datesBetween} from '../attendance-rules.mjs';
 const perms=['attendance.offset.rules.manage','attendance.offset.submit','attendance.offset.approve','attendance.offset.responsibility.manage'];
 function fixture(){
  const db=new DatabaseSync(':memory:');let now=Date.parse('2026-09-30T23:00:00+08:00');
+ // B4：路由依赖人员职位（维修人员/班组长/干部三类身份）。
+ db.exec("create table personnel(id text primary key,employee_no text,name text,position_code text,administrative_team_id text,data_status text default 'active',employment_status text default '在职')");
+ db.exec("insert into personnel(id,employee_no,name,position_code) values ('p','10001','员工甲','维修人员'),('l','10002','组长乙','班组长'),('admin','10003','管理员','主任')");
  const employee={id:'employee',personId:'p',permissions:['attendance.offset.submit']};
  const leader={id:'leader',personId:'l',permissions:['attendance.offset.approve']};
  const admin={id:'admin',personId:'admin',permissions:perms};const users=[employee,leader,admin];const sources=new Map();
@@ -40,8 +43,13 @@ test('B05/B06 transaction freezes, partial decision consumes/releases, idempoten
 test('invalid selected approver and request replay cannot leave partial data',()=>{
  const f=fixture(),{ids}=f.setup();
  assert.throws(()=>f.service.submit(f.employee,{assigneeUserId:'leader',events:[ids[0]],note:'申请'},''));
- f.db.prepare('delete from attendance_shift_responsibilities').run();assert.throws(()=>f.service.submit(f.employee,{assigneeUserId:'invalid',events:ids,note:'申请'},'x'),{status:409});
- assert.equal(f.service.balance(f.employee).frozen,0);assert.equal(f.db.prepare('select count(*) n from attendance_offset_requests').get().n,0);f.db.close();
+ // B4（V1.1 §6.1）：普通员工缺卡单由路由决定审批人，自选 assigneeUserId 被忽略；删除责任记录后按同班次班组长推断仍可提交。
+ f.db.prepare('delete from attendance_shift_responsibilities').run();
+ const req=f.service.submit(f.employee,{assigneeUserId:'invalid',events:ids,note:'申请'},'x');
+ assert.equal(f.db.prepare('select assignee_user_id from attendance_offset_requests where id=?').get(req.id).assignee_user_id,'leader','路由到同班次唯一班组长');
+ // 无同班次班组长（撤 leader 权限）时提交被拒，不留孤儿数据。
+ f.leader.permissions=[];assert.throws(()=>f.service.submit(f.employee,{events:ids,note:'无负责人'},'none'),{status:409});
+ assert.equal(f.db.prepare('select count(*) n from attendance_offset_requests').get().n,1);f.db.close();
 });
 test('source invalidation refunds approved items once without changing decision or allocating another item',()=>{
  const f=fixture(),{ids,a}=f.setup();const req=f.service.submit(f.employee,{assigneeUserId:'leader',events:[ids[0]],note:'申请'},'submit');
@@ -66,8 +74,11 @@ test('automatic closed-month issuance is idempotent and inactive switch performs
 });
 test('authorization transfer revokes old action, never lets employee approve self, and keeps one effective task',()=>{
  const f=fixture(),{ids}=f.setup(),r=f.service.submit(f.employee,{assigneeUserId:'leader',events:[ids[0]],note:'申请'},'submit');
+ // B4（V1.1 §6.4）：原审批人仍有效时禁止转交。
+ assert.throws(()=>f.service.transfer(f.admin,r.id,{version:1,assigneeUserId:f.admin.id,reason:'仍然有效'},'blocked'),{status:409});
  assert.throws(()=>f.service.transfer(f.admin,r.id,{version:1,assigneeUserId:f.employee.id,reason:'不能本人审批'},'bad'),{status:409});
- f.service.transfer(f.admin,r.id,{version:1,assigneeUserId:f.admin.id,reason:'授权代审记录'},'move');
+ f.leader.permissions=[];  // 原审批人失效后才允许事实纠正性重路由（admin 为主任=干部）。
+ f.service.transfer(f.admin,r.id,{version:1,assigneeUserId:f.admin.id,reason:'原审批人失效后的责任重路由'},'move');
  assert.equal(f.service.tasks.count(f.leader).count,0);assert.equal(f.service.tasks.count(f.admin).count,1);
  assert.throws(()=>f.service.decide(f.leader,r.id,{version:1,decisions:[]},'old'),{status:403});f.db.close();
 });
@@ -237,7 +248,7 @@ test('own home missing offsets count distinct effective dates, isolate people an
  const f=fixture(),{ids,a}=f.setup();assert.deepEqual(f.service.effectiveMissingDates(f.employee,'2026-11'),[]);const req=f.service.submit(f.employee,{assigneeUserId:'leader',events:ids,note:'申请'},'submit');const d=f.service.detail(f.leader,req.id);f.service.decide(f.leader,req.id,{version:d.version,decisions:d.items.map(i=>({id:i.id,decision:'approved'}))},'approved');assert.deepEqual(f.service.effectiveMissingDates(f.employee,'2026-11'),['2026-11-09']);assert.deepEqual(f.service.effectiveMissingDates(f.leader,'2026-11'),[]);assert.deepEqual(f.service.effectiveMissingDates(f.employee,'2026-10'),[]);assert.throws(()=>f.service.effectiveMissingDates(null,'2026-11'),{status:401});f.db.prepare("update attendance_offset_events set kind='day_off_early'").run();assert.deepEqual(f.service.effectiveMissingDates(f.employee,'2026-11'),[]);f.db.prepare("update attendance_offset_events set kind='day_off_missing',active=0").run();assert.deepEqual(f.service.effectiveMissingDates(f.employee,'2026-11'),[]);f.db.close();
 });
 test('decorated day keeps latest rejected/withdrawn decisions and assigned/actual approver without N+1 reads',()=>{
- const f=fixture(),{ids,a}=f.setup();f.db.exec("create table users(id text,person_id text,name text);create table personnel(id text,name text);create table attendance_days(person_id text,work_date text,result_json text);");f.db.prepare('insert into users values(?,?,?)').run('leader','l','负责人');f.db.prepare('insert into personnel values(?,?)').run('l','实际负责人');
+ const f=fixture(),{ids,a}=f.setup();f.db.exec("create table users(id text,person_id text,name text);create table attendance_days(person_id text,work_date text,result_json text);");f.db.prepare('insert into users values(?,?,?)').run('leader','l','负责人');f.db.prepare('update personnel set name=? where id=?').run('实际负责人','l');
  const decorate=()=>f.service.decorate({dates:[a.date],people:[{personId:'p',days:[{date:a.date,category:'缺卡',punchDetails:[]}]}]}).people[0].days[0];
  const first=f.service.submit(f.employee,{assigneeUserId:'leader',events:[ids[0]],note:'首次'},'first');assert.equal(decorate().offset.items.find(i=>i.requestId).assigneeName,'实际负责人');let d=f.service.detail(f.leader,first.id);f.service.decide(f.leader,first.id,{version:d.version,decisions:[{id:d.items[0].id,decision:'rejected',reason:'不符合'}]},'reject');assert.equal(decorate().offset.items.find(i=>i.requestId).decision,'rejected');assert.equal(decorate().offset.items.find(i=>i.requestId).approverName,'实际负责人');
  f.setNow(Date.parse('2026-11-20T12:00:01+08:00'));const second=f.service.submit(f.employee,{assigneeUserId:'leader',events:[ids[0]],note:'重新申请'},'second');d=f.service.detail(f.employee,second.id);f.service.withdraw(f.employee,second.id,{version:d.version},'withdraw');const latest=decorate().offset.items.find(i=>i.requestId);assert.equal(latest.requestId,second.id);assert.equal(latest.requestStatus,'withdrawn');f.db.prepare('update attendance_offset_requests set created_at=? where id=?').run(f.db.prepare('select created_at from attendance_offset_requests where id=?').get(first.id).created_at,second.id);assert.equal(decorate().offset.items.find(i=>i.requestId).requestStatus,'ambiguous');assert.equal(f.service.effectiveExceptionDates(f.employee,'2026-11').length,0);f.db.close();
@@ -261,6 +272,7 @@ test('global rule keeps incomplete months pending and retries after data becomes
 });
 test('same-day DingTalk planned shift recommends only authorized leaders, allows override and rejects stale permission',()=>{
  const f=fixture(),{ids}=f.setup();f.leader.position='班组长';f.admin.position='班组长';
+ f.db.prepare("update attendance_offset_events set kind='day_off_early'").run();  // B4：自选审批人仅适用于早退/混合申请（D03）
  const date='2026-11-20',point=(type,time)=>({type,planned:Date.parse(date+'T'+time+'+08:00')});
  const day={date,input:{date,covered:true,points:[point('OnDuty','08:00:00'),point('OffDuty','17:00:00')],approvals:[]}};
  const service=createOffsetService({...f.deps,readDays:(p,from,to)=>from===date&&to===date?[p==='admin'?{...day,input:{...day.input,points:[point('OnDuty','20:00:00'),{type:'OffDuty',planned:Date.parse('2026-11-21T08:00:00+08:00')}]}}:day]:f.deps.readDays(p,from,to)});

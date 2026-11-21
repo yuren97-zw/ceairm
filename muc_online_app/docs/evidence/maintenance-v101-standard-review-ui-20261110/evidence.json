@@ -1,0 +1,50 @@
+{
+  "scope": "independent standard review UI, source comparison and capability endpoint",
+  "syntheticOnly": true,
+  "realDevice": false,
+  "browser": "local Chromium headless 1440 desktop and 390 mobile emulation",
+  "productionOr8788Changed": false,
+  "featureDefault": "off",
+  "sqlite": {
+    "tests": 575,
+    "pass": 575,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "16.15",
+    "serverApiTests": 63,
+    "pass": 63,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-046",
+    "repeatedMigration": true,
+    "populatedLegacyRefused": true,
+    "stopped": true,
+    "restore": false,
+    "note": "本轮未重做备份恢复；此前后端恢复证据按其独立源SHA保留。"
+  },
+  "remaining": [
+    "standard notification consumer",
+    "independent admission and publication",
+    "published revision full API and UI acceptance",
+    "standard Excel import",
+    "real device/PWA and complete 210 case audit"
+  ],
+  "sourceSha256": {
+    "public/app.js": "d9ed33af77054c6e3692c8d2e218d7f8ee3fc940d1b28d754c89d78cba1d8cf1",
+    "public/index.html": "adead497220e7f80f6d4cbd888d386d85c48c0c13bb59a59ac315f350cb1d54d",
+    "public/nonroutine-review-workbench.mjs": "c93a23acfb686af00ce1e6f324d7f05086995b667ce96953cdf37b0991973f30",
+    "public/maintenance-standard-finalization-view.mjs": "15ad4e92297a03cee9c46d90636d6f7c2afa438f7a866e015c1ef7f1d5b10445",
+    "public/maintenance-standard-management-workbench.mjs": "4058842d6ea6c222a4941db5669898f344e2e8ef20dd814233f7ce270c760c51",
+    "nonroutine-review.mjs": "3b4c3c89ef0101dc3fd18fd6e92441b443f7c21582a69ee6bbb899295aa33174",
+    "maintenance-standard-review.mjs": "df791257d4b05c214cdaebb47d06d3f96ddfb3e43005af5dfd2ea2eb8bbcc851",
+    "maintenance-standard-management.mjs": "eb8f6a5f1c5579334ca5a5de235ba5454cc307b7ac6e5ecd703e4fe961218d32",
+    "server.mjs": "d9ac9f4c994f7fdd40a73092bbbb56cfc6ceb977ed0a3402e2919bc41f2118f3",
+    "tests/maintenance-standard-review-workbench.test.mjs": "d1e70fe3053a21a795385ccc99495df0fa45ed02219abea464df4aef5b1fd54e",
+    "tests/maintenance-standard-management-workbench.test.mjs": "170707c11b1ab801cbaf42ce3d840ea10e085521e9b9bbf16848aebc6b5e3d19",
+    "tests/server.test.mjs": "67c7c72b3639f507aae648cbec96020bf57606471814cbf810d9a1c2495a92a2",
+    "tests/nonroutine-review-workbench.test.mjs": "06d385ac774e0496e4a372e93eb10bd8f030116e8ac6799417eb84f110b15ae5",
+    "tests/maintenance-standard-review.test.mjs": "52a8c6af05ca6d2279c8158db6d62e22a652385ccaace7aede838e00379d19c2"
+  }
+}

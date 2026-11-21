@@ -1,0 +1,85 @@
+{
+  "stage": "correction-workbench",
+  "date": "2026-11-11",
+  "syntheticOnly": true,
+  "baseline": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sourceSha256": {
+    "public/app.js": "4399d7512b5ba71a336c1b904d19646ba99b8390b1bff77ce2012bfbeca7c66b",
+    "public/nonroutine-correction-workbench.mjs": "98866fd3cb497c98fc24aad281209bbdece37fc523063ae797c31d2f76cfec46",
+    "nonroutine-correction-service.mjs": "598f78aedb66539e040f1ae56cc491dc31a4dd20132f5182172c69ca29ac4ee5",
+    "server.mjs": "f65c35a85e9fc1c0b7e2a6561b1b9039a4213bbd1f1d3572d62020d7de457b44",
+    "tests/nonroutine-correction-service.test.mjs": "035e860fce553102d5521776582cf49317316ff304774568dc0d1d5ccffd75d9",
+    "tests/nonroutine-correction-workbench.test.mjs": "9133997611847de4114657094077543b13afbf888ecfbf918283010d19de3634",
+    "tests/server.test.mjs": "dafd544920f2f5e2f931c5be94f90d679b9b58dddd375660958ac6cf1f162df1"
+  },
+  "sqlite": {
+    "tests": 691,
+    "passed": 691,
+    "failed": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-vkAViX",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 142,
+      "rows": 3464,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "6cdf8b61ae49aa3e299693cb7bde8bdc4bd40a0775dbd0044c9856dfb5f55e52"
+    },
+    "stopped": true
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "originalMonths": "2026-09",
+    "handlingMonth": "2026-11",
+    "periodWorkbenchEnabled": false,
+    "explicitZero": true,
+    "pendingThenPosted": true,
+    "ownerRedacted": true,
+    "layout": {
+      "width": 390,
+      "scrollWidth": 390,
+      "formWidth": 308
+    },
+    "stopped": true,
+    "originalFactsUnchanged": true,
+    "netHours": 0.0,
+    "roleChangesResetVerification": true,
+    "browserCacheBypassed": true
+  },
+  "reviewedScreenshots": [
+    "correction-desktop.png",
+    "correction-owner-mobile.png"
+  ],
+  "checks": {
+    "syntax": true,
+    "webBuild": true,
+    "migrationBaseline": true,
+    "diffWhitespace": true
+  },
+  "limitations": [
+    "No live8788 or business database changes",
+    "Pending approval cancellation not implemented",
+    "Actual construction participant additions/removals require separate authorized source reconciliation",
+    "All partial scopes, cross-process behavior, full money-role matrix and physical devices not accepted",
+    "V10.1 210-case acceptance remains incomplete",
+    "Browser cache bypass used for functional QA; installed PWA upgrade acceptance remains pending"
+  ],
+  "goalComplete": false
+}

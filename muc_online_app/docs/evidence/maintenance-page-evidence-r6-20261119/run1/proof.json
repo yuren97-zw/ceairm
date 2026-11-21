@@ -1,0 +1,50 @@
+{
+  "driverVersion": "page-evidence-r6",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "importRowStatusMatrix": {
+      "ok": true,
+      "facts": {
+        "rowCount": 3,
+        "texts": [
+          "第2行 · 选择标准 · A320 · 2023-06-10多候选择优标准类别待填 · ATA 待填查看详情",
+          "第3行 · 重复项待核对 · A320 · 2023-06-10六轮已导入工作类别待填 · ATA 待填查看详情",
+          "第4行 · 异常 · A320 · 2023-06-10六轮已提报工作类别待填 · ATA 待填维修机会或非例行报工已锁定，既有工作仅供只读核对，不能通过导入新增、覆盖或重置。查看详情"
+        ],
+        "confirm": "导入所选 0 行草稿"
+      },
+      "selection": [
+        [
+          "2",
+          false,
+          true
+        ],
+        [
+          "3",
+          false,
+          true
+        ],
+        [
+          "4",
+          false,
+          true
+        ]
+      ],
+      "candidatesButton": "比较并选择候选标准（2项）",
+      "pickerExcerpt": "择标准× 原工作 · 类别待填 · ATA 待填 · 多候选择优标准 范围待完善 单项工作 · ATA 995 · 多候选择优标准A320 · 2小时 · V1范围甲r6-std-a单项工作 · ATA 995 · 多候选择优标准A320 · 2小时 · V1范围乙r6-std-b 返回确认引用所选版本",
+      "distinctFacts": {
+        "textarea": true,
+        "saveButton": true
+      }
+    }
+  },
+  "screenshots": [
+    "r6-import-row-statuses.png",
+    "r6-import-candidate-picker.png"
+  ],
+  "servicesStopped": true
+}

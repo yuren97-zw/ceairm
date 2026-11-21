@@ -1,0 +1,89 @@
+{
+  "scope": "independent business publisher authority, current exact aircraft verification, separate admission/publication API and workbench",
+  "userDecision": "单独授权标准发布负责人",
+  "defaultEnabled": false,
+  "actualUserAssignmentsOutsideSyntheticTests": false,
+  "sqlite": {
+    "tests": 605,
+    "pass": 605,
+    "fail": 0,
+    "skipped": 0
+  },
+  "rbacMatrix": {
+    "permissions": 100,
+    "presetRoles": 34,
+    "passed": true
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 66,
+    "pass": 66,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-049",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 128,
+      "rows": 2947,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "c249f51366a934a372115527f24541ab9a2b66d26d55eda8f1b03d20c6b3ac95"
+    },
+    "stopped": true,
+    "scopeNote": "All current backend sources exercised; later frontend-only recognized-zero label and mobile button layout checked separately via SQLite/browser/build."
+  },
+  "browser": {
+    "localSyntheticOnly": true,
+    "desktopWidth": 1440,
+    "mobileEmulationWidth": 390,
+    "mobileScrollWidth": 390,
+    "inputFont": "16px",
+    "rootImplicitPublishingRejected": true,
+    "ordinaryIndependentPublisher": true,
+    "explicitAdmissionThenPublication": true,
+    "immediateActivation": true,
+    "privateOpinionsAbsent": true,
+    "originalWorkUnchanged": true,
+    "manualPriorBlockedCheckNowCompleted": true,
+    "drawerMatchesParentWidth": 374.390625,
+    "wrongAircraftSelectionRejected": true,
+    "recognizedZeroReadonlyAndDisplayed": true,
+    "draftSaveCreatesNoFormalWork": true,
+    "mixedSubmissionItems": 2,
+    "newWorkReviewCases": 1,
+    "realDeviceOrPWA": false,
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true,
+    "approvalNote": "Original quota failure preserved in prior evidence; recovery time passed and same require_escalated approval path approved these retries."
+  },
+  "limitations": [
+    "generic applicability remains denied pending independent approval policy",
+    "WORK final recognition intake to a standard not implemented",
+    "published revision API/UI full end-to-end acceptance not complete",
+    "shift quiet windows, corrections/modules/import and complete 210-case acceptance still open",
+    "no production deployment or live 8788 data change"
+  ],
+  "sourceSha256": {
+    "maintenance-standard-publication.mjs": "819a182f8807b3719f5f23452fa77c3d1803a3b85ad4ca587835cc8140b3e780",
+    "maintenance-standard-publication-authority.mjs": "cf910215ea665d05e71e5875e4edc5ef5660be6f8c807985e5c3469220483878",
+    "rbac-policy.mjs": "3cf9037caa48468fedfd54839234f45dac49cf7b31cde060865e77a5c4a4b67c",
+    "server.mjs": "3e3af0edc0fab17d3ff36596014d88db31399c36130eade9620ad42e417b16e8",
+    "public/app.js": "6e76a124a1f968d50421f91791c2eac9536394fbb78e91440772fcac0d156bd9",
+    "public/index.html": "9ae29f707738ed3076b6d267e89f0b10df211380dee02c3904e636fda0c06fe5",
+    "public/maintenance-standard-publication-workbench.mjs": "3e5705ca35b4e80c5319383d0e2e26bc27b25c493eb70c4dceeba68d37a5c280",
+    "tests/maintenance-standard-publication.test.mjs": "73c29e03a7837a22ba6206042c7a65c9b10b0b4f07efd63d9330dc8f96b7465d",
+    "tests/maintenance-standard-publication-authority.test.mjs": "cd023c58b719e6f8b52133c523a409b1a855c6c5c1676dab417f16e362f461cb",
+    "tests/maintenance-standard-publication-workbench.test.mjs": "dd262c68465ce1136d2480c93ff20de2ea6ed3872a0572e8ee685f5052389c15",
+    "tests/maintenance-imported-draft-ui.test.mjs": "d25148eba8e3c327a211a49babc6fca50791c8047f8c1ab839f95e3123a4447b",
+    "tests/server.test.mjs": "d01c91412d6820294a84f383e44ca17260ed2661911b8f9245fb08ae7d5672c4"
+  }
+}

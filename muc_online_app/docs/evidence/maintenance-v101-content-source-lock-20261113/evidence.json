@@ -1,0 +1,54 @@
+{
+  "stage": "generic-content-source-lock-and-original-transaction",
+  "date": "2026-11-13",
+  "sourceSha256": {
+    "server.mjs": "61ef5743f37c2757a7b26234db794592555a28e50245d339bf8296baee7fa01e",
+    "tests/server.test.mjs": "3a8a0acae9bc58b84624373bb9993f01292627fecd2dd59f9b80841ba0428101",
+    "scripts/check-maintenance-v101-restored.mjs": "62b1eba65176287521b9aa0a973b6927f0f530000c5402e074905496660af7d5"
+  },
+  "sqlitePassed": 760,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-y3NFoj",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3679,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "d9b4bd263ef062dc3b7a1088f5001ba0a38241683c17e7d9dbf81c831b6c38b4"
+    },
+    "stopped": true,
+    "testsPassed": 76
+  },
+  "restored": {
+    "restoredGenericContentLocksVerified": 2,
+    "frozenSourcesUnchanged": true
+  },
+  "negativeReproduction": "before-reproduction.log: request returned conflict after invalidating the batch; database snapshot comparison detects the partial mutation",
+  "realHttpProof": [
+    "managed submission rejects generic POST and PUT without business writes",
+    "disabling feature flags does not unlock persisted submission sources",
+    "legacy POST and PUT audit failures roll back original batch invalidation and content writes",
+    "transaction-entry actor deactivation and finalization changes are rechecked"
+  ],
+  "concurrencyLimit": "deterministic single-process injection, not full multiprocess qualification/concurrency acceptance",
+  "live8788Changed": false,
+  "businessDatabaseChanged": false,
+  "browserVisualVerifiedThisStage": false,
+  "fullAcceptanceVerified": false
+}

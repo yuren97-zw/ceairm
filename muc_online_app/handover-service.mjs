@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import {FIXED_ORGANIZATIONS} from './personnel-access.mjs';
+import {classifyPosition} from './identity-classification.mjs';
 const failure=(m,status=400)=>Object.assign(Error(m),{status});
 const parse=(s,f=null)=>{try{return JSON.parse(s);}catch{return f;}};
 // 交接待办权威校验：展示/执行前确认用户仍是当前接收人且整单待接收（供 action-task 注册表调用）。
@@ -58,6 +59,14 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const row=db.prepare("select u.id as userId,p.name from users u join personnel p on p.id=u.person_id where u.person_id=? and u.status='active' order by u.id limit 1").get(personId);
   return row?{userId:row.userId,user_name:row.name}:null;
  }
+ // 办理资格（V1.1 §5.1）：创建/修改/删除/提交/确认都要求操作者当前有效班组长身份。
+ // 身份唯一来源是人员主数据职位（实时读取，职位变动立即生效）；系统权限/角色/分组不替代该身份。
+ function requireTeamLeader(user,action){
+  const row=user?.id?db.prepare("select p.position_code,p.employment_status from users u join personnel p on p.id=u.person_id where u.id=? and u.status='active' and coalesce(p.data_status,'active')<>'deleted'").get(user.id):null;
+  if(!row||classifyPosition(row.position_code).identity!=='team_leader'||['离职','停职'].includes(row.employment_status||''))
+   throw failure(`仅当前有效班组长可以${action||'办理交接'}`,403);
+  return row;
+ }
  const flightSnapshot=flightId=>{
   const row=db.prepare('select f.id,f.date,f.aircraft_no,f.flight_no,f.aircraft_type,f.work_kind,f.stand,f.planned_arrival,f.planned_departure,f.departure_flight_no,f.status,f.archived_at,l.name as locationName from maintenance_flights f left join maintenance_work_locations l on l.id=f.location_id where f.id=?').get(String(flightId||'').trim());
   if(!row)throw failure('维修机会不存在：'+flightId);
@@ -85,7 +94,18 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   }
   const drafts=loadNonroutineDrafts([...tree.keys()]);
   const routineReports=loadRoutineReports([...tree.keys()]);
-  for(const [id,entry] of tree){entry.nonroutineDraft=drafts.get(id)||null;entry.routineReport=routineReports.get(id)||null;}
+  for(const [id,entry] of tree){
+   entry.nonroutineDraft=drafts.get(id)||null;entry.routineReport=routineReports.get(id)||null;
+   // B5-3 集成兜底：维修 V10.1 草稿把派工人员保存在草稿条目 entries（不写 assignments 表），
+   // 交接投影在表内无派工时按草稿条目合成，维持字段白名单形态（role+userName）。
+   if(entry.nonroutineDraft&&Array.isArray(entry.nonroutineDraft.items))
+    for(const sub of entry.subtasks){
+     if(sub.assignments.length)continue;
+     const items=entry.nonroutineDraft.items;
+     const item=items.find(candidate=>String(candidate.id)===String(sub.id))||items.find(candidate=>String(candidate.title||'')===String(sub.title||''));
+     if(item&&Array.isArray(item.entries))sub.assignments=item.entries.map(({role,userName})=>({role,userName}));
+    }
+  }
   return tree;
  };
  const flightView=(row,entry)=>{
@@ -191,10 +211,11 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const ids=[...new Set((Array.isArray(list)?list:[]).map(v=>String(v?.userId||v||'').trim()).filter(Boolean))];
   if(!ids.length)return [];
   const marks=ids.map(()=>'?').join(',');
-  const rows=db.prepare(`select u.id as userId,p.name as userName from users u join personnel p on p.id=u.person_id where u.id in (${marks}) and u.status='active' and coalesce(p.data_status,'active')<>'deleted'`).all(...ids);
+  // 接收资格（V1.1 §5.1/H2）：接收人必须是当前职位为班组长且在职的有效账户，与候选列表口径一致。
+  const rows=db.prepare(`select u.id as userId,p.name as userName from users u join personnel p on p.id=u.person_id where u.id in (${marks}) and u.status='active' and coalesce(p.data_status,'active')<>'deleted' and p.employment_status not in ('离职','停职') and p.position_code='班组长'`).all(...ids);
   const found=new Map(rows.map(r=>[r.userId,r]));
   const missing=ids.filter(id=>!found.has(id));
-  if(missing.length)throw failure('接收人账号无效或已停用：'+missing.join('、'));
+  if(missing.length)throw failure('接收人无效或不是当前有效班组长：'+missing.join('、'));
   return ids.map(id=>found.get(id));
  };
  function syncOpportunities(handoverId,user,items,track){
@@ -258,9 +279,10 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
  };
  function create(user,payload){
   requirePermission(user,'handover.create');
+  requireTeamLeader(user,'创建交接单');
   const person=personOf(user);
-  // 交班班组：默认提交人所在班组，可下拉修改（接受组织行 id 或固定代码）。
-  const fromTeam=validateTeam(payload?.fromTeamId||person?.teamId,{label:'交班班组'});
+  // 交班班组锁定为班组长本人行政班组（V1.1 §5.1）：不再接受任意交班班组。
+  const fromTeam=validateTeam(person?.teamId,{label:'交班班组（本人行政班组）'});
   const toTeam=validateTeam(payload?.toTeamId,{allowEmpty:true});
   const recipients=resolveRecipients(payload?.recipients);
   const id=uid('hdo');
@@ -278,16 +300,16 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const handover=loadHandover(id);
   // 业务规则（2026-11-15）：提交后即锁定，仅草稿可修改；不再支持待接收阶段变更。
   if(handover.status!=='draft')throw failure('交接单已提交，不可修改',409);
+  requireTeamLeader(user,'修改交接单');
   if(!canEditHandover(user,handover))throw failure('只有交班班组可以修改交接单',403);
   const expectedVersion=Number(payload?.expectedVersion);
   if(!Number.isInteger(expectedVersion)||expectedVersion!==handover.version)throw failure('交接单已被他人修改，请刷新后重试',409);
   db.exec('begin immediate');
   try{
    const newVersion=handover.version+1;
-   if(payload?.fromTeamId!==undefined){
-    const fromTeam=validateTeam(payload.fromTeamId);
-    if(fromTeam.id!==handover.from_team_id)db.prepare('update handover set from_team_id=?,from_team_name=? where id=?').run(fromTeam.id,fromTeam.name,id);
-   }
+   // 交班班组锁定本班（V1.1 §5.1）：草稿期间也不可改换交班班组。
+   if(payload?.fromTeamId!==undefined&&validateTeam(payload.fromTeamId,{allowEmpty:true})?.id!==handover.from_team_id)
+    throw failure('交班班组锁定为创建人本班，不可修改',409);
    if(payload?.toTeamId!==undefined){
     const toTeam=validateTeam(payload.toTeamId,{allowEmpty:true});
     db.prepare('update handover set to_team_id=?,to_team_name=? where id=?').run(toTeam?.id||null,toTeam?.name||null,id);
@@ -304,6 +326,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
  function deleteDraft(user,id){
   const handover=loadHandover(id);
   if(handover.status!=='draft')throw failure('仅草稿可以删除',409);
+  requireTeamLeader(user,'删除交接草稿');
   if(handover.created_by!==user.id&&!canEditHandover(user,handover))throw failure('只有交班班组可以删除草稿',403);
   db.exec('begin immediate');
   try{
@@ -319,6 +342,7 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
  function submit(user,id,payload={}){
   const handover=loadHandover(id);
   if(handover.status!=='draft')throw failure('仅草稿可以提交',409);
+  requireTeamLeader(user,'提交交接单');
   if(!canEditHandover(user,handover))throw failure('只有交班班组可以提交交接单',403);
   const expectedVersion=Number(payload?.expectedVersion);
   if(Number.isInteger(expectedVersion)&&expectedVersion!==handover.version)throw failure('交接单已被他人修改，请刷新后重试',409);
@@ -338,6 +362,8 @@ export function createHandoverService({db,clock=Date.now,audit=()=>{},hasRbac=nu
   const handover=loadHandover(id);
   const recipient=db.prepare('select user_name from handover_recipient where handover_id=? and user_id=?').get(id,user.id);
   if(!recipient)throw failure('只有当前接收人可以确认交接',403);
+  // 接收人资格实时复核（V1.1 §5.1/A06）：提交后职位变动的接收人不能再办理确认。
+  requireTeamLeader(user,'确认交接');
   db.exec('begin immediate');
   try{
    const changed=db.prepare("update handover set status='accepted',confirmed_by=?,confirmed_by_name=?,confirmed_at=?,version=version+1,updated_at=? where id=? and status='pending'").run(user.id,recipient.user_name,now(),now(),id);

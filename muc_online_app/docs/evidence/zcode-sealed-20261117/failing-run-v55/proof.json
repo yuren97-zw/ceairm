@@ -1,0 +1,197 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "widths": [
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "PENDING_ACCEPTANCE",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 1280,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    },
+    {
+      "stage": "IN_REVIEW",
+      "width": 390,
+      "dirtyBeforeRefresh": false,
+      "actualSseRefresh": true,
+      "privateContentCleared": true,
+      "originalBusinessUnchanged": true,
+      "noHorizontalOverflow": true
+    }
+  ],
+  "diagnostics": {
+    "stages": [
+      "PENDING_ACCEPTANCE",
+      "IN_REVIEW",
+      "SEALED"
+    ],
+    "loaded-PENDING_ACCEPTANCE-1280": {
+      "label": "loaded-PENDING_ACCEPTANCE-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-PENDING_ACCEPTANCE-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-PENDING_ACCEPTANCE-1280": {
+      "label": "clicked-PENDING_ACCEPTANCE-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-PENDING_ACCEPTANCE-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": true,
+      "reviewCapsUser": "diag-browser-reviewer-12",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-PENDING_ACCEPTANCE-390": {
+      "label": "loaded-PENDING_ACCEPTANCE-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-PENDING_ACCEPTANCE-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-PENDING_ACCEPTANCE-390": {
+      "label": "clicked-PENDING_ACCEPTANCE-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-PENDING_ACCEPTANCE-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-IN_REVIEW-1280": {
+      "label": "loaded-IN_REVIEW-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-IN_REVIEW-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-IN_REVIEW-1280": {
+      "label": "clicked-IN_REVIEW-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-IN_REVIEW-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-IN_REVIEW-390": {
+      "label": "loaded-IN_REVIEW-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-IN_REVIEW-390",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-IN_REVIEW-390": {
+      "label": "clicked-IN_REVIEW-390",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-IN_REVIEW-390",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 16,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "loaded-SEALED-1280": {
+      "label": "loaded-SEALED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+      "activePage": "homePage",
+      "maintenanceTab": "dispatch",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "clicked-SEALED-1280": {
+      "label": "clicked-SEALED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "failure-SEALED-1280": {
+      "label": "failure-SEALED-1280",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": false,
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    },
+    "probe-SEALED-1280": {
+      "status": 200,
+      "body": "{\"enabled\":true}"
+    },
+    "failure-late": {
+      "label": "failure-late",
+      "url": "http://127.0.0.1:18888/dashboard?qa=diag-SEALED-1280",
+      "activePage": "maintenancePage",
+      "maintenanceTab": "dispatch",
+      "reviewEnabled": true,
+      "reviewCapsUser": "diag-browser-reviewer-12",
+      "userId": "diag-browser-reviewer-12",
+      "permCount": 15,
+      "permView": false,
+      "tabs": [],
+      "panelLen": 82
+    }
+  },
+  "error": "reviews tab timeout at SEALED-1280 — evidence captured",
+  "servicesStopped": true
+}

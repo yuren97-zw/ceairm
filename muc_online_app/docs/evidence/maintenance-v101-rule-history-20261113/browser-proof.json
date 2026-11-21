@@ -1,0 +1,27 @@
+{
+  "syntheticOnly": true,
+  "startingVersion": 1,
+  "historyLazyLoaded": true,
+  "historyDidNotOverwriteUnsavedEdits": true,
+  "realUiSavedWithVersion": true,
+  "secondClientCommitted": true,
+  "staleUiSaveRefusedWithoutJournalEntry": true,
+  "unsavedRuleEditsPreserved": true,
+  "unsavedNavigationCancelled": true,
+  "versions": [
+    3,
+    2,
+    1
+  ],
+  "layout": {
+    "viewport": 390,
+    "width": 390,
+    "historyX": 14,
+    "historyRight": 376
+  },
+  "dialogs": [
+    "规则已保存。",
+    "工时规则已变化，请重新读取并核对后保存",
+    "离开会放弃尚未保存的工时规则，是否继续？"
+  ]
+}

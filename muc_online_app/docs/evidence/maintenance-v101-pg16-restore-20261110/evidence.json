@@ -1,0 +1,132 @@
+{
+  "date": "2026-11-10",
+  "databaseVersion": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+  "scope": "New temporary PG16 cluster and synthetic fixtures, database-only cold backup and new-database restore",
+  "postgresServerTests": {
+    "tests": 62,
+    "pass": 62,
+    "fail": 0,
+    "skipped": 0
+  },
+  "sqliteRegression": {
+    "tests": 564,
+    "pass": 564,
+    "fail": 0,
+    "skipped": 0
+  },
+  "restore": {
+    "tables": 116,
+    "rows": 2529,
+    "dataEqual": true,
+    "indexesEqual": true,
+    "constraintsEqual": true,
+    "viewsEqual": true,
+    "functionsEqual": true,
+    "triggersEqual": true,
+    "sequencesEqual": true,
+    "sourceUnchanged": true,
+    "uniquenessEnforced": true,
+    "cascadeRollback": true,
+    "closedChannelReplay": true,
+    "snapshotSha256": "e367bfbb92e8eb281be2d544c6019f5bc035c455f0847418b64de4aa73684638"
+  },
+  "catalogObjects": {
+    "indexes": 244,
+    "constraints": 240,
+    "views": 1,
+    "functions": 21,
+    "triggers": 25,
+    "sequences": 1
+  },
+  "fixturePreparation": {
+    "fixturePrepared": true,
+    "legacyCompatibilityTablesChanged": [
+      "maintenance_assignments",
+      "maintenance_flights",
+      "maintenance_hour_results",
+      "maintenance_report_draft_versions"
+    ],
+    "v101FrozenFactsUnchanged": true,
+    "monetaryFactsUnchanged": true
+  },
+  "restoredApplication": {
+    "restoredApplicationStartup": true,
+    "retried": 4,
+    "postedPaths": [
+      "ADJUSTED_CLOSED",
+      "MERGED_CLOSED"
+    ],
+    "maintenanceBusinessUnchanged": true
+  },
+  "cleanup": {
+    "restoredDatabaseAndRoleDroppedByFinally": true,
+    "clusterStopped": true
+  },
+  "sourceHashes": {
+    "server.mjs": "b01e49e9e753f14576ac33adcaf0f51bdf70425dd7965bcb94a7b12aa95c43f7",
+    "db.mjs": "82c03daac877139f651bbeda128fcf7e531b9eacc7253369256a596d549cf75f",
+    "nonroutine-role-results.mjs": "a52c7f80c760e993c5b3d3829e52fcb7d10ffe3cdc72b15b11f156aebfc51947",
+    "nonroutine-delivery.mjs": "76c2b07012f42040b3f7ca2825dcc22fe54291f427e7e64a8333845c55d6be4d",
+    "nonroutine-finalization.mjs": "e898237c1b1a04d3d760da0f7d961583f55ebdca8258468bcf11fe194ce343b8",
+    "rbac-policy.mjs": "46489e0bd38028405932398ffcd7e939f725c98bacbca3f499014b1cb345e9fb",
+    "tests/server.test.mjs": "4ed98a0afaf0e242fb4127257036ebed1bc66e197890a53d402a703d4c45d47f",
+    "tests/nonroutine-delivery.test.mjs": "f7583394b3f4bd8cb4a08cd479615b62faa4c71c8beb915aefc8d91509d62f16",
+    "scripts/run-postgres-migrations.mjs": "245678e0ed3e06fe72c081ed01a65d7ca58045622a117f2b201676b5c71356ee",
+    "scripts/check-maintenance-v101-postgres.mjs": "f930b1569e61de285f348dcc82d45eab3db2a0e82126a7a89bd0e90ec4556783",
+    "scripts/check-maintenance-v101-restored.mjs": "142ce2902bdc08646889c2466e1610075327eb29e85f59dee3a5c416b8099c3b",
+    "scripts/maintenance-postgres-fingerprint.mjs": "de130ee0271c9ac6d86b303fc240d641df410116dd88fc0706cefdac2bdf1ccf",
+    "migrations/001_init_postgres.sql": "9ff4227251fa5fd90c9e47687537f665fd76b4344b9efe8874376fbed48e98f9",
+    "migrations/002_performance_indexes.sql": "57729e9f0c96363f46919eea8dabb0856e17b8df14ff92534ae7ab0a593267b0",
+    "migrations/003_review_electronic_signatures.sql": "5ae20bc417e035c8458254917628f8f69051fd55f8c8a29defc4484c5add3bf0",
+    "migrations/004_departure_flight_no.sql": "4b999dd01bbb664351aee446f9fb032187fa3877f7c8da07728a1102f0b69d7a",
+    "migrations/005_subtask_external_work_no.sql": "e1f658f20d20bebdec4918a75e97d2451eadc8266ce039385fe893d7309d7419",
+    "migrations/006_personnel_rbac.sql": "acbc3e57db00d17a2fbae62a583784c382b6b36c584e667865d77a70b52395c4",
+    "migrations/007_personnel_identity_scopes.sql": "9c6f0fbddbd1e28ec4a502f372c760285b060b8f60a79161d22418b8ead003ce",
+    "migrations/008_capability_integration.sql": "5367eb6224e1634d5d55201aa2a6db93d439c1f2de65a400b15ccd02b266be44",
+    "migrations/009_four_level_organization.sql": "e974f121cc7e3e6b0dd65738accad270636068fafa8b75cdcff1589a376067cd",
+    "migrations/010_personnel_groups.sql": "034ea4b74bdc2a99e8d2b6f26cf599db80325b058b4c5622291cdc289aa804c0",
+    "migrations/011_authorization_nine_fields.sql": "111604be5f24fc728604e7d030a9352a6701e64bafa288386bb66ff45d80a121",
+    "migrations/012_import_workspace.sql": "cc1e034595c7e790ed250152b9d2eb32c6546be9ffcf03442a71fa28d83a310e",
+    "migrations/013_authorization_project_categories.sql": "c307a5a0819eee03387c3348686f3e0e3a023c7b9de21fb2850789500fdb6f5e",
+    "migrations/014_special_personnel_group.sql": "b530f6a75b262343133a78ac27964402e1c06709f279b8a3d8e09c933adac957",
+    "migrations/015_scheduled_capability_scenarios.sql": "cd8c9ec6fad0d5f5e03a9ab35ed16f82fd0812df75d8c860d1f2a544be33b248",
+    "migrations/016_other_status_catalog.sql": "bfaa7458b10cd31af94d058e9649771049141cb1bf954d9988be077a43e19d41",
+    "migrations/017_aircraft_hours_snapshot.sql": "815b7424ab4b673f3caf19e7441671175a983a5cff47dc57935dc1793701ff23",
+    "migrations/018_maintenance_work_locations.sql": "f5b7d94d621d334f281d883e0dd62906932f82398e7ef2983c99dccb933d0615",
+    "migrations/019_backfill_maintenance_work_location.sql": "4c7db0f39230b8f1d545743608310f457b0617ad5b743a01e7c6d6cf236f3b65",
+    "migrations/020_info_realtime.sql": "44e991e4c09d61300562ce5a08b9a7466b34deede30de48e73afe31dcef38d06",
+    "migrations/021_routine_auto_confirmation.sql": "f3fabfe567fae231bbc56f3c3bc647fa53c7bda7a323e9db46ea4ed1d29bd99b",
+    "migrations/022_attendance.sql": "8975fcfbc4cb695eee7480bd8d19914139eeacbb02c5420c069eac3fca695658",
+    "migrations/023_attendance_leave_catalog.sql": "823e3715c91b7d2f314450c93203a3e14b7fb08304837f1db614802be2520cb5",
+    "migrations/024_capability_status_return_target.sql": "9351ec03ebe6eaab42acc21d43676c6e04108e4ca03b7ea6733ee786591f07c5",
+    "migrations/025_deployment_handover_days.sql": "b34f71e16dfca0fbfa9e0d36abe8e77cc0da51ddf7aaab70b2c98ef2c674d457",
+    "migrations/026_capability_allocation_pools.sql": "04f8c356902235d5dd933fd0c2c995cc481e663c2b12e54ba8ca8525873a08ff",
+    "migrations/027_attendance_hybrid.sql": "f3c03e26e9275e768fef8f3528ab4c673f8a68c5c2cc1b1c1723dc9bbf792b8d",
+    "migrations/028_attendance_leave_balances.sql": "0262cbf57668755c710cde4272dd31d85d27efa05fe18880c14a159c248682c8",
+    "migrations/029_attendance_approval_plans.sql": "904a5f6d17827528e2a635dc56d82fef0587199ee48147c855781ec7fade0ae7",
+    "migrations/030_attendance_approval_indexes.sql": "89e11f94a0fd6687f0713c054e2bd45ff74373f1a35f4330f58058745b1a3ab2",
+    "migrations/031_attendance_event_instance_index.sql": "aed169fa152ec6534abec9ade9ec365239fdcdff6e30b1d3c4c3bad8cdfc651e",
+    "migrations/032_maintenance_standards.sql": "d2007f49cda9385e84774c6ba5342ed3641b6b6716ed579a16bd3a582cca3d83",
+    "migrations/033_maintenance_draft_versions.sql": "8dba58df42442704a257215af414a7779d3c3be1ade2baa7f7e3bbb054dbc3f4",
+    "migrations/034_maintenance_import_provenance.sql": "095b24f2cb9cc1a39904c077ae923ea2e347fda2ab423d5222fae9d0d3142753",
+    "migrations/035_nonroutine_review.sql": "e2d202eb39cea379a6bfd8762410579cfa554bcdbf7247a3334dbf45b18e0a66",
+    "migrations/036_nonroutine_review_suggestions.sql": "c751c611aa0602efb29d55f39b1839d4dd54295fe9f69a9f07f415f94b182574",
+    "migrations/037_nonroutine_assessment.sql": "fe35ce4e7a3e980d4930bdad927fa73d077f2a03c9a461c3fd236831eef3862e",
+    "migrations/038_nonroutine_finalization.sql": "d1547de5824808530df7dc3811b537a49f0e4fb72167f06650e6c27dc2f76740",
+    "migrations/039_maintenance_hour_periods.sql": "45a1d76e5744e0d50dd047ce42d4b1da4d5dcd10ff22ef1de89417e42fbc3e49",
+    "migrations/040_nonroutine_adjustments.sql": "f3b9d8b484c3552d4290a9c0d9a918f7d4ca9bb5da762fc83945dc4e4cdff97f",
+    "migrations/041_nonroutine_cross_period.sql": "ed5af413a435e2bbe1ddf544c9db7a52a5815eb0878f80a81f57cd669f5c7b27",
+    "migrations/042_nonroutine_notifications.sql": "9ceedc8efa8e1668040355bbe718508a926e582a4646e92476aa6cf21e9dc2c9",
+    "migrations/043_nonroutine_posting_receipts.sql": "8df122b7f4caa6ffa296022c35dc00e0913d9d8ae7d5c115804e2d5ac44bfbce",
+    "migrations/044_maintenance_standard_management.sql": "1594588ad9aedba86356891b27867990d64c1f042f5b348ecc56f07e2f6b926d",
+    "migrations/045_nonroutine_role_results.sql": "495754ac20ac1ab687f069b53108f1c146295a84ccd417bc6beab0e2958c4be6"
+  },
+  "command": "node scripts/check-maintenance-v101-postgres.mjs ABSOLUTE_PG16_BIN --restore",
+  "limitations": [
+    "No business/production database or attachments/COS/configuration restored",
+    "No concurrent live-write backup or cutover",
+    "Not full 210-case acceptance or browser/mobile acceptance",
+    "Fixture compatibility preparation is before the backup baseline; only monetary and V10 locked/source facts asserted unchanged during that preparation",
+    "Real legacy identity mapping, Linux release and full concurrency remain unverified"
+  ]
+}

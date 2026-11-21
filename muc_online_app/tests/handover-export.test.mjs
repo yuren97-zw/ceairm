@@ -12,8 +12,8 @@ function fixture(){
  db.exec("create table maintenance_work_locations(id text primary key,name text,status text default 'active')");
  db.exec("create table maintenance_assignments(id text primary key,owner_type text,owner_id text,role text,user_name text,assigned_at text)");
  db.exec("create table maintenance_subtasks(id text primary key,flight_id text,title text,category text,content text,standard_hours real default 0,status text default '未派工',created_at text)");
- const people=[['p1','u1','张三','TEAM-LINE-1'],['p3','u3','王五','TEAM-LINE-2']];
- for(const [pid,uid,name,team] of people){db.prepare('insert into personnel(id,employee_no,name,administrative_team_id) values(?,?,?,?)').run(pid,uid,name,team);db.prepare('insert into users(id,person_id) values(?,?)').run(uid,pid);}
+ const people=[['p1','u1','张三','TEAM-LINE-1','班组长'],['p3','u3','王五','TEAM-LINE-2','班组长']];
+ for(const [pid,uid,name,team,position] of people){db.prepare('insert into personnel(id,employee_no,name,position_code,administrative_team_id) values(?,?,?,?,?)').run(pid,uid,name,position,team);db.prepare('insert into users(id,person_id) values(?,?)').run(uid,pid);}
  db.prepare('insert into maintenance_flights(id,date,aircraft_no,flight_no,work_kind,stand,planned_arrival,status,archived_at) values(?,?,?,?,?,?,?,?,?)').run('f1','2026-11-14','B-1234','MU5117','航后','桥位3','2026-11-14 12:30:00','已派工',null);
  db.prepare('insert into maintenance_flights(id,date,aircraft_no,flight_no,work_kind,stand,planned_arrival,status,archived_at) values(?,?,?,?,?,?,?,?,?)').run('f3','2026-11-13','B-9999','MU0001','航前','桥位1','2026-11-13 06:30:00','已确认','2026-11-13T12:00:00.000Z');
  const perms=['handover.view','handover.create','handover.history.all','handover.export'];

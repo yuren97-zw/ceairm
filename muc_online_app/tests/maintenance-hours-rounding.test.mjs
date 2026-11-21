@@ -12,6 +12,10 @@ const context = vm.createContext({
   maintenanceRolesForOpportunity: () => ['放行', ...roles],
   maintenanceNonroutineRoleOrder: ['主做', '检验', '辅助'],
   normalizeMaintenanceSubtaskRole: role => role,
+  json: (value,fallback)=>value ? JSON.parse(value) : fallback,
+  maintenanceNonroutineAssessment: ()=>null,
+  maintenanceNonroutineEffectivePolicy: ()=>null,
+  maintenanceRatioRuleForOwner: (_type,owner,role)=>owner._nonroutinePolicy?.ratios?.[role] ?? null,
 });
 const start = source.indexOf('function maintenanceCalculatedHours(');
 vm.runInContext(source.slice(start, source.indexOf('\n}\n', start) + 2), context);
@@ -20,7 +24,7 @@ const assignments = roles.map((role, i) => ({ id: `a-${i}`, person_id: 'person-a
 const calculate = (rows, input = owner, type = 'flight') => context.maintenanceCalculatedHours(type, input, rows);
 const cents = result => [...result.values()].reduce((sum, hours) => sum + Math.round(hours * 100), 0);
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-for (const name of ['maintenanceReviewPerson', 'maintenanceReviewCalculatedHours']) {
+for (const name of ['maintenanceReviewPerson', 'maintenanceReviewCalculatedHours','maintenanceReviewRoleHtml']) {
   const begin = app.indexOf(`function ${name}(`);
   vm.runInContext(app.slice(begin, app.indexOf('\n}\n', begin) + 2), context);
 }
@@ -67,6 +71,28 @@ test('nonroutine and towing allocation remain unchanged', () => {
   assert.equal(cents(calculate(rows, { baseHours: 1, category: '拖机' }, 'subtask')), 100);
 });
 
+test('new equal policy counts a person once across roles and leaves unknown or pending estimates missing', () => {
+  const rows=[{id:'a1',person_id:'a',role:'主做'},{id:'a2',person_id:'a',role:'检验'},{id:'b1',person_id:'b',role:'主做'}];
+  for(const baseHours of [0,0.01,1.5,2.1]) {
+    const result=calculate(rows,{baseHours,_nonroutinePolicy:{strategy:'EQUAL'}},'subtask');
+    assert.equal(cents(result),Math.round(baseHours*100));
+    assert.equal(result.get('a2'),0);
+    assert.ok(Math.abs(result.get('a1')-result.get('b1'))<=0.010001);
+  }
+  assert.equal(calculate(rows,{baseHours:null},'subtask').size,0);
+  assert.equal(calculate(rows,{baseHours:2,_nonroutinePolicy:{strategy:'UNDECIDED'}},'subtask').size,0);
+  assert.equal(calculate(rows,{baseHours:2,_nonroutinePolicy:{strategy:'ROLE_COMBINATION',valid:true,ratios:{主做:0.3,检验:null}}},'subtask').size,0);
+});
+
+test('review display keeps pending hours missing and uses saved new-policy results instead of a second allocation algorithm', () => {
+  const pending={ownerType:'subtask',hourAssessment:{pending:true},baseHours:null};
+  assert.equal(context.maintenanceReviewCalculatedHours(pending,'主做','a'),null);
+  const standard={ownerType:'subtask',changed:false,hourAssessment:{pending:false},assignments:[{role:'主做',personId:'a',reportedHours:0}]};
+  assert.equal(context.maintenanceReviewCalculatedHours(standard,'主做','a'),0);
+  standard.changed=true;
+  assert.equal(context.maintenanceReviewCalculatedHours(standard,'主做','a'),null);
+});
+
 test('review previews match server cents for every person and role after editing', () => {
   const rows = assignments.flatMap(row => ['c', 'a', 'b'].map(person => ({ ...row, id: `${row.id}-${person}`, person_id: person })));
   const task = { ownerType: 'flight', baseHours: 5, changed: true,
@@ -80,4 +106,13 @@ test('unchanged historical and adjusted stored hours remain authoritative in rev
   const task = { changed: false, ownerType: 'flight', assignments: [{ role: '接机', personId: 'p', reportedHours: 0.47 }] };
   assert.equal(context.maintenanceReviewCalculatedHours(task, '接机', 'p'), 0.47);
   assert.equal(context.maintenanceReviewCalculatedHours(task, '放行', 'p'), 0);
+});
+
+test('review rendering distinguishes the original actual role from the verified allocation role',()=>{
+  Object.assign(context,{state:{maintenanceReviewDraft:{activeTaskKey:'other',canEdit:false}},escapeHtml:value=>String(value ?? ''),maintenanceReviewTaskKey:()=> 'task'});
+  const task={ownerType:'subtask',changed:false,hourAssessment:{sourceKind:'REVIEW',pending:false},selections:new Map([['主做',new Set(['p'])]]),
+    assignments:[{personId:'p',role:'主做',allocationRole:'检验',reportedHours:2,status:'已确认'}]};
+  const html=context.maintenanceReviewRoleHtml(task,{role:'主做',metricType:'hours',ratio:null},new Map([['p',{name:'参与人',team:'班组'}]]));
+  assert.match(html,/<strong>主做<\/strong>/);assert.match(html,/核算角色：检验/);assert.match(html,/按终审核实角色/);assert.match(html,/2h/);
+  assert.ok(!html.includes('比例 null'));
 });

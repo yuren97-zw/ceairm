@@ -1,0 +1,66 @@
+{
+  "scope": "original manual nonroutine execution draft source and shared standard picker integration",
+  "sqlite": {
+    "tests": 597,
+    "pass": 597,
+    "fail": 0,
+    "skipped": 0
+  },
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "tests": 66,
+    "pass": 66,
+    "fail": 0,
+    "skipped": 0,
+    "upgrade": "001-049",
+    "repeatedMigration": true,
+    "restore": {
+      "tables": 128,
+      "rows": 2912,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "c4df9068cb259452110fff1cfa43eecc348f8e6170213bcbfced0bb03906afb7"
+    },
+    "stopped": true
+  },
+  "featureFlag": "MUC_NONROUTINE_MANUAL_ENABLED=1 additionally requires draft/review/submission flags; default off",
+  "browser": {
+    "passed": false,
+    "observed": "first attempt did not find the execution action because the synthetic flight had an empty location while the UI filtered Qingdao; source inspection also identified the collapsed card",
+    "preparedCorrection": "select all locations and expand the synthetic opportunity before clicking original report action",
+    "retryExecuted": false,
+    "blockedBy": "automatic approval review usage limit; action not executed; not a safety determination",
+    "temporaryServerStopped": true,
+    "temporaryBrowserStopped": true,
+    "noScreenshotAcceptanceClaim": true
+  },
+  "newBusinessDecision": "user selected independent standard publisher role; role/publication endpoint implementation remains next task",
+  "limitations": [
+    "manual picker real browser/mobile acceptance incomplete",
+    "standard publisher role/API/authoritative aircraft approval pending implementation",
+    "all 210 cases remain pending or partial",
+    "no live 8788 or production deployment"
+  ],
+  "sourceSha256": {
+    "maintenance-manual-sources.mjs": "1d25dbe6bd2edd107173017335056f503a207256f179b159ee3446fcde694c1f",
+    "migrations/049_maintenance_manual_sources.sql": "e7aae2a6ef614f07964719dc7c15d84ca931d2dc37cea014e45ec8898f6b17d3",
+    "server.mjs": "b0a3bcda75c1b0f2c161e744ddac7bdea069a64ae2ed69607be78f424d91d635",
+    "scripts/migrate-sqlite-to-postgres.mjs": "d82f84090d68b15c29bad00db5e169d657d4bc0bad400a445979ec681620aa6d",
+    "public/app.js": "4a28febf81ed21348f0d4efb142c3f1801bc6b934cd8333aa1b1be24dd8ef6fc",
+    "public/index.html": "a31dbf94c778831f953e38ebb4c5da7be06eebb6733f09aa018d33f36e296f77",
+    "public/maintenance-standard-picker.mjs": "47b327ab5c755962c5ca92c92e1141444fbe748294df89422be85e8d1df0fe9d",
+    "tests/maintenance-manual-sources.test.mjs": "19b47c986a2d49b17b662e5d880a7d8364e35bb5170bbdba137fb19bcc989273",
+    "tests/maintenance-imported-draft-ui.test.mjs": "bb2c3325537cbf50585092464c382b7fd5393fb08c00069c97da90b563c98d0e",
+    "tests/maintenance-standard-picker.test.mjs": "9a00c09c6d236a6fec08a06e80513abc744ecd1c31ec772b9ed32db50ead8c9c",
+    "tests/server.test.mjs": "fff6944e4841a6ea8f9cf10ec51db9616afff8e21865712f462c05c058376d6f"
+  }
+}

@@ -1,0 +1,188 @@
+[
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:46:46.046Z",
+    "elapsedMs": 129173
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:46:46.048Z",
+    "elapsedMs": 129175
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:46:57.943Z",
+    "elapsedMs": 141070
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:46:57.943Z",
+    "elapsedMs": 141070
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:46:58.042Z",
+    "elapsedMs": 141169
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:46:58.043Z",
+    "elapsedMs": 141170
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:16.274Z",
+    "elapsedMs": 159401
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:16.275Z",
+    "elapsedMs": 159402
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:16.372Z",
+    "elapsedMs": 159499
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:16.374Z",
+    "elapsedMs": 159501
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:18.374Z",
+    "elapsedMs": 161501
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:18.374Z",
+    "elapsedMs": 161501
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:18.479Z",
+    "elapsedMs": 161606
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:18.480Z",
+    "elapsedMs": 161607
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:20.487Z",
+    "elapsedMs": 163614
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:20.488Z",
+    "elapsedMs": 163615
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:20.596Z",
+    "elapsedMs": 163723
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:20.597Z",
+    "elapsedMs": 163724
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:22.602Z",
+    "elapsedMs": 165729
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:22.602Z",
+    "elapsedMs": 165729
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:22.711Z",
+    "elapsedMs": 165838
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:22.713Z",
+    "elapsedMs": 165840
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:24.716Z",
+    "elapsedMs": 167843
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:24.716Z",
+    "elapsedMs": 167843
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:24.825Z",
+    "elapsedMs": 167952
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:24.826Z",
+    "elapsedMs": 167953
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:26.828Z",
+    "elapsedMs": 169955
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:26.829Z",
+    "elapsedMs": 169956
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/maintenance/events",
+    "at": "2026-11-19T13:47:26.934Z",
+    "elapsedMs": 170061
+  },
+  {
+    "event": "SSE-OPEN",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:47:26.935Z",
+    "elapsedMs": 170062
+  },
+  {
+    "event": "SSE-CLOSE",
+    "url": "/api/info/events",
+    "at": "2026-11-19T13:48:17.670Z",
+    "elapsedMs": 220797
+  }
+]

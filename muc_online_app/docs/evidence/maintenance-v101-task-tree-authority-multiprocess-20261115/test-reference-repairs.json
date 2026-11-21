@@ -1,0 +1,394 @@
+{
+  "statusChanges": false,
+  "repairs": [
+    {
+      "caseId": "P0-15",
+      "originalReference": "tests/nonroutine-source-cancellation.test.mjs :: original removal authority, immutable final, consumed/zero evidence, CAS/audit rollback and replay",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-source-cancellation.test.mjs :: source removal closes pending review and only pending reminders, with current actor audit and exact replay",
+        "tests/nonroutine-source-cancellation.test.mjs :: finalized pending synchronization can close without changing immutable decisions or twelve opinions",
+        "tests/nonroutine-source-cancellation.test.mjs :: consumed channels and every independent posting evidence including zero hours forbid source removal",
+        "tests/nonroutine-source-cancellation.test.mjs :: revoked actor, mismatched source and inconsistent final versions cannot cancel",
+        "tests/nonroutine-source-cancellation.test.mjs :: audit insertion or review CAS failure rolls back channel, reminders and original source deletion together"
+      ]
+    },
+    {
+      "caseId": "P0-15",
+      "originalReference": "tests/nonroutine-cross-period.test.mjs :: cancelled source blocks authorization, delivery and completion while retaining history",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-cross-period.test.mjs :: cancelled review or channel overrides pending and authorized display while preserving all original authorization history"
+      ]
+    },
+    {
+      "caseId": "P0-15",
+      "originalReference": "tests/server.test.mjs :: actual opportunity deletion cancellation audit and atomic rollback",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: imported formal reports create one case and reserved channel per unlisted item without posting pending hours through finalization and review"
+      ]
+    },
+    {
+      "caseId": "P0-30",
+      "originalReference": "tests/maintenance-personal-review-estimates.test.mjs :: zero, unknown, participant isolation and finalized removal",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-personal-review-estimates.test.mjs :: personal pending estimates preserve zero, exclude other participants and remove finalized applications"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/nonroutine-corrections.test.mjs :: signed net planner, immutable source and posted view",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-corrections.test.mjs :: correction planner emits only signed differences with immutable lineage and uses integer cents",
+        "tests/nonroutine-corrections.test.mjs :: subsequent corrections compare the current net and never re-add the full target",
+        "tests/nonroutine-corrections.test.mjs :: unconfirmed, duplicated, malformed and negative ordinary sources cannot create a correction plan",
+        "tests/nonroutine-corrections.test.mjs :: signed correction schema replays and the existing effective view shows only posted net without rewriting base results"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/nonroutine-correction-service.test.mjs :: financial approval, designated period authority, rollback and exact replay",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-correction-service.test.mjs :: authorized original open-period approval posts only the delta, retries exactly and keeps base sources unchanged",
+        "tests/nonroutine-correction-service.test.mjs :: closed-period approval waits for the designated valid owner and retains original statistical month",
+        "tests/nonroutine-correction-service.test.mjs :: stale previews, unqualified actors, client amounts and participant changes cannot approve",
+        "tests/nonroutine-correction-service.test.mjs :: failures roll back the entire approval or period authorization and immutable pending decisions can retry safely"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/nonroutine-correction-workbench.test.mjs :: explicit zero, stale preview, exact retry, owner redaction, disposal",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-correction-workbench.test.mjs :: correction page separates explicit zero, missing totals and owner aggregate-only actions",
+        "tests/nonroutine-correction-workbench.test.mjs :: explicit reversal requires preview; failed approval preserves exact request identity and inputs",
+        "tests/nonroutine-correction-workbench.test.mjs :: changed amount or participant verification invalidates preview; role removal cannot approve omitted people",
+        "tests/nonroutine-correction-workbench.test.mjs :: owner verifies a separate open month and retries lost-response authorization without extra finance fields",
+        "tests/nonroutine-correction-workbench.test.mjs :: incomplete receipts preserve editor; permission loss clears private data and disposed requests do not repaint",
+        "tests/nonroutine-correction-workbench.test.mjs :: disposed requests do not repaint a previous account panel"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/nonroutine-source-cancellation.test.mjs :: original removal authority, immutable final, consumed/zero evidence, CAS/audit rollback and replay",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-source-cancellation.test.mjs :: source removal closes pending review and only pending reminders, with current actor audit and exact replay",
+        "tests/nonroutine-source-cancellation.test.mjs :: finalized pending synchronization can close without changing immutable decisions or twelve opinions",
+        "tests/nonroutine-source-cancellation.test.mjs :: consumed channels and every independent posting evidence including zero hours forbid source removal",
+        "tests/nonroutine-source-cancellation.test.mjs :: revoked actor, mismatched source and inconsistent final versions cannot cancel",
+        "tests/nonroutine-source-cancellation.test.mjs :: audit insertion or review CAS failure rolls back channel, reminders and original source deletion together"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/nonroutine-cross-period.test.mjs :: cancelled source blocks authorization, delivery and completion while retaining history",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-cross-period.test.mjs :: cancelled review or channel overrides pending and authorized display while preserving all original authorization history"
+      ]
+    },
+    {
+      "caseId": "P0-36",
+      "originalReference": "tests/server.test.mjs :: actual opportunity deletion cancellation audit and atomic rollback",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: imported formal reports create one case and reserved channel per unlisted item without posting pending hours through finalization and review"
+      ]
+    },
+    {
+      "caseId": "P0-41",
+      "originalReference": "tests/nonroutine-source-facts.test.mjs :: original baseline, drift, approved version and legacy guards",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-source-facts.test.mjs :: submission baseline is immutable and read projections ignore normal status progression",
+        "tests/nonroutine-source-facts.test.mjs :: field, opportunity and participation changes retain original facts and append audit only for real changes",
+        "tests/nonroutine-source-facts.test.mjs :: approved fact identity blocks later drift and actual person replacement without rewriting the decision",
+        "tests/nonroutine-source-facts.test.mjs :: legacy applications disclose missing opportunity baseline and cannot silently attest changed sources",
+        "tests/nonroutine-source-facts.test.mjs :: missing and corrupted baselines fail closed without mutating sources or audit",
+        "tests/nonroutine-source-facts.test.mjs :: injected actual report sources ignore dispatch changes and still detect actual participation drift"
+      ]
+    },
+    {
+      "caseId": "P0-41",
+      "originalReference": "tests/nonroutine-finalization.test.mjs :: explicit same-round source attestation",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-finalization.test.mjs :: changed construction facts require explicit current-version review in the same finalization and freeze the attestation"
+      ]
+    },
+    {
+      "caseId": "P0-41",
+      "originalReference": "tests/server.test.mjs :: authorized task-tree audit rollback, privacy and stale-source sync guard",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: imported formal reports create one case and reserved channel per unlisted item without posting pending hours through finalization and review",
+        "tests/server.test.mjs :: nonroutine review APIs enforce real account scopes, nominated seats and private opinions"
+      ]
+    },
+    {
+      "caseId": "P0-49",
+      "originalReference": "tests/maintenance-module-instances.test.mjs :: frozen identities, original source adapter, deletion trace and corruption checks",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-module-instances.test.mjs :: new opportunity identity freezes three original modules, is idempotent and never backfills old records",
+        "tests/maintenance-module-instances.test.mjs :: unrelated future rule rows cannot change an in-flight snapshot or adapter output",
+        "tests/maintenance-module-instances.test.mjs :: authorized source deletion keeps module identities and original opportunity keys as detached audit facts",
+        "tests/maintenance-module-instances.test.mjs :: tampered rules, definitions, missing instances and unsupported snapshots fail closed without repair writes"
+      ]
+    },
+    {
+      "caseId": "P0-49",
+      "originalReference": "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency (module instances enabled)",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency"
+      ]
+    },
+    {
+      "caseId": "P0-50",
+      "originalReference": "tests/maintenance-module-instances.test.mjs :: frozen identities, original source adapter, deletion trace and corruption checks",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-module-instances.test.mjs :: new opportunity identity freezes three original modules, is idempotent and never backfills old records",
+        "tests/maintenance-module-instances.test.mjs :: unrelated future rule rows cannot change an in-flight snapshot or adapter output",
+        "tests/maintenance-module-instances.test.mjs :: authorized source deletion keeps module identities and original opportunity keys as detached audit facts",
+        "tests/maintenance-module-instances.test.mjs :: tampered rules, definitions, missing instances and unsupported snapshots fail closed without repair writes"
+      ]
+    },
+    {
+      "caseId": "P0-50",
+      "originalReference": "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency (module instances enabled)",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency"
+      ]
+    },
+    {
+      "caseId": "P0-50",
+      "originalReference": "tests/maintenance-opportunity-modules.test.mjs :: original state, report, release-lock and review gate matrices",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-opportunity-modules.test.mjs :: coordinator reconciles all five states with original preserve, assignment and finalization precedence",
+        "tests/maintenance-opportunity-modules.test.mjs :: core report completeness and pure routine exclusions agree across every batch and applicability combination",
+        "tests/maintenance-opportunity-modules.test.mjs :: final application requires every original locked release check and explains each refusal without person data",
+        "tests/maintenance-opportunity-modules.test.mjs :: review confirmation requires explicit signatures, task completion and the original archive guard"
+      ]
+    },
+    {
+      "caseId": "P0-51",
+      "originalReference": "tests/maintenance-opportunity-modules.test.mjs :: original state, report, release-lock and review gate matrices",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-opportunity-modules.test.mjs :: coordinator reconciles all five states with original preserve, assignment and finalization precedence",
+        "tests/maintenance-opportunity-modules.test.mjs :: core report completeness and pure routine exclusions agree across every batch and applicability combination",
+        "tests/maintenance-opportunity-modules.test.mjs :: final application requires every original locked release check and explains each refusal without person data",
+        "tests/maintenance-opportunity-modules.test.mjs :: review confirmation requires explicit signatures, task completion and the original archive guard"
+      ]
+    },
+    {
+      "caseId": "P0-53",
+      "originalReference": "tests/maintenance-module-instances.test.mjs :: frozen identities, original source adapter, deletion trace and corruption checks",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-module-instances.test.mjs :: new opportunity identity freezes three original modules, is idempotent and never backfills old records",
+        "tests/maintenance-module-instances.test.mjs :: unrelated future rule rows cannot change an in-flight snapshot or adapter output",
+        "tests/maintenance-module-instances.test.mjs :: authorized source deletion keeps module identities and original opportunity keys as detached audit facts",
+        "tests/maintenance-module-instances.test.mjs :: tampered rules, definitions, missing instances and unsupported snapshots fail closed without repair writes"
+      ]
+    },
+    {
+      "caseId": "P0-53",
+      "originalReference": "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency (module instances enabled)",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: pure routine auto confirmation shares finalization, exclusions, rollback and concurrency"
+      ]
+    },
+    {
+      "caseId": "P0-53",
+      "originalReference": "tests/maintenance-opportunity-modules.test.mjs :: original state, report, release-lock and review gate matrices",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-opportunity-modules.test.mjs :: coordinator reconciles all five states with original preserve, assignment and finalization precedence",
+        "tests/maintenance-opportunity-modules.test.mjs :: core report completeness and pure routine exclusions agree across every batch and applicability combination",
+        "tests/maintenance-opportunity-modules.test.mjs :: final application requires every original locked release check and explains each refusal without person data",
+        "tests/maintenance-opportunity-modules.test.mjs :: review confirmation requires explicit signatures, task completion and the original archive guard"
+      ]
+    },
+    {
+      "caseId": "P0-58",
+      "originalReference": "tests/maintenance-module-results.test.mjs :: six source-reference types and no fake zero ledger fields",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-module-results.test.mjs :: each non-settlement result keeps its own source and cannot invent a zero-valued ledger record",
+        "tests/maintenance-module-results.test.mjs :: hour and release references use separate dimensions and reject forged types or missing versions"
+      ]
+    },
+    {
+      "caseId": "P0-58",
+      "originalReference": "tests/maintenance-opportunity-modules.test.mjs :: non-settlement reference guard at transition boundary",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-opportunity-modules.test.mjs :: extension check references cannot smuggle zero hours through the transition boundary"
+      ]
+    },
+    {
+      "caseId": "P0-58",
+      "originalReference": "tests/maintenance-extension-modules.test.mjs :: persistent non-settlement registration and immutable core identities",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-extension-modules.test.mjs :: registered non-settlement instances coexist with frozen core identities without advancing opportunity status",
+        "tests/maintenance-extension-modules.test.mjs :: authority, snapshot, immutable version and financial payload guards precede writes",
+        "tests/maintenance-extension-modules.test.mjs :: failed audit rolls back both definition and instance and does not create or backfill other opportunities"
+      ]
+    },
+    {
+      "caseId": "P0-58",
+      "originalReference": "tests/maintenance-workflow-actions.test.mjs :: typed results, qualification, frozen templates, retries and audit rollback",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-workflow-actions.test.mjs :: workflow claims and submits frozen typed findings without advancing the original opportunity",
+        "tests/maintenance-workflow-actions.test.mjs :: exact retries are stable, changed request keys conflict and revoked authority cannot replay",
+        "tests/maintenance-workflow-actions.test.mjs :: creation rejects stale identity, invalid assignment, foreign module and financial fields atomically",
+        "tests/maintenance-workflow-actions.test.mjs :: task ownership, current person binding and optimistic revisions guard all changes",
+        "tests/maintenance-workflow-actions.test.mjs :: result whitelist rejects zero financial payloads and incorrect result types without mutations",
+        "tests/maintenance-workflow-actions.test.mjs :: audit failure rolls back creation and later task changes with their event receipts"
+      ]
+    },
+    {
+      "caseId": "P0-63",
+      "originalReference": "tests/maintenance-tow-transition.test.mjs :: controlled retirement, original amounts and managed defaults",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-tow-transition.test.mjs :: tow retirement is opt-in; lost readiness never revives a retired monetary key",
+        "tests/maintenance-tow-transition.test.mjs :: new legacy tow creation and category conversion stop while existing work and managed sources continue",
+        "tests/maintenance-tow-transition.test.mjs :: managed unlisted, imported and published tow amounts never inherit the old default on category selection",
+        "tests/maintenance-tow-transition.test.mjs :: retired rule display keeps historical amount read-only and leaves the seven ratio groups available"
+      ]
+    },
+    {
+      "caseId": "P0-63",
+      "originalReference": "tests/server.test.mjs :: legacy3h, new standard1.2h, unlisted2.3h and retired bypass rejection",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: tow monetary retirement preserves legacy work, rejects new legacy bypasses atomically and sends new work through original standard/review sources"
+      ]
+    },
+    {
+      "caseId": "P0-64",
+      "originalReference": "tests/maintenance-tow-transition.test.mjs :: controlled retirement, original amounts and managed defaults",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-tow-transition.test.mjs :: tow retirement is opt-in; lost readiness never revives a retired monetary key",
+        "tests/maintenance-tow-transition.test.mjs :: new legacy tow creation and category conversion stop while existing work and managed sources continue",
+        "tests/maintenance-tow-transition.test.mjs :: managed unlisted, imported and published tow amounts never inherit the old default on category selection",
+        "tests/maintenance-tow-transition.test.mjs :: retired rule display keeps historical amount read-only and leaves the seven ratio groups available"
+      ]
+    },
+    {
+      "caseId": "P0-64",
+      "originalReference": "tests/server.test.mjs :: legacy3h, new standard1.2h, unlisted2.3h and retired bypass rejection",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: tow monetary retirement preserves legacy work, rejects new legacy bypasses atomically and sends new work through original standard/review sources"
+      ]
+    },
+    {
+      "caseId": "P0-92",
+      "originalReference": "tests/nonroutine-corrections.test.mjs :: signed net planner, immutable source and posted view",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-corrections.test.mjs :: correction planner emits only signed differences with immutable lineage and uses integer cents",
+        "tests/nonroutine-corrections.test.mjs :: subsequent corrections compare the current net and never re-add the full target",
+        "tests/nonroutine-corrections.test.mjs :: unconfirmed, duplicated, malformed and negative ordinary sources cannot create a correction plan",
+        "tests/nonroutine-corrections.test.mjs :: signed correction schema replays and the existing effective view shows only posted net without rewriting base results"
+      ]
+    },
+    {
+      "caseId": "P0-92",
+      "originalReference": "tests/nonroutine-correction-service.test.mjs :: financial approval, designated period authority, rollback and exact replay",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-correction-service.test.mjs :: authorized original open-period approval posts only the delta, retries exactly and keeps base sources unchanged",
+        "tests/nonroutine-correction-service.test.mjs :: closed-period approval waits for the designated valid owner and retains original statistical month",
+        "tests/nonroutine-correction-service.test.mjs :: stale previews, unqualified actors, client amounts and participant changes cannot approve",
+        "tests/nonroutine-correction-service.test.mjs :: failures roll back the entire approval or period authorization and immutable pending decisions can retry safely"
+      ]
+    },
+    {
+      "caseId": "P0-92",
+      "originalReference": "tests/nonroutine-correction-workbench.test.mjs :: explicit zero, stale preview, exact retry, owner redaction, disposal",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/nonroutine-correction-workbench.test.mjs :: correction page separates explicit zero, missing totals and owner aggregate-only actions",
+        "tests/nonroutine-correction-workbench.test.mjs :: explicit reversal requires preview; failed approval preserves exact request identity and inputs",
+        "tests/nonroutine-correction-workbench.test.mjs :: changed amount or participant verification invalidates preview; role removal cannot approve omitted people",
+        "tests/nonroutine-correction-workbench.test.mjs :: owner verifies a separate open month and retries lost-response authorization without extra finance fields",
+        "tests/nonroutine-correction-workbench.test.mjs :: incomplete receipts preserve editor; permission loss clears private data and disposed requests do not repaint",
+        "tests/nonroutine-correction-workbench.test.mjs :: disposed requests do not repaint a previous account panel"
+      ]
+    },
+    {
+      "caseId": "P0-101",
+      "originalReference": "tests/maintenance-tow-transition.test.mjs :: controlled retirement, original amounts and managed defaults",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-tow-transition.test.mjs :: tow retirement is opt-in; lost readiness never revives a retired monetary key",
+        "tests/maintenance-tow-transition.test.mjs :: new legacy tow creation and category conversion stop while existing work and managed sources continue",
+        "tests/maintenance-tow-transition.test.mjs :: managed unlisted, imported and published tow amounts never inherit the old default on category selection",
+        "tests/maintenance-tow-transition.test.mjs :: retired rule display keeps historical amount read-only and leaves the seven ratio groups available"
+      ]
+    },
+    {
+      "caseId": "P0-101",
+      "originalReference": "tests/server.test.mjs :: legacy3h, new standard1.2h, unlisted2.3h and retired bypass rejection",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: tow monetary retirement preserves legacy work, rejects new legacy bypasses atomically and sends new work through original standard/review sources"
+      ]
+    },
+    {
+      "caseId": "P0-134",
+      "originalReference": "tests/maintenance-tow-transition.test.mjs :: controlled retirement, original amounts and managed defaults",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-tow-transition.test.mjs :: tow retirement is opt-in; lost readiness never revives a retired monetary key",
+        "tests/maintenance-tow-transition.test.mjs :: new legacy tow creation and category conversion stop while existing work and managed sources continue",
+        "tests/maintenance-tow-transition.test.mjs :: managed unlisted, imported and published tow amounts never inherit the old default on category selection",
+        "tests/maintenance-tow-transition.test.mjs :: retired rule display keeps historical amount read-only and leaves the seven ratio groups available"
+      ]
+    },
+    {
+      "caseId": "P0-134",
+      "originalReference": "tests/server.test.mjs :: legacy3h, new standard1.2h, unlisted2.3h and retired bypass rejection",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: tow monetary retirement preserves legacy work, rejects new legacy bypasses atomically and sends new work through original standard/review sources"
+      ]
+    },
+    {
+      "caseId": "P0-135",
+      "originalReference": "tests/maintenance-tow-transition.test.mjs :: controlled retirement, original amounts and managed defaults",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/maintenance-tow-transition.test.mjs :: tow retirement is opt-in; lost readiness never revives a retired monetary key",
+        "tests/maintenance-tow-transition.test.mjs :: new legacy tow creation and category conversion stop while existing work and managed sources continue",
+        "tests/maintenance-tow-transition.test.mjs :: managed unlisted, imported and published tow amounts never inherit the old default on category selection",
+        "tests/maintenance-tow-transition.test.mjs :: retired rule display keeps historical amount read-only and leaves the seven ratio groups available"
+      ]
+    },
+    {
+      "caseId": "P0-135",
+      "originalReference": "tests/server.test.mjs :: legacy3h, new standard1.2h, unlisted2.3h and retired bypass rejection",
+      "classification": "descriptive-summary-replaced-by-actual-test-titles",
+      "newReferences": [
+        "tests/server.test.mjs :: tow monetary retirement preserves legacy work, rejects new legacy bypasses atomically and sends new work through original standard/review sources"
+      ]
+    }
+  ]
+}

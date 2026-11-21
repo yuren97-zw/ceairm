@@ -1,0 +1,22 @@
+{
+  "syntheticOnly": true,
+  "protectedTables": [
+    "maintenance_flights",
+    "maintenance_subtasks",
+    "maintenance_assignments",
+    "maintenance_report_batches",
+    "maintenance_report_entries",
+    "maintenance_hour_results",
+    "maintenance_nonroutine_review_cases",
+    "maintenance_standard_review_cases",
+    "maintenance_standard_review_finals",
+    "maintenance_standard_publications",
+    "maintenance_standard_work_publications",
+    "maintenance_nonroutine_manual_sources",
+    "maintenance_report_drafts"
+  ],
+  "workAndReferenceSnapshotsUnchanged": true,
+  "publishedVersionDefinitionsUnchanged": true,
+  "standardParentsAndVersionsNotDeleted": true,
+  "draftWithdrawnWithHistory": true
+}

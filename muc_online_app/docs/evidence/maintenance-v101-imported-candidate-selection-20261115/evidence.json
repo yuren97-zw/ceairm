@@ -1,0 +1,65 @@
+{
+  "baselineCommit": "ecfd7378b772f9f0001cba74fb5fe37518f8cb5d",
+  "sqlite": {
+    "default": 836,
+    "coordinator": 836,
+    "failed": 0
+  },
+  "postgres": {
+    "serviceTests": 107,
+    "fixtureOnly": false,
+    "restore": {
+      "tables": 147,
+      "rows": 7722,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "97cfd0b2902a74ffa6b6c3dee7cc781a0a617be9022a27f2a3bd611d2e907a41"
+    },
+    "workersCleanExit": true,
+    "clusterStopped": true,
+    "backendUnchangedAfterPostgres": "Final frontend-only source label and picker-return wording adjustment verified by latest full tests and fresh browser."
+  },
+  "browser": {
+    "actualOriginalBrowser": true,
+    "syntheticOnly": true,
+    "viewports": [
+      1280,
+      390
+    ],
+    "physicalDeviceVerified": false,
+    "unlistedReturnKeepsOriginalItem": true,
+    "candidateCount": 2,
+    "selectedStandard": "browser-later-a",
+    "saveAndReopenRetained": true,
+    "originalSourceIdentityRetained": true,
+    "formalSubmitUsesStandard": true,
+    "reviewCases": 0,
+    "recognizedHours": 1.5,
+    "originalDispatchUnchanged": true
+  },
+  "browserCleanup": {
+    "chromeExit": 130,
+    "serverExit": 0
+  },
+  "sourceSha256": {
+    "server.mjs": "cb546e5e9b1a9a035f7a692553cfeb92f8896ab358f52242f519282ae85944f2",
+    "public/app.js": "b2c6e504bc236adf67043eae365d4a15c4335666587ff60af7ed5bf23dd4f4e9",
+    "public/maintenance-standard-picker.mjs": "f867d456b3e5b1fa7e5f27c47c78a8a3399ffb4d2e4aa79187ef950a1bd6823f",
+    "public/index.html": "245a1d4d6d0a3bb7c5d576e3ff5e04d260da16c00c587f10b98fde297b8a623e",
+    "public/sw.js": "1701906e9356e9e948e107b3653fc27bc3aaec55bcfecdb2abdaed425d5ee15e",
+    "tests/server.test.mjs": "d7f9228b609c42d9c4fd13744b6c9ec7d2c2061a21cea82b9e48db7eeff06bb9",
+    "tests/maintenance-imported-draft-ui.test.mjs": "2ededd00a5a9b9a065b5bc70e715103b99dbc39b496462b4f34b527f9068a8ca",
+    "scripts/check-maintenance-v101-restored.mjs": "179931223f959032b386c2c67c6603c3108b178d7d47694a0eac9a620f2bcd36"
+  },
+  "mergedOrDeployed": false,
+  "physicalDeviceVerified": false
+}

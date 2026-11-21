@@ -1,0 +1,36 @@
+{
+  "driverVersion": "page-evidence-r2",
+  "teardown": true,
+  "probe": true,
+  "syntheticOnly": true,
+  "actualOriginalAppBrowser": true,
+  "physicalDeviceVerified": false,
+  "assertions": {
+    "p107EqualDisplay": {
+      "ok": true,
+      "excerpt": "只读预览，尚未入账分配版本沿用正式提报快照；后台新比例仅用于新提报。策略 EQUAL · 版本 4af70e80c3084afb2c267a23df1e16281b8dacfbb5c848cb8e8306636bcb17a2完整策略有变化；参与角色无变化类别：单项工作 → 试车\n    赵威 · 核算角色 主做 · 2 小时原账期 2023-06 · 未确认输入或策略变化后须重新核对，预览不是入账凭据。"
+    },
+    "p138UndecidedDisplay": {
+      "ok": true,
+      "excerpt": "只读预览，尚未入账分配版本沿用正式提报快照；后台新比例仅用于新提报。策略 UNDECIDED · 版本 4af70e80c3084afb2c267a23df1e16281b8dacfbb5c848cb8e8306636bcb17a2完整策略有变化；参与角色无变化类别：单项工作 → 人工除冰\n    暂无法分配：策略未决或有效比例缺失，暂无法核算原账期 2023-06 · 未确认输入或策略变化后须重新核对，预览不是入账凭据。"
+    },
+    "p6790141DriftDisplay": {
+      "ok": true,
+      "frozenMainRatio": 1,
+      "excerpt": "只读预览，尚未入账分配版本沿用正式提报快照；后台新比例仅用于新提报。配置版本已独立变化（只读提示）：分配仍按原提报冻结比例执行；启用新版本须按制度另行批准。策略 ROLE_COMBINATION · 版本 4af70e80c3084afb2c267a23df1e16281b8dacfbb5c848cb8e8306636bcb17a2完整策略无变化；参与角色无变化\n    赵威 · 核算角色 主做 · 2 小时原账期 2023-06 · 未确认输入或策略变化后须重新核对，预览不是入账凭据。"
+    },
+    "p112SseBoundary": {
+      "ok": true,
+      "newFlightNo": "PEVR2-SSE-QA",
+      "noReloadUrl": "http://127.0.0.1:18888/dashboard",
+      "assertedBy": "DOM appearance without navigation after server-side API create"
+    }
+  },
+  "screenshots": [
+    "p107-equal-preview.png",
+    "p138-undecided-preview.png",
+    "p67-90-141-drift-hint.png",
+    "p112-sse-appearance.png"
+  ],
+  "servicesStopped": true
+}

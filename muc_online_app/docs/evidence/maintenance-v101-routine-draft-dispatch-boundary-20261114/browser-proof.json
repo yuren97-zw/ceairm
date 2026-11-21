@@ -1,0 +1,20 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalPage": true,
+  "flightId": "mtnf-1794621259099-20329c31a215",
+  "formalAssignmentIds": [
+    "mtnas-1794621259106-0bfacdcfd688",
+    "mtnas-1794621259106-b67929538655"
+  ],
+  "formalPersonId": "person-1794621100663-4fc42f74a673",
+  "draftPersonId": "person-browser-draft-only",
+  "formalDispatchUnchanged": true,
+  "releaseAndRoutineChoicesRestored": true,
+  "draftVersion": 1,
+  "layout": {
+    "viewport": 390,
+    "width": 390,
+    "dialogWidth": 374.390625
+  },
+  "dialogs": []
+}

@@ -1,0 +1,143 @@
+{
+  "stage": "private-workflow-audit-and-unverified-source-read",
+  "sourceSha256": {
+    "maintenance-workflow-audit.mjs": "42ec0beda4884c4570bcc4ee21a67beb839a779e3d784d69ee68088cc48b7ebc",
+    "server.mjs": "780b033ff8cfb262e08cb5f5e0e40b462e3d847d608e8b89a9baf6f1a13b2401",
+    "public/app.js": "882346ffae55c9f030549db8b3219ca97424efe3b4b55cb79c629a27bc84cd58",
+    "public/maintenance-workflow-workbench.mjs": "0578fec7ef52b8ae2ba36f4b06c1105758a06795b1dc905df622652456feaec6",
+    "tests/maintenance-workflow-audit.test.mjs": "b777d497c21fb31d937a17e41500f3eef042249b5597e993cf5cfd0f23b70b61",
+    "tests/maintenance-workflow-workbench.test.mjs": "168205ca22f79ca4852bfc458e28ea230647f8dd13bb6d18077cf9351588a0a3",
+    "tests/server.test.mjs": "0645cb300d68962451045cefde36d66e8db836344a4163b9b296d520dd1284c9",
+    "scripts/check-maintenance-v101-restored.mjs": "39bca943bcc56b8a2a7ad174703a80b9b3e24555f1c2cee95679c9368cf7179f",
+    "maintenance-workflow-results.mjs": "3744d6567a2a135080dbfab42367616b1689935d64179221bf2a65c566357b37",
+    "maintenance-workflow-contract.mjs": "bfa70dae2e78412dc439bd1fec3315bdc09eb7230166065867fe11f1bbdb1643",
+    "maintenance-workflow-actions.mjs": "6858f866f5442a4c37d19e5a99ee2f83dfd7e13cba7be70536bef627b73c1f78"
+  },
+  "sqlitePassed": 753,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-hqmBwu",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3633,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "cbb0cf7be7721fbe5f656113f426696487dd67e78c967c537198f7b8f335242d"
+    },
+    "stopped": true,
+    "testsPassed": 75
+  },
+  "browser": {
+    "syntheticOnly": true,
+    "managerCreatedThroughUI": true,
+    "managerCannotClaimForWorker": true,
+    "workerClaimedThroughUI": true,
+    "dirtyNavigationCancelled": true,
+    "submissionResponseLostAfterRealCommit": true,
+    "requestRetriedUnchanged": true,
+    "workflowId": "a5acfc51-8204-4b25-9616-77b24a046964",
+    "exceptionRemainsSubmitted": true,
+    "workflowCompleted": true,
+    "completionSourceVerified": true,
+    "typedResultVerified": true,
+    "otherAccountDenied": true,
+    "managerHistoryBasisVisible": true,
+    "workerHistoryRedacted": true,
+    "historyPreservesDraft": true,
+    "layout": {
+      "width": 390,
+      "scrollWidth": 390,
+      "inputSize": "16px"
+    },
+    "stopped": true,
+    "originalOpportunityUnchanged": true,
+    "originalHoursUnchanged": true,
+    "workflowEventCount": 3,
+    "sourceServerExitCode": 0,
+    "browserExitCode": 130,
+    "inspectedScreenshots": [
+      "workflow-manager-desktop.png",
+      "workflow-result-mobile.png"
+    ]
+  },
+  "corruptSourceDrill": {
+    "syntheticOnly": true,
+    "damagedTemplateReadOnly": true,
+    "qualifiedHistoryAccessible": true,
+    "privateBasisAbsent": true,
+    "retryRefused": true,
+    "typedResultRefused": true,
+    "layout": {
+      "width": 390,
+      "scrollWidth": 390
+    },
+    "recovered": true,
+    "stopped": true,
+    "recoveredViaOriginalSyntheticBytes": true,
+    "verifiedSourceAfterReread": true,
+    "sourceServerExitCode": 0,
+    "browserExitCode": 130,
+    "postFixCorruptListAccessible": true,
+    "screenshotInspected": true
+  },
+  "limitations": [
+    "Read-only audit for the fixed simulation contract; no history editing or reconstruction",
+    "Full cross-group scope matrix and long-history performance remain unverified",
+    "Formal templates, rejection, time-window notifications and extension gate activation incomplete",
+    "Physical devices and installed PWA not verified; no deployment",
+    "Full V10.1 acceptance incomplete"
+  ],
+  "goalComplete": false,
+  "restoredApplication": {
+    "restoredApplicationStartup": true,
+    "workflowAuditReadsVerified": 2,
+    "workflowCompletionSourcesVerified": 1,
+    "workflowHttpRetries": 2,
+    "workflowCancelRetries": 2,
+    "workflowActionFixtureVerified": true,
+    "workflowActionRetries": 2,
+    "workflowStorageFixtureVerified": true,
+    "extensionInstancesVerified": 4,
+    "extensionRegistrationsRetried": 6,
+    "towStandardSourcesVerified": 2,
+    "towReviewSourcesVerified": 1,
+    "legacyTowHours": 3,
+    "retiredTowRuleWriteRejected": true,
+    "sourceFactBaselinesVerified": 5,
+    "sourceFactChangesVerified": 1,
+    "sourceAttestationsRetried": 2,
+    "moduleSnapshotsVerified": 16,
+    "detachedModuleSnapshotsVerified": 1,
+    "correctionsVerified": 2,
+    "correctionApprovalsRetried": 10,
+    "correctionAuthorizationsRetried": 2,
+    "retried": 4,
+    "standardFinalizationsRetried": 8,
+    "standardPublicationsRetried": 8,
+    "standardImportsRetried": 8,
+    "publicationKinds": [
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications"
+    ],
+    "postedPaths": [
+      "ADJUSTED_CLOSED",
+      "MERGED_CLOSED"
+    ],
+    "maintenanceBusinessUnchanged": true
+  }
+}

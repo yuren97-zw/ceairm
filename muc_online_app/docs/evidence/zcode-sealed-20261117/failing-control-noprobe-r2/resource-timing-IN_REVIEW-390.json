@@ -1,0 +1,79 @@
+[
+  {
+    "n": "127.0.0.1:18888/attachment-viewer.css",
+    "start": 4,
+    "dur": 3,
+    "conn": 4,
+    "sslc": 5
+  },
+  {
+    "n": "127.0.0.1:18888/attendance.css",
+    "start": 4,
+    "dur": 3,
+    "conn": 4,
+    "sslc": 5
+  },
+  {
+    "n": "127.0.0.1:18888/config.js",
+    "start": 4,
+    "dur": 4,
+    "conn": 4,
+    "sslc": 7
+  },
+  {
+    "n": "127.0.0.1:18888/import-workspace.js",
+    "start": 4,
+    "dur": 4,
+    "conn": 4,
+    "sslc": 7
+  },
+  {
+    "n": "127.0.0.1:18888/app.js",
+    "start": 4,
+    "dur": 10,
+    "conn": 4,
+    "sslc": 8
+  },
+  {
+    "n": "127.0.0.1:18888/manifest.webmanifest",
+    "start": 10,
+    "dur": 2,
+    "conn": 10,
+    "sslc": 10
+  },
+  {
+    "n": "127.0.0.1:18888/attachment-viewer.mjs",
+    "start": 17,
+    "dur": 3,
+    "conn": 17,
+    "sslc": 18
+  },
+  {
+    "n": "api/me",
+    "start": 18,
+    "dur": 2,
+    "conn": 18,
+    "sslc": 18
+  },
+  {
+    "n": "api/records",
+    "start": 20,
+    "dur": 3,
+    "conn": 20,
+    "sslc": 20
+  },
+  {
+    "n": "icons/icon-192.png",
+    "start": 22,
+    "dur": 2,
+    "conn": 22,
+    "sslc": 23
+  },
+  {
+    "n": "maintenance/flights",
+    "start": 23,
+    "dur": 2,
+    "conn": 23,
+    "sslc": 23
+  }
+]

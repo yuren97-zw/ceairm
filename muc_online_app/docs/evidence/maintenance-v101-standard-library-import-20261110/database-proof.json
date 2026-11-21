@@ -1,0 +1,32 @@
+{
+  "syntheticOnly": true,
+  "protectedTables": [
+    "maintenance_flights",
+    "maintenance_subtasks",
+    "maintenance_assignments",
+    "maintenance_report_batches",
+    "maintenance_report_entries",
+    "maintenance_hour_results",
+    "maintenance_nonroutine_review_cases",
+    "maintenance_standard_review_cases",
+    "maintenance_standard_review_finals",
+    "maintenance_standard_publications",
+    "maintenance_standard_work_publications"
+  ],
+  "originalWorkReviewPublicationFactsUnchanged": true,
+  "createdDrafts": [
+    {
+      "standard_hours": 0.0,
+      "status": "DRAFT",
+      "review_final_id": null,
+      "published_at": null
+    },
+    {
+      "standard_hours": 1.0,
+      "status": "DRAFT",
+      "review_final_id": null,
+      "published_at": null
+    }
+  ],
+  "sources": 2
+}

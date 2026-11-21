@@ -1,0 +1,7 @@
+# Cancellation concurrency and actual original-page verification
+
+Current application unchanged from prior 818/818 SQLite tests. PostgreSQL 103 service tests, four new real lock-wait authority revocations, five new double-process overlaps, complete 147-table/6915-row restore and six identical authorized cancellation replays after restore pass. Existing fourteen overlaps remain separate. Twelve API workers and PG cluster stopped cleanly. First invalid posting fixture is preserved separately and not counted as a pass.
+
+Browser: use a new private directory, copy seed.mjs/browser.mjs, run seed first on18888 with a private SQLite database, and an isolated Chrome profile on18889. Never run seed in the repository evidence directory. The browser script uses original product forms for cancellation; initial cases use original authenticated APIs. Network interception drops an actual successful cancellation response to verify identical request retry. Revocation touches only the synthetic actor role. Source/ledger rows are compared exactly before/after. Native DOM required-checkbox validation is exercised. Screenshots1280 desktop and390 viewport inspected; no physical device/PWA claim. Chrome130/service0 shutdown observed.
+
+Full 210-case goal remains incomplete. This evidence does not promote P0-15 or other scenarios to verified status. Remaining mixed batches, historical/export projections, cross-period task edge cases, full scope combinations and physical-device acceptance are tracked in next-source-check.md.

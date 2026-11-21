@@ -1,0 +1,19 @@
+{
+  "syntheticOnly": true,
+  "actualOriginalPage": true,
+  "viewports": [],
+  "downloads": [],
+  "screenshots": [],
+  "searchTypingFocusPreserved": true,
+  "staleAllScopeResponseIgnoredAfterCurrentSelfScope": true,
+  "oldResponseStatus": 200,
+  "currentScopeExportHasNoOutsideItems": true,
+  "reopenedCachedDetailReauthorizesAndClearsDeniedData": true,
+  "revokedManagementRoleClearsReportAndDeniesExport": true,
+  "beforeSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+  "afterSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7",
+  "sourceAndLedgerUnchanged": true,
+  "actualOriginalUi": true,
+  "physicalDeviceVerified": false,
+  "syntheticAuthorityRestored": true
+}

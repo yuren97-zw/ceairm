@@ -1,0 +1,81 @@
+{
+  "stage": "internal-workflow-actions",
+  "sourceSha256": {
+    "maintenance-workflow-actions.mjs": "756b5bcbeb1f3e863b35d324b1869a9afda938a78b15cd576bb7f9f43e7d8fd9",
+    "maintenance-workflow-tasks.mjs": "0dad82ee11166706d201f251b10323aab259d6ade49913e1a4c37e2a38356245",
+    "migrations/054_maintenance_workflow_tasks.sql": "17e4d535a3805eeb2319c021c8359cc8270bcc40eba4f03d9dbbde2e62a5605e",
+    "tests/maintenance-workflow-actions.test.mjs": "095370c885469d856a4fbf2dc9a9576176badce72ab0176671745d4805b4a5c8",
+    "tests/server.test.mjs": "56892475ddb0d86252c8931ba6f5e108cafabf026cc80adff0ad0fa2af122ad5",
+    "scripts/check-maintenance-v101-restored.mjs": "854a4432f644e67b36942d5f3f57597beec1477591e7d83395be95719994d95b"
+  },
+  "sqlitePassed": 729,
+  "postgres": {
+    "version": "postgres (PostgreSQL) 16.15 (Postgres.app)",
+    "isolatedState": "/var/folders/h0/tmqh6fwn08b5y8ct0nn3w7q80000gn/T/muc-v101-pg16-Jt1Y7x",
+    "port": 15432,
+    "fixtureOnly": false,
+    "populatedLegacyRefused": true,
+    "upgrade": true,
+    "repeatedMigration": true,
+    "serverTests": true,
+    "restore": {
+      "tables": 145,
+      "rows": 3561,
+      "dataEqual": true,
+      "indexesEqual": true,
+      "constraintsEqual": true,
+      "viewsEqual": true,
+      "functionsEqual": true,
+      "triggersEqual": true,
+      "sequencesEqual": true,
+      "sourceUnchanged": true,
+      "uniquenessEnforced": true,
+      "cascadeRollback": true,
+      "closedChannelReplay": true,
+      "snapshotSha256": "5702f08f66e34656ce380c4bd1f76ef8f05cbfdf34fc699c110320628c43fcef"
+    },
+    "stopped": true,
+    "testsPassed": 74
+  },
+  "limitations": [
+    "Internal service only; no public workflow HTTP, actual workflow RBAC or UI",
+    "Trusted template and current qualification required from host; no business template published",
+    "Completion projection, rejection and notifications remain unavailable",
+    "Fixture-only cross-runtime service tests do not prove actual business approval",
+    "Full V10.1 acceptance incomplete"
+  ],
+  "goalComplete": false,
+  "restoredApplication": {
+    "restoredApplicationStartup": true,
+    "workflowActionFixtureVerified": true,
+    "workflowActionRetries": 2,
+    "workflowStorageFixtureVerified": true,
+    "extensionInstancesVerified": 2,
+    "extensionRegistrationsRetried": 2,
+    "towStandardSourcesVerified": 2,
+    "towReviewSourcesVerified": 1,
+    "legacyTowHours": 3,
+    "retiredTowRuleWriteRejected": true,
+    "sourceFactBaselinesVerified": 5,
+    "sourceFactChangesVerified": 1,
+    "sourceAttestationsRetried": 2,
+    "moduleSnapshotsVerified": 15,
+    "detachedModuleSnapshotsVerified": 1,
+    "correctionsVerified": 2,
+    "correctionApprovalsRetried": 10,
+    "correctionAuthorizationsRetried": 2,
+    "retried": 4,
+    "standardFinalizationsRetried": 8,
+    "standardPublicationsRetried": 8,
+    "standardImportsRetried": 8,
+    "publicationKinds": [
+      "maintenance_standard_publications",
+      "maintenance_standard_work_publications"
+    ],
+    "postedPaths": [
+      "ADJUSTED_CLOSED",
+      "MERGED_CLOSED"
+    ],
+    "maintenanceBusinessUnchanged": true
+  }
+}

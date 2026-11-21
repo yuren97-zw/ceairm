@@ -1,0 +1,50 @@
+{
+  "flightId": "mtnf-1794737900631-af3c36829bc2",
+  "cases": [
+    {
+      "id": "nrc-1794737900657-9c5e151ab1fc",
+      "subtask_id": "mtns-1794737900652-83c78a1a807c"
+    },
+    {
+      "id": "nrc-1794737900658-3df302707b9b",
+      "subtask_id": "mtns-1794737900652-ed59678844f5"
+    },
+    {
+      "id": "nrc-1794737900659-bc813c05972e",
+      "subtask_id": "mtns-1794737900653-10bdff5d108a"
+    },
+    {
+      "id": "nrc-1794737900659-ded279303052",
+      "subtask_id": "mtns-1794737900654-950accac96bd"
+    }
+  ],
+  "items": [
+    {
+      "title": "报表页面-取消"
+    },
+    {
+      "title": "报表页面-评议中"
+    },
+    {
+      "title": "报表页面-合法零"
+    },
+    {
+      "title": "报表页面-有效两小时"
+    }
+  ],
+  "tables": [
+    "maintenance_flights",
+    "maintenance_subtasks",
+    "maintenance_assignments",
+    "maintenance_report_batches",
+    "maintenance_report_entries",
+    "maintenance_hour_results",
+    "maintenance_sortie_results",
+    "maintenance_report_source_journal",
+    "maintenance_nonroutine_assessments",
+    "maintenance_nonroutine_review_cases",
+    "maintenance_nonroutine_review_channels",
+    "maintenance_nonroutine_review_events"
+  ],
+  "beforeSha256": "30e79e911de68d5c9da0213d2af5f5cc407c481e9d1b60d030e703af0a93a0a7"
+}

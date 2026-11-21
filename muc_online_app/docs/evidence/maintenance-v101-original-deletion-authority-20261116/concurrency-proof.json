@@ -1,0 +1,2488 @@
+{
+  "syntheticOnly": true,
+  "processes": [
+    {
+      "port": 18890,
+      "backendPid": 69693,
+      "processId": 69692
+    },
+    {
+      "port": 18891,
+      "backendPid": 69695,
+      "processId": 69694
+    },
+    {
+      "port": 18892,
+      "backendPid": 69709,
+      "processId": 69708
+    },
+    {
+      "port": 18893,
+      "backendPid": 69711,
+      "processId": 69710
+    },
+    {
+      "port": 18894,
+      "backendPid": 69714,
+      "processId": 69713
+    },
+    {
+      "port": 18895,
+      "backendPid": 69718,
+      "processId": 69715
+    },
+    {
+      "port": 18896,
+      "backendPid": 69720,
+      "processId": 69719
+    },
+    {
+      "port": 18897,
+      "backendPid": 69730,
+      "processId": 69729
+    },
+    {
+      "port": 18898,
+      "backendPid": 69732,
+      "processId": 69731
+    },
+    {
+      "port": 18899,
+      "backendPid": 69734,
+      "processId": 69733
+    },
+    {
+      "port": 18900,
+      "backendPid": 69736,
+      "processId": 69735
+    },
+    {
+      "port": 18901,
+      "backendPid": 69738,
+      "processId": 69737
+    }
+  ],
+  "overlaps": [
+    {
+      "label": "dispatch-additions-same-version",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:20.727Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:20.762Z"
+        }
+      ],
+      "firstCommand": "first-addition",
+      "secondCommand": "stale-addition",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "dispatch-explicit-removal-same-impact",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:20.832Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:20.861Z"
+        }
+      ],
+      "firstCommand": "first-removal",
+      "secondCommand": "repeat-removal",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        404
+      ]
+    },
+    {
+      "label": "nonroutine-participant-draft-same-version",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.157Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.185Z"
+        }
+      ],
+      "firstCommand": "first-nonroutine-selection",
+      "secondCommand": "stale-nonroutine-selection",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "routine-first-draft-same-version",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.937Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.966Z"
+        }
+      ],
+      "firstCommand": "first-draft",
+      "secondCommand": "stale-draft",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "DUPLICATE:last-opinion",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.851Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.879Z"
+        }
+      ],
+      "firstCommand": "last-seat-opinion",
+      "secondCommand": "last-seat-opinion",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "duplicate-finalization",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.952Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.983Z"
+        }
+      ],
+      "firstCommand": "finalize-review",
+      "secondCommand": "finalize-review",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "label": "FINALIZE:last-opinion",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:26.687Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:26.715Z"
+        }
+      ],
+      "firstCommand": "last-seat-opinion",
+      "secondCommand": "last-seat-opinion",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "finalize-first",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:26.782Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:26.811Z"
+        }
+      ],
+      "firstCommand": "finalize-review",
+      "secondCommand": "confirm-opportunity",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "label": "CONFIRM:last-opinion",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.518Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.549Z"
+        }
+      ],
+      "firstCommand": "last-seat-opinion",
+      "secondCommand": "last-seat-opinion",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "confirm-first",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.611Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.640Z"
+        }
+      ],
+      "firstCommand": "confirm-opportunity",
+      "secondCommand": "finalize-review",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "label": "confirmed-adjustment-finalization-retries",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.737Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:27.765Z"
+        }
+      ],
+      "firstCommand": "finalize-review",
+      "secondCommand": "finalize-review",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "label": "twelve-distinct-reviewers",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.445Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.448Z"
+        },
+        {
+          "pid": 69709,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.450Z"
+        },
+        {
+          "pid": 69711,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.451Z"
+        },
+        {
+          "pid": 69718,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.450Z"
+        },
+        {
+          "pid": 69714,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.449Z"
+        },
+        {
+          "pid": 69720,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.449Z"
+        },
+        {
+          "pid": 69730,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.449Z"
+        },
+        {
+          "pid": 69732,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.450Z"
+        },
+        {
+          "pid": 69734,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.450Z"
+        },
+        {
+          "pid": 69736,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.450Z"
+        },
+        {
+          "pid": 69738,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:35.449Z"
+        }
+      ],
+      "commands": [
+        {
+          "port": 18890,
+          "accountId": "v101-race-reviewer-0"
+        },
+        {
+          "port": 18891,
+          "accountId": "v101-race-reviewer-1"
+        },
+        {
+          "port": 18892,
+          "accountId": "v101-race-reviewer-2"
+        },
+        {
+          "port": 18893,
+          "accountId": "v101-race-reviewer-3"
+        },
+        {
+          "port": 18894,
+          "accountId": "v101-race-reviewer-4"
+        },
+        {
+          "port": 18895,
+          "accountId": "v101-race-reviewer-5"
+        },
+        {
+          "port": 18896,
+          "accountId": "v101-race-reviewer-6"
+        },
+        {
+          "port": 18897,
+          "accountId": "v101-race-reviewer-7"
+        },
+        {
+          "port": 18898,
+          "accountId": "v101-race-reviewer-8"
+        },
+        {
+          "port": 18899,
+          "accountId": "v101-race-reviewer-9"
+        },
+        {
+          "port": 18900,
+          "accountId": "v101-race-reviewer-10"
+        },
+        {
+          "port": 18901,
+          "accountId": "v101-race-reviewer-11"
+        }
+      ],
+      "releasedOnlyAfterAllTwelveWaiting": true,
+      "responseStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    {
+      "label": "EARLY:last-opinion",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:36.254Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:36.282Z"
+        }
+      ],
+      "firstCommand": "last-seat-opinion",
+      "secondCommand": "last-seat-opinion",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "ordinary-opportunity-explicit-version",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:36.359Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:36.387Z"
+        }
+      ],
+      "firstCommand": "first-versioned-edit",
+      "secondCommand": "stale-versioned-edit",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "label": "duplicate-finalization",
+      "opportunityId": "mtnf-1794787945049-7af0aa61ab6e",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "channelState": "MERGED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "confirmedOriginalFactsUnchanged": true,
+      "confirmedOriginalSnapshotSha256": "dc5425a20de5dbf2f7cbb6172f7c69e1f0afe6677f235d4afd1ef9e01c7d2dbb"
+    },
+    {
+      "label": "finalize-first",
+      "opportunityId": "mtnf-1794787946115-e2c501e6f19b",
+      "caseId": "nrc-1794787946229-48c76cfb9498",
+      "channelState": "MERGED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "confirmedOriginalFactsUnchanged": true,
+      "confirmedOriginalSnapshotSha256": "0f3debe08f8c2c0a8a78b1829d043d4007e958419d6b14135dd7e4c4e39790a9"
+    },
+    {
+      "label": "confirm-first",
+      "opportunityId": "mtnf-1794787946932-e39cd77502d4",
+      "caseId": "nrc-1794787947048-47b334d315d3",
+      "channelState": "ADJUSTED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "confirmedOriginalFactsUnchanged": true,
+      "confirmedOriginalSnapshotSha256": "7989b8db92a7bb5c1eadb761e67bd18d43bac2249017711e36bf2471041cd0e1"
+    },
+    {
+      "label": "twelve-distinct-reviewers",
+      "opportunityId": "mtnf-1794787955087-710ff08a97dd",
+      "caseId": "nrc-1794787955172-cdb65bb214f0",
+      "channelState": "MERGED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "confirmedOriginalFactsUnchanged": true,
+      "confirmedOriginalSnapshotSha256": "aa9c4ec0fd56d9e587f5a6e987d18b89096f11f75fbb2a7fdbac26649a9e6c66"
+    },
+    {
+      "label": "early-recognition-date-protected",
+      "opportunityId": "mtnf-1794787955827-0477b89c7a8c",
+      "caseId": "nrc-1794787955914-daaa95e6ca3e",
+      "channelState": "MERGED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "confirmedOriginalFactsUnchanged": true,
+      "confirmedOriginalSnapshotSha256": "3a0d2c6c6501039ae844b23b93c8f1ca8d737bad79ed9841d6d033e5189b5752"
+    }
+  ],
+  "workersStopped": true,
+  "month": "2026-11",
+  "dispatchAssociationRace": {
+    "flightId": "mtnf-1794787940672-140e6df85a62",
+    "additionStatuses": [
+      200,
+      409
+    ],
+    "removalStatuses": [
+      200,
+      404
+    ],
+    "releaseId": "mtnas-1794787940702-7f255d648a20",
+    "removedId": "mtnas-1794787940790-8d89301f9e18",
+    "retainedReleaseUnchanged": true,
+    "removalAudits": 1,
+    "formalHours": 0
+  },
+  "nonroutineParticipantDraftRace": {
+    "flightId": "mtnf-1794787940905-a1fae40019e3",
+    "subtaskId": "mtns-1794787940948-4fbab839f0cf",
+    "statuses": [
+      200,
+      409
+    ],
+    "version": 2,
+    "selectedPersonId": "person-v101-race-reviewer-0",
+    "formalPersonId": "person-1794783284815-517adfa6f16f",
+    "dispatchUnchanged": true,
+    "formalHours": 0
+  },
+  "reportAuthority": [
+    {
+      "action": "routine",
+      "change": "account",
+      "flightId": "mtnf-1794787941366-4280b40d93bb",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.442Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "routine",
+      "change": "personnel",
+      "flightId": "mtnf-1794787941366-4280b40d93bb",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.485Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "routine",
+      "change": "roles",
+      "flightId": "mtnf-1794787941366-4280b40d93bb",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.528Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "release",
+      "change": "account",
+      "flightId": "mtnf-1794787941574-066bd44cee3d",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.648Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "release",
+      "change": "personnel",
+      "flightId": "mtnf-1794787941574-066bd44cee3d",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.690Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "release",
+      "change": "roles",
+      "flightId": "mtnf-1794787941574-066bd44cee3d",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.733Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-save",
+      "change": "account",
+      "flightId": "mtnf-1794787941778-2ae030228ccf",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:21.998Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-save",
+      "change": "personnel",
+      "flightId": "mtnf-1794787941778-2ae030228ccf",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.040Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-save",
+      "change": "roles",
+      "flightId": "mtnf-1794787941778-2ae030228ccf",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.083Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-finalize",
+      "change": "account",
+      "flightId": "mtnf-1794787942127-bf7b8f590984",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.349Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-finalize",
+      "change": "personnel",
+      "flightId": "mtnf-1794787942127-bf7b8f590984",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.391Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "confirmation-finalize",
+      "change": "roles",
+      "flightId": "mtnf-1794787942127-bf7b8f590984",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.433Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-save",
+      "change": "account",
+      "flightId": "mtnf-1794787942476-5d232b98429f",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.546Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-save",
+      "change": "personnel",
+      "flightId": "mtnf-1794787942476-5d232b98429f",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.588Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-save",
+      "change": "roles",
+      "flightId": "mtnf-1794787942476-5d232b98429f",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.630Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-draft",
+      "change": "account",
+      "flightId": "mtnf-1794787942675-5ffbc2cb11b1",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.745Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-draft",
+      "change": "personnel",
+      "flightId": "mtnf-1794787942675-5ffbc2cb11b1",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.787Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-draft",
+      "change": "roles",
+      "flightId": "mtnf-1794787942675-5ffbc2cb11b1",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.830Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-submit",
+      "change": "account",
+      "flightId": "mtnf-1794787942875-5d39b4263e21",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.949Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-submit",
+      "change": "personnel",
+      "flightId": "mtnf-1794787942875-5d39b4263e21",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:22.993Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-submit",
+      "change": "roles",
+      "flightId": "mtnf-1794787942875-5d39b4263e21",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.036Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-delete",
+      "change": "account",
+      "flightId": "mtnf-1794787943080-4bf2178be8f8",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.188Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-delete",
+      "change": "personnel",
+      "flightId": "mtnf-1794787943080-4bf2178be8f8",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.231Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    },
+    {
+      "action": "nonroutine-delete",
+      "change": "roles",
+      "flightId": "mtnf-1794787943080-4bf2178be8f8",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.274Z"
+        }
+      ],
+      "status": 403,
+      "businessAndLogsUnchanged": true,
+      "authorityChangedAfterActualLockWait": true
+    }
+  ],
+  "treeReviewAuthority": [
+    {
+      "action": "save",
+      "change": "account",
+      "flightId": "mtnf-1794787943320-6a0c5d1c6a81",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.632Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "13a42d177a7c0038a1117f4d59afe4a30e6181ddfc2062e88eaddc23959d3ef8"
+    },
+    {
+      "action": "save",
+      "change": "personnel",
+      "flightId": "mtnf-1794787943320-6a0c5d1c6a81",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.667Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "13a42d177a7c0038a1117f4d59afe4a30e6181ddfc2062e88eaddc23959d3ef8"
+    },
+    {
+      "action": "save",
+      "change": "review-permission",
+      "flightId": "mtnf-1794787943320-6a0c5d1c6a81",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.700Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "13a42d177a7c0038a1117f4d59afe4a30e6181ddfc2062e88eaddc23959d3ef8"
+    },
+    {
+      "action": "save",
+      "change": "scope",
+      "flightId": "mtnf-1794787943320-6a0c5d1c6a81",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:23.735Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "13a42d177a7c0038a1117f4d59afe4a30e6181ddfc2062e88eaddc23959d3ef8"
+    },
+    {
+      "action": "confirm",
+      "change": "account",
+      "flightId": "mtnf-1794787943822-abc65cffcfa9",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.122Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "5bfc3ad21897ec75513d0cdf3e604cbde75302320b7d622a1ae0192ff3549de5"
+    },
+    {
+      "action": "confirm",
+      "change": "personnel",
+      "flightId": "mtnf-1794787943822-abc65cffcfa9",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.156Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "5bfc3ad21897ec75513d0cdf3e604cbde75302320b7d622a1ae0192ff3549de5"
+    },
+    {
+      "action": "confirm",
+      "change": "review-permission",
+      "flightId": "mtnf-1794787943822-abc65cffcfa9",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.188Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "5bfc3ad21897ec75513d0cdf3e604cbde75302320b7d622a1ae0192ff3549de5"
+    },
+    {
+      "action": "confirm",
+      "change": "scope",
+      "flightId": "mtnf-1794787943822-abc65cffcfa9",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.223Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "5bfc3ad21897ec75513d0cdf3e604cbde75302320b7d622a1ae0192ff3549de5"
+    },
+    {
+      "action": "archive-save",
+      "change": "account",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.680Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "3bfe2259589454aae7684371e072c869b40f1b0edd5c4297991790dec0852c49"
+    },
+    {
+      "action": "archive-save",
+      "change": "personnel",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.715Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "3bfe2259589454aae7684371e072c869b40f1b0edd5c4297991790dec0852c49"
+    },
+    {
+      "action": "archive-save",
+      "change": "review-permission",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.747Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "3bfe2259589454aae7684371e072c869b40f1b0edd5c4297991790dec0852c49"
+    },
+    {
+      "action": "archive-save",
+      "change": "scope",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18891,
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.782Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "3bfe2259589454aae7684371e072c869b40f1b0edd5c4297991790dec0852c49"
+    },
+    {
+      "action": "archive-save",
+      "change": "archive-permission",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "accountId": "v101-race-reviewer-12",
+      "port": 18890,
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:24.820Z"
+        }
+      ],
+      "status": 403,
+      "authorityChangedAfterActualLockWait": true,
+      "businessJournalAndLogsUnchanged": true,
+      "unchangedFactsSha256": "3bfe2259589454aae7684371e072c869b40f1b0edd5c4297991790dec0852c49"
+    }
+  ],
+  "treeReviewPositiveControls": [
+    {
+      "action": "save",
+      "flightId": "mtnf-1794787943320-6a0c5d1c6a81",
+      "status": 200,
+      "resultStatus": "待复核",
+      "restoredAuthorityAccepted": true
+    },
+    {
+      "action": "confirm",
+      "flightId": "mtnf-1794787943822-abc65cffcfa9",
+      "status": 200,
+      "resultStatus": "已确认",
+      "restoredAuthorityAccepted": true
+    },
+    {
+      "action": "archive-save",
+      "flightId": "mtnf-1794787944308-3c61fbd62bb7",
+      "status": 200,
+      "resultStatus": "已确认",
+      "restoredAuthorityAccepted": true
+    }
+  ],
+  "routineDraftRace": {
+    "flightId": "mtnf-1794787944898-a83f5f8c0119",
+    "statuses": [
+      200,
+      409
+    ],
+    "version": 1,
+    "feedback": "FIRST",
+    "formalHours": 0,
+    "selectedPersonId": "person-v101-race-reviewer-0",
+    "formalPersonId": "person-1794783284815-517adfa6f16f",
+    "dispatchUnchanged": true
+  },
+  "revokedAcceptances": [
+    {
+      "purpose": "WORK",
+      "action": "accept",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "role-revoked",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.421Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "WORK",
+      "action": "accept",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "scope-shrunk",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.455Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "WORK",
+      "action": "accept",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "person-suspended",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.492Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "WORK",
+      "action": "seats",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "role-revoked",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.589Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "WORK",
+      "action": "seats",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "scope-shrunk",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.623Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "WORK",
+      "action": "seats",
+      "caseId": "nrc-1794787945172-93e5c13b4d27",
+      "scenario": "person-suspended",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:25.661Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "accept",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "role-revoked",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.225Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "accept",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "scope-shrunk",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.259Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "accept",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "person-suspended",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.296Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "seats",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "role-revoked",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.399Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "seats",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "scope-shrunk",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.434Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    },
+    {
+      "purpose": "STANDARD",
+      "action": "seats",
+      "caseId": "stdreview-1794787960210-7d16fa749ff2",
+      "scenario": "person-suspended",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.472Z"
+        }
+      ],
+      "status": 404,
+      "authorityChangedOnlyAfterActualBusinessTransactionWaited": true,
+      "reviewFactsUnchanged": true
+    }
+  ],
+  "concurrentRound": {
+    "caseId": "nrc-1794787955172-cdb65bb214f0",
+    "distinctAccounts": 12,
+    "distinctBackendPids": 12,
+    "progressCounts": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "sealedEvents": 1,
+    "statistics": {
+      "trimmedMean": 2.6,
+      "median": 2.5
+    },
+    "privateOpinionsOnly": true,
+    "sealedRetryStatuses": [
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409,
+      409
+    ],
+    "thirteenthStatus": 409,
+    "sealedRoundFactsUnchanged": true,
+    "finalSnapshotVerified": true
+  },
+  "opportunityVersionRace": {
+    "statuses": [
+      200,
+      409
+    ],
+    "staleEditDidNotOverwrite": true
+  },
+  "earlyRecognitionDate": {
+    "opportunityId": "mtnf-1794787955827-0477b89c7a8c",
+    "caseId": "nrc-1794787955914-daaa95e6ca3e",
+    "status": 409,
+    "beforeDate": "2026-11-10",
+    "afterDate": "2026-11-10",
+    "receipt": {
+      "work_month": "2026-11",
+      "statistical_month": "2026-11"
+    },
+    "sourceMonthMetrics": {
+      "todayHours": 0,
+      "pendingTodayHours": 0,
+      "weekHours": 0,
+      "pendingWeekHours": 0,
+      "monthHours": 18,
+      "pendingMonthHours": 17,
+      "monthSorties": 16,
+      "pendingMonthSorties": 12
+    },
+    "targetMonthMetrics": {
+      "todayHours": 0,
+      "pendingTodayHours": 0,
+      "weekHours": 0,
+      "pendingWeekHours": 0,
+      "monthHours": 0,
+      "pendingMonthHours": 0,
+      "monthSorties": 0,
+      "pendingMonthSorties": 0
+    }
+  },
+  "cancellationAuthority": [
+    {
+      "change": "account",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.129Z"
+        }
+      ],
+      "status": 404,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "allBusinessJournalReviewFactsUnchanged": true
+    },
+    {
+      "change": "personnel",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.166Z"
+        }
+      ],
+      "status": 404,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "allBusinessJournalReviewFactsUnchanged": true
+    },
+    {
+      "change": "role",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.203Z"
+        }
+      ],
+      "status": 404,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "allBusinessJournalReviewFactsUnchanged": true
+    },
+    {
+      "change": "scope",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.241Z"
+        }
+      ],
+      "status": 404,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "allBusinessJournalReviewFactsUnchanged": true
+    }
+  ],
+  "cancellationOverlaps": [
+    {
+      "label": "independent-duplicate-cancel",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.282Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.309Z"
+        }
+      ],
+      "firstCommand": "independent-cancel",
+      "secondCommand": "independent-cancel",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "label": "independent-cancel-versus-finalize",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.965Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:37.994Z"
+        }
+      ],
+      "firstCommand": "independent-cancel",
+      "secondCommand": "finalize-review",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "independent-finalize-versus-finalize",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:38.621Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:38.648Z"
+        }
+      ],
+      "firstCommand": "finalize-review",
+      "secondCommand": "independent-cancel",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "independent-cancel-versus-posting",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:39.367Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:39.397Z"
+        }
+      ],
+      "firstCommand": "independent-cancel",
+      "secondCommand": "retry-authorized-posting",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    },
+    {
+      "label": "independent-sync-versus-posting",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.061Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:40.089Z"
+        }
+      ],
+      "firstCommand": "retry-authorized-posting",
+      "secondCommand": "independent-cancel",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    }
+  ],
+  "cancellationCases": [
+    {
+      "label": "authority-restored-and-duplicate",
+      "flightId": "mtnf-1794787956630-7f365ecfbc09",
+      "caseId": "nrc-1794787956708-17f8c98d7efe",
+      "subtaskId": "mtns-1794787956699-b40e80469100",
+      "caseState": "CANCELLED",
+      "channelState": "CANCELLED_CLOSED",
+      "effectiveRows": 0,
+      "effectiveHours": 0,
+      "cancellationEvents": 1,
+      "opinionsRetained": 12
+    },
+    {
+      "label": "finalize-cancel",
+      "flightId": "mtnf-1794787957357-0c5a04eee610",
+      "caseId": "nrc-1794787957453-6f9b999d61a7",
+      "subtaskId": "mtns-1794787957442-f2dbfb4cbf58",
+      "caseState": "CANCELLED",
+      "channelState": "CANCELLED_CLOSED",
+      "effectiveRows": 0,
+      "effectiveHours": 0,
+      "cancellationEvents": 1,
+      "opinionsRetained": 12
+    },
+    {
+      "label": "finalize-finalize",
+      "flightId": "mtnf-1794787958039-ffd854388a90",
+      "caseId": "nrc-1794787958131-bbb587594673",
+      "subtaskId": "mtns-1794787958120-54ba63323fd4",
+      "caseState": "FINALIZED",
+      "channelState": "ADJUSTED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "cancellationEvents": 0,
+      "opinionsRetained": 12
+    },
+    {
+      "label": "posting-cancel",
+      "flightId": "mtnf-1794787958703-97433db396fd",
+      "caseId": "nrc-1794787958793-2336093e4a3e",
+      "subtaskId": "mtns-1794787958782-d3c44fa02d43",
+      "caseState": "CANCELLED",
+      "channelState": "CANCELLED_CLOSED",
+      "effectiveRows": 0,
+      "effectiveHours": 0,
+      "cancellationEvents": 1,
+      "opinionsRetained": 12
+    },
+    {
+      "label": "posting-sync",
+      "flightId": "mtnf-1794787959445-30d86109068a",
+      "caseId": "nrc-1794787959540-84dbc8a2d3dc",
+      "subtaskId": "mtns-1794787959529-51c7876bbc19",
+      "caseState": "FINALIZED",
+      "channelState": "ADJUSTED_CLOSED",
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "cancellationEvents": 0,
+      "opinionsRetained": 12
+    }
+  ],
+  "standardDraftAuthority": {
+    "waiting": [
+      {
+        "pid": 69693,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "xact_start": "2026-11-16T00:12:40.157Z"
+      }
+    ],
+    "status": 403,
+    "before": {
+      "standards": "20",
+      "versions": "25",
+      "events": "14"
+    },
+    "after": {
+      "standards": "20",
+      "versions": "25",
+      "events": "14"
+    }
+  },
+  "standardAuthority": {
+    "caseId": "stdreview-1794787960210-7d16fa749ff2",
+    "standardId": "mst-1794787960194-3fb7b3617d75",
+    "versionId": "msv-1794787960194-c1fca0b8078a",
+    "state": "IN_REVIEW",
+    "revision": 3,
+    "seats": 12,
+    "replacementAccountId": "v101-race-reviewer-12",
+    "removedAccountId": "v101-race-reviewer-11",
+    "removedMemberStatus": 404,
+    "workAndFinancialFactsUnchanged": true
+  },
+  "publicationScopeAuthority": {
+    "standardId": "mst-1794787960556-d721d5e5e7ea",
+    "waiting": [
+      {
+        "pid": 69693,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "xact_start": "2026-11-16T00:12:40.845Z"
+      }
+    ],
+    "status": 403,
+    "before": {
+      "n": "0"
+    },
+    "after": {
+      "n": "0"
+    }
+  },
+  "personalMetrics": {
+    "before": {
+      "todayHours": 0,
+      "pendingTodayHours": 0,
+      "weekHours": 0,
+      "pendingWeekHours": 0,
+      "monthHours": 10,
+      "pendingMonthHours": 15,
+      "monthSorties": 12,
+      "pendingMonthSorties": 11
+    },
+    "after": {
+      "todayHours": 0,
+      "pendingTodayHours": 0,
+      "weekHours": 0,
+      "pendingWeekHours": 0,
+      "monthHours": 20,
+      "pendingMonthHours": 15,
+      "monthSorties": 17,
+      "pendingMonthSorties": 11
+    },
+    "addedHours": 10,
+    "addedSorties": 5,
+    "pendingHoursUnchanged": true
+  },
+  "archiveSourceOverlaps": [
+    {
+      "label": "archive-source-archive-first",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:41.531Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:41.559Z"
+        }
+      ],
+      "firstCommand": "archive-managed-source-copy",
+      "secondCommand": "finalize-review",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        409,
+        200
+      ]
+    },
+    {
+      "label": "archive-source-finalize-first",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.245Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.274Z"
+        }
+      ],
+      "firstCommand": "finalize-review",
+      "secondCommand": "archive-managed-source-copy",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    }
+  ],
+  "archiveSourceCases": [
+    {
+      "flightId": "mtnf-1794787960907-56ccc138162c",
+      "caseId": "nrc-1794787960998-43fddc90baa0",
+      "subtaskId": "mtns-1794787960987-36aeef05480a",
+      "first": "archive",
+      "archiveStatus": 409,
+      "finalizeStatus": 200,
+      "subtasks": 1,
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "originalSourceUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787961644-e0059375edce",
+      "caseId": "nrc-1794787961737-e90d75d129ba",
+      "subtaskId": "mtns-1794787961725-b1675643d309",
+      "first": "finalize",
+      "archiveStatus": 409,
+      "finalizeStatus": 200,
+      "subtasks": 1,
+      "effectiveRows": 1,
+      "effectiveHours": 2,
+      "originalSourceUnchanged": true
+    }
+  ],
+  "archiveAdditionIdentityOverlaps": [
+    {
+      "label": "archive-addition-source-same-version",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.534Z"
+        },
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.563Z"
+        }
+      ],
+      "firstCommand": "same-stable-archive-addition",
+      "secondCommand": "same-stable-archive-addition",
+      "releasedOnlyAfterBothWaiting": true,
+      "responseStatuses": [
+        200,
+        409
+      ]
+    }
+  ],
+  "archiveAdditionIdentity": {
+    "flightId": "mtnf-1794787962353-eb75ad041808",
+    "clientId": "archive-race-stable-source",
+    "subtaskId": "mtns-1794787962599-764d6a22cb6e",
+    "concurrentStatuses": [
+      200,
+      409
+    ],
+    "refreshRetryStatus": 200,
+    "sourceRows": 1,
+    "effectiveRows": 1,
+    "hours": 2,
+    "originalResultPreserved": true
+  },
+  "originalDeletionAuthority": [
+    {
+      "flightId": "mtnf-1794787962712-8316b0794ad3",
+      "subtaskId": "mtns-1794787962863-d75d20328750",
+      "target": "subtask",
+      "phase": "pending",
+      "change": "primary-permission",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.903Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787962712-8316b0794ad3",
+      "subtaskId": "mtns-1794787962863-d75d20328750",
+      "target": "subtask",
+      "phase": "pending",
+      "change": "state-permission",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.939Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787962712-8316b0794ad3",
+      "subtaskId": "mtns-1794787962863-d75d20328750",
+      "target": "subtask",
+      "phase": "pending",
+      "change": "scope",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:42.973Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787962712-8316b0794ad3",
+      "subtaskId": "mtns-1794787962863-d75d20328750",
+      "target": "subtask",
+      "phase": "pending",
+      "change": "account",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.014Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787962712-8316b0794ad3",
+      "subtaskId": "mtns-1794787962863-d75d20328750",
+      "target": "subtask",
+      "phase": "pending",
+      "change": "personnel",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.048Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963085-e8e2db93f584",
+      "subtaskId": "mtns-1794787963239-88353fab42fa",
+      "target": "subtask",
+      "phase": "confirmed",
+      "change": "primary-permission",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.344Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963085-e8e2db93f584",
+      "subtaskId": "mtns-1794787963239-88353fab42fa",
+      "target": "subtask",
+      "phase": "confirmed",
+      "change": "state-permission",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.379Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963085-e8e2db93f584",
+      "subtaskId": "mtns-1794787963239-88353fab42fa",
+      "target": "subtask",
+      "phase": "confirmed",
+      "change": "scope",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.414Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963085-e8e2db93f584",
+      "subtaskId": "mtns-1794787963239-88353fab42fa",
+      "target": "subtask",
+      "phase": "confirmed",
+      "change": "account",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.455Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963085-e8e2db93f584",
+      "subtaskId": "mtns-1794787963239-88353fab42fa",
+      "target": "subtask",
+      "phase": "confirmed",
+      "change": "personnel",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.491Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963530-c20023843610",
+      "subtaskId": "mtns-1794787963689-452fab674833",
+      "target": "flight",
+      "phase": "pending",
+      "change": "primary-permission",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.728Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963530-c20023843610",
+      "subtaskId": "mtns-1794787963689-452fab674833",
+      "target": "flight",
+      "phase": "pending",
+      "change": "state-permission",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.763Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963530-c20023843610",
+      "subtaskId": "mtns-1794787963689-452fab674833",
+      "target": "flight",
+      "phase": "pending",
+      "change": "scope",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.796Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963530-c20023843610",
+      "subtaskId": "mtns-1794787963689-452fab674833",
+      "target": "flight",
+      "phase": "pending",
+      "change": "account",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.833Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963530-c20023843610",
+      "subtaskId": "mtns-1794787963689-452fab674833",
+      "target": "flight",
+      "phase": "pending",
+      "change": "personnel",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:43.867Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963904-1965a873dc87",
+      "subtaskId": "mtns-1794787964065-ed17ef37f14b",
+      "target": "flight",
+      "phase": "confirmed",
+      "change": "primary-permission",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:44.177Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963904-1965a873dc87",
+      "subtaskId": "mtns-1794787964065-ed17ef37f14b",
+      "target": "flight",
+      "phase": "confirmed",
+      "change": "state-permission",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:44.208Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963904-1965a873dc87",
+      "subtaskId": "mtns-1794787964065-ed17ef37f14b",
+      "target": "flight",
+      "phase": "confirmed",
+      "change": "scope",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:44.243Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963904-1965a873dc87",
+      "subtaskId": "mtns-1794787964065-ed17ef37f14b",
+      "target": "flight",
+      "phase": "confirmed",
+      "change": "account",
+      "waiting": [
+        {
+          "pid": 69693,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:44.280Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    },
+    {
+      "flightId": "mtnf-1794787963904-1965a873dc87",
+      "subtaskId": "mtns-1794787964065-ed17ef37f14b",
+      "target": "flight",
+      "phase": "confirmed",
+      "change": "personnel",
+      "waiting": [
+        {
+          "pid": 69695,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "xact_start": "2026-11-16T00:12:44.315Z"
+        }
+      ],
+      "status": 403,
+      "currentAuthorityRecheckedAfterActualLockWait": true,
+      "originalBusinessAndSourcesUnchanged": true
+    }
+  ],
+  "workersCleanExit": true,
+  "observationObjectsRemoved": true
+}

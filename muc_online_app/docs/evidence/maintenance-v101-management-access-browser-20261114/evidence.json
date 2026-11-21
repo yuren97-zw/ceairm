@@ -1,0 +1,41 @@
+{
+  "stage": "actual-original-management-page-access-clearing",
+  "date": "2026-11-14",
+  "sourceSha256": {
+    "public/maintenance-standard-management-workbench.mjs": "dd1188dffb962ad34d59f456c84f74c2bf152f295bd01108489f43e8c2e7fc19",
+    "public/sw.js": "bc1d6b8a2197099e8e8888808f1f74c20d040b2e394a3101d6eeaf79fdb18b1b",
+    "server.mjs": "563967294575cd98c434462cdf6363c51544d722ccf37a5f22743cf4eeabae57"
+  },
+  "browser": {
+    "actualBrowser": true,
+    "actualOriginalPage": true,
+    "syntheticOnly": true,
+    "networkFailureRetainsInput": true,
+    "actualRoleRevocationClearsOldDetails": true,
+    "apiStatusAfterRevocation": 403,
+    "layout": {
+      "viewport": 390,
+      "width": 390
+    },
+    "standardId": "mst-1794613049122-a9a0d2e57f84"
+  },
+  "business": {
+    "standards": 1,
+    "versions": 1,
+    "managementEvents": 1,
+    "managerGrants": 0,
+    "flights": 0,
+    "hours": 0
+  },
+  "screenshotsInspected": true,
+  "browserStopped": true,
+  "serverStopped": true,
+  "priorTests": "../maintenance-v101-management-access-clear-20261113/evidence.json",
+  "limits": [
+    "Headless Chromium desktop1280 and emulated390, not a physical phone or installed PWA.",
+    "Network loss simulated by browser offline mode; actual role removed through a separate SQLite process in a private synthetic database.",
+    "Real original page and real API403; does not cover every scope/session/replay case.",
+    "No product code changes this stage; previous776 tests and build evidence retained, not rerun.",
+    "Initial startup rejected because approval service quota prevented review; after reset time the same escalated workflow succeeded. No bypass used."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "globalRulesRequests": [],
+  "visibleCountsExplicit": true,
+  "syntheticOnly": true,
+  "actualOriginalUi": true,
+  "flightId": "mtnf-1794728422582-d9a167fb59de",
+  "reviewerPersonId": "person-browser-actual-1",
+  "onlySelfScope": true,
+  "readonlyMessage": true,
+  "saveHidden": true,
+  "confirmHidden": true,
+  "editHidden": true,
+  "signatureFieldsDisabled": true,
+  "rootIdentityRedacted": true,
+  "forgedWriteStatus": 403,
+  "businessFactsUnchanged": true,
+  "layout": {
+    "viewport": 390,
+    "width": 390,
+    "dialogWidth": 374.390625
+  },
+  "dialogs": []
+}
