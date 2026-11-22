@@ -190,9 +190,7 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_archive_modify: ["maintenance.review.view", "maintenance.review.submit", "maintenance.archive.modify"],
   addon_info_advanced: ["info.read", "info.update.any", "info.delete.any", "info.void.any", "info.restore", "info.remind.any"],
   addon_personnel_import: ["personnel.import.view", "personnel.import.execute"],
-  addon_actual_grade_view: ["personnel.detail.view", "personnel.actual_grade.view"],
-  addon_actual_grade_manage: ["personnel.detail.view", "personnel.profile.update", "personnel.actual_grade.view", "personnel.actual_grade.manage"],
-  addon_actual_grade_export: ["personnel.detail.view", "personnel.actual_grade.view", "personnel.actual_grade.export"],
+  addon_actual_grade_manage: ["personnel.detail.view", "personnel.profile.update", "personnel.actual_grade.view", "personnel.actual_grade.manage", "personnel.actual_grade.export"],
   addon_organization_manage: ["personnel.list.view", "personnel.detail.view", "personnel.organization.manage"],
   addon_qualification_manage: ["personnel.detail.view", "personnel.qualification.view", "personnel.qualification.manage"],
   addon_personnel_lifecycle: ["personnel.list.view", "personnel.detail.view", "personnel.lifecycle.manage"],
@@ -225,8 +223,7 @@ export const RBAC_ROLE_NAMES = {
   addon_maintenance_import: "附加：维修导入", addon_maintenance_delete: "附加：维修删除",
   addon_maintenance_export: "附加：维修导出", addon_maintenance_rules: "附加：维修规则",
   addon_archive_modify: "附加：归档修正", addon_info_advanced: "附加：信息高级管理",
-  addon_personnel_import: "附加：人员数据导入", addon_organization_manage: "附加：组织管理",
-  addon_actual_grade_view: "附加：实际岗级查看", addon_actual_grade_manage: "附加：实际岗级维护", addon_actual_grade_export: "附加：实际岗级导出",
+  addon_personnel_import: "附加：人员数据导入", addon_organization_manage: "附加：组织管理", addon_actual_grade_manage: "附加：实际岗级管理",
   addon_qualification_manage: "附加：资质维护", addon_personnel_lifecycle: "附加：人员生命周期管理", addon_capability_config: "附加：能力规则配置",
   addon_scenario_apply: "附加：方案应用", addon_account_role_manage: "附加：账号角色管理",
   addon_offset_approver: "附加：考勤抵消审批",
@@ -242,8 +239,8 @@ export const RBAC_ROLE_NAMES = {
 
 export const RBAC_ROLE_DESCRIPTIONS = {
   system_admin: "54002010专用；拥有全部系统权限和全部数据范围，标准正式发布仍要求独立业务授权。",
-  worker: "信息只读；执行与报工本人任务；维护本人未提交非例行；查看本人统计。",
-  dispatcher: "包含工作者权限；另可建立和修改未确认维修机会、派工、维护工作内容并调整未确认工时。",
+  worker: "独立可选。信息只读；执行与报工本人任务；维护本人未提交非例行；查看本人统计。",
+  dispatcher: "独立可选，包含工作者权限；另可建立和修改未确认维修机会、派工、维护工作内容并调整未确认工时。",
   manager: "包含工作者和派工人员权限；另可发布信息、维护人员一般资料和进行能力调配。",
   addon_capability_readonly: "可选只读能力看板。",
   addon_fixed_readonly: "查看固化项目。",
@@ -269,9 +266,7 @@ export const RBAC_ROLE_DESCRIPTIONS = {
   addon_archive_modify: "修正已归档维修数据。",
   addon_info_advanced: "修改、删除、作废和恢复他人发布的信息。",
   addon_personnel_import: "执行人员、执照、授权和培训导入。",
-  addon_actual_grade_view: "在人员数据范围内查看他人的实际岗级。",
   addon_actual_grade_manage: "在人员数据范围内查看并维护实际岗级。",
-  addon_actual_grade_export: "在人员数据范围内导出实际岗级；仅在导出功能明确包含该字段时生效。",
   addon_organization_manage: "维护部门、人员分组和行政班组。",
   addon_qualification_manage: "维护执照、授权和培训记录。",
   addon_personnel_lifecycle: "管理人员停职和离职状态。",
@@ -293,7 +288,7 @@ export function accountRoleCombinationErrors(codes, { superAccount = false } = {
   const errors = [];
   if (selected.has("system_admin") && !superAccount) errors.push({ code: "SYSTEM_ADMIN_RESERVED" });
   const baseRoles = RBAC_BASE_ROLE_CODES.filter(code => selected.has(code));
-  if (!superAccount && baseRoles.length !== 1) errors.push({ code: "BASE_ROLE_REQUIRED", selected: baseRoles });
+  // 基础角色已改为独立可选（V1.0 §1），不再限制恰好一个。
   if (superAccount && (selected.size !== 1 || !selected.has("system_admin"))) errors.push({ code: "SUPER_ACCOUNT_ROLE_FIXED" });
   return errors;
 }
@@ -304,7 +299,15 @@ export const NAVIGATION_NODES = [
     { id: "statsSubpage", anyOf: ["info.stats.read"], label: "统计分析" },
     { id: "handoverSubpage", anyOf: ["handover.view"], label: "班组交接" }
   ]},
-  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"] },
+  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"], children: [
+    { id: "dispatch", anyOf: ["maintenance.dispatch.view"], label: "派工视图" },
+    { id: "execute", anyOf: ["maintenance.execute.view"], label: "执行报工" },
+    { id: "hours", anyOf: ["maintenance.stats.manage.view"], label: "工时统计" },
+    { id: "reviews", anyOf: ["maintenance.nonroutine.review.view"], label: "非例行评议" },
+    { id: "standards", anyOf: ["maintenance.standard.view"], label: "标准库" },
+    { id: "periods", anyOf: ["maintenance.hours.period.view"], label: "账期管理" },
+    { id: "workflows", anyOf: ["maintenance.workflow.view"], label: "非结算流程" }
+  ]},
   { id: "fixedPage", anyOf: ["fixed.read"] },
   { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"], children: [
     { id: "capability", anyOf: ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"], label: "人员配置" },

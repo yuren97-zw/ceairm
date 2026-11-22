@@ -357,7 +357,7 @@ if(worker){
   await ok(a,`/api/maintenance/standard-reviews/${pubCase}/accept`,{method:'POST',cookie,body:nominate});
   for(const reviewer of reviewers)await ok(a,`/api/maintenance/standard-reviews/${pubCase}/opinion`,{method:'POST',cookie:reviewer.cookie,body:{revision:0,hours:2,basis:'独立合成标准意见'}});
   await ok(a,`/api/maintenance/standard-reviews/${pubCase}/finalize`,{method:'POST',cookie,body:{revision:3,decision:{category:'单项工作',chapter:'29',title:'V101RACE-PUBLISH-AUTH',workScope:'发布权限验证范围',recognizedHours:2},admissionDecision:'INCLUDE',reason:''}});
-  await control.query("insert into rbac_user_roles(user_id,role_id,created_at) select $1,id,$2 from rbac_roles where code='addon_maintenance_standard_publisher'",[spare.id,new Date().toISOString()]);
+  await control.query("insert into rbac_user_roles(user_id,role_id,created_at) select $1,id,$2 from rbac_roles where code='addon_maintenance_standard_manager'",[spare.id,new Date().toISOString()]);
   const pubPath=`/api/maintenance/standard-publications/${pubId}/versions/${pubVersion}`,pubView=(await ok(a,pubPath,{cookie:spare.cookie})).payload.result;
   const admissionBefore=(await control.query('select count(*) n from maintenance_standard_admissions where standard_id=$1',[pubId])).rows[0];await control.query('begin');await control.query('select pg_advisory_xact_lock(54002010,31)');let publishHeld=true,admissionPending;
   try{
