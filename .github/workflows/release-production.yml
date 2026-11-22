@@ -62,7 +62,9 @@ jobs:
           cache: npm
           cache-dependency-path: muc_online_app/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run check && npm test
+      # 测试期模块 env（job 级注入）：server.mjs 加载时固化 cosConfig/APP_VERSION，
+      # 测试文件内晚赋值在慢 runner 上输掉竞态（同 PR#55 修复的 ci.yml 问题）。
+      - run: COS_SECRET_ID=test-secret-id COS_SECRET_KEY=test-secret-key COS_BUCKET=test-bucket-1234567890 COS_REGION=ap-shanghai APP_VERSION=test-version npm run check && COS_SECRET_ID=test-secret-id COS_SECRET_KEY=test-secret-key COS_BUCKET=test-bucket-1234567890 COS_REGION=ap-shanghai APP_VERSION=test-version npm test
       - name: Build approved release
         env:
           RELEASE_SHA: ${{ inputs.commit_sha }}
