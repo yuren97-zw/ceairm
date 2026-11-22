@@ -2729,6 +2729,29 @@ function renderUserManagement() {
     }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}</div></div>`;
 }
 
+// B7-5 菜单预览：根据当前选中的角色实时计算可见页面
+function updateUserMenuPreview() {
+  const selected = new Set([...$$("input[name=userBaseRole]:checked"), ...$$("input[name=userRbacRoles]:checked")].map(i => i.value));
+  const rolePerms = new Set();
+  for (const role of state.rbacCatalog?.roles || []) if (selected.has(role.code)) for (const p of role.permissions || []) rolePerms.add(p);
+  const nav = visibleNavigationFromPermissions(rolePerms);
+  const el = $("#userMenuPreview");
+  if (el) el.innerHTML = nav.length ? nav.map(page => `<span class="perm-role">✓ ${pageLabels[page] || page}</span>`).join(" ") : '<span class="perm-warning">暂无可见页面（请先选择角色）</span>';
+}
+function visibleNavigationFromPermissions(perms) {
+  const NAV = [
+    { id: "infoPage", label: "信息传达", anyOf: ["info.read"] },
+    { id: "maintenancePage", label: "维修管控", anyOf: ["maintenance.view","maintenance.execute.view","maintenance.dispatch.view","maintenance.review.view","maintenance.stats.manage.view"] },
+    { id: "fixedPage", label: "固化项目", anyOf: ["fixed.read"] },
+    { id: "personnelPage", label: "人员与能力", anyOf: ["capability.overview.view","personnel.list.view"] },
+    { id: "hoursPage", label: "工时统计", anyOf: ["hours.read"] },
+    { id: "attendancePage", label: "考勤管理", anyOf: ["attendance.read"] },
+    { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage"] }
+  ];
+  return NAV.filter(n => [...n.anyOf].some(p => perms.has(p))).map(n => n.label);
+}
+const pageLabels = { infoPage: "信息传达", maintenancePage: "维修管控", fixedPage: "固化项目", personnelPage: "人员与能力", hoursPage: "工时统计", attendancePage: "考勤管理", settingsPage: "系统设置", homePage: "首页" };
+
 function openUserDialog(user = null) {
   const isEdit = !!user;
   if (user?.id === SUPER_ACCOUNT_ID || user?.personDeleted) return;
@@ -2751,9 +2774,19 @@ function openUserDialog(user = null) {
     ${isEdit ? "" : '<label>初始密码<input id="userPassword" type="password" minlength="6" required></label>'}
     <label>状态<select id="userStatus"><option value="active">启用</option><option value="disabled">停用</option></select></label>
     <label class="login-check"><input id="userMustChangePassword" type="checkbox" ${!isEdit || user?.mustChangePassword ? "checked" : ""}>下次登录必须修改密码</label>
-    <div><span class="status-line">基础角色（必须且只能选一项）</span><div class="check-grid">${baseRoles.map(role => `<label class="check-option"><input type="radio" name="userBaseRole" value="${escapeHtml(role.code)}" ${selectedRoleCodes.includes(role.code) ? "checked" : ""}><span>${escapeHtml(role.name)}</span></label>`).join("")}</div></div>
-    <div><span class="status-line">附加角色（按需多选）</span>${checkedGroup("userRbacRoles", supplementalRoles.map(role => [role.code, role.name]), selectedRoleCodes)}</div>
-    ${renderModuleScopes(user?.dataScopes || [])}
+    <div class="user-dialog-tabs settings-tabs">
+      <button type="button" class="chip active" data-user-tab="operation">操作权限</button>
+      <button type="button" class="chip" data-user-tab="data">数据权限</button>
+      <button type="button" class="chip" data-user-tab="menu">菜单预览</button>
+    </div>
+    <div data-user-panel="operation">
+      <div><span class="status-line">基础角色（独立可选）</span><div class="check-grid">${baseRoles.map(role => `<label class="check-option"><input type="radio" name="userBaseRole" value="${escapeHtml(role.code)}" ${selectedRoleCodes.includes(role.code) ? "checked" : ""}><span>${escapeHtml(role.name)}</span></label>`).join("")}</div></div>
+      <div><span class="status-line">附加角色（按需多选）</span>${checkedGroup("userRbacRoles", supplementalRoles.map(role => [role.code, role.name]), selectedRoleCodes)}</div>
+    </div>
+    <div data-user-panel="data" hidden>${renderModuleScopes(user?.dataScopes || [])}</div>
+    <div data-user-panel="menu" hidden>
+      <div class="data-panel"><strong>菜单可见性预览</strong><p>根据所选角色的权限自动推导，不可直接编辑。</p><div id="userMenuPreview" class="status-line">选择角色后自动更新。</div></div>
+    </div>
     <div class="form-actions"><button class="btn secondary" type="button" data-close="userDialog">取消</button><button id="userSaveBtn" class="btn" type="submit" ${isEdit ? "" : "disabled"}>保存</button></div>
   </form>`;
   $("#userStatus").value = user?.status || "active";
@@ -2761,6 +2794,13 @@ function openUserDialog(user = null) {
   state.userAvailabilitySequence += 1;
   state.userAvailability = { checking: false, available: isEdit };
   $("#userDialog").showModal();
+  // B7-5 三页签切换
+  $$("#userDialogBody [data-user-tab]").forEach(btn => btn.addEventListener("click", () => {
+    $$("#userDialogBody [data-user-tab]").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    $$("#userDialogBody [data-user-panel]").forEach(p => p.hidden = p.dataset.userPanel !== btn.dataset.userTab);
+    if (btn.dataset.userTab === "menu") updateUserMenuPreview();
+  }));
 }
 
 function setUserAvailabilityUi({ checking = false, available = false, usernameMessage = "", personMessage = "" } = {}) {
