@@ -341,6 +341,9 @@ function normalizeFunctionCategory(value) {
   return personnelFunctionCategories.includes(normalized) ? normalized : "维修";
 }
 
+// 兼容：确保 grant_reason/granted_by 列存在（内存库场景迁移 067 未跑时的兜底）
+for (const col of ["grant_reason","granted_by"]) { try { db.exec(`alter table rbac_user_scopes add column ${col} text not null default ''`); } catch { /* 列已存在（PG 走迁移 067，SQLite 重复执行） */ } }
+
 function rbacSnapshot(userId) {
   if (!userId) return { roles: [], permissions: [], scopes: [] };
   const assignedRoles = db.prepare(`select r.code,r.name from rbac_roles r
@@ -350,7 +353,9 @@ function rbacSnapshot(userId) {
     join rbac_user_roles ur on ur.role_id=rp.role_id
     join rbac_roles r on r.id=ur.role_id
     where ur.user_id=? and r.status='active' order by p.code`).all(userId).map(row => row.code);
-  const scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId);
+  let scopes;
+  try { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo,grant_reason as grantReason,granted_by as grantedBy from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+  catch { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
   return { roles: assignedRoles, permissions, scopes };
 }
 
@@ -4933,6 +4938,14 @@ function syncMaintenanceOwnerConfirmation(ownerType, ownerId, personId = "") {
   reconcileMaintenanceTreeStatus(ownerType === "flight" ? owner.id : owner.flight_id, personId);
 }
 
+// B7-2 统计防推断（V1.1 §5.3/D07）：样本量小于阈值时隐藏个人明细行，
+// 只保留汇总。阈值可通过 MUC_STATS_MIN_SAMPLE 环境变量调整（默认 5）。
+const STATS_MIN_SAMPLE = Number(process.env.MUC_STATS_MIN_SAMPLE) || 5;
+function redactSmallSample(items, identityKey = "personId") {
+  if (!Array.isArray(items) || items.length >= STATS_MIN_SAMPLE) return items;
+  return items.map(item => ({ ...item, [identityKey]: "hidden", name: `样本不足（${items.length}人，阈值${STATS_MIN_SAMPLE}）`, hours: null, sorties: null, taskCount: null, hourTaskCount: null, sortieTaskCount: null }));
+}
+
 function maintenanceStats(params = {}, user = null) {
   const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_effective_hour_results h join maintenance_flights f on f.id=h.flight_id
@@ -4978,8 +4991,8 @@ function maintenanceStats(params = {}, user = null) {
     },
     hours: visibleHours.map(row => publicMaintenanceHour(row)),
     sorties: visibleSorties.map(row => publicMaintenanceSortie(row)),
-    people: Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties),
-    teams: Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)
+    people: redactSmallSample(Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)),
+    teams: redactSmallSample(Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties), "team")
   };
 }
 
@@ -8188,13 +8201,19 @@ function validateAccountIdentity(payload, existing = null) {
   return person;
 }
 
-function replaceAccountAccess(userId, access) {
+function replaceAccountAccess(userId, access, grantedBy="") {
   db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
   const insertRole = db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)");
   access.roleRows.forEach(role => insertRole.run(userId, role.id, now()));
   db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-  const insertScope = db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
-  access.scopes.forEach(scope => insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now()));
+  const scopeCols = db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "pragma_table_info('rbac_user_scopes')")).get().n;
+  const insertScope = scopeCols === 2
+    ? db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)")
+    : db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
+  access.scopes.forEach(scope => {
+    if (scopeCols === 2) insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now(), String(scope.grantReason||"").slice(0,500), grantedBy);
+    else insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now());
+  });
 }
 
 async function route(req,res) {
@@ -10181,7 +10200,7 @@ async function routeRequestMain(req, res) {
         db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
           values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
           .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -10214,7 +10233,7 @@ async function routeRequestMain(req, res) {
         validateAccountIdentity(payload, existing);
         db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
           .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -10359,7 +10378,7 @@ async function routeRequestMain(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
         }
         db.exec("commit");
       } catch (error) {
@@ -12659,7 +12678,7 @@ async function routeRequestMaintenance(req, res) {
         db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
           values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
           .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -12692,7 +12711,7 @@ async function routeRequestMaintenance(req, res) {
         validateAccountIdentity(payload, existing);
         db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
           .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -12837,7 +12856,7 @@ async function routeRequestMaintenance(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
         }
         db.exec("commit");
       } catch (error) {

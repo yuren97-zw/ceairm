@@ -629,13 +629,13 @@ function scopeDateInput(value) { return value ? new Date(Date.parse(value)+8*360
 function moduleScopeRow(module,scope={scopeType:"self"}) {
   const type=scope.scopeType || "self";
   const orgType={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
-  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
+  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><label>授权原因（审计留痕）<input type="text" data-scope-reason maxlength="500" placeholder="如：跨班支援、临时授权" value="${escapeHtml(scope.grantReason||"")}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
 }
 function renderModuleScopes(scopes) {
   return `<section class="data-panel"><strong>分模块数据范围</strong><p>各模块独立授权；同模块多项范围取并集。日期为空表示不限制，未配置模块默认本人。</p>${Object.entries(scopeModuleLabels).map(([module,label])=>`<fieldset><legend>${label}</legend><div data-module-scopes="${module}">${(scopes.filter(s=>s.module===module).length?scopes.filter(s=>s.module===module):[{scopeType:"self"}]).map(s=>moduleScopeRow(module,s)).join("")}</div><button type="button" class="link-btn" data-scope-add="${module}">增加范围</button></fieldset>`).join("")}</section>`;
 }
 function readModuleScopes() {
-  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value}));
+  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value,grantReason:row.querySelector("[data-scope-reason]")?.value||""}));
 }
 
 function renderOrganizationSettings() {
@@ -823,7 +823,7 @@ async function showEffectivePermissions(userId, username) {
     // 数据范围
     if (data.scopesByModule && Object.keys(data.scopesByModule).length) {
       const scopeLabels = { all: "全部", self: "本人", administrative_team: "行政班组", personnel_group: "人员分组", department: "部门", specified_teams: "指定班组", specified_groups: "指定分组" };
-      sections.push(`<div class="perm-section"><h4>数据范围</h4>${Object.entries(data.scopesByModule).map(([mod, scopes]) => `<p><b>${esc(moduleNames[mod] || mod)}</b>：${scopes.map(sc => `<span class="perm-scope${sc.status === "expired" ? " perm-scope-expired" : sc.status === "pending" ? " perm-scope-pending" : ""}">${esc(scopeLabels[sc.scopeType] || sc.scopeType)}${sc.validTo ? `（至 ${esc(sc.validTo.slice(0, 10))}）` : ""}${sc.status === "expired" ? " ⚠已过期" : sc.status === "pending" ? " ⏳未生效" : ""}</span>`).join("、")}</p>`).join("")}</div>`);
+      sections.push(`<div class="perm-section"><h4>数据范围</h4>${Object.entries(data.scopesByModule).map(([mod, scopes]) => `<p><b>${esc(moduleNames[mod] || mod)}</b>：${scopes.map(sc => `<span class="perm-scope${sc.status === "expired" ? " perm-scope-expired" : sc.status === "pending" ? " perm-scope-pending" : ""}">${esc(scopeLabels[sc.scopeType] || sc.scopeType)}${sc.validTo ? `（至 ${esc(sc.validTo.slice(0, 10))}）` : ""}${sc.status === "expired" ? " ⚠已过期" : sc.status === "pending" ? " ⏳未生效" : ""}${sc.grantReason ? ` · ${esc(sc.grantReason.slice(0, 30))}` : ""}</span>`).join("、")}</p>`).join("")}</div>`);
     }
     // 基础角色校验
     if (data.baseRoleIssues?.length) sections.push(`<div class="perm-section perm-warning"><h4>⚠ 配置异常</h4>${data.baseRoleIssues.map(i => `<p>${esc(i)}</p>`).join("")}</div>`);
@@ -10797,6 +10797,20 @@ document.addEventListener("submit", event => {
           permissions: selectedChecks("rolePermissions")
         };
         if (!payload.permissions.length) throw new Error("请至少选择一项权限");
+        // B7-3 权限修改前后对比（V1.1 §6）：保存前显示新增/移除的权限变更
+        const existingRole = (state.rbacCatalog?.roles || []).find(r => r.id === id);
+        const oldPerms = new Set(existingRole?.permissions || []);
+        const newPerms = new Set(payload.permissions);
+        const added = [...newPerms].filter(code => !oldPerms.has(code));
+        const removed = [...oldPerms].filter(code => !newPerms.has(code));
+        if (added.length || removed.length) {
+          const permName = code => (state.rbacCatalog?.permissions || []).find(p => p.code === code)?.name || code;
+          const diffParts = [];
+          if (added.length) diffParts.push(`新增 ${added.length} 项：\n${added.map(c => `  + ${permName(c)}`).join("\n")}`);
+          if (removed.length) diffParts.push(`移除 ${removed.length} 项：\n${removed.map(c => `  - ${permName(c)}`).join("\n")}`);
+          const impactCount = existingRole?.assignedUserCount || 0;
+          if (!confirm(`权限变更预览：\n\n${diffParts.join("\n\n")}\n\n影响 ${impactCount} 个已分配账户（保存后需重新登录）。\n\n确认保存？`)) return;
+        }
         const result = id ? await rbacService.updateRole(id, payload) : await rbacService.createRole(payload);
         $("#roleDialog").close();
         if (result.sessionRevoked) {
