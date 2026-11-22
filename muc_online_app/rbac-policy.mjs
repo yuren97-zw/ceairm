@@ -159,9 +159,9 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
   "roles.manage": ["roles.read"]
 };
 
-const worker = ["info.read", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create"];
+const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "hours.read", "attendance.read", "attendance.offset.submit"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export"];
+const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "hours.detail.read", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),
@@ -200,6 +200,9 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_scenario_apply: ["capability.allocation.view", "capability.allocation.submit", "capability.scenario.view", "capability.scenario.apply"],
   addon_account_role_manage: ["personnel.list.view", "accounts.read", "accounts.create", "accounts.update", "accounts.disable", "accounts.password.reset", "accounts.bulk_open", "accounts.roles.assign", "accounts.scopes.assign", "roles.read", "roles.manage"],
   addon_offset_approver: ["attendance.offset.submit", "attendance.offset.approve"],
+  addon_offset_admin: ["attendance.offset.rules.manage", "attendance.offset.responsibility.manage"],
+  addon_hours_manage: ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"],
+  addon_attendance_manage: ["attendance.read", "attendance.record.manage", "attendance.exception.manage", "attendance.stats.read", "attendance.export"],
   addon_system_settings: ["settings.manage"]
 };
 
@@ -227,7 +230,13 @@ export const RBAC_ROLE_NAMES = {
   addon_qualification_manage: "附加：资质维护", addon_personnel_lifecycle: "附加：人员生命周期管理", addon_capability_config: "附加：能力规则配置",
   addon_scenario_apply: "附加：方案应用", addon_account_role_manage: "附加：账号角色管理",
   addon_offset_approver: "附加：考勤抵消审批",
+  addon_offset_admin: "附加：考勤抵消规则管理",
+  addon_hours_manage: "附加：工时管理",
+  addon_attendance_manage: "附加：考勤管理",
   addon_offset_approver: "附加：本人提交考勤抵消申请并审批受派申请（B4 干部池/值班班组长路由的审批能力）。",
+  addon_offset_admin: "附加：管理考勤抵消规则（月度额度）与责任重路由。",
+  addon_hours_manage: "附加：查看工时明细、调整工时、确认工时并导出。",
+  addon_attendance_manage: "附加：管理考勤记录与异常，查看统计并导出。",
   addon_system_settings: "附加：系统配置"
 };
 
