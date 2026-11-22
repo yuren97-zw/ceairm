@@ -4938,6 +4938,14 @@ function syncMaintenanceOwnerConfirmation(ownerType, ownerId, personId = "") {
   reconcileMaintenanceTreeStatus(ownerType === "flight" ? owner.id : owner.flight_id, personId);
 }
 
+// B7-2 统计防推断（V1.1 §5.3/D07）：样本量小于阈值时隐藏个人明细行，
+// 只保留汇总。阈值可通过 MUC_STATS_MIN_SAMPLE 环境变量调整（默认 5）。
+const STATS_MIN_SAMPLE = Number(process.env.MUC_STATS_MIN_SAMPLE) || 5;
+function redactSmallSample(items, identityKey = "personId") {
+  if (!Array.isArray(items) || items.length >= STATS_MIN_SAMPLE) return items;
+  return items.map(item => ({ ...item, [identityKey]: "hidden", name: `样本不足（${items.length}人，阈值${STATS_MIN_SAMPLE}）`, hours: null, sorties: null, taskCount: null, hourTaskCount: null, sortieTaskCount: null }));
+}
+
 function maintenanceStats(params = {}, user = null) {
   const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_effective_hour_results h join maintenance_flights f on f.id=h.flight_id
@@ -4983,8 +4991,8 @@ function maintenanceStats(params = {}, user = null) {
     },
     hours: visibleHours.map(row => publicMaintenanceHour(row)),
     sorties: visibleSorties.map(row => publicMaintenanceSortie(row)),
-    people: Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties),
-    teams: Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)
+    people: redactSmallSample(Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)),
+    teams: redactSmallSample(Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties), "team")
   };
 }
 
