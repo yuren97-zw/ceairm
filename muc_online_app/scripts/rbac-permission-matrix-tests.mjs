@@ -48,8 +48,8 @@ assert(has("addon_actual_grade_manage", "personnel.actual_grade.manage"));
 assert(has("addon_actual_grade_export", "personnel.actual_grade.export"));
 
 assert.deepEqual(visibleNavigation([...role("addon_capability_readonly")]), ["personnelPage"]);
-assert.deepEqual(visibleNavigation([...role("worker")]), ["infoPage", "maintenancePage"]);
-assert.deepEqual(visibleNavigation([...role("manager")]), ["infoPage", "maintenancePage", "personnelPage"]);
+assert.deepEqual(visibleNavigation([...role("worker")]), ["infoPage", "maintenancePage", "hoursPage", "attendancePage"]);
+assert.deepEqual(visibleNavigation([...role("manager")]), ["infoPage", "maintenancePage", "personnelPage", "hoursPage", "attendancePage"]);
 
 assert.deepEqual(accountRoleCombinationErrors(["worker"]), []);
 assert.deepEqual(accountRoleCombinationErrors(["dispatcher", "addon_maintenance_review"]), []);

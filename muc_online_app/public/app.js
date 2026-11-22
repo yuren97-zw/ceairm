@@ -1801,8 +1801,18 @@ function canOpenSettings() {
   return ["accounts.read", "roles.read", "settings.manage"].some(hasRbac);
 }
 
-function canViewSubpage(subpage) {
+// 层①导航树查询（V1.1 §4.1）：优先从服务端下发的 navigationTree 查找，退化为 hasRbac。
+function navigationTreeChildren(pageId) {
+  const tree = state.user?.navigationTree;
+  if (!Array.isArray(tree)) return null;
+  const page = tree.find(node => node.id === pageId);
+  return page?.children || [];
+}
+function canViewSubpage(subpage, parentPage) {
   if (!isLoggedIn()) return false;
+  const children = navigationTreeChildren(parentPage || "infoPage");
+  if (children.length) return children.some(child => child.id === subpage);
+  // 退化路径（导航树未就绪时的兜底）
   if (subpage === "infoListSubpage") return true;
   if (subpage === "statsSubpage") return hasRbac("info.stats.read");
   if (subpage === "handoverSubpage") return hasRbac("handover.view");
@@ -3425,9 +3435,11 @@ function applyCapabilityShapeLayer(shadow) {
 }
 
 function renderPersonnelArea() {
-  const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
-  const authorizationAllowed = hasRbac("personnel.list.view") && hasRbac("personnel.qualification.view");
-  const masterAllowed = personnelTabOptions().length > 0;
+  // 层①：优先从导航树获取子区域可见性（V1.1 §4.1）
+  const navChildren = navigationTreeChildren("personnelPage");
+  const capabilityAllowed = navChildren.length ? navChildren.some(c => c.id === "capability") : ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
+  const authorizationAllowed = navChildren.length ? navChildren.some(c => c.id === "authorization") : hasRbac("personnel.list.view") && hasRbac("personnel.qualification.view");
+  const masterAllowed = navChildren.length ? navChildren.some(c => c.id === "master") : personnelTabOptions().length > 0;
   if (!personnelArea || (personnelArea === "capability" && !capabilityAllowed) || (personnelArea === "authorization" && !authorizationAllowed) || (personnelArea === "master" && !masterAllowed)) personnelArea = capabilityAllowed ? "capability" : authorizationAllowed ? "authorization" : "master";
   document.getElementById("personnelAreaNav").innerHTML = `<div class="settings-tabs">${capabilityAllowed ? `<button type="button" class="chip ${personnelArea === "capability" ? "active" : ""}" data-personnel-area="capability">人员配置</button>` : ""}${authorizationAllowed ? `<button type="button" class="chip ${personnelArea === "authorization" ? "active" : ""}" data-personnel-area="authorization">人员授权</button>` : ""}${masterAllowed ? `<button type="button" class="chip ${personnelArea === "master" ? "active" : ""}" data-personnel-area="master">主数据管理</button>` : ""}</div>`;
   const host = document.getElementById("capabilityHost");

@@ -66,7 +66,8 @@ import {
   RBAC_ROLE_DESCRIPTIONS,
   accountRoleCombinationErrors,
   permissionDependencyErrors,
-  visibleNavigation
+  visibleNavigation,
+  visibleNavigationTree
 } from "./rbac-policy.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
@@ -314,7 +315,8 @@ function toUser(row) {
     rbacRoles: rbac.roles,
     rbacPermissions: rbac.permissions,
     dataScopes: rbac.scopes,
-    visibleNavigation: visibleNavigation(rbac.permissions, row.id === SUPER_ACCOUNT_ID)
+    visibleNavigation: visibleNavigation(rbac.permissions, row.id === SUPER_ACCOUNT_ID),
+    navigationTree: visibleNavigationTree(rbac.permissions, row.id === SUPER_ACCOUNT_ID)
   };
 }
 

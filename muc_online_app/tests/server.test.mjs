@@ -4093,7 +4093,11 @@ test('attendance endpoints enforce login and distinguish real missing coverage',
   const html=await requestRaw('/api/attendance/export/html?month=2026-09&scope=all',{cookie});assert.equal(html.statusCode,200);assert.ok(html.body.toString().includes('offline:true'));assert.equal(html.headers['Cache-Control'],'no-store');
   const stranger=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'attendance-denied-user',name:'考勤无权用户'});
   const other=await request('/api/login',{method:'POST',body:{username:stranger.username,password:'muc2026'}}),otherCookie=String(other.res.headers['Set-Cookie']).split(';')[0];
-  assert.equal((await request('/api/attendance/days?month=2026-09',{cookie:otherCookie})).res.statusCode,403);
+  // Worker 现在拥有 attendance.read（B6 权限补全），不再 403；
+  // 但 self 范围下应只看到本人数据（而非全员）。
+  const strangerDays=await request('/api/attendance/days?month=2026-09',{cookie:otherCookie});
+  assert.equal(strangerDays.res.statusCode,200);
+  assert.ok(strangerDays.payload.people.length<=1,`self 范围应只含本人，实际 ${strangerDays.payload.people.length} 人`);
 });
 test('attendance export category filter validates input, keeps complete month and all scope ignores it',async()=>{
  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
