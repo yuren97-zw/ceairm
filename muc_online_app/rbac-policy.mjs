@@ -290,16 +290,38 @@ export function accountRoleCombinationErrors(codes, { superAccount = false } = {
 }
 
 export const NAVIGATION_NODES = [
-  { id: "infoPage", anyOf: ["info.read"] },
+  { id: "infoPage", anyOf: ["info.read"], children: [
+    { id: "infoListSubpage", anyOf: ["info.read"], label: "信息传达" },
+    { id: "statsSubpage", anyOf: ["info.stats.read"], label: "统计分析" },
+    { id: "handoverSubpage", anyOf: ["handover.view"], label: "班组交接" }
+  ]},
   { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"] },
   { id: "fixedPage", anyOf: ["fixed.read"] },
-  { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"] },
+  { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"], children: [
+    { id: "capability", anyOf: ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"], label: "人员配置" },
+    { id: "authorization", anyOf: ["personnel.list.view", "personnel.qualification.view"], label: "人员授权" },
+    { id: "master", anyOf: ["personnel.organization.manage", "personnel.qualification.manage"], label: "主数据管理" }
+  ]},
   { id: "hoursPage", anyOf: ["hours.read"] },
   { id: "attendancePage", anyOf: ["attendance.read"] },
-  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage"] }
+  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage"], children: [
+    { id: "accountsTab", anyOf: ["accounts.read"], label: "登录账户" },
+    { id: "rolesTab", anyOf: ["roles.read"], label: "角色权限" },
+    { id: "systemTab", anyOf: ["settings.manage"], label: "系统配置" }
+  ]}
 ];
 
 export function visibleNavigation(permissionCodes, isSuper = false) {
   const permissions = new Set(permissionCodes || []);
   return NAVIGATION_NODES.filter(node => isSuper || node.anyOf.some(code => permissions.has(code))).map(node => node.id);
+}
+
+// 层①导航树（V1.1 §4.1）：返回带 children 的可见导航树，前端统一渲染，替代散落的 hasRbac 判断。
+export function visibleNavigationTree(permissionCodes, isSuper = false) {
+  const permissions = new Set(permissionCodes || []);
+  const visible = node => isSuper || node.anyOf.some(code => permissions.has(code));
+  return NAVIGATION_NODES.filter(visible).map(node => ({
+    id: node.id,
+    children: (node.children || []).filter(visible).map(child => ({ id: child.id, label: child.label }))
+  }));
 }
