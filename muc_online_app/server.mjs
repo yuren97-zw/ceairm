@@ -2496,7 +2496,7 @@ function standardReviewCan(user,permission,item){
   if(permission==='maintenance.nonroutine.review.view'){
     if(all&&['maintenance.standard.manage','maintenance.nonroutine.review.assign','maintenance.nonroutine.review.opinions.view'].some(code=>hasRbac(user,code)))return true;
     if(!hasRbac(user,permission)||!item)return false;
-    if(item.finalizer_account_id===user.id&&all&&hasRbac(user,'maintenance.nonroutine.review.finalize'))return true;
+    if(all&&hasRbac(user,'maintenance.nonroutine.review.finalize'))return true;
     return Boolean(db.prepare('select 1 from maintenance_standard_review_seats where case_id=? and account_id=? and person_id=?').get(item.id,user.id,user.personId));
   }
   return hasRbac(user,permission)&&(permission==='maintenance.nonroutine.review.opinion.submit'||all);
@@ -11590,13 +11590,14 @@ async function routeRequestMaintenance(req, res) {
       if (process.env.MUC_NONROUTINE_REVIEW_ENABLED !== "1") return send(res, 404, { error: "非例行评议尚未启用" });
       const service = nonroutineReviewService();
       const id = routeParam(nonroutineReviewRoute[1]);
+      if(nonroutineReviewRoute[2]==='candidates')return send(res,200,service.candidates(id,Object.fromEntries(url.searchParams),viewer));
       if(nonroutineReviewRoute[2]==='cancel'){
         const cancellation=createNonroutineReviewCancellation({db,transaction:maintenanceTransaction,can:nonroutineReviewCan,qualifiedAccount:nonroutineReviewQualifiedAccount,sourceFacts:maintenanceReviewSourceFacts,clock:now,randomId});
         const result=cancellation.cancel(id,await bodyJson(req),viewer);
         bumpMaintenanceVersion('', 'maintenance.nonroutine.review.changed');
         return send(res,200,{cancellation:result});
       }
-      if(nonroutineReviewRoute[2]==='candidates')return send(res,200,service.candidates(id,Object.fromEntries(url.searchParams),viewer));
+      
       if(["finalization","finalize","sync","preview"].includes(nonroutineReviewRoute[2])) {
         if(process.env.MUC_NONROUTINE_FINALIZATION_ENABLED!=="1")return send(res,404,{error:"非例行终审尚未启用"});
         const finalizer=nonroutineFinalizationService();
