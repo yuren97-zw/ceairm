@@ -10797,6 +10797,20 @@ document.addEventListener("submit", event => {
           permissions: selectedChecks("rolePermissions")
         };
         if (!payload.permissions.length) throw new Error("请至少选择一项权限");
+        // B7-3 权限修改前后对比（V1.1 §6）：保存前显示新增/移除的权限变更
+        const existingRole = (state.rbacCatalog?.roles || []).find(r => r.id === id);
+        const oldPerms = new Set(existingRole?.permissions || []);
+        const newPerms = new Set(payload.permissions);
+        const added = [...newPerms].filter(code => !oldPerms.has(code));
+        const removed = [...oldPerms].filter(code => !newPerms.has(code));
+        if (added.length || removed.length) {
+          const permName = code => (state.rbacCatalog?.permissions || []).find(p => p.code === code)?.name || code;
+          const diffParts = [];
+          if (added.length) diffParts.push(`新增 ${added.length} 项：\n${added.map(c => `  + ${permName(c)}`).join("\n")}`);
+          if (removed.length) diffParts.push(`移除 ${removed.length} 项：\n${removed.map(c => `  - ${permName(c)}`).join("\n")}`);
+          const impactCount = existingRole?.assignedUserCount || 0;
+          if (!confirm(`权限变更预览：\n\n${diffParts.join("\n\n")}\n\n影响 ${impactCount} 个已分配账户（保存后需重新登录）。\n\n确认保存？`)) return;
+        }
         const result = id ? await rbacService.updateRole(id, payload) : await rbacService.createRole(payload);
         $("#roleDialog").close();
         if (result.sessionRevoked) {
