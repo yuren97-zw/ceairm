@@ -62,6 +62,15 @@ jobs:
           cache: npm
           cache-dependency-path: muc_online_app/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Inject test-time module env at job level
+        # server.mjs 在模块加载时固化 cosConfig/APP_VERSION；测试文件内晚赋值在慢 runner 上
+        # 输掉竞态导致 COS 409/health 版本断言失败（与 PR#55 修复的 ci.yml 同源问题）。
+        run: |
+          echo "COS_SECRET_ID=test-secret-id" >> $GITHUB_ENV
+          echo "COS_SECRET_KEY=test-secret-key" >> $GITHUB_ENV
+          echo "COS_BUCKET=test-bucket-1234567890" >> $GITHUB_ENV
+          echo "COS_REGION=ap-shanghai" >> $GITHUB_ENV
+          echo "APP_VERSION=test-version" >> $GITHUB_ENV
       - run: npm run check && npm test
       - name: Build approved release
         env:
