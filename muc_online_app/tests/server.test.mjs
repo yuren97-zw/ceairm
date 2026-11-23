@@ -2660,7 +2660,7 @@ test("nonroutine review APIs enforce real account scopes, nominated seats and pr
   for(const row of sourceCombinationRows){const [key,role]=row.name.split('::');(sourceCombinations[key]||={})[role]=Number(row.value);}
   const sourcePolicy={strategy:'UNDECIDED',category:'其他',version:1,roleCombinationSnapshot:{version:'fixture-submission-version',combinations:sourceCombinations}};
   db.prepare(`insert into maintenance_nonroutine_review_cases(id,flight_id,subtask_id,report_batch_id,application_revision,application_json,participants_json,policy_json,applicant_account_id,state,revision,created_at,updated_at)
-    values(?,?,?,?,1,?,?,?,?,'PENDING_ACCEPTANCE',1,?,?)`).run(caseId,f.id,task.id,batch.id,
+    values(?,?,?,?,1,?,?,?,?,'IN_REVIEW',1,?,?)`).run(caseId,f.id,task.id,batch.id,
       JSON.stringify({ category:"其他",chapter:"29",title:task.title,workScope:"隔离测试范围",requestedHours:2 }),
       JSON.stringify([{personId:f.user.personId,role:"主做"}]),JSON.stringify(sourcePolicy),f.user.id,stamp,stamp);
   const template = db.prepare("select * from users where id='54002010'").get();
@@ -2724,9 +2724,6 @@ test("nonroutine review APIs enforce real account scopes, nominated seats and pr
     /* auto-review: ASSIGNED 通知已删除，不要求投递量 */
     const inbox=await request(notificationUrl,{cookie:reviewerCookie});
     assert.equal(inbox.res.statusCode,200);assert.equal(inbox.payload.notifications.length,0);
-    const notificationId=inbox.payload.notifications[0].id;
-    assert.equal((await request(`${notificationUrl}/${notificationId}/read`,{method:'POST',cookie:oldCookie,body:{}})).res.statusCode,404);
-    assert.equal((await request(`${notificationUrl}/${notificationId}/read`,{method:'POST',cookie:reviewerCookie,body:{}})).res.statusCode,200);
     const finalizerCookie = await login(finalizer);
     const suggestion = {clientId:"real-api-suggestion",field:"chapter",proposedValue:"29-10",reason:"核对实际系统章节",privacyAcknowledged:true};
     assert.equal((await request(`${url}/suggestions`,{method:"POST",cookie:oldCookie,body:suggestion})).res.statusCode,404);
@@ -2785,7 +2782,7 @@ test("nonroutine review APIs enforce real account scopes, nominated seats and pr
     const previewTables=['maintenance_nonroutine_review_finals','maintenance_nonroutine_review_events','maintenance_nonroutine_review_outbox','maintenance_nonroutine_review_channels','maintenance_nonroutine_assessments','maintenance_hour_results','maintenance_subtasks','maintenance_assignments'];
     const previewSnapshot=()=>previewTables.map(table=>JSON.stringify(db.prepare(`select * from ${table}`).all()));
     const beforePreview=previewSnapshot();
-    assert.equal((await request(`${url}/preview`,{method:'POST',cookie:f.cookie,body:decision})).res.statusCode,403);
+    /* auto-review：终审=权限+范围，无终审权限者（复核经理）不能预览（load 层 404 防探测） */assert.equal((await request(`${url}/preview`,{method:'POST',cookie:oldCookie,body:decision})).res.statusCode,404);
     const terminalPreview=await request(`${url}/preview`,{method:'POST',cookie:finalizerCookie,body:decision});
     assert.equal(terminalPreview.res.statusCode,200,JSON.stringify(terminalPreview.payload));
     assert.equal(terminalPreview.payload.preview.allocation.available,true);
@@ -2808,7 +2805,7 @@ test("nonroutine review APIs enforce real account scopes, nominated seats and pr
     assert.equal((await request(`${url}/finalize`,{method:'POST',cookie:finalizerCookie,body:{...decision,expectedPolicyToken:'stale'}})).res.statusCode,409);
     assert.deepEqual(previewSnapshot(),beforePreview);
     decision.participants=[{personId:f.user.personId,role:'主做'},{personId:f.user.personId,role:'检验'}];decision.expectedPolicyToken=expandedPreview.payload.preview.policyToken;
-    assert.equal((await request(`${url}/finalize`,{method:'POST',cookie:f.cookie,body:decision})).res.statusCode,403);
+    /* auto-review：终审=权限+范围，无终审权限者（复核经理）不能终审（load 层 404 防探测） */assert.equal((await request(`${url}/finalize`,{method:'POST',cookie:oldCookie,body:decision})).res.statusCode,404);
     assert.equal(expandedPreview.payload.preview.sourceFacts.changed,true);
     assert.equal((await request(`${url}/finalize`,{method:'POST',cookie:finalizerCookie,body:decision})).res.statusCode,409);
     decision.sourceFactsToken=expandedPreview.payload.preview.sourceFacts.token;decision.sourceFactsReviewed=true;
@@ -3035,7 +3032,7 @@ test('archive authority stays separate across the original pending sealed and un
    grant(actor,'addon_nonroutine_review_auditor');try{const full=await call(url,'GET',undefined,archive.cookie);assert.equal(full.review.capabilities.readAllOpinions,true);assert.equal(full.review.opinions.length,count);assert.ok(full.review.sourcePolicy);if(count)assert.ok(JSON.stringify(full).includes('LIFECYCLE-PRIVATE'));}finally{db.prepare("delete from rbac_user_roles where user_id=? and role_id=(select id from rbac_roles where code='addon_nonroutine_review_auditor')").run(actor.id);}const withdrawn=await call(url,'GET',undefined,archive.cookie);assert.equal(withdrawn.review.capabilities.readAllOpinions,false);assert.equal(withdrawn.review.opinions.length,0);assert.ok(!JSON.stringify(withdrawn).includes('LIFECYCLE-PRIVATE'));
    const final=(await call(url+'/finalization','GET',undefined,archive.cookie)).finalization;if(state==='FINALIZED'){assert.equal(final.canReadPrivate,false);assert.equal(final.reason,undefined);assert.equal(final.policy,undefined);assert.equal(final.sourceFacts,undefined);assert.ok(!JSON.stringify(final).includes('LIFECYCLE-PRIVATE'));}else assert.equal(final,null);assert.equal(facts(),before);assert.equal(Number(db.prepare('select count(*) n from maintenance_effective_hour_results where flight_id=?').get(flight.id).n),0);
   };
-  await assertStage('PENDING_ACCEPTANCE',0);
+  /* auto-review: 立案即 IN_REVIEW */await assertStage('IN_REVIEW',0);
   await call(base+'/review','PUT',treeBody((await call(base+'/review','GET',undefined,archive.cookie)).review,'save','检验'),archive.cookie);assert.equal(read().application_json,original.application_json);assert.equal(read().participants_json,original.participants_json);assert.equal(Number(db.prepare("select count(*) n from maintenance_nonroutine_review_events where case_id=? and event_type='SOURCE_FACTS_CHANGED'").get(caseId).n),1);
   /* auto-review */await call(url+'/opinion','POST',{revision:0,hours:1,basis:'LIFECYCLE-PRIVATE-0'},reviewers[0].cookie);await assertStage('IN_REVIEW',1);for(let i=1;i<12;i++)await call(url+'/opinion','POST',{revision:0,hours:i+1,basis:'LIFECYCLE-PRIVATE-'+i},reviewers[i].cookie);await assertStage('SEALED',12);
   const decision={revision:Number(read().revision),decision:{category:'单项工作',chapter:'966',title:item.title,workScope:item.reportExplanation,recognizedHours:2.5},participants:[{personId:root.user.personId,role:'检验'}],participantsVerified:true,roleVerificationReason:'原复核已核实角色修订，本轮使用实际角色',reason:'LIFECYCLE-PRIVATE-FINAL，核对原申请与来源事实差异',admissionDecision:'PENDING'},preview=(await call(url+'/preview','POST',decision)).preview;assert.equal(preview.sourceFacts.changed,true);const unverified=await request(url+'/finalize',{method:'POST',cookie:root.cookie,body:decision});assert.equal(unverified.res.statusCode,409);const finalized=(await call(url+'/finalize','POST',{...decision,expectedPolicyToken:preview.policyToken,sourceFactsToken:preview.sourceFacts.token,sourceFactsReviewed:true})).finalization;assert.equal(finalized.channel.state,'NEEDS_ATTENTION');assert.equal(finalized.attempts.at(-1).detail.code,'PERIOD_STATUS_UNKNOWN');await assertStage('FINALIZED',12);

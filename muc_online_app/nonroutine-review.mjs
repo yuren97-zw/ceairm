@@ -208,8 +208,9 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
     return transaction(() => {
       const item = load(id, user, 'opinion.submit');
       const seat = db.prepare('select * from maintenance_nonroutine_review_seats where case_id=? and account_id=? and person_id=?').get(id,user.id,user.personId);
-      const qualified = seat && qualifiedAccount(user.id, permission('opinion.submit'), item);
-      if (!qualified || qualified.personId !== seat.person_id) throw fail('当前账户不是本轮有效指定评议人',403);
+      // WORK 线权限即资格（动态占席），未提交意见也可提共享建议；STANDARD 线仍须有效指定席位
+      const qualified = (purpose==='WORK' || seat) && qualifiedAccount(user.id, permission('opinion.submit'), item);
+      if (!qualified || qualified.personId !== (purpose==='WORK' ? user.personId : seat.person_id)) throw fail('当前账户不是本轮有效指定评议人',403);
       if (!payload || Object.keys(payload).some(key => !['clientId','field','proposedValue','reason','privacyAcknowledged'].includes(key))) throw fail('共享建议仅接受四项非工时字段');
       const field = payload.field;
       const limits = { category: 100, chapter: 200, title: 500, workScope: 4000 };
