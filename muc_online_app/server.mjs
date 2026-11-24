@@ -66,6 +66,7 @@ import {
   RBAC_ROLE_NAMES,
   RBAC_ROLE_DESCRIPTIONS,
   accountRoleCombinationErrors,
+  missingBaselineRolePermissions,
   permissionDependencyErrors,
   visibleNavigation,
   visibleNavigationTree
@@ -1771,12 +1772,21 @@ function seedRbac() {
     roleIds.set(code, id);
   }
   const assignPermission = db.prepare("insert or ignore into rbac_role_permissions(role_id,permission_id) values(?,?)");
+  const baselineReconcile = [];
   for (const [code, permissions] of Object.entries(rbacRoleDefinitions)) {
     const roleId = roleIds.get(code);
-    if (preserveControlledEdit(code)) continue;
+    if (preserveControlledEdit(code)) {
+      // 受控编辑角色保留手工授予的额外权限，但代码基线新增的权限必须补入。
+      const currentCodes = db.prepare("select p.code from rbac_role_permissions rp join rbac_permissions p on p.id=rp.permission_id where rp.role_id=?").all(roleId).map(row => row.code);
+      const missing = missingBaselineRolePermissions(code, currentCodes);
+      missing.forEach(permission => assignPermission.run(roleId, permissionIds.get(permission)));
+      if (missing.length) baselineReconcile.push({ role: code, added: missing });
+      continue;
+    }
     db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
     permissions.forEach(permission => assignPermission.run(roleId, permissionIds.get(permission)));
   }
+  if (baselineReconcile.length) console.warn(`[rbac] 受控编辑角色基线补差：${baselineReconcile.map(item => `${item.role}+${item.added.length}(${item.added.join(",")})`).join("；")}`);
   setSetting("pureRbacV2Migrated", true);
   setSetting("rbacPermissionCatalogV3Seeded", true);
   // 54002010使用单一正常账号，但系统管理员角色始终同步全部权限，避免新增权限后出现缺口。
