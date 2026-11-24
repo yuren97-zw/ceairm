@@ -340,3 +340,138 @@ test('first explicit cap never backdates to October and old clients cannot clear
  assert.equal(f.service.saveMonthlyRule(f.admin,{hours:'2',count:1,cap:4},'old-client').unchanged,true);
  assert.equal(f.service.monthlyRules(f.admin)[0].single_cap_seconds,1);f.db.close();
 });
+
+function closeFixture(){
+ const f=fixture(),batches=[],successful=new Set();
+ f.db.exec('create table attendance_runs(id text primary key,status text,error text)');
+ const deps={...f.deps,listPeople:()=>['p'],monthClose:{
+  enabled:()=>true,verified:id=>successful.has(id),
+  enqueue:batch=>{batches.push(batch);f.db.prepare("insert into attendance_runs values(?,'running',null)").run(batch.id);}
+ }};
+ const service=createOffsetService(deps);
+ const at=(date,time)=>Date.parse(date+'T'+time+'+08:00');
+ const setTime=(date,time)=>f.setNow(at(date,time));
+ const result=(status,verified=true)=>{
+  const id=batches.at(-1).id;
+  f.db.prepare('update attendance_runs set status=? where id=?').run(status,id);
+  if(verified)successful.add(id);
+ };
+ const overtime=(date,seconds,{offDate=date,covered=true}={})=>{
+  const planned=at(offDate,'08:00:00');
+  const input={date,covered,points:[{type:'OnDuty',planned:at(date,offDate===date?'00:00:00':'20:00:00')},{type:'OffDuty',planned}],punches:[{type:'OffDuty',planned,actual:planned+seconds*1000,source:'USER'}],approvals:[]};
+  f.sources.set(date,{date,input,sourceReadAt:at(offDate,'21:00:00')});
+  return input;
+ };
+ return {...f,service,deps,batches,setTime,overtime,result};
+}
+
+test('month close resumes the same batch after restart, then atomically switches after successful partial verification',()=>{
+ const f=closeFixture(),{service,admin,employee,db}=f;
+ f.setTime('2026-10-29','12:00:00');
+ service.saveMonthlyRule(admin,{hours:'2',count:1,cap:2},'rule');
+ f.overtime('2026-10-31',16062,{offDate:'2026-11-01'});
+ f.sources.set('2026-10-29',{date:'2026-10-29',input:{date:'2026-10-29',covered:true,rest:true,scheduleConflict:true}});
+ f.setTime('2026-11-02','23:59:59');
+ service.settleDue(admin);assert.equal(f.batches.length,0);
+ f.setTime('2026-11-03','00:00:00');
+ service.settleDue(admin);assert.deepEqual([f.batches[0].from,f.batches[0].to],['2026-10-01','2026-10-31']);
+ assert.equal(service.activeMonth(),'2026-10');
+ assert.equal(service.balance(employee,'2026-11').available,null);
+ const restarted=createOffsetService(f.deps);
+ restarted.settleDue(admin);assert.equal(f.batches.length,1);
+ assert.throws(()=>restarted.issue(admin,{personId:'p',sourceMonth:'2026-10'},'bypass'),/自动结算/);
+ f.result('partial');
+ assert.equal(restarted.settleDue(admin).processed,1);
+ const balance=restarted.balance(employee);
+ assert.equal(balance.activeMonth,'2026-11');assert.equal(balance.available,2);
+ assert.equal(balance.confirmedSeconds,16062);assert.equal(balance.pendingDays,1);
+ assert.equal(restarted.balance(employee,'2026-10').available,null);
+ restarted.settleDue(admin);assert.equal(db.prepare('select count(*) n from attendance_offset_ledger').get().n,1);
+ db.close();
+});
+
+test('a whole failed monthly sync is retried without issuing, and January settles December',()=>{
+ const f=closeFixture(),{service,admin,employee}=f;
+ f.setTime('2026-12-31','22:00:00');service.saveMonthlyRule(admin,{hours:'2',count:1,cap:2},'rule');
+ f.setTime('2027-01-03','00:00:00');service.settleDue(admin);
+ f.result('partial',false);service.settleDue(admin);
+ assert.equal(service.state(admin).settlement.status,'retry');
+ assert.equal(service.activeMonth(),'2026-12');
+ f.setTime('2027-01-03','00:14:59');service.settleDue(admin);assert.equal(f.batches.length,1);
+ f.setTime('2027-01-03','00:15:00');service.settleDue(admin);
+ assert.equal(f.batches.length,2);assert.equal(f.batches[1].from,'2026-12-01');
+ f.result('completed');service.settleDue(admin);
+ assert.equal(service.balance(employee).available,0);
+ f.db.close();
+});
+
+test('verified corrections deduct, release latest pending request, preserve approved use and recover after later increases',()=>{
+ const f=closeFixture(),{service,admin,employee,db}=f;
+ f.setTime('2026-10-29','12:00:00');service.saveMonthlyRule(admin,{hours:'2',count:1,cap:3},'rule');
+ const date='2026-10-31';
+ const dirty=()=>{service.markDirty('p',date);service.drain(admin);};
+ f.overtime(date,21600);
+ f.setTime('2026-11-03','00:00:00');service.settleDue(admin);f.result('completed');service.settleDue(admin);
+ assert.equal(service.balance(employee).available,3);
+ // Simulate two completed approvals and one still-frozen item in the same account.
+ db.exec("update attendance_offset_accounts set used=2,frozen=1 where person_id='p' and usage_month='2026-11'");
+ db.prepare("insert into attendance_offset_requests values('r','p','2026-11','leader','{}','test','pending',1,?,?)").run('2026-11-03','2026-11-03');
+ db.exec("insert into attendance_offset_items(id,request_id,event_id,evidence_hash,event_revision,decision,effective) values('i','r','event','hash',1,'pending',0);insert into attendance_offset_claims values('event','i')");
+ f.overtime(date,0,{covered:false});dirty();
+ assert.equal(service.balance(employee).granted,3);
+ assert.equal(service.balance(employee).confirmedSeconds,21600);
+ f.overtime(date,7200);dirty();
+ assert.equal(service.balance(employee).granted,1);
+ assert.equal(service.balance(employee).used,2);
+ assert.equal(service.balance(employee).available,0);
+ assert.equal(service.balance(employee).overused,1);
+ assert.equal(service.balance(employee).frozen,0);
+ assert.equal(db.prepare("select status from attendance_offset_requests where id='r'").get().status,'quota_released');
+ assert.equal(db.prepare("select count(*) n from attendance_offset_claims").get().n,0);
+ f.overtime(date,14400);dirty();
+ assert.equal(service.balance(employee).overused,0);assert.equal(service.balance(employee).available,0);
+ f.overtime(date,21600);dirty();dirty();
+ assert.equal(service.balance(employee).available,1);
+ assert.equal(db.prepare("select count(*) n from attendance_offset_ledger where kind='settlement_add'").get().n,2);
+ db.close();
+});
+
+test('old-period events may be submitted before the switch and frozen requests can be approved after expiry',()=>{
+ const f=closeFixture(),{ids,a}=f.setup();
+ const {service,admin,employee,leader,sources}=f;
+ service.saveMonthlyRule(admin,{hours:'2',count:1,cap:2},'monthly-transition-rule');
+ const date='2026-12-02',delta=Date.parse(date)-Date.parse(a.date);
+ const december={...a,date,points:a.points.map(p=>({...p,planned:p.planned+delta}))};
+ sources.set(date,{date,input:december,sourceReadAt:Date.parse(date+'T23:00:00+08:00')});
+ f.setTime('2026-12-02','23:59:59');service.settleDue(admin);
+ service.reconcile(admin,'p',date,'december-source');
+ const next=f.db.prepare("select id from attendance_offset_events where person_id='p' and work_date=? limit 1").get(date);
+ assert.throws(()=>service.submit(employee,{events:[next.id],note:'新账期'},'early'),/当月有效事项/);
+ const req=service.submit(employee,{assigneeUserId:'leader',events:[ids[0]],note:'上期申请'},'old');
+ assert.equal(service.balance(employee).usageMonth,'2026-11');
+ f.setTime('2026-12-03','00:00:00');service.settleDue(admin);f.result('completed');service.settleDue(admin);
+ assert.equal(service.balance(employee).usageMonth,'2026-12');
+ const details=service.detail(leader,req.id);
+ assert.equal(service.decide(leader,req.id,{version:details.version,decisions:[{id:details.items[0].id,decision:'approved'}]},'old-decision').status,'approved');
+ assert.equal(service.balance(employee,'2026-11').used,1);
+ assert.equal(service.balance(employee,'2026-11').available,null);
+ assert.equal(service.balance(employee).used,0);
+ f.db.close();
+});
+
+test('an accounting error rolls back all grants and resumes the same committed sync',()=>{
+ const f=closeFixture(),{db,service,admin,employee}=f;
+ f.setTime('2026-10-29','12:00:00');service.saveMonthlyRule(admin,{hours:'2',count:1,cap:2},'rule');
+ f.overtime('2026-10-31',7200);
+ f.setTime('2026-11-03','00:00:00');service.settleDue(admin);f.result('completed');
+ db.exec("create trigger test_fail_grant before insert on attendance_offset_ledger begin select raise(abort,'simulated ledger failure'); end");
+ assert.throws(()=>service.settleDue(admin),/simulated ledger failure/);
+ assert.equal(service.state(admin).settlement.status,'accounting_retry');
+ assert.equal(service.activeMonth(),'2026-10');
+ assert.equal(db.prepare('select count(*) n from attendance_month_close_days').get().n,0);
+ db.exec('drop trigger test_fail_grant');
+ f.setTime('2026-11-03','00:05:00');createOffsetService(f.deps).settleDue(admin);
+ assert.equal(f.batches.length,1);
+ assert.equal(service.balance(employee).available,1);
+ db.close();
+});

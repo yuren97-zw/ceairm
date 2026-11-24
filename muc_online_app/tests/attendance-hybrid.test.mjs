@@ -146,7 +146,7 @@ test('Beijing daily, previous calendar week and previous month cross year/leap b
  assert.deepEqual(attendancePeriods('2027-01-05').weekly,{from:'2026-12-28',to:'2027-01-03',minute:600,eligible:true});
  assert.equal(attendancePeriods('2026-10-27').daily.from,'2026-10-26');
  assert.equal(attendancePeriods('2026-10-26').daily.from,'2026-10-25');
- assert.deepEqual(attendancePeriods('2028-03-03').monthly,{from:'2028-02-01',to:'2028-02-29',minute:690,eligible:true});
+ assert.deepEqual(attendancePeriods('2028-03-03').monthly,{from:'2028-02-01',to:'2028-02-29',minute:0,eligible:true});
 });
 test('three switches default off; scheduler can create tasks with worker paused, never executes APIs',async()=>{
  const defaults=configuration({});assert.equal(defaults.workerEnabled,false);assert.equal(defaults.eventsEnabled,false);assert.equal(defaults.enabled,false);
@@ -154,14 +154,14 @@ test('three switches default off; scheduler can create tasks with worker paused,
  assert.equal(f.calls.length,0);assert.ok(f.db.prepare("select id from attendance_runs where id like 'hybrid-weekly%'").get());
  assert.equal(f.db.prepare('select count(*) as n from attendance_tasks').get().n,0);f.close();
 });
-test('daily exact 12:30; Tuesday exact 10:00; month day3 exact11:30, no old timers or shift-close',()=>{
+test('daily exact 12:30; Tuesday exact 10:00; no standalone monthly or shift-close timers',()=>{
  const f=fixture({config:{enabled:true}});const h=f.service.hybrid;
  h.schedule();assert.equal(f.db.prepare("select id from attendance_runs where id like 'hybrid-daily%'").get(),undefined);
  f.time='2026-10-24T12:30:00+08:00';h.schedule();h.schedule();assert.equal(f.db.prepare("select count(*) as n from attendance_runs where id like 'hybrid-daily%'").get().n,1);
  f.time='2026-10-27T09:59:00+08:00';h.schedule();assert.equal(f.db.prepare("select id from attendance_runs where id like 'hybrid-weekly%'").get(),undefined);
  f.time='2026-10-27T10:00:00+08:00';h.schedule();assert.deepEqual({...f.db.prepare("select from_date,to_date from attendance_runs where id like 'hybrid-weekly%'").get()},{from_date:'2026-10-19',to_date:'2026-10-25'});
  f.time='2026-11-03T11:29:00+08:00';h.schedule();assert.equal(f.db.prepare("select id from attendance_runs where id like 'hybrid-monthly%'").get(),undefined);
- f.time='2026-11-03T11:30:00+08:00';h.schedule();assert.deepEqual({...f.db.prepare("select from_date,to_date from attendance_runs where id like 'hybrid-monthly%'").get()},{from_date:'2026-10-01',to_date:'2026-10-31'});
+ f.time='2026-11-03T11:30:00+08:00';h.schedule();assert.equal(f.db.prepare("select id from attendance_runs where id like 'hybrid-monthly%'").get(),undefined);
  assert.equal(f.db.prepare("select id from attendance_runs where id like 'scheduled-%' or id like '%close%'").get(),undefined);f.close();
 });
 test('restart schedules missed days once; existing data prevents initial-backfill duplication',async()=>{
