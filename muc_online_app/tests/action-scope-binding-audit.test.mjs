@@ -228,6 +228,15 @@ test("S3 迁移守卫：考勤两服务使用绑定驱动 API，无遗留注入�
   }
 });
 
+test("S4 资源级：运行时动作 API 透传绑定资源类别，范围判定支持 resource", () => {
+  const server = FILES["server.mjs"];
+  assert.ok((server.match(/binding\.resource/g) || []).length >= 4, "actionScope* 应把 binding.resource 传入范围判定");
+  const access = FILES["personnel-access.mjs"];
+  assert.ok(/function predicate\(user, module, alias = "p", resource\)/.test(access), "predicate 应支持 resource 参数");
+  assert.ok(/function allows\(user, module, personId, resource\)/.test(access), "allows 应支持 resource 参数");
+  assert.ok(/moduleResources\(s\.module\)\.includes\(resource\)/.test(access), "normalizeScopes 应校验资源类别");
+});
+
 test("审计器防退化：字面量范围检查点数量不得骤降", () => {
   const total = Object.values(fileData).reduce((sum, item) => sum + item.sites.length, 0);
   assert.ok(total >= 60, `识别到的字面量范围检查点过少（${total}），扫描器可能失效`);

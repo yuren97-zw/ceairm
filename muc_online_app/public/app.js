@@ -68,7 +68,7 @@ const state = {
   infoPeople: [], maintenancePeople: [], organizations: [], orgSearch: "",
   personnelMeta: { total: 0, page: 1, pageSize: 20, facets: {} },
   personnelImportBatches: [],
-  rbacCatalog: { roles: [], permissions: [] },
+  rbacCatalog: { roles: [], permissions: [], scopeResources: [] },
   settingsTab: "accounts",
   personnelTab: "list",
   personnelAuthorizationOverview: { items: [], total: 0, page: 1, pageSize: 20, facets: { teams: [], statuses: [] }, loaded: false, loading: false, error: "", q: "", team: "", category: "", status: "有效", openPersonId: "", openCategory: "", detail: null, detailLoading: false, detailError: "", detailPage: 1, showAll: false, searchTimer: null, requestSequence: 0 },
@@ -630,13 +630,15 @@ function scopeDateInput(value) { return value ? new Date(Date.parse(value)+8*360
 function moduleScopeRow(module,scope={scopeType:"self"}) {
   const type=scope.scopeType || "self";
   const orgType={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
-  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><label>授权原因（审计留痕）<input type="text" data-scope-reason maxlength="500" placeholder="如：跨班支援、临时授权" value="${escapeHtml(scope.grantReason||"")}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
+  const resources=(state.rbacCatalog.scopeResources||[]).filter(item=>item.module===module),resource=scope.resource||"";
+  const resourceField=resources.length?`<label>资源类别<select data-scope-resource><option value="">模块级（全部资源）</option>${resources.map(item=>`<option value="${escapeHtml(item.resource)}" ${resource===item.resource?"selected":""}>${escapeHtml(item.label||item.resource)}</option>`).join("")}</select></label>`:"";
+  return `<div class="entry-grid module-scope-row" data-scope-row="${module}">${resourceField}<label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><label>授权原因（审计留痕）<input type="text" data-scope-reason maxlength="500" placeholder="如：跨班支援、临时授权" value="${escapeHtml(scope.grantReason||"")}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
 }
 function renderModuleScopes(scopes) {
-  return `<section class="data-panel"><strong>分模块数据范围</strong><p>各模块独立授权；同模块多项范围取并集。日期为空表示不限制，未配置模块默认本人。</p>${Object.entries(scopeModuleLabels).map(([module,label])=>`<fieldset><legend>${label}</legend><div data-module-scopes="${module}">${(scopes.filter(s=>s.module===module).length?scopes.filter(s=>s.module===module):[{scopeType:"self"}]).map(s=>moduleScopeRow(module,s)).join("")}</div><button type="button" class="link-btn" data-scope-add="${module}">增加范围</button></fieldset>`).join("")}</section>`;
+  return `<section class="data-panel"><strong>分模块数据范围</strong><p>各模块独立授权；同模块多项范围取并集。资源类别为空=该模块全部资源，指定资源=仅该资源的动作生效（资源之间不互相借用）。日期为空表示不限制，未配置模块默认本人。</p>${Object.entries(scopeModuleLabels).map(([module,label])=>`<fieldset><legend>${label}</legend><div data-module-scopes="${module}">${(scopes.filter(s=>s.module===module).length?scopes.filter(s=>s.module===module):[{scopeType:"self"}]).map(s=>moduleScopeRow(module,s)).join("")}</div><button type="button" class="link-btn" data-scope-add="${module}">增加范围</button></fieldset>`).join("")}</section>`;
 }
 function readModuleScopes() {
-  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value,grantReason:row.querySelector("[data-scope-reason]")?.value||""}));
+  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,resource:row.querySelector("[data-scope-resource]")?.value||"",scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value,grantReason:row.querySelector("[data-scope-reason]")?.value||""}));
 }
 
 function renderOrganizationSettings() {
@@ -5210,7 +5212,7 @@ async function loadActivePageData({ force = true } = {}) {
   if (page === "settingsPage" && (force || !loaded.has("users"))) {
     await loadPersonnelDirectories(["info", "accounts", "organizations"]);
     state.users = await userService.list();
-    state.rbacCatalog = hasRbac("roles.read") ? await rbacService.catalog() : { roles: [], permissions: [] };
+    state.rbacCatalog = hasRbac("roles.read") ? await rbacService.catalog() : { roles: [], permissions: [], scopeResources: [] };
     loaded.add("users");
   }
   if (page === "personnelPage" && personnelArea === "master") {

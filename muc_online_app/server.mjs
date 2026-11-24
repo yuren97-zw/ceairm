@@ -75,7 +75,7 @@ import {
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
 import { classifyPosition, identityQualityReport } from "./identity-classification.mjs";
-import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS, CADRE_GROUP_CODE } from "./personnel-access.mjs";
+import { createPersonnelAccess, preflightOrganizations, migratePersonnelFoundation, SENSITIVE_FIELDS, ORGANIZATION_FIELDS, MODULE_LABELS, CADRE_GROUP_CODE, moduleResources } from "./personnel-access.mjs";
 import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
@@ -241,6 +241,25 @@ function ensureColumn(table, column, definition) {
   if (!exists) db.exec(`alter table ${table} add column ${column} ${definition}`);
 }
 
+// S4：rbac_user_scopes 统一插入（resource/grant 列按实际 schema 动态拼接）。
+let scopeSchemaCache = null;
+function scopeSchemaFlags() {
+  if (scopeSchemaCache) return scopeSchemaCache;
+  const names = db.kind === "postgres"
+    ? db.prepare("select column_name as name from information_schema.columns where table_schema=current_schema() and table_name='rbac_user_scopes'").all().map(row => row.name)
+    : db.prepare("pragma table_info(rbac_user_scopes)").all().map(row => row.name);
+  scopeSchemaCache = { resource: names.includes("resource"), grant: names.includes("grant_reason") && names.includes("granted_by") };
+  return scopeSchemaCache;
+}
+function insertUserScope(scope) {
+  const flags = scopeSchemaFlags();
+  const columns = ["id", "user_id", "module", "scope_type", "scope_id", "valid_from", "valid_to", "created_at", "updated_at"];
+  const values = [scope.id, scope.userId, scope.module, scope.scopeType, scope.scopeId ?? "", scope.validFrom ?? "", scope.validTo ?? "", scope.createdAt, scope.updatedAt];
+  if (flags.resource) { columns.splice(3, 0, "resource"); values.splice(3, 0, scope.resource ?? ""); }
+  if (flags.grant) { columns.push("grant_reason", "granted_by"); values.push(String(scope.grantReason ?? "").slice(0, 500), scope.grantedBy ?? ""); }
+  db.prepare(`insert into rbac_user_scopes(${columns.join(",")}) values(${columns.map(() => "?").join(",")})`).run(...values);
+}
+
 function settingValue(key, fallback) {
   const row = db.prepare("select value from settings where key=?").get(key);
   return row ? json(row.value, fallback) : fallback;
@@ -358,8 +377,13 @@ function rbacSnapshot(userId) {
     join rbac_roles r on r.id=ur.role_id
     where ur.user_id=? and r.status='active' order by p.code`).all(userId).map(row => row.code);
   let scopes;
-  try { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo,grant_reason as grantReason,granted_by as grantedBy from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
-  catch { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+  try { scopes = db.prepare("select id,module,resource,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo,grant_reason as grantReason,granted_by as grantedBy from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+  catch {
+    try { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo,grant_reason as grantReason,granted_by as grantedBy from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+    catch { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+  }
+  // S4：resource='' 表示模块级范围；旧库无该列时统一补空串。
+  scopes = (scopes || []).map(scope => ({ ...scope, resource: scope.resource || "" }));
   return { roles: assignedRoles, permissions, scopes };
 }
 
@@ -381,24 +405,28 @@ function actionScopeModule(permission) {
   return binding.scopeModule;
 }
 function actionScopeAllows(user, permission, personId) {
-  const module = actionScopeModule(permission);
-  if (module === null) return true;
-  return personnelAccess.allows(user, module, personId);
+  const binding = scopeBindingFor(permission);
+  if (!binding) throw Object.assign(new Error(`权限码缺少动作→范围绑定声明：${permission}`), { status: 500 });
+  if (binding.scopeModule === null) return true;
+  return personnelAccess.allows(user, binding.scopeModule, personId, binding.resource);
 }
 function actionScopeHasAll(user, permission) {
-  const module = actionScopeModule(permission);
-  if (module === null) return true;
-  return personnelAccess.hasAll(user, module);
+  const binding = scopeBindingFor(permission);
+  if (!binding) throw Object.assign(new Error(`权限码缺少动作→范围绑定声明：${permission}`), { status: 500 });
+  if (binding.scopeModule === null) return true;
+  return personnelAccess.hasAll(user, binding.scopeModule, binding.resource);
 }
 function requireActionScope(user, permission, personId, active = false) {
-  const module = actionScopeModule(permission);
-  if (module === null) return null;
-  return personnelAccess.requirePerson(user, module, personId, active);
+  const binding = scopeBindingFor(permission);
+  if (!binding) throw Object.assign(new Error(`权限码缺少动作→范围绑定声明：${permission}`), { status: 500 });
+  if (binding.scopeModule === null) return null;
+  return personnelAccess.requirePerson(user, binding.scopeModule, personId, active, binding.resource);
 }
 function actionScopePredicate(user, permission, alias = "p") {
-  const module = actionScopeModule(permission);
-  if (module === null) return { sql: "1=1", params: [] };
-  return personnelAccess.predicate(user, module, alias);
+  const binding = scopeBindingFor(permission);
+  if (!binding) throw Object.assign(new Error(`权限码缺少动作→范围绑定声明：${permission}`), { status: 500 });
+  if (binding.scopeModule === null) return { sql: "1=1", params: [] };
+  return personnelAccess.predicate(user, binding.scopeModule, alias, binding.resource);
 }
 
 function dataScopeAllowsUser(user, targetAccountId, module = "info") {
@@ -1958,7 +1986,7 @@ function ensureSuperAccountRbac() {
  db.prepare("delete from rbac_user_roles where user_id=?").run(SUPER_ACCOUNT_ID);
  db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(SUPER_ACCOUNT_ID,role.id,now());
  db.prepare("delete from rbac_user_scopes where user_id=?").run(SUPER_ACCOUNT_ID);
- for(const module of SCOPE_MODULES) db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,'all','','','',?,?)").run(randomId("scope"),SUPER_ACCOUNT_ID,module,now(),now());
+ for(const module of SCOPE_MODULES) insertUserScope({id:randomId("scope"),userId:SUPER_ACCOUNT_ID,module,resource:"",scopeType:"all",scopeId:"",validFrom:"",validTo:"",createdAt:now(),updatedAt:now()});
 }
 
 function backfillRecordRecipients() {
@@ -8247,14 +8275,11 @@ function replaceAccountAccess(userId, access, grantedBy="") {
   const insertRole = db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)");
   access.roleRows.forEach(role => insertRole.run(userId, role.id, now()));
   db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-  const scopeCols = db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "pragma_table_info('rbac_user_scopes')")).get().n;
-  const insertScope = scopeCols === 2
-    ? db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)")
-    : db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
-  access.scopes.forEach(scope => {
-    if (scopeCols === 2) insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now(), String(scope.grantReason||"").slice(0,500), grantedBy);
-    else insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now());
-  });
+  access.scopes.forEach(scope => insertUserScope({
+    id: randomId("scope"), userId, module: scope.module, resource: scope.resource || "", scopeType: scope.scopeType,
+    scopeId: scope.scopeId, validFrom: scope.validFrom, validTo: scope.validTo, createdAt: now(), updatedAt: now(),
+    grantReason: scope.grantReason || "", grantedBy
+  }));
 }
 
 async function route(req,res) {
@@ -8907,7 +8932,8 @@ async function routeRequestMain(req, res) {
       if (!manager) return;
       const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
       const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
-      return send(res, 200, { roles: rolesOut, permissions });
+      const scopeResources = SCOPE_MODULES.flatMap(module => moduleResources(module).map(resource => ({ module, resource, label: RESOURCE_LABELS[resource] || resource })));
+      return send(res, 200, { roles: rolesOut, permissions, scopeResources });
     }
     if (method === "POST" && url.pathname === "/api/admin/roles") {
       const manager = requireRbacPermission(req, res, "roles.manage");
@@ -10333,12 +10359,11 @@ async function routeRequestMain(req, res) {
             for (const role of update.access.roleRows) db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(update.id,role.id,now());
           }
           for (const module of modules) db.prepare("delete from rbac_user_scopes where user_id=? and module=?").run(update.id,module);
-          const hasGrantColumns = Number(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "(select name from pragma_table_info('rbac_user_scopes') where name in ('grant_reason','granted_by'))")).get().n) === 2;
-          for (const scope of update.scopes) {
-            const values=[randomId("scope"),update.id,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];
-            if(hasGrantColumns) db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)").run(...values,scope.grantReason,manager.id);
-            else db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(...values);
-          }
+          for (const scope of update.scopes) insertUserScope({
+            id: randomId("scope"), userId: update.id, module: scope.module, resource: scope.resource || "", scopeType: scope.scopeType,
+            scopeId: scope.scopeId, validFrom: scope.validFrom, validTo: scope.validTo, createdAt: now(), updatedAt: now(),
+            grantReason: scope.grantReason, grantedBy: manager.id
+          });
           db.prepare("update users set updated_at=? where id=?").run(now(),update.id);
           audit(manager,"bulk_update_account_access","user",update.id,JSON.stringify({roleMode:changeRoles?payload.roleMode:null,roles:update.access?.roleCodes,modules,scopes:update.scopes}));
         }
@@ -10516,7 +10541,7 @@ async function routeRequestMain(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
+          item.scopes.forEach(scope=>insertUserScope({id:randomId("scope"),userId,module:scope.module,resource:scope.resource||"",scopeType:scope.scopeType,scopeId:scope.scopeId,validFrom:scope.validFrom,validTo:scope.validTo,createdAt:now(),updatedAt:now(),grantReason:scope.grantReason||"",grantedBy:""}));
         }
         db.exec("commit");
       } catch (error) {
@@ -11047,7 +11072,8 @@ async function routeRequestMaintenance(req, res) {
       if (!manager) return;
       const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
       const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
-      return send(res, 200, { roles: rolesOut, permissions });
+      const scopeResources = SCOPE_MODULES.flatMap(module => moduleResources(module).map(resource => ({ module, resource, label: RESOURCE_LABELS[resource] || resource })));
+      return send(res, 200, { roles: rolesOut, permissions, scopeResources });
     }
     if (method === "POST" && url.pathname === "/api/admin/roles") {
       const manager = requireRbacPermission(req, res, "roles.manage");
@@ -12995,7 +13021,7 @@ async function routeRequestMaintenance(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
+          item.scopes.forEach(scope=>insertUserScope({id:randomId("scope"),userId,module:scope.module,resource:scope.resource||"",scopeType:scope.scopeType,scopeId:scope.scopeId,validFrom:scope.validFrom,validTo:scope.validTo,createdAt:now(),updatedAt:now(),grantReason:scope.grantReason||"",grantedBy:""}));
         }
         db.exec("commit");
       } catch (error) {

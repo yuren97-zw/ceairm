@@ -1,4 +1,16 @@
 import { SCOPE_MODULES, migrateIdentity } from "./personnel-identity.mjs";
+import { ACTION_SCOPE_BINDINGS } from "./rbac-policy.mjs";
+
+// 模块→资源类别（来自动作绑定表，V1.1 §4.3）：用于校验资源级范围配置。
+const MODULE_RESOURCES = new Map();
+for (const binding of Object.values(ACTION_SCOPE_BINDINGS)) {
+  if (!binding?.scopeModule || !binding.resource) continue;
+  if (!MODULE_RESOURCES.has(binding.scopeModule)) MODULE_RESOURCES.set(binding.scopeModule, new Set());
+  MODULE_RESOURCES.get(binding.scopeModule).add(binding.resource);
+}
+export function moduleResources(module) {
+  return [...(MODULE_RESOURCES.get(module) || [])].sort();
+}
 
 export const MODULE_LABELS = { personnel: "人员与能力", accounts: "登录账户管理", info: "信息传达", maintenance: "维修管控", hours: "工时统计", attendance: "考勤管理" };
 export const SENSITIVE_FIELDS = ["actualGrade"];
@@ -38,16 +50,20 @@ export function scopeDate(value, end = false) {
 export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, superAccountId }) {
   const isSuper = user => user?.id === superAccountId;
   const permission = (user, code) => { if (!hasRbac(user, code)) throw error("当前账号没有操作权限", 403, { permission: code }); };
-  function activeScopes(user, module) {
+  function activeScopes(user, module, resource) {
     if (!SCOPE_MODULES.includes(module)) throw error("不支持的数据范围模块");
-    if (isSuper(user)) return [{ module, scopeType: "all" }];
+    if (isSuper(user)) return [{ module, resource: resource === undefined ? "" : resource, scopeType: "all" }];
     const stamp = Date.now();
-    return (user?.dataScopes || []).filter(s => s.module === module && (!s.validFrom || (Number.isFinite(Date.parse(s.validFrom)) && Date.parse(s.validFrom) <= stamp)) && (!s.validTo || (Number.isFinite(Date.parse(s.validTo)) && Date.parse(s.validTo) >= stamp)));
+    const rows = (user?.dataScopes || []).filter(s => s.module === module && (!s.validFrom || (Number.isFinite(Date.parse(s.validFrom)) && Date.parse(s.validFrom) <= stamp)) && (!s.validTo || (Number.isFinite(Date.parse(s.validTo)) && Date.parse(s.validTo) >= stamp)));
+    // 模块级检查（未指定资源）：模块级行 + 全部资源级行并集，保持既有模块行为。
+    // 动作级检查（指定资源）：仅该资源行或模块级行生效——资源之间不互相借用（§4.2 禁令）。
+    if (resource === undefined) return rows;
+    return rows.filter(s => !s.resource || s.resource === resource);
   }
-  const hasAll = (user, module) => activeScopes(user, module).some(s => s.scopeType === "all");
-  function predicate(user, module, alias = "p") {
+  const hasAll = (user, module, resource) => activeScopes(user, module, resource).some(s => s.scopeType === "all");
+  function predicate(user, module, alias = "p", resource) {
     if (!user?.id) return { sql: "0=1", params: [] };
-    const scopes = activeScopes(user, module);
+    const scopes = activeScopes(user, module, resource);
     if (scopes.some(s => s.scopeType === "all")) return { sql: "1=1", params: [] };
     const actor = db.prepare("select * from personnel where id=?").get(user.personId || "");
     const parts = [], params = [];
@@ -63,8 +79,8 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     }
     return { sql: parts.length ? `(${parts.join(" or ")})` : "0=1", params };
   }
-  function allows(user, module, personId) {
-    const p = predicate(user, module);
+  function allows(user, module, personId, resource) {
+    const p = predicate(user, module, "p", resource);
     return !!db.prepare(`select 1 from personnel p where p.id=? and (${p.sql})`).get(personId || "", ...p.params);
   }
   function canViewActualGrade(user, personId) {
@@ -81,8 +97,8 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
   function canExportActualGrade(user) {
     return isSuper(user) || (hasRbac(user, "personnel.actual_grade.view") && hasRbac(user, "personnel.actual_grade.export"));
   }
-  function requirePerson(user, module, personId, active = false) {
-    const p = predicate(user, module);
+  function requirePerson(user, module, personId, active = false, resource) {
+    const p = predicate(user, module, "p", resource);
     const row = db.prepare(`select p.* from personnel p where p.id=? and (${p.sql})${active ? " and p.data_status='active'" : ""}`).get(personId || "", ...p.params);
     if (!row) throw error("未找到人员", 404);
     return row;
@@ -92,8 +108,9 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
     const seen = new Set();
     const result = input.map(s => {
       if (!s || typeof s !== "object" || !SCOPE_MODULES.includes(s.module)) throw error("数据范围必须包含有效模块，旧格式不再支持");
-      const type = s.scopeType, id = text(s.scopeId);
+      const type = s.scopeType, id = text(s.scopeId), resource = text(s.resource);
       if (!["self","administrative_team","personnel_group","department","specified_teams","specified_groups","all"].includes(type)) throw error("数据范围类型无效");
+      if (resource && !moduleResources(s.module).includes(resource)) throw error("数据范围资源类别无效");
       if (["specified_teams","specified_groups"].includes(type)) {
         const org = db.prepare("select * from organization_units where id=? and status='active'").get(id);
         const expected={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
@@ -105,12 +122,12 @@ export function createPersonnelAccess({ db, hasRbac, randomId, now, audit, super
       if (type === "department" && !actor?.department_id) throw error("未归属部门，不能配置“所属部门”");
       const validFrom = scopeDate(s.validFrom), validTo = scopeDate(s.validTo, true);
       if (validFrom && validTo && validFrom > validTo) throw error("范围结束日期不能早于开始日期");
-      const key = `${s.module}:${type}:${id}`;
+      const key = `${s.module}:${resource}:${type}:${id}`;
       if (seen.has(key)) throw error("同模块的数据范围重复");
       seen.add(key);
-      return { module: s.module, scopeType: type, scopeId: id, validFrom, validTo };
+      return { module: s.module, resource, scopeType: type, scopeId: id, validFrom, validTo };
     });
-    for (const module of SCOPE_MODULES) if (!result.some(s => s.module === module)) result.push({ module, scopeType: "self", scopeId: "", validFrom: "", validTo: "" });
+    for (const module of SCOPE_MODULES) if (!result.some(s => s.module === module && !s.resource)) result.push({ module, resource: "", scopeType: "self", scopeId: "", validFrom: "", validTo: "" });
     return result;
   }
   function redact(user, row) {
@@ -314,7 +331,12 @@ export function migrateOrganizations(db, now, randomId, { withinTransaction = fa
     db.prepare("update personnel set department_id=?,personnel_group_id=?,administrative_team_id=null,department='航线维修车间',home_team='' where employee_no='54002010'").run(dep,cadre);
     const scopes=db.prepare("select * from rbac_user_scopes").all();
     db.prepare("delete from rbac_user_scopes").run();
-    const insertScope=db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?) on conflict(user_id,module,scope_type,scope_id) do nothing");
+    const scopeHasResource=db.kind==="postgres"
+      ? !!db.prepare("select 1 from information_schema.columns where table_schema=current_schema() and table_name='rbac_user_scopes' and column_name='resource'").get()
+      : db.prepare("pragma table_info(rbac_user_scopes)").all().some(row=>row.name==="resource");
+    const insertScope=db.prepare(scopeHasResource
+      ? "insert into rbac_user_scopes(id,user_id,module,resource,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,'',?,?,?,?,?,?) on conflict(user_id,module,resource,scope_type,scope_id) do nothing"
+      : "insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?) on conflict(user_id,module,scope_type,scope_id) do nothing");
     for (const scope of scopes) {
       const mapped={home_team:"administrative_team",managed_teams:"specified_teams",workshop:"personnel_group",personnel_category:"personnel_group",specified_workshops:"specified_groups",specified_categories:"specified_groups"}[scope.scope_type]||scope.scope_type;
       insertScope.run(scope.id,scope.user_id,scope.module,mapped,scope.scope_id||"",scopeDate(scope.valid_from),scopeDate(scope.valid_to,true),scope.created_at,scope.updated_at);

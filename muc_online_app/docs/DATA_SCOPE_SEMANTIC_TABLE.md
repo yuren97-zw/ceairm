@@ -5,6 +5,7 @@
 ## 总则
 
 - 数据范围绑定 **用户+模块**（运行时执行层）；**动作→范围的绑定声明登记在 `rbac-policy.mjs` 的 `ACTION_SCOPE_BINDINGS`**（S1，2026-11-25）：每个权限码声明其检查的 `scopeModule` 与 `resource`。
+- **S4（2026-11-25）资源级数据范围**：`rbac_user_scopes` 增加 `resource` 列（迁移 071；SQLite 由 migrateIdentity 重建）。`resource=''` = 模块级范围（兼容存量，覆盖该模块全部资源）；非空 = 仅对该资源类别的动作生效，**资源之间不互相借用**。模块级查询（列表/人员选择等未指定资源的检查）取模块级+资源级并集以保持既有行为；动作级检查（`actionScope*`，资源来自绑定表）严格匹配。管理界面数据权限页签支持按资源类别配置。
 - **S2（2026-11-25）运行时绑定 API**：`actionScopeAllows / actionScopeHasAll / actionScopePredicate / requireActionScope`（server.mjs）——范围模块由绑定表推导，调用点不再手写模块；核心检查函数（评审/变更/派工/更正/跨期/工作流/统计/导出/导入/账户校验）已迁移。未配对动作性检查点预算=0（仅剩通用守卫豁免）。S3（2026-11-25）：`hours.*` 五码退役；考勤两服务（attendance-service / attendance-offset-service）迁移到绑定驱动 API，旧注入桩 `canViewPerson` 移除。
 - 同一模块多范围 **OR 合并**（并集），无有效范围时 **fail-closed**（`0=1`）。
 - 缺功能权限 → 403；范围外目标 → 404（不泄露存在性）。
