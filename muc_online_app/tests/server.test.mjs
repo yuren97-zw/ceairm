@@ -6493,3 +6493,31 @@ test('bulk account access checks role and scope permissions independently and en
  const result=await send({accountIds:[actor.id],moduleScopes:{info:[{module:'info',scopeType:'self'}]}});assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));
  assert.equal((await request('/api/me',{cookie})).res.statusCode,401);
 });
+
+test('personnel import records the confirming account on creation and organization changes', async () => {
+  const login = await request('/api/login', {method:'POST',body:{username:'54002010',password:'muc2026'}});
+  assert.equal(login.res.statusCode,200);
+  const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const {randomInt,randomUUID}=await import('node:crypto');
+  const suffix=randomUUID().slice(0,8),employeeNo=String(randomInt(91000000,92000000));
+  const departments=['A','B'].map(letter=>({id:'import-org-'+letter+'-'+suffix,name:'导入测试部门'+letter+suffix}));
+  const stamp=new Date().toISOString();
+  for(const dep of departments)db.prepare("insert into organization_units(id,code,name,unit_type,parent_id,status,maintenance_eligible,created_at,updated_at) values(?,?,?,'department','','active',0,?,?)").run(dep.id,dep.id,dep.name,stamp,stamp);
+  async function confirm(department){
+    const stage=await request('/api/personnel/imports',{cookie,method:'POST',body:{type:'personnel',fileName:'personnel.csv',rows:[{'员工工号':employeeNo,'员工姓名':'导入测试人员','部门':department.name}]}});
+    assert.equal(stage.res.statusCode,201,JSON.stringify(stage.payload));
+    assert.equal(stage.payload.batch.summary.errors,0,JSON.stringify(stage.payload.issues));
+    const result=await request('/api/personnel/imports/'+stage.payload.batch.id+'/confirm',{cookie,method:'POST',body:{}});
+    assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));
+    return result.payload.result;
+  }
+  assert.equal((await confirm(departments[0])).created,1);
+  assert.equal((await confirm(departments[1])).updated,1);
+  const person=db.prepare('select id,department_id from personnel where employee_no=?').get(employeeNo);
+  assert.equal(person.department_id,departments[1].id);
+  const history=db.prepare('select department_id,changed_by,change_reason from personnel_organization_history where person_id=? order by change_reason').all(person.id);
+  assert.deepEqual(history.map(row=>({...row})),[
+    {department_id:departments[0].id,changed_by:'54002010',change_reason:'初始创建'},
+    {department_id:departments[1].id,changed_by:'54002010',change_reason:'导入更新组织归属'}
+  ]);
+});

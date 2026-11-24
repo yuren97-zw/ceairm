@@ -7799,7 +7799,7 @@ function visibleImportBatch(batch,user,context=null) {
    return hasRbac(user,"personnel.actual_grade.manage") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
  });
 }
-function confirmPersonnelRows(batchId, rows, user = null) {
+function confirmPersonnelRows(batchId, rows, user) {
   const upsert = db.prepare(`insert into personnel(id,employee_no,name,department,home_team,is_instructor,position_code,actual_grade,employment_status,source_batch_id,data_status,created_at,updated_at)
     values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(employee_no) do update set name=excluded.name,department=excluded.department,home_team=excluded.home_team,is_instructor=excluded.is_instructor,position_code=excluded.position_code,actual_grade=excluded.actual_grade,employment_status=excluded.employment_status,source_batch_id=excluded.source_batch_id,updated_at=excluded.updated_at`);
   let created = 0, updated = 0, skipped = 0, selfPositionBlocked = 0;
@@ -7829,7 +7829,7 @@ function confirmPersonnelRows(batchId, rows, user = null) {
     const savedPerson = findImportedPerson(employeeNo);
     personnelAccess.saveOrganization(savedPerson.id,org);
     if(!existing||String(existing.department_id||"")!==String(org.department_id||"")||String(existing.personnel_group_id||"")!==String(org.personnel_group_id||"")||String(existing.administrative_team_id||"")!==String(org.administrative_team_id||"")){
-      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,manager.id,"初始创建",now());
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,user.id,existing?"导入更新组织归属":"初始创建",now());
       const linked=db.prepare("select id from users where person_id=?").get(savedPerson.id);
       if(linked && linked.id!==SUPER_ACCOUNT_ID)revokeUserSessions(linked.id,{bumpCredentialVersion:true});
     }
