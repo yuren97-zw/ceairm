@@ -11205,12 +11205,12 @@ document.addEventListener("change", async event => {
   }
   if (event.target.id === "userRoleFilter") {
     state.userRoleFilter = event.target.value;
+    state.selectedUserIds.clear();
     renderSettings();
     return;
   }
   if (event.target.id === "userSelectAll") {
     $$("[data-user-select]:not(:disabled)").forEach(input => {
-    state.selectedUserIds.clear();
       input.checked = event.target.checked;
       if (input.checked) state.selectedUserIds.add(input.dataset.userSelect);
       else state.selectedUserIds.delete(input.dataset.userSelect);

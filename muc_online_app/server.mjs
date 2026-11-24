@@ -10223,20 +10223,6 @@ async function routeRequestMain(req, res) {
       audit(manager, "create_account", "user", userId, JSON.stringify({ username, personId: person.id, roles: access.roleCodes, scopes: access.scopes }));
       return send(res, 201, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
     }
-    const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
-    if (accountRoute && method === "PUT") {
-      const manager = requireRbacPermission(req, res, "accounts.update");
-      if (!manager) return;
-      const userId = routeParam(accountRoute[1]);
-      if (userId === SUPER_ACCOUNT_ID) {
-        audit(manager, "reject_update_super_account", "user", userId);
-        return send(res, 403, { error: "唯一超级账号不可修改；仅允许本人修改密码" });
-      }
-      const existing = db.prepare("select * from users where id=?").get(userId);
-      if (!existing) return send(res, 404, { error: "未找到账号" });
-      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
-      const payload = await bodyJson(req);
-      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
     if (method === "POST" && url.pathname === "/api/admin/accounts/bulk-access") {
       const manager = requireRbacPermission(req, res, "accounts.update");
       if (!manager) return;
@@ -10297,6 +10283,20 @@ async function routeRequestMain(req, res) {
       for (const id of ids) revokeUserSessions(id,{bumpCredentialVersion:true});
       return send(res,200,{ok:true,updated:ids.length});
     }
+    const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
+    if (accountRoute && method === "PUT") {
+      const manager = requireRbacPermission(req, res, "accounts.update");
+      if (!manager) return;
+      const userId = routeParam(accountRoute[1]);
+      if (userId === SUPER_ACCOUNT_ID) {
+        audit(manager, "reject_update_super_account", "user", userId);
+        return send(res, 403, { error: "唯一超级账号不可修改；仅允许本人修改密码" });
+      }
+      const existing = db.prepare("select * from users where id=?").get(userId);
+      if (!existing) return send(res, 404, { error: "未找到账号" });
+      personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+      const payload = await bodyJson(req);
+      if (!hasRbac(manager, "accounts.roles.assign")) return send(res, 403, { error: "当前账号没有分配角色权限", permission: "accounts.roles.assign" });
       if (!hasRbac(manager, "accounts.scopes.assign")) return send(res, 403, { error: "当前账号没有分配数据范围权限", permission: "accounts.scopes.assign" });
       const person = validateAccountIdentity(payload, existing);
       const access = validateAccountAccess(payload,person.id);
