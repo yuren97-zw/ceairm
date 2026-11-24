@@ -43,6 +43,9 @@ S1+S2（2026-11-25）处置：
 
 ## 交叉引用
 
+- 业务条件（不得自审/班组长资格/在职复核/CAS/字段/有效期）：`docs/BUSINESS_CONDITION_MATRIX.md` + `tests/business-condition-audit.test.mjs`
+
+
 - 范围实现：`personnel-access.mjs` `predicate()` / `allows()` / `requirePerson()`
 - 权限并集：`server.mjs` `rbacSnapshot()`
 - 权限矩阵：`scripts/rbac-permission-matrix-tests.mjs`（114/39）

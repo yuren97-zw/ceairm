@@ -27,7 +27,6 @@ const MODULE_LITERAL = /["'](personnel|accounts|info|maintenance|hours|attendanc
 // 动态范围检查点豁免：无法静态确定权限码的调用点（权限码作为参数/桩注入），必须写明原因。
 // 上限 8 条，防止用豁免清单掩盖新增的未配对检查点。
 const EXEMPT_SITE_MARKERS = {
-  "function dataScopeAllowsUser": "数据范围工具函数定义行，不是调用点",
   'routePath.startsWith("/api/maintenance/")': "路由级通用维修守卫：对任意维修路由做全范围判断，不对应单一动作",
   "Array.isArray(value))return value.filter": "通用 payload 人员过滤辅助函数：多动作共用，动作码在上游路由",
   "value.personId && value.personId!==user.personId": "通用 payload 人员过滤辅助函数：多动作共用",
@@ -69,7 +68,8 @@ for (const [name, source] of Object.entries(FILES)) {
   const sites = [];
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    // 纯函数定义行（如 dataScopeAllowsUser 的签名）不是调用点，但保留为已知未配对基线，不做跳过。
+    // 纯函数定义行（如 dataScopeAllowsUser 的签名）不是调用点，直接跳过。
+    if (/^\s*(export\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/.test(line)) continue;
     // 注入型授权入口：工厂注入的 can/qualify 契约内包含范围检查（见 server.mjs 实例化处）。
     if (name === "maintenance-standard-publication.mjs" && /\bcan\(/.test(line)) {
       // standardPublicationCan（server.mjs:2475）= maintenance.standard.publish + standardPublicationAuthorized(hasAll 'maintenance')
