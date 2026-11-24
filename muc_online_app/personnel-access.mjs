@@ -295,6 +295,8 @@ export function migrateOrganizations(db, now, randomId, { withinTransaction = fa
     else db.exec("alter table personnel_organization_history add column personnel_group_id text");
   }
   if(!historyColumns.has("administrative_team_id"))db.exec("alter table personnel_organization_history add column administrative_team_id text");
+  if(!historyColumns.has("changed_by"))db.exec("alter table personnel_organization_history add column changed_by text not null default ''");
+  if(!historyColumns.has("change_reason"))db.exec("alter table personnel_organization_history add column change_reason text not null default ''");
   const report = preflightOrganizations(db);
   if (!report.ok) throw error("组织迁移存在待确认归属，尚未切换",409,report);
   if (!withinTransaction) db.exec("begin immediate");
