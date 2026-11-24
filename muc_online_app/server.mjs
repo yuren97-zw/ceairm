@@ -1,3 +1,4 @@
+import {loginAuditFilters,readLoginAudit,loginAuditXlsx} from './login-audit.mjs';
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
 import {createHandoverService} from './handover-service.mjs';
@@ -8431,6 +8432,19 @@ async function routeRequestMain(req, res) {
         startedAt: serviceStartedAt,
         time: new Date().toISOString()
       });
+    }
+    if (method === "GET" && ["/api/admin/audit/logins","/api/admin/audit/logins/export"].includes(url.pathname)) {
+      const actor = requireRbacPermission(req,res,"audit.read");
+      if (!actor) return;
+      const exporting=url.pathname.endsWith('/export');
+      if(exporting&&!requireRbacPermission(req,res,"audit.export"))return;
+      let filters;
+      try { filters=loginAuditFilters(url.searchParams); } catch(error){return send(res,400,{error:error.message});}
+      const data=readLoginAudit(db,filters,{all:exporting});
+      if(!exporting)return send(res,200,data);
+      const generatedAt=now(),file=loginAuditXlsx(data,generatedAt);
+      audit(actor,"audit_login_export","audit_logs","login",JSON.stringify({filters,count:data.total}));
+      return sendBinary(res,200,file,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",{"Content-Disposition":`attachment; filename="login-audit-${filters.from}-${filters.to}.xlsx"`,"Cache-Control":"no-store"});
     }
     if (method === "GET" && url.pathname === "/api/me") {
       const user = currentUser(req);

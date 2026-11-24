@@ -1800,7 +1800,7 @@ function canView(tab) {
 }
 
 function canOpenSettings() {
-  return ["accounts.read", "roles.read", "settings.manage"].some(hasRbac);
+  return ["accounts.read", "roles.read", "settings.manage", "audit.read"].some(hasRbac);
 }
 
 // 层①导航树查询（V1.1 §4.1）：优先从服务端下发的 navigationTree 查找，退化为 hasRbac。
@@ -2751,7 +2751,7 @@ function visibleNavigationFromPermissions(perms) {
     { id: "personnelPage", label: "人员与能力", anyOf: ["capability.overview.view","personnel.list.view"] },
     { id: "hoursPage", label: "工时统计", anyOf: ["hours.read"] },
     { id: "attendancePage", label: "考勤管理", anyOf: ["attendance.read"] },
-    { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage"] }
+    { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage","audit.read"] }
   ];
   return NAV.filter(n => [...n.anyOf].some(p => perms.has(p))).map(n => n.label);
 }
@@ -2900,7 +2900,8 @@ function settingsTabOptions() {
   return [
     ["accounts", "登录账户管理", hasRbac("accounts.read")],
     ["roles", "角色与权限", hasRbac("roles.read")],
-    ["general", "通用设置", hasRbac("settings.manage")]
+    ["general", "通用设置", hasRbac("settings.manage")],
+    ["audit", "审计", hasRbac("audit.read")]
   ].filter(([, , visible]) => visible);
 }
 
@@ -3628,8 +3629,12 @@ function renderSettings() {
   if (!tabs.some(([key]) => key === state.settingsTab)) state.settingsTab = tabs[0]?.[0] || "accounts";
   const content = state.settingsTab === "accounts" ? `<section class="settings-grid">${renderUserManagement()}</section>`
         : state.settingsTab === "roles" ? renderRbacCatalog()
-          : renderGeneralSettings();
+          : state.settingsTab === "audit" ? `<section data-login-audit>正在读取…</section>` : renderGeneralSettings();
   $("#settingsPanel").innerHTML = `<div class="settings-tabs">${tabs.map(([key, label]) => `<button class="chip ${state.settingsTab === key ? "active" : ""}" type="button" data-settings-tab="${key}">${label}</button>`).join("")}</div>${content}`;
+  if(state.settingsTab === "audit") {
+    const root=document.querySelector('[data-login-audit]'),accountId=state.user.id;
+    import('./login-audit.mjs').then(({mountLoginAudit})=>{if(root?.isConnected&&state.user.id===accountId)mountLoginAudit({root,api:apiRequest,escapeHtml,canExport:hasRbac('audit.export'),accountId});}).catch(error=>{if(root?.isConnected)root.textContent='审计页面加载失败，请切换页签重试：'+error.message;});
+  }
 }
 
 function renderEntryOptions() {
