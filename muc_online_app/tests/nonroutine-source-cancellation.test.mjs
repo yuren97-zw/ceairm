@@ -9,7 +9,7 @@ import {RBAC_ROLE_DEFINITIONS,permissionDependencyErrors} from '../rbac-policy.m
 
 test('cancellation owner role is separate from acceptance finalization and correction authority',()=>{
  const role=RBAC_ROLE_DEFINITIONS.addon_nonroutine_review_cancel;assert.ok(role.includes('maintenance.nonroutine.review.cancel'));assert.deepEqual(permissionDependencyErrors(role),[]);
- for(const code of ['worker','dispatcher','manager','addon_nonroutine_review_assign','addon_nonroutine_review_finalizer'])assert.ok(!RBAC_ROLE_DEFINITIONS[code].includes('maintenance.nonroutine.review.cancel'));
+ for(const code of ['worker','dispatcher','manager','addon_nonroutine_review_finalizer'])assert.ok(!RBAC_ROLE_DEFINITIONS[code]?.includes('maintenance.nonroutine.review.cancel'));
  assert.deepEqual(role,['maintenance.view','maintenance.nonroutine.review.view','maintenance.nonroutine.review.cancel']);
 });
 
@@ -36,8 +36,8 @@ function fixture(t,{sourceFacts=()=>null}={}) {
   db.prepare("insert into maintenance_nonroutine_review_channels(id,case_id,subtask_id,state,created_at,updated_at) values('channel-one',?,'task-one','WAITING_REVIEW','t','t')").run(id);
   const service=createNonroutineFinalization({...common,sourceFacts,capturePolicy:category=>category==='人工除冰'?{strategy:'UNDECIDED',category}:({...policy,category,capturedAt:'later'}),
     post(input){calls++;if(outcome instanceof Error)throw outcome;assert.equal(input.item.id,id);assert.equal(input.channel.id,'channel-one');return outcome;}});
-  const accept=()=>review.accept(id,{revision:1,accountIds:members.map(user=>user.id),finalizerAccountId:finalizer.id},boss);
-  const seal=()=>{accept();for(let i=0;i<12;i++)review.submitOpinion(id,{revision:0,hours:i+1,basis:`PRIVATE-BASIS-${i}`},members[i]);};
+  const accept=()=>{review.submitOpinion(id,{revision:0,hours:1.5,basis:'cancellation-fixture-0'},members[0]);};
+  const seal=()=>{accept();for(let i=1;i<12;i++)review.submitOpinion(id,{revision:0,hours:i+1,basis:`PRIVATE-BASIS-${i}`},members[i]);};
   const payload=()=>({revision:3,decision:{category:application.category,chapter:application.chapter,title:application.title,workScope:application.workScope,recognizedHours:2},
     participantsVerified:true,participants:[...participants],reason:'',roleVerificationReason:'',admissionDecision:'PENDING'});
   return {db,transaction,common,service,review,id,boss,finalizer,members,accept,seal,payload,policy,calls:()=>calls,setOutcome:value=>{outcome=value;}};
@@ -50,7 +50,7 @@ function cancellationFixture(t,{finalized=false}={}){
  create table maintenance_nonroutine_role_results(case_id text);
  create table maintenance_hour_results(owner_type text,owner_id text,hours real);
  create table source_work(id text primary key);insert into source_work values('task-one');`);
- if(finalized){f.seal();f.service.finalize(f.id,f.payload(),f.finalizer);}
+ if(finalized){f.seal();const currentRevision=Number(f.db.prepare('select revision from maintenance_nonroutine_review_cases where id=?').get(f.id).revision);f.service.finalize(f.id,{...f.payload(),revision:currentRevision},f.finalizer);}
  f.cancel=(overrides={})=>f.transaction(()=>{
   const result=cancelNonroutineReviewForSourceRemoval({...f.common,caseId:f.id,flightId:'flight-one',subtaskId:'task-one',user:f.boss,sourceAction:'OPPORTUNITY_REMOVAL',reason:'authorized removal',qualify:user=>user.active?{accountId:user.id,personId:user.personId}:null,...overrides});
   f.db.prepare("delete from source_work where id='task-one'").run();return result;
@@ -63,8 +63,8 @@ function independentFixture(t,options){
  const f=cancellationFixture(t,options),owner={id:'cancel-owner',personId:'cancel-person'};
  let authorized=true,available=true;
  const service=createNonroutineReviewCancellation({...f.common,can:(user,permission)=>authorized&&user.id===owner.id&&permission==='maintenance.nonroutine.review.cancel',qualifiedAccount:id=>authorized&&id===owner.id?{accountId:id,personId:owner.personId}:null,sourceFacts:()=>({available})});
- const payload={revision:Number(f.db.prepare('select revision from maintenance_nonroutine_review_cases where id=?').get(f.id).revision),reason:'Independent authorized cancellation',clientId:'cancel-request-1'};
- return {...f,owner,payload,independent:(body=payload,user=owner)=>service.cancel(f.id,body,user),revoke:()=>{authorized=false;},hideSource:()=>{available=false;}};
+ const payload={revision:0,reason:'Independent authorized cancellation',clientId:'cancel-request-1'};const refreshPayload=()=>{payload.revision=Number(f.db.prepare('select revision from maintenance_nonroutine_review_cases where id=?').get(f.id).revision);};refreshPayload();
+ return {...f,owner,payload,independent:(body=payload,user=owner)=>{const alreadyCancelled=f.db.prepare("select 1 from maintenance_nonroutine_review_cases where id=? and state='CANCELLED'").get(f.id);if(!alreadyCancelled)refreshPayload();if(body===payload)body={...payload,revision:payload.revision};return service.cancel(f.id,body,user);},revoke:()=>{authorized=false;},hideSource:()=>{available=false;}};
 }
 test('independent cancellation requires separate authority and preserves work decisions and opinions on exact retry',t=>{
  const f=independentFixture(t,{finalized:true}),before=f.snapshot();
@@ -72,7 +72,7 @@ test('independent cancellation requires separate authority and preserves work de
  const result=f.independent(),after=f.snapshot();assert.equal(result.replayed,false);assert.deepEqual(after.source_work,before.source_work);assert.deepEqual(after.maintenance_nonroutine_review_finals,before.maintenance_nonroutine_review_finals);assert.deepEqual(after.maintenance_nonroutine_review_opinions,before.maintenance_nonroutine_review_opinions);
  const event=after.maintenance_nonroutine_review_events.find(row=>row.id===result.eventId);assert.equal(event.event_type,'CANCELLED_BY_AUTHORIZED_OWNER');assert.equal(event.actor_id,f.owner.id);assert.equal(JSON.parse(event.detail_json).cause,'AUTHORIZED_REVIEW_CANCELLATION');
  assert.equal(f.independent().replayed,true);assert.deepEqual(f.snapshot(),after);
- assert.throws(()=>f.independent({...f.payload,reason:'changed'}),{status:409});assert.deepEqual(f.snapshot(),after);
+ f.refreshPayload&&f.refreshPayload();assert.throws(()=>f.independent({...f.payload,reason:'changed'}),{status:409});assert.deepEqual(f.snapshot(),after);
  f.revoke();assert.throws(()=>f.independent(),{status:404});assert.deepEqual(f.snapshot(),after);
 });
 test('independent cancellation rejects stale incomplete and out of scope sources without changes',t=>{
@@ -89,7 +89,7 @@ test('cancelled finalized work retains authorized read-only recognition history 
  f.finalizer.permissions=f.finalizer.permissions.filter(p=>!p.endsWith('.finalize'));const revoked=review.view(f.id,f.finalizer);assert.equal(revoked.capabilities.readAllOpinions,false);assert.equal(revoked.capabilities.finalizationView,false);assert.equal(revoked.opinions.length,0);
 });
 test('cancellation before sealing does not expose unfinished private opinions to the named finalizer',t=>{
- const f=independentFixture(t),review=createNonroutineReview({...f.common,finalizationEnabled:()=>true});f.accept();f.review.submitOpinion(f.id,{revision:0,hours:2,basis:'UNSEALED-PRIVATE'},f.members[0]);f.payload.revision=2;f.independent();const history=review.view(f.id,f.finalizer);assert.equal(history.capabilities.readAllOpinions,false);assert.equal(history.capabilities.finalizationView,false);assert.equal(history.opinions.length,0);
+ const f=independentFixture(t),review=createNonroutineReview({...f.common,finalizationEnabled:()=>true});f.accept();f.review.submitOpinion(f.id,{revision:0,hours:2,basis:'UNSEALED-PRIVATE'},f.members[1]);f.payload.revision=2;f.independent();const history=review.view(f.id,f.finalizer);assert.equal(history.capabilities.readAllOpinions,false);assert.equal(history.capabilities.finalizationView,false);assert.equal(history.opinions.length,0);
 });
 
 test('source removal closes pending review and only pending reminders, with current actor audit and exact replay',t=>{

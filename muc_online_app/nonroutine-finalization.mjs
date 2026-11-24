@@ -38,7 +38,8 @@ export function createNonroutineFinalization({db,transaction,can,qualifiedAccoun
   function load(id,user,write=false) {
     const item=db.prepare('select * from maintenance_nonroutine_review_cases where id=?').get(id);
     if(!item || !can(user,permission(write?'finalize':'view'),item))throw fail('未找到可访问的非例行终审',404);
-    if(write && item.finalizer_account_id!==user.id)throw fail('只有本事项指定的终审负责人可以裁定或重试同步',403);
+    // 终审=权限+全维修范围（用户定稿 2026-11-22），不再检查指定终审人。
+    // 仅 WORK purpose 适用；STANDARD 的终审在 maintenance-standard-review.mjs 中有独立校验。
     if(write && qualifiedAccount(user.id,permission('finalize'),item)?.personId!==user.personId)throw fail('当前终审人员身份、资格或范围已失效',403);
     return item;
   }
@@ -48,7 +49,7 @@ export function createNonroutineFinalization({db,transaction,can,qualifiedAccoun
     if(!final)return null;
     const channel=db.prepare('select * from maintenance_nonroutine_review_channels where case_id=?').get(id);
     const sourceAttestation=db.prepare("select detail_json from maintenance_nonroutine_review_events where case_id=? and event_type='FINALIZED' order by created_at,id").all(id).map(row=>JSON.parse(row.detail_json)).find(row=>row.finalId===final.id)?.sourceFacts;
-    const full=can(user,permission('opinions.view'),item) || item.finalizer_account_id===user.id && can(user,permission('finalize'),item);
+    const full=can(user,permission('opinions.view'),item) || can(user,permission('finalize'),item);
     return {id:final.id,approvedRevision:Number(final.approved_revision),canReadPrivate:Boolean(full),decision:JSON.parse(final.decision_json),
       admissionDecision:final.admission_decision,finalizedBy:final.finalized_by,createdAt:final.created_at,
       channel:channel?{id:channel.id,state:channel.state}:null,

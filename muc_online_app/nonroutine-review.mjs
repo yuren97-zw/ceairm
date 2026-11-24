@@ -139,8 +139,8 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
     }
     const id = randomId('nrc'), stamp = clock();
     db.prepare(`insert into maintenance_nonroutine_review_cases(id,flight_id,subtask_id,report_batch_id,application_revision,application_json,participants_json,policy_json,applicant_account_id,state,revision,created_at,updated_at)
-      values(?,?,?,?,?,?,?,?,?,'PENDING_ACCEPTANCE',1,?,?)`)
-      .run(id, input.flightId, input.subtaskId, input.reportBatchId, input.applicationRevision, application, participants, input.policySnapshot ? JSON.stringify(input.policySnapshot) : null, input.applicantId, stamp, stamp);
+      values(?,?,?,?,?,?,?,?,?,?,1,?,?)`)
+      .run(id, input.flightId, input.subtaskId, input.reportBatchId, input.applicationRevision, application, participants, input.policySnapshot ? JSON.stringify(input.policySnapshot) : null, input.applicantId, purpose==='WORK' ? 'IN_REVIEW' : 'PENDING_ACCEPTANCE', stamp, stamp);
     return id;
   }
   function view(id, user) {
@@ -151,14 +151,14 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
     const visible = readAll ? opinions : opinions.filter(opinion => opinion.person_id === user.personId && opinion.account_id === user.id);
     const ownSeat=seats.some(seat=>seat.person_id===user.personId && seat.account_id===user.id);
     const facts=purpose==='WORK'?sourceFacts(item,user):null;
-    const namedFinalizer=item.finalizer_account_id===user.id && Boolean(qualifiedAccount(user.id,permission('finalize'),item));
+    const namedFinalizer=purpose==='WORK' ? Boolean(qualifiedAccount(user.id,permission('finalize'),item)) : item.finalizer_account_id===user.id && Boolean(qualifiedAccount(user.id,permission('finalize'),item));
     return {
       id, state: item.state, revision: Number(item.revision), application: JSON.parse(item.application_json),
       ...(purpose==='STANDARD'?{purpose,source:{kind:'STANDARD_VERSION',standardId:item.standard_id,versionId:item.version_id,baseVersionId:item.base_version_id,aircraft:JSON.parse(item.aircraft_json),...sourceContext(item)}}:{}),
       ...(facts?{sourceFacts:readAll?facts:{available:facts.available,changed:facts.changed,fields:(facts.differences||[]).map(row=>row.field),participantsChanged:facts.participantsChanged,participantIdentityChanged:facts.participantIdentityChanged}}:{}),
-      acceptedAt: item.accepted_at, sealedAt: item.sealed_at, submittedCount: opinions.length,
-      capabilities:{cancel:purpose==='WORK' && ['PENDING_ACCEPTANCE','IN_REVIEW','SEALED','FINALIZED'].includes(item.state) && can(user,permission('cancel'),item),submitOpinion:item.state==='IN_REVIEW' && ownSeat && Boolean(qualifiedAccount(user.id,permission('opinion.submit'),item)),
-        assign:item.state==='PENDING_ACCEPTANCE' && can(user,permission('assign'),item),replaceSeat:item.state==='IN_REVIEW' && can(user,permission('assign'),item),
+      acceptedAt: item.accepted_at, sealedAt: item.sealed_at, submittedCount: opinions.length, seatsFilled: seats.length, seatsRemaining: Math.max(0, 12 - seats.length),
+      capabilities:{cancel:purpose==='WORK' && ['PENDING_ACCEPTANCE','IN_REVIEW','SEALED','FINALIZED'].includes(item.state) && can(user,permission('cancel'),item),submitOpinion:item.state==='IN_REVIEW' && (purpose==='WORK' ? Boolean(qualifiedAccount(user.id,permission('opinion.submit'),item)) : ownSeat && Boolean(qualifiedAccount(user.id,permission('opinion.submit'),item))),assign:purpose!=='WORK'&&item.state==='PENDING_ACCEPTANCE'&&can(user,permission('assign'),item),replaceSeat:purpose!=='WORK'&&item.state==='IN_REVIEW'&&can(user,permission('assign'),item),
+        
         readAllOpinions:readAll,finalizationView:finalizationEnabled() && ((readAll && (['SEALED','FINALIZED'].includes(item.state)||purpose==='WORK'&&item.state==='CANCELLED'&&Boolean(item.sealed_at)))||(purpose==='STANDARD'&&item.state==='FINALIZED')),
         finalize:finalizationEnabled() && item.state==='SEALED' && namedFinalizer,sync:purpose==='WORK' && finalizationEnabled() && item.state==='FINALIZED' && namedFinalizer},
       ...(readAll&&purpose==='WORK'?{sourceParticipants:JSON.parse(item.participants_json),sourcePolicy:JSON.parse(item.policy_json||'null')}:{}),
@@ -185,17 +185,8 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
       title:application.title,category:application.category,chapter:application.chapter,workScope:application.workScope,submittedCount:counts.get(item.id)||0,createdAt:item.created_at};}),
       nextCursor:rows.length>50?JSON.stringify([visible.at(-1).created_at,visible.at(-1).id]):null};
   }
-  function candidates(id,payload,user){
-    const item=load(id,user,'assign');
-    if(!['PENDING_ACCEPTANCE','IN_REVIEW'].includes(item.state))throw fail('本轮已封闭，不能再指定人员',409);
-    if(!['opinion','finalize'].includes(payload?.role))throw fail('候选角色无效');
-    const action=payload.role==='opinion'?'opinion.submit':'finalize';
-    const search=String(payload.search || '').trim().slice(0,100);
-    const eligible=candidateAccounts(search,user).filter(account=>canAssignPerson(user,account.personId) && qualifiedAccount(account.accountId,permission(action),item));
-    return {items:eligible.slice(0,100).map(account=>({accountId:account.accountId,personId:account.personId,name:account.name,employeeNo:account.employeeNo})),truncated:eligible.length>100};
-  }
   function canReadAllOpinions(item, user) {
-    return can(user, permission('opinions.view'), item) || item.finalizer_account_id === user.id && (['SEALED','FINALIZED'].includes(item.state)||purpose==='WORK'&&item.state==='CANCELLED'&&Boolean(item.sealed_at)) && can(user, permission('finalize'), item);
+    return can(user, permission('opinions.view'), item) || (purpose==='WORK' ? (['SEALED','FINALIZED'].includes(item.state)||item.state==='CANCELLED'&&Boolean(item.sealed_at)) && can(user, permission('finalize'), item) : item.finalizer_account_id === user.id && (['SEALED','FINALIZED'].includes(item.state)||purpose==='WORK'&&item.state==='CANCELLED'&&Boolean(item.sealed_at)) && can(user, permission('finalize'), item));
   }
   function opinionHistory(id, payload, user) {
     const item = load(id, user);
@@ -217,8 +208,9 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
     return transaction(() => {
       const item = load(id, user, 'opinion.submit');
       const seat = db.prepare('select * from maintenance_nonroutine_review_seats where case_id=? and account_id=? and person_id=?').get(id,user.id,user.personId);
-      const qualified = seat && qualifiedAccount(user.id, permission('opinion.submit'), item);
-      if (!qualified || qualified.personId !== seat.person_id) throw fail('当前账户不是本轮有效指定评议人',403);
+      // WORK 线权限即资格（动态占席），未提交意见也可提共享建议；STANDARD 线仍须有效指定席位
+      const qualified = (purpose==='WORK' || seat) && qualifiedAccount(user.id, permission('opinion.submit'), item);
+      if (!qualified || qualified.personId !== (purpose==='WORK' ? user.personId : seat.person_id)) throw fail('当前账户不是本轮有效指定评议人',403);
       if (!payload || Object.keys(payload).some(key => !['clientId','field','proposedValue','reason','privacyAcknowledged'].includes(key))) throw fail('共享建议仅接受四项非工时字段');
       const field = payload.field;
       const limits = { category: 100, chapter: 200, title: 500, workScope: 4000 };
@@ -249,9 +241,49 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
       return view(id,user);
     });
   }
+  function outbox(caseId, type, accountId, dueAt, generation = 1) {
+    db.prepare('insert into maintenance_nonroutine_review_outbox(id,case_id,event_type,recipient_account_id,due_at,state,generation,created_at) values(?,?,?,?,?,\'PENDING\',?,?)')
+      .run(randomId('nro'), caseId, type, accountId, dueAt, generation, clock());
+  }
+  function submitOpinion(id, payload, user) {
+    return transaction(() => {
+      const item = load(id, user, 'opinion.submit');
+      if (item.state !== 'IN_REVIEW') throw fail('本轮评议已封轮或未开放', 409);
+      const seat = db.prepare('select * from maintenance_nonroutine_review_seats where case_id=? and account_id=? and person_id=?').get(id, user.id, user.personId);
+      const qualified = qualifiedAccount(user.id, permission('opinion.submit'), item);
+      if (!qualified || qualified.personId !== user.personId) throw fail('当前账户不具备评议资格或数据范围', 403);
+      if (purpose === 'WORK') {
+        // 权限即资格+动态占席（用户定稿 2026-11-22）：无席位且未满 12 席时创建席位记录
+        if (!seat) {
+          const seatCount = Number(db.prepare('select count(*) n from maintenance_nonroutine_review_seats where case_id=?').get(id).n);
+          if (seatCount >= 12) throw fail('本轮评议已满 12 席', 409);
+          db.prepare('insert into maintenance_nonroutine_review_seats(id,case_id,person_id,account_id,qualification_json,assigned_by,assigned_at) values(?,?,?,?,?,?,?)')
+            .run(randomId('nrs'), id, user.personId, user.id, JSON.stringify(qualified), user.id, clock());
+        }
+      } else if (!seat) {
+        throw fail('当前账户不是本轮有效指定评议人', 403);
+      }
+      const current = db.prepare('select * from maintenance_nonroutine_review_opinions where case_id=? and person_id=?').get(id, user.personId);
+      if (Number(payload?.revision) !== Number(current?.revision || 0)) throw fail('本人意见已更新，请刷新后重试', 409);
+      const amount = hours(payload.hours), basis = String(payload.basis || '').trim();
+      if (!basis || basis.length > 4000) throw fail('请填写不超过4000字的工时评议依据');
+      const version = Number(current?.revision || 0) + 1, stamp = clock();
+      db.prepare(`insert into maintenance_nonroutine_review_opinions(case_id,person_id,account_id,hours,basis,revision,qualification_json,submitted_at,updated_at) values(?,?,?,?,?,?,?,?,?)
+        on conflict(case_id,person_id) do update set hours=excluded.hours,basis=excluded.basis,revision=excluded.revision,qualification_json=excluded.qualification_json,updated_at=excluded.updated_at`)
+        .run(id, user.personId, user.id, amount, basis, version, JSON.stringify(qualified), current?.submitted_at || stamp, stamp);
+      db.prepare('insert into maintenance_nonroutine_review_opinion_history(id,case_id,person_id,account_id,revision,opinion_json,created_at) values(?,?,?,?,?,?,?)')
+        .run(randomId('nrh'), id, user.personId, user.id, version, JSON.stringify({ hours: amount, basis, qualification: qualified }), stamp);
+      db.prepare("update maintenance_nonroutine_review_outbox set state='CANCELLED' where case_id=? and recipient_account_id=? and event_type='REMINDER_24' and state='PENDING'").run(id, user.id);
+      const count = Number(db.prepare('select count(*) n from maintenance_nonroutine_review_opinions where case_id=?').get(id).n);
+      if (count === 12) db.prepare("update maintenance_nonroutine_review_cases set state='SEALED',revision=revision+1,sealed_at=?,updated_at=? where id=?").run(stamp, stamp, id);
+      event(item, user, count === 12 ? 'SEALED' : 'OPINION_SUBMITTED', { personId: user.personId, revision: version, count });
+      return view(id, user);
+    });
+  }
   function accept(id, payload, user) {
     return transaction(() => {
       const item = load(id, user, 'assign');
+      if (purpose === 'WORK') throw fail('非例行评议已自动进入评议阶段，无需人工受理', 409);
       if (item.state !== 'PENDING_ACCEPTANCE' || Number(payload?.revision) !== Number(item.revision)) throw fail('评议状态或版本已变化', 409);
       const accounts = payload.accountIds;
       if (!Array.isArray(accounts) || accounts.length !== 12 || new Set(accounts).size !== 12) throw fail('请人工指定12名不同的有效评议人员');
@@ -273,37 +305,19 @@ export function createNonroutineReview({ db:database, transaction, can, qualifie
       return view(id, user);
     });
   }
-  function outbox(caseId, type, accountId, dueAt, generation = 1) {
-    db.prepare('insert into maintenance_nonroutine_review_outbox(id,case_id,event_type,recipient_account_id,due_at,state,generation,created_at) values(?,?,?,?,?,\'PENDING\',?,?)')
-      .run(randomId('nro'), caseId, type, accountId, dueAt, generation, clock());
-  }
-  function submitOpinion(id, payload, user) {
-    return transaction(() => {
-      const item = load(id, user, 'opinion.submit');
-      if (item.state !== 'IN_REVIEW') throw fail('本轮评议未开放或已封闭', 409);
-      const seat = db.prepare('select * from maintenance_nonroutine_review_seats where case_id=? and account_id=? and person_id=?').get(id, user.id, user.personId);
-      const qualified = seat && qualifiedAccount(user.id, permission('opinion.submit'), item);
-      if (!qualified || qualified.personId !== seat.person_id) throw fail('当前账户不是本轮有效指定评议人', 403);
-      const current = db.prepare('select * from maintenance_nonroutine_review_opinions where case_id=? and person_id=?').get(id, user.personId);
-      if (Number(payload?.revision) !== Number(current?.revision || 0)) throw fail('本人意见已更新，请刷新后重试', 409);
-      const amount = hours(payload.hours), basis = String(payload.basis || '').trim();
-      if (!basis || basis.length > 4000) throw fail('请填写不超过4000字的工时评议依据');
-      const version = Number(current?.revision || 0) + 1, stamp = clock();
-      db.prepare(`insert into maintenance_nonroutine_review_opinions(case_id,person_id,account_id,hours,basis,revision,qualification_json,submitted_at,updated_at) values(?,?,?,?,?,?,?,?,?)
-        on conflict(case_id,person_id) do update set hours=excluded.hours,basis=excluded.basis,revision=excluded.revision,qualification_json=excluded.qualification_json,updated_at=excluded.updated_at`)
-        .run(id, user.personId, user.id, amount, basis, version, JSON.stringify(qualified), current?.submitted_at || stamp, stamp);
-      db.prepare('insert into maintenance_nonroutine_review_opinion_history(id,case_id,person_id,account_id,revision,opinion_json,created_at) values(?,?,?,?,?,?,?)')
-        .run(randomId('nrh'), id, user.personId, user.id, version, JSON.stringify({ hours: amount, basis, qualification: qualified }), stamp);
-      db.prepare("update maintenance_nonroutine_review_outbox set state='CANCELLED' where case_id=? and recipient_account_id=? and event_type='REMINDER_24' and state='PENDING'").run(id, user.id);
-      const count = Number(db.prepare('select count(*) n from maintenance_nonroutine_review_opinions where case_id=?').get(id).n);
-      if (count === 12) db.prepare("update maintenance_nonroutine_review_cases set state='SEALED',revision=revision+1,sealed_at=?,updated_at=? where id=?").run(stamp, stamp, id);
-      event(item, user, count === 12 ? 'SEALED' : 'OPINION_SUBMITTED', { personId: user.personId, revision: version, count });
-      return view(id, user);
-    });
+  function candidates(id,payload,user){
+    const item=load(id,user,'assign');
+    if(!['PENDING_ACCEPTANCE','IN_REVIEW'].includes(item.state))throw fail('本轮已封闭，不能再指定人员',409);
+    if(!['opinion','finalize'].includes(payload?.role))throw fail('候选角色无效');
+    const action=payload.role==='opinion'?'opinion.submit':'finalize';
+    const search=String(payload.search || '').trim().slice(0,100);
+    const eligible=candidateAccounts(search,user).filter(account=>canAssignPerson(user,account.personId) && qualifiedAccount(account.accountId,permission(action),item));
+    return {items:eligible.slice(0,100).map(account=>({accountId:account.accountId,personId:account.personId,name:account.name,employeeNo:account.employeeNo})),truncated:eligible.length>100};
   }
   function replaceUnsubmittedSeat(id, payload, user) {
     return transaction(() => {
       const item = load(id, user, 'assign');
+      if (purpose === 'WORK') throw fail('非例行评议席位为动态占席，不支持人工替换', 409);
       if (item.state !== 'IN_REVIEW' || Number(payload?.revision) !== Number(item.revision)) throw fail('评议状态或版本已变化',409);
       const reason = String(payload.reason || '').trim();
       if (!reason || reason.length > 1000) throw fail('替换席位必须填写不超过1000字的原因');
