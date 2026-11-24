@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  ACTION_SCOPE_BINDINGS,
   RBAC_PERMISSION_DEFINITIONS,
   RBAC_PERMISSION_DEPENDENCIES,
   RBAC_ROLE_DEFINITIONS,
@@ -24,6 +25,19 @@ for (const [roleCode, permissions] of Object.entries(RBAC_ROLE_DEFINITIONS)) {
 }
 
 assert.deepEqual(role("system_admin"), permissionSet, "超级管理员必须拥有完整权限集");
+
+// 动作→范围绑定（V1.1 §4.2，S1）：每个权限码必须有绑定声明；
+// 有范围的声明模块必须合法，无范围的声明必须写明原因。
+const SCOPE_MODULE_SET = new Set(["personnel", "accounts", "info", "maintenance", "hours", "attendance"]);
+for (const code of permissionCodes) {
+  const binding = ACTION_SCOPE_BINDINGS[code];
+  assert.ok(binding, `权限 ${code} 缺少动作→范围绑定声明`);
+  assert.ok(binding.resource, `权限 ${code} 的绑定缺少 resource`);
+  if (binding.scopeModule === null) assert.ok(binding.note, `权限 ${code} 声明无范围但缺少 note 原因`);
+  else assert.ok(SCOPE_MODULE_SET.has(binding.scopeModule), `权限 ${code} 的 scopeModule 非法: ${binding.scopeModule}`);
+}
+for (const code of ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"])
+  assert.equal(ACTION_SCOPE_BINDINGS[code].scopeModule, "maintenance", `${code} 应绑定 maintenance 范围（hours 模块无运行时检查点）`);
 
 for (const permission of ["info.read", "maintenance.execute.submit", "maintenance.nonroutine.create.own", "maintenance.stats.self.view"])
   assert(has("worker", permission), `工作者缺少 ${permission}`);
