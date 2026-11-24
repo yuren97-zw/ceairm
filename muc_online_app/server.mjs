@@ -67,6 +67,7 @@ import {
   RBAC_ROLE_DESCRIPTIONS,
   accountRoleCombinationErrors,
   missingBaselineRolePermissions,
+  scopeBindingFor,
   permissionDependencyErrors,
   visibleNavigation,
   visibleNavigationTree
@@ -369,6 +370,34 @@ function hasRbac(user, permission) {
 
 function hasAnyRbac(user, permissions) {
   return permissions.some(permission => hasRbac(user, permission));
+}
+
+// 动作→范围运行时绑定（V1.1 §4.2，S2）：模块由 ACTION_SCOPE_BINDINGS 推导，
+// 调用点不再手写范围模块；未登记绑定声明的权限码按开发错误 fail-fast（500）。
+function actionScopeModule(permission) {
+  const binding = scopeBindingFor(permission);
+  if (!binding) throw Object.assign(new Error(`权限码缺少动作→范围绑定声明：${permission}`), { status: 500 });
+  return binding.scopeModule;
+}
+function actionScopeAllows(user, permission, personId) {
+  const module = actionScopeModule(permission);
+  if (module === null) return true;
+  return personnelAccess.allows(user, module, personId);
+}
+function actionScopeHasAll(user, permission) {
+  const module = actionScopeModule(permission);
+  if (module === null) return true;
+  return personnelAccess.hasAll(user, module);
+}
+function requireActionScope(user, permission, personId, active = false) {
+  const module = actionScopeModule(permission);
+  if (module === null) return null;
+  return personnelAccess.requirePerson(user, module, personId, active);
+}
+function actionScopePredicate(user, permission, alias = "p") {
+  const module = actionScopeModule(permission);
+  if (module === null) return { sql: "1=1", params: [] };
+  return personnelAccess.predicate(user, module, alias);
 }
 
 function dataScopeAllowsUser(user, targetAccountId, module = "info") {
@@ -2357,16 +2386,16 @@ function currentMaintenanceReviewActor(user) {
 
 function maintenanceReviewCanAssignPerson(user,personId) {
   const current=currentMaintenanceReviewActor(user);
-  return Boolean(current&&personnelAccess.allows(current,'maintenance',personId));
+  return Boolean(current&&actionScopeAllows(current,'maintenance.nonroutine.review.assign',personId));
 }
 
 function nonroutineReviewCan(user, permission, item) {
   user=currentMaintenanceReviewActor(user);
   if (!user?.id || user.status !== "active" || !hasRbac(user, "maintenance.view") || !hasRbac(user, permission)) return false;
-  if (personnelAccess.hasAll(user, "maintenance")) return true;
+  if (actionScopeHasAll(user, permission)) return true;
   const participants = json(item.participants_json, []);
   if (!participants.length) return false;
-  const allows = participant => personnelAccess.allows(user, "maintenance", participant.personId);
+  const allows = participant => actionScopeAllows(user, permission, participant.personId);
   return permission === "maintenance.nonroutine.review.view" ? participants.some(allows) : participants.every(allows);
 }
 
@@ -2380,7 +2409,7 @@ function nonroutineReviewQualifiedAccount(accountId, permission, item) {
 
 function maintenanceReviewSourceFacts(item,user){
   const facts=readNonroutineSourceFacts(db,item,{readParticipants:source=>maintenanceNonroutineParticipantRows(source.subtask_id)});
-  if(facts.available&&user&&[...(facts.baseline.participants||[]),...(facts.current.participants||[])].some(person=>!personnelAccess.allows(user,'maintenance',person.personId)))return {available:false,changed:true,token:null,reason:'当前工作事实涉及维修数据范围外人员，须有权负责人核对'};
+  if(facts.available&&user&&[...(facts.baseline.participants||[]),...(facts.current.participants||[])].some(person=>!actionScopeAllows(user,'maintenance.nonroutine.review.view',person.personId)))return {available:false,changed:true,token:null,reason:'当前工作事实涉及维修数据范围外人员，须有权负责人核对'};
   return facts;
 }
 
@@ -2416,7 +2445,7 @@ function maintenanceWorkflowPerson(accountId,permission,all=false){
  where u.id=? and coalesce(u.status,'active')='active' and p.data_status='active' and coalesce(p.employment_status,'') not in ('离职','停职')
  and exists(select 1 from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id join rbac_role_permissions rp on rp.role_id=r.id join rbac_permissions permission on permission.id=rp.permission_id where ur.user_id=u.id and r.status='active' and r.code<>'system_admin' and permission.code=?)`).get(accountId,permission);
  if(!row)return null;const actor=toUser(row);
- if(!actor.personId||!hasRbac(actor,'maintenance.view')||!personnelAccess.allows(actor,'maintenance',actor.personId)||(all&&!personnelAccess.hasAll(actor,'maintenance')))return null;
+ if(!actor.personId||!hasRbac(actor,'maintenance.view')||!actionScopeAllows(actor,permission,actor.personId)||(all&&!actionScopeHasAll(actor,permission)))return null;
  return {accountId:actor.id,personId:actor.personId,permissions:actor.rbacPermissions,scopes:actor.dataScopes};
 }
 function maintenanceWorkflowManage(user){return maintenanceWorkflowPerson(user?.id,'maintenance.workflow.manage',true);}
@@ -2601,7 +2630,7 @@ function maintenanceHourPeriods() {
 }
 
 function maintenanceCrossPeriod(){
-  const can=(user,permission)=>Boolean(user?.id && user.status==='active' && hasRbac(user,'maintenance.view') && hasRbac(user,permission) && personnelAccess.hasAll(user,'maintenance'));
+  const can=(user,permission)=>Boolean(user?.id && user.status==='active' && hasRbac(user,'maintenance.view') && hasRbac(user,permission) && actionScopeHasAll(user,permission));
   return createNonroutineCrossPeriod({db,transaction:maintenanceTransaction,can,clock:now,randomId,periodState:month=>maintenanceHourPeriods().state(month),
     qualifiedAccount(accountId,permission){
       const row=db.prepare("select u.* from users u join personnel p on p.id=u.person_id where u.id=? and coalesce(u.status,'active')='active' and p.data_status='active' and coalesce(p.employment_status,'') not in ('离职','停职')").get(String(accountId || ''));
@@ -2639,7 +2668,7 @@ function maintenanceCorrectionSource(subtaskId){
     assignments:assignments.map(row=>({id:row.id,personId:row.person_id,role:row.role,status:row.status})),baseResults:rows.filter(row=>row.source!=='授权更正')};
   return {subtaskId,flightId:flight.id,kind:assessment.source_kind,sourceId,sourceVersion,workMonth:String(flight.date).slice(0,7),context:{...snapshot.opportunity,flightNo:maintenanceDisplayFlightNo(flight)},participants,policy,decision,rows,assignments,subtask,snapshot,digest:crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')};
 }
-function maintenanceCorrectionCan(user,permission){return Boolean(user?.id&&user.status==='active'&&hasRbac(user,'maintenance.view')&&hasRbac(user,permission)&&personnelAccess.hasAll(user,'maintenance'));}
+function maintenanceCorrectionCan(user,permission){return Boolean(user?.id&&user.status==='active'&&hasRbac(user,'maintenance.view')&&hasRbac(user,permission)&&actionScopeHasAll(user,permission));}
 function maintenanceCorrectionQualified(accountId,permission){
   const row=db.prepare("select u.* from users u join personnel p on p.id=u.person_id where u.id=? and coalesce(u.status,'active')='active' and p.data_status='active' and coalesce(p.employment_status,'') not in ('离职','停职')").get(accountId);
   if(!row)return null;const user=toUser(row);return maintenanceCorrectionCan(user,permission)?{accountId:user.id,personId:user.personId,permissions:user.rbacPermissions,scopes:user.dataScopes}:null;
@@ -4957,7 +4986,7 @@ function redactSmallSample(items, identityKey = "personId") {
   return items.map(item => ({ ...item, [identityKey]: "hidden", name: `样本不足（${items.length}人，阈值${STATS_MIN_SAMPLE}）`, hours: null, sorties: null, taskCount: null, hourTaskCount: null, sortieTaskCount: null }));
 }
 
-function maintenanceStats(params = {}, user = null) {
+function maintenanceStats(params = {}, user = null, permission = "maintenance.stats.manage.view") {
   const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_effective_hour_results h join maintenance_flights f on f.id=h.flight_id
     order by f.date desc,h.user_name`).all();
@@ -4968,7 +4997,7 @@ function maintenanceStats(params = {}, user = null) {
   const month = String(params.month || "").trim();
   const status = String(params.status || "").trim();
   const filterRows = rows => rows.filter(row => {
-    if (user && row.person_id !== user.personId && !personnelAccess.allows(user,"maintenance",row.person_id)) return false;
+    if (user && row.person_id !== user.personId && !actionScopeAllows(user, permission, row.person_id)) return false;
     if (month && month !== "全部" && !String(row.date || "").startsWith(month)) return false;
     if (status && status !== "全部" && row.status !== status) return false;
     if (!search) return true;
@@ -5042,9 +5071,9 @@ function maintenanceReportFilters(params = {}) {
   };
 }
 
-function maintenanceReportAllowedPersonIds(user) {
-  if (personnelAccess.hasAll(user, "maintenance")) return null;
-  const scope = personnelAccess.predicate(user, "maintenance");
+function maintenanceReportAllowedPersonIds(user, permission = "maintenance.export") {
+  if (actionScopeHasAll(user, permission)) return null;
+  const scope = actionScopePredicate(user, permission);
   return new Set(db.prepare(`select p.id from personnel p where ${scope.sql}`).all(...scope.params).map(row => row.id));
 }
 
@@ -5647,8 +5676,8 @@ function maintenancePersonalStats(params, user) {
   const rangeStart = range === "half" && shiftMaintenanceDate(rangeEnd, -14) > bounds.start
     ? shiftMaintenanceDate(rangeEnd, -14)
     : bounds.start;
-  const allResultHours = maintenancePersonalHourRows().filter(row=>row.person_id===user.personId || personnelAccess.allows(user,"maintenance",row.person_id));
-  const allResultSorties = maintenancePersonalSortieRows().filter(row=>row.person_id===user.personId || personnelAccess.allows(user,"maintenance",row.person_id));
+  const allResultHours = maintenancePersonalHourRows().filter(row=>row.person_id===user.personId || actionScopeAllows(user,"maintenance.stats.self.view",row.person_id));
+  const allResultSorties = maintenancePersonalSortieRows().filter(row=>row.person_id===user.personId || actionScopeAllows(user,"maintenance.stats.self.view",row.person_id));
   const allHours = allResultHours.filter(row => row.status === "已确认");
   const ownConfirmedHours = allHours.filter(row => row.person_id === user.personId);
   const ownPendingHours = allResultHours.filter(row => row.person_id === user.personId && row.status !== "已确认");
@@ -5924,9 +5953,9 @@ function maintenanceCurrentMutationActor(user,flightId,permission='maintenance.c
   if(!current||!hasRbac(current,permission))throw maintenanceReviewError('当前人员或维修维护权限已失效',403);
   const flight=db.prepare('select * from maintenance_flights where id=?').get(flightId);if(!flight)throw maintenanceReviewError('未找到航班任务',404);
   const assigned=db.prepare('select person_id from maintenance_assignments where flight_id=?').all(flightId);
-  if(!personnelAccess.hasAll(current,'maintenance')&&flight.created_by!==current.id&&!assigned.some(item=>item.person_id===current.personId||personnelAccess.allows(current,'maintenance',item.person_id))&&!dataScopeAllowsUser(current,flight.created_by,'maintenance'))throw maintenanceReviewError('未找到可访问的维修机会',404);
+  if(!actionScopeHasAll(current,permission)&&flight.created_by!==current.id&&!assigned.some(item=>item.person_id===current.personId||actionScopeAllows(current,permission,item.person_id))&&!dataScopeAllowsUser(current,flight.created_by,'maintenance'))throw maintenanceReviewError('未找到可访问的维修机会',404);
   const batch=db.prepare("select id from maintenance_report_batches where flight_id=? and report_type='nonroutine'").get(flightId);
-  if(permission==='maintenance.content.manage'&&batch&&db.prepare("select person_id from maintenance_assignments where flight_id=? and owner_type='subtask'").all(flightId).some(item=>!personnelAccess.allows(current,'maintenance',item.person_id)))throw maintenanceReviewError('批次包含当前维修范围外人员，不能作废或覆盖',403);
+  if(permission==='maintenance.content.manage'&&batch&&db.prepare("select person_id from maintenance_assignments where flight_id=? and owner_type='subtask'").all(flightId).some(item=>!actionScopeAllows(current,permission,item.person_id)))throw maintenanceReviewError('批次包含当前维修范围外人员，不能作废或覆盖',403);
   return current;
 }
 
@@ -6001,8 +6030,8 @@ function maintenanceDispatchMutationContext(ownerType, ownerId, user, expectedUp
   if (!flight || flight.updated_at !== expectedUpdatedAt) throw maintenanceDispatchConflict();
   const allAssigned = db.prepare("select person_id from maintenance_assignments where flight_id=?").all(flightId);
   const shared = flight.status === "未派工" && hasRbac(user, "maintenance.dispatch.view") && maintenanceSharesCreatorDepartment(user, flight.created_by);
-  if (!personnelAccess.hasAll(user, "maintenance") && flight.created_by !== user.id && !allAssigned.some(row => row.person_id === user.personId || personnelAccess.allows(user, "maintenance", row.person_id)) && !dataScopeAllowsUser(user, flight.created_by, "maintenance") && !shared) throw maintenanceReviewError("未找到维修机会", 404);
-  if (allAssigned.some(row => !personnelAccess.allows(user, "maintenance", row.person_id))) throw maintenanceReviewError("任务包含当前维修范围外人员，不能修改", 403);
+  if (!actionScopeHasAll(user, "maintenance.assignment.manage") && flight.created_by !== user.id && !allAssigned.some(row => row.person_id === user.personId || actionScopeAllows(user, "maintenance.assignment.manage", row.person_id)) && !dataScopeAllowsUser(user, flight.created_by, "maintenance") && !shared) throw maintenanceReviewError("未找到维修机会", 404);
+  if (allAssigned.some(row => !actionScopeAllows(user, "maintenance.assignment.manage", row.person_id))) throw maintenanceReviewError("任务包含当前维修范围外人员，不能修改", 403);
   assertMaintenanceTreeDirectEditAllowed(flightId);
   const allowedRoles = maintenanceRolesForOwner(ownerType, owner);
   const submitted = type => ["已提报", "待复核", "已确认"].includes(db.prepare("select status from maintenance_report_batches where flight_id=? and report_type=?").get(flightId, type)?.status || "");
@@ -7412,7 +7441,7 @@ function readingStats(query = {}) {
   });
   const actor=requestUser();
   const rows = records.filter(record=>!actor || canViewRecord(actor,record)).flatMap(record => {
-    const recs = recipients(record.id).filter(p=>!actor || personnelAccess.allows(actor,"info",p.personId));
+    const recs = recipients(record.id).filter(p=>!actor || actionScopeAllows(actor,"info.stats.read",p.personId));
     return recs.map(person => {
       const receipt = db.prepare("select * from read_receipts where record_id=? and user_id=?").get(record.id, person.id);
       const overdue = parseRecordDate(record.deadline || deadlineFor(record.date))?.getTime() < Date.now();
@@ -7751,11 +7780,11 @@ function validatePersonnelImportAccess(type,rows,user) {
      const found=forbidden.filter(key=>Object.hasOwn(row,key));
      if(found.length)throw new Error(`不再接受旧字段：${found.join("、")}`);
    }
-   if(existing && !personnelAccess.allows(user,"personnel",existing.id))throw new Error("该行不在可维护范围内");
+   if(existing && !actionScopeAllows(user, type==="authorization"?"personnel.qualification.manage":"personnel.import.execute", existing.id))throw new Error("该行不在可维护范围内");
    if(existing?.data_status==="deleted")return; // The import analyser reports deleted employee numbers without attempting restoration.
    if(type==="authorization"&&existing&&["离职","停职"].includes(existing.employment_status))throw new Error("停职或离职人员不能导入授权");
    if(type==="personnel")personnelAccess.checkMutation(user,personnelImportPayload(row),existing);
-   else {personnelAccess.permission(user,"personnel.qualification.manage");if(existing)personnelAccess.requirePerson(user,"personnel",existing.id,true);}
+   else {personnelAccess.permission(user,"personnel.qualification.manage");if(existing)requireActionScope(user,"personnel.qualification.manage",existing.id,true);}
   }catch(e){issues.push({rowNumber:Number(row.__importRowNumber)||index+2,employeeNo:importEmployeeNo(row),detail:e.status===404?"该行不在可维护范围内":e.message});}
  });
  if(issues.length)throw Object.assign(new Error("导入存在权限、范围或组织异常，整批未生效"),{status:400,details:{issues}});
@@ -7764,8 +7793,8 @@ function visibleImportBatch(batch,user,context=null) {
  const rows=context ? context.rows.get(batch.id) : json(batch.rows_json,[]);
  return rows.every(row=>{
    const p=context ? context.people.get(importEmployeeNo(row)) : findImportedPerson(importEmployeeNo(row));
-   if(p && !(context ? context.allowed.has(p.id) : personnelAccess.allows(user,"personnel",p.id)))return false;
-   if(!p && !(context ? context.hasAll : personnelAccess.hasAll(user,"personnel")))return batch.created_by===user.id;
+   if(p && !(context ? context.allowed.has(p.id) : actionScopeAllows(user,"personnel.import.view",p.id)))return false;
+   if(!p && !(context ? context.hasAll : actionScopeHasAll(user,"personnel.import.view")))return batch.created_by===user.id;
    if(batch.import_type!=="personnel")return hasRbac(user,"personnel.qualification.view");
    return hasRbac(user,"personnel.actual_grade.manage") || !Object.keys(personnelImportPayload(row)).some(k=>SENSITIVE_FIELDS.includes(k));
  });
@@ -8201,7 +8230,7 @@ function validateAccountIdentity(payload, existing = null) {
   if (!personId) throw Object.assign(new Error("必须关联人员主数据"), { status: 400 });
   if (existing && personId !== existing.person_id) throw Object.assign(new Error("账户创建后禁止更换关联人员"), {status:409});
   const actor=requestUser();
-  if(actor) personnelAccess.requirePerson(actor,"accounts",personId,true);
+  if(actor) requireActionScope(actor,"accounts.read",personId,true);
   const person = db.prepare("select * from personnel where id=? and data_status='active'").get(personId);
   if (!person) throw Object.assign(new Error("关联人员不存在或已失效"), { status: 400 });
   if (["离职", "停职"].includes(person.employment_status)) throw Object.assign(new Error("离职或停职人员不能开通或启用账户"), { status: 409 });
