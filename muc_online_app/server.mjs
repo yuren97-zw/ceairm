@@ -1,3 +1,4 @@
+import {loginAuditFilters,readLoginAudit,loginAuditXlsx} from './login-audit.mjs';
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
 import {createHandoverService} from './handover-service.mjs';
@@ -65,8 +66,10 @@ import {
   RBAC_ROLE_NAMES,
   RBAC_ROLE_DESCRIPTIONS,
   accountRoleCombinationErrors,
+  missingBaselineRolePermissions,
   permissionDependencyErrors,
-  visibleNavigation
+  visibleNavigation,
+  visibleNavigationTree
 } from "./rbac-policy.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preflightIdentity, SCOPE_MODULES, PERSON_TABLES } from "./personnel-identity.mjs";
@@ -184,7 +187,7 @@ function cosEnabled() {
   return Object.values(cosConfig).every(Boolean);
 }
 
-function cosSignedUrl(method, objectKey, expiresSeconds = 600, query = {}) {
+function cosSignedUrl(method, objectKey, expiresSeconds = 300, query = {}) {
   if (!cosEnabled()) throw new Error("COS 尚未配置");
   cosClient ||= new COS({ SecretId: cosConfig.secretId, SecretKey: cosConfig.secretKey });
   return cosClient.getObjectUrl({
@@ -314,7 +317,8 @@ function toUser(row) {
     rbacRoles: rbac.roles,
     rbacPermissions: rbac.permissions,
     dataScopes: rbac.scopes,
-    visibleNavigation: visibleNavigation(rbac.permissions, row.id === SUPER_ACCOUNT_ID)
+    visibleNavigation: visibleNavigation(rbac.permissions, row.id === SUPER_ACCOUNT_ID),
+    navigationTree: visibleNavigationTree(rbac.permissions, row.id === SUPER_ACCOUNT_ID)
   };
 }
 
@@ -339,6 +343,9 @@ function normalizeFunctionCategory(value) {
   return personnelFunctionCategories.includes(normalized) ? normalized : "维修";
 }
 
+// 兼容：确保 grant_reason/granted_by 列存在（内存库场景迁移 067 未跑时的兜底）
+for (const col of ["grant_reason","granted_by"]) { try { db.exec(`alter table rbac_user_scopes add column ${col} text not null default ''`); } catch { /* 列已存在（PG 走迁移 067，SQLite 重复执行） */ } }
+
 function rbacSnapshot(userId) {
   if (!userId) return { roles: [], permissions: [], scopes: [] };
   const assignedRoles = db.prepare(`select r.code,r.name from rbac_roles r
@@ -348,7 +355,9 @@ function rbacSnapshot(userId) {
     join rbac_user_roles ur on ur.role_id=rp.role_id
     join rbac_roles r on r.id=ur.role_id
     where ur.user_id=? and r.status='active' order by p.code`).all(userId).map(row => row.code);
-  const scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId);
+  let scopes;
+  try { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo,grant_reason as grantReason,granted_by as grantedBy from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
+  catch { scopes = db.prepare("select id,module,scope_type as scopeType,scope_id as scopeId,valid_from as validFrom,valid_to as validTo from rbac_user_scopes where user_id=? order by scope_type,scope_id").all(userId); }
   return { roles: assignedRoles, permissions, scopes };
 }
 
@@ -1763,12 +1772,21 @@ function seedRbac() {
     roleIds.set(code, id);
   }
   const assignPermission = db.prepare("insert or ignore into rbac_role_permissions(role_id,permission_id) values(?,?)");
+  const baselineReconcile = [];
   for (const [code, permissions] of Object.entries(rbacRoleDefinitions)) {
     const roleId = roleIds.get(code);
-    if (preserveControlledEdit(code)) continue;
+    if (preserveControlledEdit(code)) {
+      // 受控编辑角色保留手工授予的额外权限，但代码基线新增的权限必须补入。
+      const currentCodes = db.prepare("select p.code from rbac_role_permissions rp join rbac_permissions p on p.id=rp.permission_id where rp.role_id=?").all(roleId).map(row => row.code);
+      const missing = missingBaselineRolePermissions(code, currentCodes);
+      missing.forEach(permission => assignPermission.run(roleId, permissionIds.get(permission)));
+      if (missing.length) baselineReconcile.push({ role: code, added: missing });
+      continue;
+    }
     db.prepare("delete from rbac_role_permissions where role_id=?").run(roleId);
     permissions.forEach(permission => assignPermission.run(roleId, permissionIds.get(permission)));
   }
+  if (baselineReconcile.length) console.warn(`[rbac] 受控编辑角色基线补差：${baselineReconcile.map(item => `${item.role}+${item.added.length}(${item.added.join(",")})`).join("；")}`);
   setSetting("pureRbacV2Migrated", true);
   setSetting("rbacPermissionCatalogV3Seeded", true);
   // 54002010使用单一正常账号，但系统管理员角色始终同步全部权限，避免新增权限后出现缺口。
@@ -2489,7 +2507,7 @@ function standardReviewCan(user,permission,item){
   if(permission==='maintenance.nonroutine.review.view'){
     if(all&&['maintenance.standard.manage','maintenance.nonroutine.review.assign','maintenance.nonroutine.review.opinions.view'].some(code=>hasRbac(user,code)))return true;
     if(!hasRbac(user,permission)||!item)return false;
-    if(item.finalizer_account_id===user.id&&all&&hasRbac(user,'maintenance.nonroutine.review.finalize'))return true;
+    if(all&&hasRbac(user,'maintenance.nonroutine.review.finalize'))return true;
     return Boolean(db.prepare('select 1 from maintenance_standard_review_seats where case_id=? and account_id=? and person_id=?').get(item.id,user.id,user.personId));
   }
   return hasRbac(user,permission)&&(permission==='maintenance.nonroutine.review.opinion.submit'||all);
@@ -4931,6 +4949,14 @@ function syncMaintenanceOwnerConfirmation(ownerType, ownerId, personId = "") {
   reconcileMaintenanceTreeStatus(ownerType === "flight" ? owner.id : owner.flight_id, personId);
 }
 
+// B7-2 统计防推断（V1.1 §5.3/D07）：样本量小于阈值时隐藏个人明细行，
+// 只保留汇总。阈值可通过 MUC_STATS_MIN_SAMPLE 环境变量调整（默认 5）。
+const STATS_MIN_SAMPLE = Number(process.env.MUC_STATS_MIN_SAMPLE) || 5;
+function redactSmallSample(items, identityKey = "personId") {
+  if (!Array.isArray(items) || items.length >= STATS_MIN_SAMPLE) return items;
+  return items.map(item => ({ ...item, [identityKey]: "hidden", name: `样本不足（${items.length}人，阈值${STATS_MIN_SAMPLE}）`, hours: null, sorties: null, taskCount: null, hourTaskCount: null, sortieTaskCount: null }));
+}
+
 function maintenanceStats(params = {}, user = null) {
   const hourRows = db.prepare(`select h.*,f.date,f.flight_no,f.departure_flight_no,f.aircraft_no,f.work_type,f.card_no,f.card_name
     from maintenance_effective_hour_results h join maintenance_flights f on f.id=h.flight_id
@@ -4976,8 +5002,8 @@ function maintenanceStats(params = {}, user = null) {
     },
     hours: visibleHours.map(row => publicMaintenanceHour(row)),
     sorties: visibleSorties.map(row => publicMaintenanceSortie(row)),
-    people: Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties),
-    teams: Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)
+    people: redactSmallSample(Object.values(people).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties)),
+    teams: redactSmallSample(Object.values(teams).map(row => ({ ...row, hours: Number(row.hours.toFixed(2)), taskCount: row.hourTaskCount + row.sortieTaskCount })).sort((a, b) => b.hours - a.hours || b.sorties - a.sorties), "team")
   };
 }
 
@@ -7279,8 +7305,8 @@ async function createCosUpload(req, res, ownerType, ownerId) {
   return send(res, 200, {
     attachmentId,
     objectKey,
-    uploadUrl: cosSignedUrl("PUT", objectKey, 600),
-    expiresIn: 600,
+    uploadUrl: cosSignedUrl("PUT", objectKey, 300),
+    expiresIn: 300,
     headers: { "Content-Type": safeAttachmentMime(name) }
   });
 }
@@ -7774,7 +7800,7 @@ function confirmPersonnelRows(batchId, rows, user = null) {
     const savedPerson = findImportedPerson(employeeNo);
     personnelAccess.saveOrganization(savedPerson.id,org);
     if(!existing||String(existing.department_id||"")!==String(org.department_id||"")||String(existing.personnel_group_id||"")!==String(org.personnel_group_id||"")||String(existing.administrative_team_id||"")!==String(org.administrative_team_id||"")){
-      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,now());
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,manager.id,"初始创建",now());
       const linked=db.prepare("select id from users where person_id=?").get(savedPerson.id);
       if(linked && linked.id!==SUPER_ACCOUNT_ID)revokeUserSessions(linked.id,{bumpCredentialVersion:true});
     }
@@ -8064,7 +8090,7 @@ function updatePersonnel(person, payload, manager) {
     db.prepare(`update personnel set ${assignments},source_batch_id='manual_override',updated_at=? where id=?`).run(...updates.map(item => item.next), stamp, person.id);}
     if(orgChanged){
       personnelAccess.saveOrganization(person.id,org);
-      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),person.id,org.department_id,org.personnel_group_id,org.administrative_team_id,stamp);
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),person.id,org.department_id,org.personnel_group_id,org.administrative_team_id,manager.id,String(reason||"").slice(0,500),stamp);
     }
     const insertLog = db.prepare("insert into personnel_change_logs(id,person_id,field_name,field_label,old_value,new_value,source_type,source_batch_id,reason,operator_id,operator_name,created_at) values(?,?,?,?,?,?,'manual','',?,?,?,?)");
     const upsertOverride = db.prepare("insert into personnel_field_overrides(person_id,field_name,field_value,reason,updated_by,updated_at) values(?,?,?,?,?,?) on conflict(person_id,field_name) do update set field_value=excluded.field_value,reason=excluded.reason,updated_by=excluded.updated_by,updated_at=excluded.updated_at");
@@ -8186,13 +8212,19 @@ function validateAccountIdentity(payload, existing = null) {
   return person;
 }
 
-function replaceAccountAccess(userId, access) {
+function replaceAccountAccess(userId, access, grantedBy="") {
   db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
   const insertRole = db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)");
   access.roleRows.forEach(role => insertRole.run(userId, role.id, now()));
   db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-  const insertScope = db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
-  access.scopes.forEach(scope => insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now()));
+  const scopeCols = db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "pragma_table_info('rbac_user_scopes')")).get().n;
+  const insertScope = scopeCols === 2
+    ? db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)")
+    : db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)");
+  access.scopes.forEach(scope => {
+    if (scopeCols === 2) insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now(), String(scope.grantReason||"").slice(0,500), grantedBy);
+    else insertScope.run(randomId("scope"), userId, scope.module, scope.scopeType, scope.scopeId, scope.validFrom, scope.validTo, now(), now());
+  });
 }
 
 async function route(req,res) {
@@ -8411,6 +8443,19 @@ async function routeRequestMain(req, res) {
         time: new Date().toISOString()
       });
     }
+    if (method === "GET" && ["/api/admin/audit/logins","/api/admin/audit/logins/export"].includes(url.pathname)) {
+      const actor = requireRbacPermission(req,res,"audit.read");
+      if (!actor) return;
+      const exporting=url.pathname.endsWith('/export');
+      if(exporting&&!requireRbacPermission(req,res,"audit.export"))return;
+      let filters;
+      try { filters=loginAuditFilters(url.searchParams); } catch(error){return send(res,400,{error:error.message});}
+      const data=readLoginAudit(db,filters,{all:exporting});
+      if(!exporting)return send(res,200,data);
+      const generatedAt=now(),file=loginAuditXlsx(data,generatedAt);
+      audit(actor,"audit_login_export","audit_logs","login",JSON.stringify({filters,count:data.total}));
+      return sendBinary(res,200,file,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",{"Content-Disposition":`attachment; filename="login-audit-${filters.from}-${filters.to}.xlsx"`,"Cache-Control":"no-store"});
+    }
     if (method === "GET" && url.pathname === "/api/me") {
       const user = currentUser(req);
       if (!user.id) return send(res, 401, { error: "请先登录" });
@@ -8526,6 +8571,30 @@ async function routeRequestMain(req, res) {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
       if (!manager) return;
       return send(res, 200, publicPersonnelPage(url.searchParams));
+    }
+    if (method === "GET" && /^\/api\/personnel\/[^/]+\/organization-history$/.test(url.pathname)) {
+      // B7-4 历史组织快照查询（V1.1 §5.4）：返回某人的组织归属变更时间线，
+      // 可选 date 参数返回该日期时的组织归属（按 changed_at <= date 的最新一条）。
+      const seg = url.pathname.split("/").filter(Boolean);
+      const personId = decodeURIComponent(seg[2]);
+      const manager = requireRbacPermission(req, res, "personnel.detail.view");
+      if (!manager) return;
+      const person = db.prepare("select id from personnel where id=? and data_status='active'").get(personId);
+      if (!person) return send(res, 404, { error: "人员不存在" });
+      if (!personnelAccess.allows(manager, "personnel", personId)) return send(res, 403, { error: "该人员不在您的数据范围内" });
+      const rows = db.prepare(`select h.id,h.person_id,h.department_id,h.personnel_group_id,h.administrative_team_id,h.changed_by,h.change_reason,h.changed_at,
+        d.name as department_name,g.name as group_name,t.name as team_name
+        from personnel_organization_history h
+        left join organization_units d on d.id=h.department_id
+        left join organization_units g on g.id=h.personnel_group_id
+        left join organization_units t on t.id=h.administrative_team_id
+        where h.person_id=? order by h.changed_at desc`).all(personId);
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const atDate = rows.filter(r => r.changed_at <= dateParam + "T23:59:59.999Z")[0];
+        return send(res, 200, { personId, date: dateParam, organization: atDate || null, history: rows });
+      }
+      return send(res, 200, { personId, history: rows });
     }
     if (method === "GET" && url.pathname === "/api/personnel/identity-quality") {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
@@ -10084,6 +10153,53 @@ async function routeRequestMain(req, res) {
       if (!manager) return;
       return send(res, 200, { accounts: db.prepare("select * from users order by created_at").all().filter(row=>personnelAccess.allows(manager,"accounts",row.person_id)).map(adminUser) });
     }
+    if (method === "GET" && url.pathname === "/api/admin/accounts/effective-permissions") {
+      // B6 有效权限预览（V1.1 §4.1/S5）：显示指定账户的最终权限、来源角色、范围与身份。
+      const manager = requireRbacPermission(req, res, "roles.read");
+      if (!manager) return;
+      const targetUserId = String(url.searchParams.get("userId") || "").trim();
+      if (!targetUserId) return send(res, 400, { error: "缺少 userId" });
+      const target = db.prepare("select u.id,u.username,u.status,u.person_id,p.name,p.position_code from users u left join personnel p on p.id=u.person_id where u.id=?").get(targetUserId);
+      if (!target) return send(res, 404, { error: "账户不存在" });
+      if (!personnelAccess.allows(manager, "accounts", target.person_id)) return send(res, 403, { error: "该账户不在您的数据范围内" });
+      const snapshot = rbacSnapshot(targetUserId);
+      const rolePermissions = {};
+      for (const role of snapshot.roles) {
+        const perms = db.prepare(`select distinct p.code, p.name, p.module from rbac_permissions p
+          join rbac_role_permissions rp on rp.permission_id=p.id
+          join rbac_roles r on r.id=rp.role_id
+          where r.code=? and r.status='active' order by p.module, p.code`).all(role.code);
+        rolePermissions[role.code] = perms;
+      }
+      const permissionSources = {};
+      for (const [roleCode, perms] of Object.entries(rolePermissions)) {
+        for (const perm of perms) {
+          if (!permissionSources[perm.code]) permissionSources[perm.code] = { name: perm.name, module: perm.module, roles: [] };
+          permissionSources[perm.code].roles.push(roleCode);
+        }
+      }
+      const identity = classifyPosition(target.position_code);
+      const now = Date.now();
+      const scopesByModule = {};
+      for (const scope of snapshot.scopes) {
+        if (!scopesByModule[scope.module]) scopesByModule[scope.module] = [];
+        const expired = scope.validTo && Date.parse(scope.validTo) < now;
+        const pending = scope.validFrom && Date.parse(scope.validFrom) > now;
+        scopesByModule[scope.module].push({ ...scope, status: expired ? "expired" : pending ? "pending" : "active" });
+      }
+      const baseRoles = snapshot.roles.filter(r => ["worker", "dispatcher", "manager"].includes(r.code));
+      const baseRoleIssues = baseRoles.length !== 1 && snapshot.roles[0]?.code !== "system_admin" ? ["基础角色数量异常（应为恰好一个）"] : [];
+      return send(res, 200, {
+        account: { id: target.id, username: target.username, status: target.status, personName: target.name, position: target.position_code },
+        identity: { class: identity.identity, label: identity.identityLabel, source: identity.source, quality: identity.quality },
+        roles: snapshot.roles.map(r => ({ code: r.code, name: r.name, permissionCount: rolePermissions[r.code]?.length || 0 })),
+        effectivePermissions: snapshot.permissions.map(code => permissionSources[code]).filter(Boolean),
+        permissionCount: snapshot.permissions.length,
+        scopesByModule,
+        baseRoleIssues,
+        isSuperAccount: targetUserId === SUPER_ACCOUNT_ID
+      });
+    }
     if (method === "GET" && url.pathname === "/api/admin/accounts/availability") {
       const manager = requireRbacPermission(req, res, "accounts.create");
       if (!manager) return;
@@ -10132,7 +10248,7 @@ async function routeRequestMain(req, res) {
         db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
           values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
           .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -10140,6 +10256,66 @@ async function routeRequestMain(req, res) {
       }
       audit(manager, "create_account", "user", userId, JSON.stringify({ username, personId: person.id, roles: access.roleCodes, scopes: access.scopes }));
       return send(res, 201, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    if (method === "POST" && url.pathname === "/api/admin/accounts/bulk-access") {
+      const manager = requireRbacPermission(req, res, "accounts.update");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const fail = (message, status=400) => { throw Object.assign(new Error(message), {status}); };
+      const ids = Array.isArray(payload.accountIds) ? [...new Set(payload.accountIds)] : [];
+      if (!ids.length || ids.length > 1000 || ids.some(id => typeof id !== "string" || !id)) fail("请选择 1 至 1000 个有效账号");
+      const changeRoles = payload.roles !== undefined, changeScopes = payload.moduleScopes !== undefined;
+      if (!changeRoles && !changeScopes) fail("请至少选择一项修改内容");
+      if (changeRoles && !hasRbac(manager,"accounts.roles.assign")) fail("没有分配角色权限",403);
+      if (changeScopes && !hasRbac(manager,"accounts.scopes.assign")) fail("没有分配数据范围权限",403);
+      if (changeRoles && (!["append","replace"].includes(payload.roleMode) || !Array.isArray(payload.roles) || !payload.roles.length)) fail("请选择角色及有效修改方式");
+      const modules = changeScopes && payload.moduleScopes && typeof payload.moduleScopes === "object" && !Array.isArray(payload.moduleScopes) ? Object.keys(payload.moduleScopes) : [];
+      const allowedModules = ["personnel","accounts","info","maintenance","hours","attendance"];
+      if (changeScopes && (!modules.length || modules.some(module => !allowedModules.includes(module) || !Array.isArray(payload.moduleScopes[module]) || !payload.moduleScopes[module].length || payload.moduleScopes[module].some(scope => scope?.module !== module)))) fail("请选择有效模块并配置至少一项范围");
+      db.exec("begin immediate");
+      try {
+        // Validate the entire batch before writing; retain untouched scope rows and their audit metadata.
+        const updates = ids.map(id => {
+          try {
+            if (id === SUPER_ACCOUNT_ID) fail("唯一超级账号不可修改",403);
+            const existing = db.prepare("select * from users where id=?" + (db.kind === "postgres" ? " for update" : "")).get(id);
+            if (!existing) fail("账号不存在",409);
+            personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+            validateAccountIdentity({},existing);
+            const current = rbacSnapshot(id);
+            let access;
+            if (changeRoles) {
+              const roles = payload.roleMode === "append" ? [...current.roles.map(role=>role.code),...payload.roles] : payload.roles;
+              access = validateAccountAccess({roles,scopes:[]}, existing.person_id);
+            }
+            let scopes=[];
+            if (changeScopes) {
+              const input=modules.flatMap(module=>payload.moduleScopes[module]);
+              scopes=personnelAccess.normalizeScopes(input,existing.person_id).filter(scope=>modules.includes(scope.module));
+              scopes=scopes.map(scope=>({...scope,grantReason:String(input.find(item=>item.module===scope.module && item.scopeType===scope.scopeType && String(item.scopeId||"")===scope.scopeId)?.grantReason||"").slice(0,500)}));
+            }
+            return {id,existing,access,scopes};
+          } catch(error) { error.message=`账号 ${id}：${error.message}`; throw error; }
+        });
+        for (const update of updates) {
+          if (changeRoles) {
+            db.prepare("delete from rbac_user_roles where user_id=?").run(update.id);
+            for (const role of update.access.roleRows) db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(update.id,role.id,now());
+          }
+          for (const module of modules) db.prepare("delete from rbac_user_scopes where user_id=? and module=?").run(update.id,module);
+          const hasGrantColumns = Number(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "(select name from pragma_table_info('rbac_user_scopes') where name in ('grant_reason','granted_by'))")).get().n) === 2;
+          for (const scope of update.scopes) {
+            const values=[randomId("scope"),update.id,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];
+            if(hasGrantColumns) db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)").run(...values,scope.grantReason,manager.id);
+            else db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(...values);
+          }
+          db.prepare("update users set updated_at=? where id=?").run(now(),update.id);
+          audit(manager,"bulk_update_account_access","user",update.id,JSON.stringify({roleMode:changeRoles?payload.roleMode:null,roles:update.access?.roleCodes,modules,scopes:update.scopes}));
+        }
+        db.exec("commit");
+      } catch(error) { db.exec("rollback"); throw error; }
+      for (const id of ids) revokeUserSessions(id,{bumpCredentialVersion:true});
+      return send(res,200,{ok:true,updated:ids.length});
     }
     const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
     if (accountRoute && method === "PUT") {
@@ -10165,7 +10341,7 @@ async function routeRequestMain(req, res) {
         validateAccountIdentity(payload, existing);
         db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
           .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -10310,7 +10486,7 @@ async function routeRequestMain(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
         }
         db.exec("commit");
       } catch (error) {
@@ -11522,13 +11698,14 @@ async function routeRequestMaintenance(req, res) {
       if (process.env.MUC_NONROUTINE_REVIEW_ENABLED !== "1") return send(res, 404, { error: "非例行评议尚未启用" });
       const service = nonroutineReviewService();
       const id = routeParam(nonroutineReviewRoute[1]);
+      if(nonroutineReviewRoute[2]==='candidates')return send(res,200,service.candidates(id,Object.fromEntries(url.searchParams),viewer));
       if(nonroutineReviewRoute[2]==='cancel'){
         const cancellation=createNonroutineReviewCancellation({db,transaction:maintenanceTransaction,can:nonroutineReviewCan,qualifiedAccount:nonroutineReviewQualifiedAccount,sourceFacts:maintenanceReviewSourceFacts,clock:now,randomId});
         const result=cancellation.cancel(id,await bodyJson(req),viewer);
         bumpMaintenanceVersion('', 'maintenance.nonroutine.review.changed');
         return send(res,200,{cancellation:result});
       }
-      if(nonroutineReviewRoute[2]==='candidates')return send(res,200,service.candidates(id,Object.fromEntries(url.searchParams),viewer));
+      
       if(["finalization","finalize","sync","preview"].includes(nonroutineReviewRoute[2])) {
         if(process.env.MUC_NONROUTINE_FINALIZATION_ENABLED!=="1")return send(res,404,{error:"非例行终审尚未启用"});
         const finalizer=nonroutineFinalizationService();
@@ -12610,7 +12787,7 @@ async function routeRequestMaintenance(req, res) {
         db.prepare(`insert into users(id,username,name,role,salt,password_hash,permissions,allowed_tabs,department,team,function_category,status,person_id,must_change_password,credential_version,created_at,updated_at)
           values(?,?,?,'rbac',?,?,'[]','[]',?,?,?,?,?,?,1,?,?)`)
           .run(userId, username, person.name, pass.salt, pass.hash, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory), normalizeStatus(payload.status), person.id, payload.mustChangePassword === false ? 0 : 1, now(), now());
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -12643,7 +12820,7 @@ async function routeRequestMaintenance(req, res) {
         validateAccountIdentity(payload, existing);
         db.prepare("update users set name=?,role='rbac',permissions='[]',allowed_tabs='[]',department=?,team=?,function_category=?,status=?,person_id=?,must_change_password=?,updated_at=? where id=?")
           .run(person.name, person.department || "未设置", person.home_team || "未设置", normalizeFunctionCategory(payload.functionCategory ?? existing.function_category), status, person.id, payload.mustChangePassword === true ? 1 : 0, now(), userId);
-        replaceAccountAccess(userId, access);
+        replaceAccountAccess(userId, access, (manager||{}).id||"");
         db.exec("commit");
       } catch (error) {
         db.exec("rollback");
@@ -12788,7 +12965,7 @@ async function routeRequestMaintenance(req, res) {
           db.prepare("delete from rbac_user_roles where user_id=?").run(userId);
           item.roleRows.forEach(role => db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(userId, role.id, now()));
           db.prepare("delete from rbac_user_scopes where user_id=?").run(userId);
-          item.scopes.forEach(scope=>db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()));
+          item.scopes.forEach(scope=>{const hasGrant=(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name as name from information_schema.columns where table_name='rbac_user_scopes' and column_name='grant_reason')" : "pragma_table_info('rbac_user_scopes')")).get().n===1);const sql=hasGrant?"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)":"insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)";const args=hasGrant?[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now(),String(scope.grantReason||"").slice(0,500),(admin||{}).id||""]:[randomId("scope"),userId,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];db.prepare(sql).run(...args);});
         }
         db.exec("commit");
       } catch (error) {

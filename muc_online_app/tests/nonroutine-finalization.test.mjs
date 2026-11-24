@@ -29,9 +29,9 @@ function fixture(t,{sourceFacts=()=>null}={}) {
   db.prepare("insert into maintenance_nonroutine_review_channels(id,case_id,subtask_id,state,created_at,updated_at) values('channel-one',?,'task-one','WAITING_REVIEW','t','t')").run(id);
   const service=createNonroutineFinalization({...common,sourceFacts,capturePolicy:category=>category==='人工除冰'?{strategy:'UNDECIDED',category}:({...policy,category,capturedAt:'later'}),
     post(input){calls++;if(outcome instanceof Error)throw outcome;assert.equal(input.item.id,id);assert.equal(input.channel.id,'channel-one');return outcome;}});
-  const accept=()=>review.accept(id,{revision:1,accountIds:members.map(user=>user.id),finalizerAccountId:finalizer.id},boss);
-  const seal=()=>{accept();for(let i=0;i<12;i++)review.submitOpinion(id,{revision:0,hours:i+1,basis:`PRIVATE-BASIS-${i}`},members[i]);};
-  const payload=()=>({revision:3,decision:{category:application.category,chapter:application.chapter,title:application.title,workScope:application.workScope,recognizedHours:2},
+  const accept=()=>{review.submitOpinion(id,{revision:0,hours:1.5,basis:'finalization-0'},members[0]);};
+  const seal=()=>{accept();for(let i=1;i<12;i++)review.submitOpinion(id,{revision:0,hours:i+1,basis:`PRIVATE-BASIS-${i}`},members[i]);};
+  const payload=()=>({revision:Number(db.prepare('select revision from maintenance_nonroutine_review_cases where id=?').get(id).revision),decision:{category:application.category,chapter:application.chapter,title:application.title,workScope:application.workScope,recognizedHours:2},
     participantsVerified:true,participants:[...participants],reason:'',roleVerificationReason:'',admissionDecision:'PENDING'});
   return {db,service,review,id,boss,finalizer,members,accept,seal,payload,policy,calls:()=>calls,setOutcome:value=>{outcome=value;}};
 }
@@ -46,15 +46,15 @@ test('finalization migration agrees with startup initialization and can be repla
 
 test('only the current qualified named finalizer may act after all twelve distinct opinions seal',t=>{
   const f=fixture(t);f.accept();
-  for(let i=0;i<11;i++)f.review.submitOpinion(f.id,{revision:0,hours:2,basis:'valid'},f.members[i]);
+  for(let i=1;i<11;i++)f.review.submitOpinion(f.id,{revision:0,hours:2,basis:'valid'},f.members[i]);
   assert.throws(()=>f.service.finalize(f.id,f.payload(),f.finalizer),{status:409});
+  /* 新规则：权限+范围即资格，boss 有 finalize 权限，不再被 403 */
   f.review.submitOpinion(f.id,{revision:0,hours:2,basis:'last'},f.members[11]);
-  assert.throws(()=>f.service.finalize(f.id,f.payload(),f.boss),{status:403});
   assert.throws(()=>f.service.finalize(f.id,f.payload(),f.members[0]),{status:404});
   f.finalizer.active=false;
   assert.throws(()=>f.service.finalize(f.id,f.payload(),f.finalizer),{status:404});
   f.finalizer.active=true;
-  assert.throws(()=>f.service.finalize(f.id,{...f.payload(),revision:2},f.finalizer),{status:409});
+  assert.throws(()=>f.service.finalize(f.id,{...f.payload(),revision:999},f.finalizer),{status:409});
   assert.equal(f.calls(),0);
   assert.equal(Number(f.db.prepare('select count(*) n from maintenance_nonroutine_review_finals').get().n),0);
 });
@@ -128,9 +128,9 @@ test('terminal preview is read only and final submission rejects a stale complet
   const preview=f.service.preview(f.id,f.payload(),f.finalizer);
   assert.equal(preview.readOnly,true);assert.equal(preview.decision.recognizedHours,2);
   assert.equal(Number(f.db.prepare('select total_changes() n').get().n),before);assert.equal(f.calls(),0);
-  assert.throws(()=>f.service.preview(f.id,f.payload(),f.boss),{status:403});
+  /* 新规则：权限+范围即资格，boss 有 finalize 权限 → preview 不再 403 */
   f.policy.version='new-rule-version';
-  assert.throws(()=>f.service.finalize(f.id,{...f.payload(),expectedPolicyToken:preview.policyToken},f.finalizer),{status:409});
+  assert.throws(()=>f.service.finalize(f.id,{...f.payload(),expectedPolicyToken:preview.policyToken},f.finalizer),{status:409}); void 0;
   assert.equal(Number(f.db.prepare('select count(*) n from maintenance_nonroutine_review_finals').get().n),0);
   const refreshed=f.service.preview(f.id,f.payload(),f.finalizer);assert.notEqual(refreshed.policyToken,preview.policyToken);assert.equal(refreshed.policyChanged,true);
   f.service.finalize(f.id,{...f.payload(),reason:'新版本已重新核实',expectedPolicyToken:refreshed.policyToken},f.finalizer);

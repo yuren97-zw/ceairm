@@ -94,6 +94,7 @@ const state = {
   userAvailabilitySequence: 0,
   userAvailability: { checking: false, available: false },
   userRoleFilter: "全部",
+  userSearch: "",
   settings: clone(defaultSettings),
   favorites: {},
   recordFiles: [],
@@ -629,13 +630,13 @@ function scopeDateInput(value) { return value ? new Date(Date.parse(value)+8*360
 function moduleScopeRow(module,scope={scopeType:"self"}) {
   const type=scope.scopeType || "self";
   const orgType={specified_teams:"administrative_team",specified_groups:"personnel_group"}[type];
-  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
+  return `<div class="entry-grid module-scope-row" data-scope-row="${module}"><label>范围<select data-scope-type>${Object.entries(scopeLabels).map(([key,name])=>`<option value="${key}" ${type===key?"selected":""}>${name}</option>`).join("")}</select></label><label>指定组织<select data-scope-org ${orgType?"":"disabled"}><option value="">请选择</option>${state.organizations.filter(o=>o.type===orgType).map(o=>`<option value="${escapeHtml(o.id)}" ${scope.scopeId===o.id?"selected":""}>${escapeHtml(organizationLabel(o))}</option>`).join("")}</select></label><label>生效日期（北京时间）<input type="date" data-scope-from value="${scopeDateInput(scope.validFrom)}"></label><label>截止日期（含当天）<input type="date" data-scope-to value="${scopeDateInput(scope.validTo)}"></label><label>授权原因（审计留痕）<input type="text" data-scope-reason maxlength="500" placeholder="如：跨班支援、临时授权" value="${escapeHtml(scope.grantReason||"")}"></label><button type="button" class="link-btn" data-scope-remove>移除范围</button></div>`;
 }
 function renderModuleScopes(scopes) {
   return `<section class="data-panel"><strong>分模块数据范围</strong><p>各模块独立授权；同模块多项范围取并集。日期为空表示不限制，未配置模块默认本人。</p>${Object.entries(scopeModuleLabels).map(([module,label])=>`<fieldset><legend>${label}</legend><div data-module-scopes="${module}">${(scopes.filter(s=>s.module===module).length?scopes.filter(s=>s.module===module):[{scopeType:"self"}]).map(s=>moduleScopeRow(module,s)).join("")}</div><button type="button" class="link-btn" data-scope-add="${module}">增加范围</button></fieldset>`).join("")}</section>`;
 }
 function readModuleScopes() {
-  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value}));
+  return $$("[data-scope-row]").map(row=>({module:row.dataset.scopeRow,scopeType:row.querySelector("[data-scope-type]").value,scopeId:row.querySelector("[data-scope-org]").disabled?"":row.querySelector("[data-scope-org]").value,validFrom:row.querySelector("[data-scope-from]").value,validTo:row.querySelector("[data-scope-to]").value,grantReason:row.querySelector("[data-scope-reason]")?.value||""}));
 }
 
 function renderOrganizationSettings() {
@@ -796,6 +797,42 @@ function personnelCadreBadgeHtml(person) {
 }
 
 // 身份分类徽标（V1.1 §3.1）：来源是人员主数据职位 position_code，与上方按人员分组的干部判定相互独立。
+// B6 有效权限预览面板（V1.1 S5）：显示账户的角色来源、权限明细、范围与身份。
+async function showEffectivePermissions(userId, username) {
+  try {
+    const data = await userService.effectivePermissions(userId);
+    const sections = [];
+    const moduleNames = { info: "信息传达", maintenance: "维修管控", personnel: "人员管理", accounts: "账号角色", attendance: "考勤假期", capability: "能力看板", handover: "班组交接", settings: "系统配置" };
+    // 身份
+    if (data.identity?.label) {
+      sections.push(`<div class="perm-section"><h4>身份分类</h4><p>${escapeHtml(data.identity.label)}（来源：${escapeHtml(data.identity.source || "职位")}）${data.identity.quality !== "matched" ? `<span class="perm-warning">职位值异常（${escapeHtml(data.identity.quality)}）</span>` : ""}</p></div>`);
+    }
+    // 角色
+    if (data.roles?.length) {
+      sections.push(`<div class="perm-section"><h4>角色（${data.roles.length} 个）</h4>${data.roles.map(r => `<span class="perm-role${["worker","dispatcher","manager"].includes(r.code) ? " perm-role-base" : ""}">${escapeHtml(r.name)}（${r.permissionCount} 项权限）</span>`).join("")}</div>`);
+    }
+    if (data.isSuperAccount) sections.push(`<div class="perm-section"><h4>超级账户</h4><p>拥有全部权限与全部数据范围，业务身份限制（自审禁止、班组长资格）不豁免。</p></div>`);
+    // 权限按模块分组
+    if (data.effectivePermissions?.length) {
+      const byModule = {};
+      for (const perm of data.effectivePermissions) {
+        if (!byModule[perm.module]) byModule[perm.module] = [];
+        byModule[perm.module].push(perm);
+      }
+      sections.push(`<div class="perm-section"><h4>有效权限（${data.permissionCount} 项）</h4>${Object.entries(byModule).map(([mod, perms]) => `<details><summary>${escapeHtml(moduleNames[mod] || mod)}（${perms.length} 项）</summary>${perms.map(p => `<div class="perm-item">${escapeHtml(p.name)} <small>← ${escapeHtml(p.roles.join(", "))}</small></div>`).join("")}</details>`).join("")}</div>`);
+    }
+    // 数据范围
+    if (data.scopesByModule && Object.keys(data.scopesByModule).length) {
+      const scopeLabels = { all: "全部", self: "本人", administrative_team: "行政班组", personnel_group: "人员分组", department: "部门", specified_teams: "指定班组", specified_groups: "指定分组" };
+      sections.push(`<div class="perm-section"><h4>数据范围</h4>${Object.entries(data.scopesByModule).map(([mod, scopes]) => `<p><b>${escapeHtml(moduleNames[mod] || mod)}</b>：${scopes.map(sc => `<span class="perm-scope${sc.status === "expired" ? " perm-scope-expired" : sc.status === "pending" ? " perm-scope-pending" : ""}">${escapeHtml(scopeLabels[sc.scopeType] || sc.scopeType)}${sc.validTo ? `（至 ${escapeHtml(sc.validTo.slice(0, 10))}）` : ""}${sc.status === "expired" ? " ⚠已过期" : sc.status === "pending" ? " ⏳未生效" : ""}${sc.grantReason ? ` · ${escapeHtml(sc.grantReason.slice(0, 30))}` : ""}</span>`).join("、")}</p>`).join("")}</div>`);
+    }
+    // 基础角色校验
+    if (data.baseRoleIssues?.length) sections.push(`<div class="perm-section perm-warning"><h4>⚠ 配置异常</h4>${data.baseRoleIssues.map(i => `<p>${escapeHtml(i)}</p>`).join("")}</div>`);
+    $("#userDialogBody").innerHTML = `<div class="dialog-head"><h2>有效权限：${escapeHtml(username || data.account?.username || "")}</h2><button class="icon-btn" type="button" data-close="userDialog" aria-label="关闭">×</button></div>${sections.join("") || "<p>暂无权限数据。</p>"}<div class="form-actions"><button class="btn secondary" type="button" data-close="userDialog">关闭</button></div>`;
+    $("#userDialog").showModal();
+  } catch (error) { alert("获取权限信息失败：" + error.message); }
+}
+
 function personnelIdentityBadgeHtml(person) {
   if (!person?.identityClass) return "";
   const unknown = person.identityQuality === "unknown_value" || person.identityQuality === "empty";
@@ -1089,6 +1126,12 @@ const userService = {
   },
   async importRows(rows) {
     return await apiRequest("/admin/accounts/bulk-open", { method: "POST", body: { rows } });
+  },
+  async effectivePermissions(userId) {
+    return await apiRequest(`/admin/accounts/effective-permissions?userId=${encodeURIComponent(userId)}`);
+  },
+  async effectivePermissions(userId) {
+    return await apiRequest(`/admin/accounts/effective-permissions?userId=${encodeURIComponent(userId)}`);
   }
 };
 
@@ -1757,11 +1800,21 @@ function canView(tab) {
 }
 
 function canOpenSettings() {
-  return ["accounts.read", "roles.read", "settings.manage"].some(hasRbac);
+  return ["accounts.read", "roles.read", "settings.manage", "audit.read"].some(hasRbac);
 }
 
-function canViewSubpage(subpage) {
+// 层①导航树查询（V1.1 §4.1）：优先从服务端下发的 navigationTree 查找，退化为 hasRbac。
+function navigationTreeChildren(pageId) {
+  const tree = state.user?.navigationTree;
+  if (!Array.isArray(tree)) return null;
+  const page = tree.find(node => node.id === pageId);
+  return page?.children || [];
+}
+function canViewSubpage(subpage, parentPage) {
   if (!isLoggedIn()) return false;
+  const children = navigationTreeChildren(parentPage || "infoPage");
+  if (children.length) return children.some(child => child.id === subpage);
+  // 退化路径（导航树未就绪时的兜底）
   if (subpage === "infoListSubpage") return true;
   if (subpage === "statsSubpage") return hasRbac("info.stats.read");
   if (subpage === "handoverSubpage") return hasRbac("handover.view");
@@ -2661,22 +2714,48 @@ function functionCategoryOptions(selected = "维修") {
 
 function renderUserManagement() {
   const roleFilterOptions = [["全部", "全部角色"], ...(state.rbacCatalog.roles || []).map(role => [role.code, role.name])];
-  const rows = (state.users || []).filter(user => state.userRoleFilter === "全部" || (user.rbacRoles || []).some(role => role.code === state.userRoleFilter));
-  const rowIds = new Set(rows.map(user => user.id));
+  const query = (state.userSearch || "").trim().toLowerCase();
+  const rows = (state.users || []).filter(user => (state.userRoleFilter === "全部" || (user.rbacRoles || []).some(role => role.code === state.userRoleFilter)) && (!query || [user.name,user.employeeNo].some(value=>String(value||"").toLowerCase().includes(query))));
+  const canBatch = hasRbac("accounts.update") && (hasRbac("accounts.roles.assign") || hasRbac("accounts.scopes.assign"));
+  const selectable = rows.filter(user=>canBatch && user.id!==SUPER_ACCOUNT_ID && !user.personDeleted);
+  const rowIds = new Set(selectable.map(user => user.id));
   state.selectedUserIds = new Set([...state.selectedUserIds].filter(id => rowIds.has(id)));
   const selectedCount = state.selectedUserIds.size;
-  const allChecked = rows.length > 0 && rows.every(user => state.selectedUserIds.has(user.id));
+  const allChecked = selectable.length > 0 && selectable.every(user => state.selectedUserIds.has(user.id));
   return `<div class="data-panel setting-list user-admin-card"><div class="module-head"><div><strong>登录账户管理</strong><div class="status-line">人员身份只从人员主数据读取；访问能力只由 RBAC 角色和数据范围决定。</div></div>${hasRbac("accounts.create") ? '<button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button>' : ""}</div>
     ${hasRbac("accounts.bulk_open") ? '<div class="import-box"><label>Excel / CSV 批量开通账户<input id="userImportFile" type="file" accept=".xlsx,.xls,.csv"></label><button id="userImportBtn" class="btn secondary" type="button">校验并批量开通</button><div id="userImportResult" class="status-line">列名：员工工号、登录账号、初始密码、账户状态、角色，以及人员与能力范围、登录账户管理范围、信息传达范围、维修管控范围、工时统计范围、考勤管理范围。范围空白默认本人；指定范围写“指定行政班组:航线维修车间 / 二车间 / 一组”或“指定人员分组:航线维修车间 / 二车间”，多选用“|”。可附加各模块“范围开始日期”“范围结束日期”列，按北京时间 YYYY-MM-DD 解释。只能新开账户，不覆盖已有账户。</div></div>' : ""}
-    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label></div>
-    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span>账号</span><span>人员</span><span>部门/班组</span><span>RBAC 角色</span><span>数据范围</span><span>状态</span><span>首次改密</span><span>操作</span></div>${rows.map(user => {
+    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><input id="userSearch" class="search" type="search" placeholder="搜索姓名或工号" aria-label="搜索姓名或工号" value="${escapeHtml(state.userSearch || "")}"><span class="status-line">共 ${state.users.length} 个账号 · 当前筛选 ${rows.length} 个 · <span id="userBatchCount">已选 ${selectedCount} 个</span></span>${canBatch ? `<div class="user-toolbar-right"><button id="clearUserSelectionBtn" class="btn secondary" type="button">取消选择</button><button id="openUserBatchBtn" class="btn" type="button" ${selectedCount?"":"disabled"}>批量设置</button></div>` : ""}</div>
+    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span>${canBatch?`<input id="userSelectAll" type="checkbox" aria-label="全选当前筛选账号" ${allChecked?"checked":""} ${selectable.length?"":"disabled"}>`:""}</span><span>账号</span><span>人员</span><span>部门/班组</span><span>RBAC 角色</span><span>数据范围</span><span>状态</span><span>首次改密</span><span>操作</span></div>${rows.map(user => {
       const locked = user.id === SUPER_ACCOUNT_ID;
       const roles = (user.rbacRoles || []).map(role => role.name || role.code).join("、") || "未配置";
       const scopes = (user.dataScopes || []).map(scope => `${scopeModuleLabels[scope.module] || ""}：${scopeLabels[scope.scopeType]}${scope.scopeId ? " · "+(state.organizations.find(o=>o.id===scope.scopeId)?.name || "未配置组织") : ""}`).join("；") || "未配置";
-      const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
-      return `<div class="user-row admin-user-row"><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}<small>${escapeHtml(user.employeeNo || "")}</small></span><span>${escapeHtml(user.department || "未设置")}<small>${escapeHtml(user.team || "未设置")}</small></span><span>${escapeHtml(roles)}</span><span>${escapeHtml(scopes)}</span><span>${escapeHtml(statusLabels[user.status] || user.status)}</span><span>${user.mustChangePassword ? "是" : "否"}</span><span class="user-actions">${actions}</span></div>`;
+      const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-view-perms="${escapeHtml(user.id)}" data-view-perms-name="${escapeHtml(user.username)}">查看权限</button><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
+      return `<div class="user-row admin-user-row"><span>${canBatch?`<input type="checkbox" data-user-select="${escapeHtml(user.id)}" aria-label="选择 ${escapeHtml(user.name)}" ${locked||user.personDeleted?"disabled":""} ${state.selectedUserIds.has(user.id)?"checked":""}>`:""}</span><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}<small>${escapeHtml(user.employeeNo || "")}</small></span><span>${escapeHtml(user.department || "未设置")}<small>${escapeHtml(user.team || "未设置")}</small></span><span>${escapeHtml(roles)}</span><span>${escapeHtml(scopes)}</span><span>${escapeHtml(statusLabels[user.status] || user.status)}</span><span>${user.mustChangePassword ? "是" : "否"}</span><span class="user-actions">${actions}</span></div>`;
     }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}</div></div>`;
 }
+
+// B7-5 菜单预览：根据当前选中的角色实时计算可见页面
+function updateUserMenuPreview() {
+  const selected = new Set([...$$("input[name=userBaseRole]:checked"), ...$$("input[name=userRbacRoles]:checked")].map(i => i.value));
+  const rolePerms = new Set();
+  for (const role of state.rbacCatalog?.roles || []) if (selected.has(role.code)) for (const p of role.permissions || []) rolePerms.add(p);
+  const nav = visibleNavigationFromPermissions(rolePerms);
+  const el = $("#userMenuPreview");
+  if (el) el.innerHTML = nav.length ? nav.map(page => `<span class="perm-role">✓ ${pageLabels[page] || page}</span>`).join(" ") : '<span class="perm-warning">暂无可见页面（请先选择角色）</span>';
+}
+function visibleNavigationFromPermissions(perms) {
+  const NAV = [
+    { id: "infoPage", label: "信息传达", anyOf: ["info.read"] },
+    { id: "maintenancePage", label: "维修管控", anyOf: ["maintenance.view","maintenance.execute.view","maintenance.dispatch.view","maintenance.review.view","maintenance.stats.manage.view"] },
+    { id: "fixedPage", label: "固化项目", anyOf: ["fixed.read"] },
+    { id: "personnelPage", label: "人员与能力", anyOf: ["capability.overview.view","personnel.list.view"] },
+    { id: "hoursPage", label: "工时统计", anyOf: ["hours.read"] },
+    { id: "attendancePage", label: "考勤管理", anyOf: ["attendance.read"] },
+    { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage","audit.read"] }
+  ];
+  return NAV.filter(n => [...n.anyOf].some(p => perms.has(p))).map(n => n.label);
+}
+const pageLabels = { infoPage: "信息传达", maintenancePage: "维修管控", fixedPage: "固化项目", personnelPage: "人员与能力", hoursPage: "工时统计", attendancePage: "考勤管理", settingsPage: "系统设置", homePage: "首页" };
 
 function openUserDialog(user = null) {
   const isEdit = !!user;
@@ -2700,9 +2779,19 @@ function openUserDialog(user = null) {
     ${isEdit ? "" : '<label>初始密码<input id="userPassword" type="password" minlength="6" required></label>'}
     <label>状态<select id="userStatus"><option value="active">启用</option><option value="disabled">停用</option></select></label>
     <label class="login-check"><input id="userMustChangePassword" type="checkbox" ${!isEdit || user?.mustChangePassword ? "checked" : ""}>下次登录必须修改密码</label>
-    <div><span class="status-line">基础角色（必须且只能选一项）</span><div class="check-grid">${baseRoles.map(role => `<label class="check-option"><input type="radio" name="userBaseRole" value="${escapeHtml(role.code)}" ${selectedRoleCodes.includes(role.code) ? "checked" : ""}><span>${escapeHtml(role.name)}</span></label>`).join("")}</div></div>
-    <div><span class="status-line">附加角色（按需多选）</span>${checkedGroup("userRbacRoles", supplementalRoles.map(role => [role.code, role.name]), selectedRoleCodes)}</div>
-    ${renderModuleScopes(user?.dataScopes || [])}
+    <div class="user-dialog-tabs settings-tabs">
+      <button type="button" class="chip active" data-user-tab="operation">操作权限</button>
+      <button type="button" class="chip" data-user-tab="data">数据权限</button>
+      <button type="button" class="chip" data-user-tab="menu">菜单预览</button>
+    </div>
+    <div data-user-panel="operation">
+      <div><span class="status-line">基础角色（独立可选）</span><div class="check-grid">${baseRoles.map(role => `<label class="check-option"><input type="radio" name="userBaseRole" value="${escapeHtml(role.code)}" ${selectedRoleCodes.includes(role.code) ? "checked" : ""}><span>${escapeHtml(role.name)}</span></label>`).join("")}</div></div>
+      <div><span class="status-line">附加角色（按需多选）</span>${checkedGroup("userRbacRoles", supplementalRoles.map(role => [role.code, role.name]), selectedRoleCodes)}</div>
+    </div>
+    <div data-user-panel="data" hidden>${renderModuleScopes(user?.dataScopes || [])}</div>
+    <div data-user-panel="menu" hidden>
+      <div class="data-panel"><strong>菜单可见性预览</strong><p>根据所选角色的权限自动推导，不可直接编辑。</p><div id="userMenuPreview" class="status-line">选择角色后自动更新。</div></div>
+    </div>
     <div class="form-actions"><button class="btn secondary" type="button" data-close="userDialog">取消</button><button id="userSaveBtn" class="btn" type="submit" ${isEdit ? "" : "disabled"}>保存</button></div>
   </form>`;
   $("#userStatus").value = user?.status || "active";
@@ -2710,6 +2799,13 @@ function openUserDialog(user = null) {
   state.userAvailabilitySequence += 1;
   state.userAvailability = { checking: false, available: isEdit };
   $("#userDialog").showModal();
+  // B7-5 三页签切换
+  $$("#userDialogBody [data-user-tab]").forEach(btn => btn.addEventListener("click", () => {
+    $$("#userDialogBody [data-user-tab]").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    $$("#userDialogBody [data-user-panel]").forEach(p => p.hidden = p.dataset.userPanel !== btn.dataset.userTab);
+    if (btn.dataset.userTab === "menu") updateUserMenuPreview();
+  }));
 }
 
 function setUserAvailabilityUi({ checking = false, available = false, usernameMessage = "", personMessage = "" } = {}) {
@@ -2792,19 +2888,20 @@ function userPayloadFromForm() {
 function syncUserSelectionUi() {
   const selectedCount = state.selectedUserIds.size;
   const count = $("#userBatchCount");
-  if (count) count.textContent = `已选择 ${selectedCount} 个账号`;
+  if (count) count.textContent = `已选 ${selectedCount} 个`;
   const button = $("#openUserBatchBtn");
   if (button) button.disabled = !selectedCount;
-  const boxes = $$("[data-user-select]");
+  const boxes = $$("[data-user-select]:not(:disabled)");
   const all = $("#userSelectAll");
-  if (all) all.checked = boxes.length > 0 && boxes.every(box => box.checked);
+  if (all) { all.checked = boxes.length > 0 && boxes.every(box => box.checked); all.indeterminate = selectedCount > 0 && !all.checked; }
 }
 
 function settingsTabOptions() {
   return [
     ["accounts", "登录账户管理", hasRbac("accounts.read")],
     ["roles", "角色与权限", hasRbac("roles.read")],
-    ["general", "通用设置", hasRbac("settings.manage")]
+    ["general", "通用设置", hasRbac("settings.manage")],
+    ["audit", "审计", hasRbac("audit.read")]
   ].filter(([, , visible]) => visible);
 }
 
@@ -2984,7 +3081,7 @@ function renderPersonnelDetail() {
   const englishLabel = detail.qualificationVisible ? (detail.englishLevels || []).join("、") || "未提供" : "无查看权限";
   const actualGradeLabel = person.actualGradeMasked ? "***" : (person.actualGrade || "未提供");
   let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b>${personnelIdentityBadgeHtml(person)}</span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
-  if (tab === "changes") content = `<div class="personnel-flat-list">${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
+  if (tab === "changes") content = `<div class="personnel-flat-list">${(state.activePersonnelOrgHistory || []).length ? `<div class="setting-item"><b>📋 组织归属变更</b>${(state.activePersonnelOrgHistory || []).map(h => `<div style="padding:2px 0"><small>${escapeHtml((h.changed_at || "").replace("T", " ").slice(0, 19))}</small> · ${escapeHtml(h.department_name || "—")} / ${escapeHtml(h.group_name || "—")} / ${escapeHtml(h.team_name || "—")}${h.change_reason ? ` · ${escapeHtml(h.change_reason)}` : ""}</div>`).join("")}</div>` : ""}${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
   if (tab === "authorizations") content = detail.qualificationVisible ? renderAuthorizationCategoryPanel(detail) : '<div class="status-line">当前账号没有查看授权明细的权限。</div>';
   if (type) {
     if (!detail.qualificationVisible) content = '<div class="status-line">当前账号没有查看执照、授权和培训明细的权限。</div>';
@@ -3091,6 +3188,7 @@ async function reloadActivePersonnelDetail() {
   const personId = state.activePersonnelDetail?.person?.id;
   if (!personId) return;
   state.activePersonnelDetail = await personnelService.detail(personId);
+  try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personId)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
   state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
   const type = qualificationTabType(state.personnelDetailTab);
   if (type && (type !== "authorization" || state.expandedAuthorizationCategory)) await loadPersonnelQualifications(type, { keepFilters: true });
@@ -3384,9 +3482,11 @@ function applyCapabilityShapeLayer(shadow) {
 }
 
 function renderPersonnelArea() {
-  const capabilityAllowed = ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
-  const authorizationAllowed = hasRbac("personnel.list.view") && hasRbac("personnel.qualification.view");
-  const masterAllowed = personnelTabOptions().length > 0;
+  // 层①：优先从导航树获取子区域可见性（V1.1 §4.1）
+  const navChildren = navigationTreeChildren("personnelPage");
+  const capabilityAllowed = navChildren.length ? navChildren.some(c => c.id === "capability") : ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"].some(hasRbac);
+  const authorizationAllowed = navChildren.length ? navChildren.some(c => c.id === "authorization") : hasRbac("personnel.list.view") && hasRbac("personnel.qualification.view");
+  const masterAllowed = navChildren.length ? navChildren.some(c => c.id === "master") : personnelTabOptions().length > 0;
   if (!personnelArea || (personnelArea === "capability" && !capabilityAllowed) || (personnelArea === "authorization" && !authorizationAllowed) || (personnelArea === "master" && !masterAllowed)) personnelArea = capabilityAllowed ? "capability" : authorizationAllowed ? "authorization" : "master";
   document.getElementById("personnelAreaNav").innerHTML = `<div class="settings-tabs">${capabilityAllowed ? `<button type="button" class="chip ${personnelArea === "capability" ? "active" : ""}" data-personnel-area="capability">人员配置</button>` : ""}${authorizationAllowed ? `<button type="button" class="chip ${personnelArea === "authorization" ? "active" : ""}" data-personnel-area="authorization">人员授权</button>` : ""}${masterAllowed ? `<button type="button" class="chip ${personnelArea === "master" ? "active" : ""}" data-personnel-area="master">主数据管理</button>` : ""}</div>`;
   const host = document.getElementById("capabilityHost");
@@ -3530,8 +3630,12 @@ function renderSettings() {
   if (!tabs.some(([key]) => key === state.settingsTab)) state.settingsTab = tabs[0]?.[0] || "accounts";
   const content = state.settingsTab === "accounts" ? `<section class="settings-grid">${renderUserManagement()}</section>`
         : state.settingsTab === "roles" ? renderRbacCatalog()
-          : renderGeneralSettings();
+          : state.settingsTab === "audit" ? `<section data-login-audit>正在读取…</section>` : renderGeneralSettings();
   $("#settingsPanel").innerHTML = `<div class="settings-tabs">${tabs.map(([key, label]) => `<button class="chip ${state.settingsTab === key ? "active" : ""}" type="button" data-settings-tab="${key}">${label}</button>`).join("")}</div>${content}`;
+  if(state.settingsTab === "audit") {
+    const root=document.querySelector('[data-login-audit]'),accountId=state.user.id;
+    import('./login-audit.mjs').then(({mountLoginAudit})=>{if(root?.isConnected&&state.user.id===accountId)mountLoginAudit({root,api:apiRequest,escapeHtml,canExport:hasRbac('audit.export'),accountId});}).catch(error=>{if(root?.isConnected)root.textContent='审计页面加载失败，请切换页签重试：'+error.message;});
+  }
 }
 
 function renderEntryOptions() {
@@ -10165,6 +10269,7 @@ document.addEventListener("click", async event => {
     }
     try {
       state.activePersonnelDetail = await personnelService.detail(personnelDetail.dataset.personnelDetail);
+      try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personnelDetail.dataset.personnelDetail)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
       state.personnelDetailTab = "basic"; state.expandedAuthorizationCategory = ""; resetPersonnelQualifications();
       try { state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personnelDetail.dataset.personnelDetail) : []; }
       catch { state.activePersonnelDetail.changes = []; }
@@ -10362,6 +10467,8 @@ document.addEventListener("click", async event => {
     }
   }
   if (event.target.id === "userImportBtn") await importUserFile();
+  const viewPerms = event.target.closest("[data-view-perms]");
+  if (viewPerms) { void showEffectivePermissions(viewPerms.dataset.viewPerms, viewPerms.dataset.viewPermsName); return; }
   const editUser = event.target.closest("[data-edit-user]");
   if (editUser) {
     const user = state.users.find(item => item.id === editUser.dataset.editUser);
@@ -10742,6 +10849,20 @@ document.addEventListener("submit", event => {
           permissions: selectedChecks("rolePermissions")
         };
         if (!payload.permissions.length) throw new Error("请至少选择一项权限");
+        // B7-3 权限修改前后对比（V1.1 §6）：保存前显示新增/移除的权限变更
+        const existingRole = (state.rbacCatalog?.roles || []).find(r => r.id === id);
+        const oldPerms = new Set(existingRole?.permissions || []);
+        const newPerms = new Set(payload.permissions);
+        const added = [...newPerms].filter(code => !oldPerms.has(code));
+        const removed = [...oldPerms].filter(code => !newPerms.has(code));
+        if (added.length || removed.length) {
+          const permName = code => (state.rbacCatalog?.permissions || []).find(p => p.code === code)?.name || code;
+          const diffParts = [];
+          if (added.length) diffParts.push(`新增 ${added.length} 项：\n${added.map(c => `  + ${permName(c)}`).join("\n")}`);
+          if (removed.length) diffParts.push(`移除 ${removed.length} 项：\n${removed.map(c => `  - ${permName(c)}`).join("\n")}`);
+          const impactCount = existingRole?.assignedUserCount || 0;
+          if (!confirm(`权限变更预览：\n\n${diffParts.join("\n\n")}\n\n影响 ${impactCount} 个已分配账户（保存后需重新登录）。\n\n确认保存？`)) return;
+        }
         const result = id ? await rbacService.updateRole(id, payload) : await rbacService.createRole(payload);
         $("#roleDialog").close();
         if (result.sessionRevoked) {
@@ -10764,6 +10885,7 @@ document.addEventListener("submit", event => {
         $("#personnelDialog").close();
         await refreshPersonnel({ keepDetail: true });
         state.activePersonnelDetail = await personnelService.detail(personId);
+  try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personId)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
         state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
         renderPersonnelPage();
       } catch (error) { alert(error.message); }
@@ -11086,11 +11208,12 @@ document.addEventListener("change", async event => {
   }
   if (event.target.id === "userRoleFilter") {
     state.userRoleFilter = event.target.value;
+    state.selectedUserIds.clear();
     renderSettings();
     return;
   }
   if (event.target.id === "userSelectAll") {
-    $$("[data-user-select]").forEach(input => {
+    $$("[data-user-select]:not(:disabled)").forEach(input => {
       input.checked = event.target.checked;
       if (input.checked) state.selectedUserIds.add(input.dataset.userSelect);
       else state.selectedUserIds.delete(input.dataset.userSelect);
@@ -11230,3 +11353,55 @@ async function renderAttendancePage() {
 }
 
 window.addEventListener('attendance-offset-policy-saved',()=>{homeDataService.loadAttendance(true);});
+
+
+function openUserBatchDialog() {
+  if ($("#userBatchForm")?.dataset.busy) return;
+  const targets=state.users.filter(user=>state.selectedUserIds.has(user.id) && user.id!==SUPER_ACCOUNT_ID && !user.personDeleted);
+  if (!targets.length) return;
+  const dialog=$("#userDialog");
+  $("#userDialogBody").innerHTML=`<div class="dialog-head"><h2>批量设置 ${targets.length} 个账号</h2><button type="button" class="icon-btn" data-close="userDialog">×</button></div><div class="user-batch-targets">${targets.map(user=>escapeHtml(`${user.name} · ${user.employeeNo||"—"}`)).join("；")}</div><form id="userBatchForm" class="entry-grid">
+    ${hasRbac("accounts.roles.assign")?`<label class="login-check"><input id="batchChangeRoles" type="checkbox">修改角色</label><section id="batchRolesPanel" hidden><label>修改方式<select id="batchRoleMode"><option value="append">追加角色</option><option value="replace">替换全部角色</option></select></label><p class="status-line">替换会移除原角色；至少保留一个合法角色，基础角色可独立多选。</p>${checkedGroup("batchRoles",state.rbacCatalog.roles.filter(role=>role.code!=="system_admin").map(role=>[role.code,role.name]))}</section>`:""}
+    ${hasRbac("accounts.scopes.assign")?`<label class="login-check"><input id="batchChangeScopes" type="checkbox">修改数据权限</label><section id="batchScopesPanel" hidden>${renderModuleScopes([])}</section>`:""}
+    <p id="userBatchError" role="alert" class="danger-text"></p><div class="form-actions"><button type="button" class="btn secondary" data-close="userDialog">取消</button><button type="submit" class="btn">预览变更</button></div></form>`;
+  dialog.dataset.batchIds=JSON.stringify(targets.map(user=>user.id));
+  $$("#batchScopesPanel fieldset").forEach(fieldset=>{const module=fieldset.querySelector("[data-module-scopes]").dataset.moduleScopes;fieldset.querySelector("legend").insertAdjacentHTML("afterbegin",`<input type="checkbox" data-batch-module="${module}" aria-label="修改此模块"> `);fieldset.querySelectorAll("input:not([data-batch-module]),select,button").forEach(el=>el.disabled=true);});
+  dialog.showModal();
+}
+document.addEventListener("input",event=>{
+  if(event.target.id!=="userSearch")return;
+  const value=event.target.value, start=event.target.selectionStart, end=event.target.selectionEnd;
+  state.userSearch=value;state.selectedUserIds.clear();renderSettings();
+  const input=$("#userSearch");input?.focus({preventScroll:true});if(input && start!==null)input.setSelectionRange(start,end);
+});
+document.addEventListener("click",event=>{
+  if(event.target.closest("#openUserBatchBtn"))openUserBatchDialog();
+  if(event.target.closest("#clearUserSelectionBtn")){state.selectedUserIds.clear();$$("[data-user-select]").forEach(el=>el.checked=false);syncUserSelectionUi();}
+});
+document.addEventListener("change",event=>{
+  if(event.target.id==="batchChangeRoles")$("#batchRolesPanel").hidden=!event.target.checked;
+  if(event.target.id==="batchChangeScopes")$("#batchScopesPanel").hidden=!event.target.checked;
+  if(event.target.matches("[data-batch-module]")){
+    const fieldset=event.target.closest("fieldset");
+    fieldset.querySelectorAll("input:not([data-batch-module]),select,button").forEach(el=>el.disabled=!event.target.checked);
+    fieldset.querySelectorAll("[data-scope-row]").forEach(row=>{row.querySelector("[data-scope-org]").disabled=!event.target.checked || !["specified_teams","specified_groups"].includes(row.querySelector("[data-scope-type]").value);});
+  }
+});
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="userBatchForm")return;
+  event.preventDefault();const form=event.target;if(form.dataset.busy)return;
+  const error=$("#userBatchError"), payload={accountIds:JSON.parse($("#userDialog").dataset.batchIds)};
+  if($("#batchChangeRoles")?.checked){payload.roleMode=$("#batchRoleMode").value;payload.roles=selectedChecks("batchRoles");if(!payload.roles.length){error.textContent="请选择至少一个角色";return;}}
+  if($("#batchChangeScopes")?.checked){payload.moduleScopes={};const scopes=readModuleScopes();$$("[data-batch-module]:checked").forEach(el=>payload.moduleScopes[el.dataset.batchModule]=scopes.filter(scope=>scope.module===el.dataset.batchModule));if(!Object.keys(payload.moduleScopes).length){error.textContent="请选择要修改的模块";return;}}
+  if(!payload.roles && !payload.moduleScopes){error.textContent="请至少选择一项修改内容";return;}
+  const roles=payload.roles?.map(code=>state.rbacCatalog.roles.find(role=>role.code===code)?.name||code).join("、");
+  const scopeSummary=payload.moduleScopes?Object.entries(payload.moduleScopes).map(([module,scopes])=>`${scopeModuleLabels[module]}：${scopes.map(scope=>`${scopeLabels[scope.scopeType]}${scope.scopeId?" · "+organizationLabel(state.organizations.find(org=>org.id===scope.scopeId)||{}):""}，${scope.validFrom||"不限开始"} 至 ${scope.validTo||"不限结束"}${scope.grantReason?"，原因："+scope.grantReason:""}`).join("；")}`).join("\n"):"";
+  if(!confirm(`确认修改 ${payload.accountIds.length} 个账号？\n${roles?`${payload.roleMode==="append"?"追加角色":"替换全部原角色"}：${roles}\n`:""}${scopeSummary}\n未选择的配置保持原状。`))return;
+  form.dataset.busy="true";const buttons=[...$("#userDialog").querySelectorAll("button")];buttons.forEach(button=>button.disabled=true);error.textContent="";
+  try {await apiRequest("/admin/accounts/bulk-access",{method:"POST",body:payload});}
+  catch(failure){error.textContent=failure.message;delete form.dataset.busy;buttons.forEach(button=>button.disabled=false);return;}
+  $("#userDialog").close();state.selectedUserIds.clear();
+  try{state.users=await userService.list();renderSettings();alert("批量设置已保存");}catch(failure){alert(`已保存，列表刷新失败：${failure.message}`);}
+});
+
+document.addEventListener("cancel",event=>{if(event.target.id==="userDialog" && $("#userBatchForm")?.dataset.busy)event.preventDefault();},true);

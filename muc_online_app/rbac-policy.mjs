@@ -72,6 +72,8 @@ const maintenanceV2 = [
 ];
 
 const existing = [
+  ["audit.read", "审计查询", "settings"],
+  ["audit.export", "审计导出", "settings"],
   ["attendance.offset.rules.manage", "管理考勤兑换规则与结算", "attendance"],
   ["attendance.offset.submit", "本人申请及撤回考勤抵消", "attendance"],
   ["attendance.offset.approve", "审批受派考勤抵消", "attendance"],
@@ -159,9 +161,9 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
   "roles.manage": ["roles.read"]
 };
 
-const worker = ["info.read", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create"];
+const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "hours.read", "attendance.read", "attendance.offset.submit"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export"];
+const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "hours.detail.read", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),
@@ -170,7 +172,6 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_fixed_readonly: ["fixed.read"],
   addon_maintenance_review: ["maintenance.review.view", "maintenance.review.submit"],
   addon_nonroutine_review_cancel: ["maintenance.view", "maintenance.nonroutine.review.view", "maintenance.nonroutine.review.cancel"],
-  addon_nonroutine_review_assign: ["maintenance.view", "maintenance.nonroutine.review.view", "maintenance.nonroutine.review.assign"],
   addon_nonroutine_reviewer: ["maintenance.view", "maintenance.nonroutine.review.view", "maintenance.nonroutine.review.opinion.submit"],
   addon_nonroutine_review_auditor: ["maintenance.view", "maintenance.nonroutine.review.view", "maintenance.nonroutine.review.opinions.view"],
   addon_nonroutine_review_finalizer: ["maintenance.view", "maintenance.nonroutine.review.view", "maintenance.nonroutine.review.finalize"],
@@ -190,19 +191,30 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_archive_modify: ["maintenance.review.view", "maintenance.review.submit", "maintenance.archive.modify"],
   addon_info_advanced: ["info.read", "info.update.any", "info.delete.any", "info.void.any", "info.restore", "info.remind.any"],
   addon_personnel_import: ["personnel.import.view", "personnel.import.execute"],
-  addon_actual_grade_view: ["personnel.detail.view", "personnel.actual_grade.view"],
-  addon_actual_grade_manage: ["personnel.detail.view", "personnel.profile.update", "personnel.actual_grade.view", "personnel.actual_grade.manage"],
-  addon_actual_grade_export: ["personnel.detail.view", "personnel.actual_grade.view", "personnel.actual_grade.export"],
+  addon_actual_grade_manage: ["personnel.detail.view", "personnel.profile.update", "personnel.actual_grade.view", "personnel.actual_grade.manage", "personnel.actual_grade.export"],
   addon_organization_manage: ["personnel.list.view", "personnel.detail.view", "personnel.organization.manage"],
   addon_qualification_manage: ["personnel.detail.view", "personnel.qualification.view", "personnel.qualification.manage"],
   addon_personnel_lifecycle: ["personnel.list.view", "personnel.detail.view", "personnel.lifecycle.manage"],
   addon_capability_config: ["capability.overview.view", "capability.config.manage"],
   addon_scenario_apply: ["capability.allocation.view", "capability.allocation.submit", "capability.scenario.view", "capability.scenario.apply"],
   addon_account_role_manage: ["personnel.list.view", "accounts.read", "accounts.create", "accounts.update", "accounts.disable", "accounts.password.reset", "accounts.bulk_open", "accounts.roles.assign", "accounts.scopes.assign", "roles.read", "roles.manage"],
+  addon_offset_approver: ["attendance.offset.submit", "attendance.offset.approve"],
+  addon_offset_admin: ["attendance.offset.rules.manage", "attendance.offset.responsibility.manage"],
+  addon_hours_manage: ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"],
+  addon_attendance_manage: ["attendance.read", "attendance.record.manage", "attendance.exception.manage", "attendance.stats.read", "attendance.export"],
   addon_system_settings: ["settings.manage"]
 };
 
 export const RBAC_BASE_ROLE_CODES = ["worker", "dispatcher", "manager"];
+
+// 受控编辑角色（rbacRoleControlledEdit）保留手工授予，但代码基线新增的权限
+// 必须在每次播种时补入，否则新功能会对基础角色静默缺失（2026-11-24 生产实证）。
+export function missingBaselineRolePermissions(roleCode, currentCodes = []) {
+  const baseline = RBAC_ROLE_DEFINITIONS[roleCode];
+  if (!baseline) return [];
+  const current = new Set(currentCodes);
+  return baseline.filter(code => !current.has(code));
+}
 
 export const RBAC_ROLE_NAMES = {
   system_admin: "系统管理员", worker: "工作者", dispatcher: "派工人员", manager: "管理者",
@@ -221,23 +233,29 @@ export const RBAC_ROLE_NAMES = {
   addon_maintenance_import: "附加：维修导入", addon_maintenance_delete: "附加：维修删除",
   addon_maintenance_export: "附加：维修导出", addon_maintenance_rules: "附加：维修规则",
   addon_archive_modify: "附加：归档修正", addon_info_advanced: "附加：信息高级管理",
-  addon_personnel_import: "附加：人员数据导入", addon_organization_manage: "附加：组织管理",
-  addon_actual_grade_view: "附加：实际岗级查看", addon_actual_grade_manage: "附加：实际岗级维护", addon_actual_grade_export: "附加：实际岗级导出",
+  addon_personnel_import: "附加：人员数据导入", addon_organization_manage: "附加：组织管理", addon_actual_grade_manage: "附加：实际岗级管理",
   addon_qualification_manage: "附加：资质维护", addon_personnel_lifecycle: "附加：人员生命周期管理", addon_capability_config: "附加：能力规则配置",
   addon_scenario_apply: "附加：方案应用", addon_account_role_manage: "附加：账号角色管理",
+  addon_offset_approver: "附加：考勤抵消审批",
+  addon_offset_admin: "附加：考勤抵消规则管理",
+  addon_hours_manage: "附加：工时管理",
+  addon_attendance_manage: "附加：考勤管理",
+  addon_offset_approver: "附加：本人提交考勤抵消申请并审批受派申请（B4 干部池/值班班组长路由的审批能力）。",
+  addon_offset_admin: "附加：管理考勤抵消规则（月度额度）与责任重路由。",
+  addon_hours_manage: "附加：查看工时明细、调整工时、确认工时并导出。",
+  addon_attendance_manage: "附加：管理考勤记录与异常，查看统计并导出。",
   addon_system_settings: "附加：系统配置"
 };
 
 export const RBAC_ROLE_DESCRIPTIONS = {
   system_admin: "54002010专用；拥有全部系统权限和全部数据范围，标准正式发布仍要求独立业务授权。",
-  worker: "信息只读；执行与报工本人任务；维护本人未提交非例行；查看本人统计。",
-  dispatcher: "包含工作者权限；另可建立和修改未确认维修机会、派工、维护工作内容并调整未确认工时。",
+  worker: "独立可选。信息只读；执行与报工本人任务；维护本人未提交非例行；查看本人统计。",
+  dispatcher: "独立可选，包含工作者权限；另可建立和修改未确认维修机会、派工、维护工作内容并调整未确认工时。",
   manager: "包含工作者和派工人员权限；另可发布信息、维护人员一般资料和进行能力调配。",
   addon_capability_readonly: "可选只读能力看板。",
   addon_fixed_readonly: "查看固化项目。",
   addon_maintenance_review: "查看并复核维修报工。",
   addon_nonroutine_review_cancel: "仅取消授权范围内尚未入账的评议，保留原工作与全部历史。",
-  addon_nonroutine_review_assign: "受理非例行工时申请，人工指定12人和替换未提交席位。",
   addon_nonroutine_reviewer: "仅以本人有效指定席位提交非例行评议意见。",
   addon_nonroutine_review_auditor: "在授权范围内读取完整评议意见。",
   addon_nonroutine_review_finalizer: "作为指定负责人在12份意见封闭后终审。",
@@ -257,9 +275,7 @@ export const RBAC_ROLE_DESCRIPTIONS = {
   addon_archive_modify: "修正已归档维修数据。",
   addon_info_advanced: "修改、删除、作废和恢复他人发布的信息。",
   addon_personnel_import: "执行人员、执照、授权和培训导入。",
-  addon_actual_grade_view: "在人员数据范围内查看他人的实际岗级。",
   addon_actual_grade_manage: "在人员数据范围内查看并维护实际岗级。",
-  addon_actual_grade_export: "在人员数据范围内导出实际岗级；仅在导出功能明确包含该字段时生效。",
   addon_organization_manage: "维护部门、人员分组和行政班组。",
   addon_qualification_manage: "维护执照、授权和培训记录。",
   addon_personnel_lifecycle: "管理人员停职和离职状态。",
@@ -281,22 +297,53 @@ export function accountRoleCombinationErrors(codes, { superAccount = false } = {
   const errors = [];
   if (selected.has("system_admin") && !superAccount) errors.push({ code: "SYSTEM_ADMIN_RESERVED" });
   const baseRoles = RBAC_BASE_ROLE_CODES.filter(code => selected.has(code));
-  if (!superAccount && baseRoles.length !== 1) errors.push({ code: "BASE_ROLE_REQUIRED", selected: baseRoles });
+  // 基础角色已改为独立可选（V1.0 §1），不再限制恰好一个。
   if (superAccount && (selected.size !== 1 || !selected.has("system_admin"))) errors.push({ code: "SUPER_ACCOUNT_ROLE_FIXED" });
   return errors;
 }
 
 export const NAVIGATION_NODES = [
-  { id: "infoPage", anyOf: ["info.read"] },
-  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"] },
+  { id: "infoPage", anyOf: ["info.read"], children: [
+    { id: "infoListSubpage", anyOf: ["info.read"], label: "信息传达" },
+    { id: "statsSubpage", anyOf: ["info.stats.read"], label: "统计分析" },
+    { id: "handoverSubpage", anyOf: ["handover.view"], label: "班组交接" }
+  ]},
+  { id: "maintenancePage", anyOf: ["maintenance.view", "maintenance.execute.view", "maintenance.dispatch.view", "maintenance.review.view", "maintenance.stats.manage.view"], children: [
+    { id: "dispatch", anyOf: ["maintenance.dispatch.view"], label: "派工视图" },
+    { id: "execute", anyOf: ["maintenance.execute.view"], label: "执行报工" },
+    { id: "hours", anyOf: ["maintenance.stats.manage.view"], label: "工时统计" },
+    { id: "reviews", anyOf: ["maintenance.nonroutine.review.view"], label: "非例行评议" },
+    { id: "standards", anyOf: ["maintenance.standard.view"], label: "标准库" },
+    { id: "periods", anyOf: ["maintenance.hours.period.view"], label: "账期管理" },
+    { id: "workflows", anyOf: ["maintenance.workflow.view"], label: "非结算流程" }
+  ]},
   { id: "fixedPage", anyOf: ["fixed.read"] },
-  { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"] },
+  { id: "personnelPage", anyOf: [...capabilityV2.map(([code]) => code).filter(code => code.endsWith(".view")), ...personnelV2.map(([code]) => code).filter(code => code.endsWith(".view")), "personnel.organization.manage", "personnel.qualification.manage"], children: [
+    { id: "capability", anyOf: ["capability.overview.view", "capability.allocation.view", "capability.status.view", "capability.history.view", "capability.scenario.view", "capability.report.view"], label: "人员配置" },
+    { id: "authorization", anyOf: ["personnel.list.view", "personnel.qualification.view"], label: "人员授权" },
+    { id: "master", anyOf: ["personnel.organization.manage", "personnel.qualification.manage"], label: "主数据管理" }
+  ]},
   { id: "hoursPage", anyOf: ["hours.read"] },
   { id: "attendancePage", anyOf: ["attendance.read"] },
-  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage"] }
+  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage", "audit.read"], children: [
+    { id: "accountsTab", anyOf: ["accounts.read"], label: "登录账户" },
+    { id: "rolesTab", anyOf: ["roles.read"], label: "角色权限" },
+    { id: "auditTab", anyOf: ["audit.read"], label: "审计" },
+    { id: "systemTab", anyOf: ["settings.manage"], label: "系统配置" }
+  ]}
 ];
 
 export function visibleNavigation(permissionCodes, isSuper = false) {
   const permissions = new Set(permissionCodes || []);
   return NAVIGATION_NODES.filter(node => isSuper || node.anyOf.some(code => permissions.has(code))).map(node => node.id);
+}
+
+// 层①导航树（V1.1 §4.1）：返回带 children 的可见导航树，前端统一渲染，替代散落的 hasRbac 判断。
+export function visibleNavigationTree(permissionCodes, isSuper = false) {
+  const permissions = new Set(permissionCodes || []);
+  const visible = node => isSuper || node.anyOf.some(code => permissions.has(code));
+  return NAVIGATION_NODES.filter(visible).map(node => ({
+    id: node.id,
+    children: (node.children || []).filter(visible).map(child => ({ id: child.id, label: child.label }))
+  }));
 }

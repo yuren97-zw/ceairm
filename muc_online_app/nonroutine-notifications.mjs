@@ -23,7 +23,7 @@ export function createNonroutineNotifications({db:database,transaction,qualified
       if(!person || !db.prepare('select 1 from maintenance_nonroutine_review_seats where case_id=? and account_id=? and person_id=?').get(item.id,person.accountId,person.personId))return false;
       return !db.prepare('select 1 from maintenance_nonroutine_review_opinions where case_id=? and person_id=?').get(item.id,person.personId);
     }
-    return ['REMINDER_36','REMINDER_48'].includes(outbox.event_type) && item.finalizer_account_id===outbox.recipient_account_id && Boolean(qualifiedAccount(outbox.recipient_account_id,permission('finalize'),item));
+    return ['REMINDER_36','REMINDER_48'].includes(outbox.event_type) && Boolean(qualifiedAccount(outbox.recipient_account_id,permission('finalize'),item));
   }
   function pump(){return transaction(()=>{
     const stamp=clock(),time=Date.parse(stamp);if(!Number.isFinite(time))throw fail('通知时钟无效',500);
