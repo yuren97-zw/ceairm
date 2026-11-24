@@ -36,8 +36,10 @@ for (const code of permissionCodes) {
   if (binding.scopeModule === null) assert.ok(binding.note, `权限 ${code} 声明无范围但缺少 note 原因`);
   else assert.ok(SCOPE_MODULE_SET.has(binding.scopeModule), `权限 ${code} 的 scopeModule 非法: ${binding.scopeModule}`);
 }
-for (const code of ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"])
-  assert.equal(ACTION_SCOPE_BINDINGS[code].scopeModule, "maintenance", `${code} 应绑定 maintenance 范围（hours 模块无运行时检查点）`);
+for (const code of ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"]) {
+  assert(!permissionSet.has(code), `${code} 应已退役（不再定义）`);
+  assert.equal(ACTION_SCOPE_BINDINGS[code], undefined, `${code} 应已从绑定表移除`);
+}
 
 for (const permission of ["info.read", "maintenance.execute.submit", "maintenance.nonroutine.create.own", "maintenance.stats.self.view"])
   assert(has("worker", permission), `工作者缺少 ${permission}`);

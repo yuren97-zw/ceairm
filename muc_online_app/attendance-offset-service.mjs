@@ -17,7 +17,7 @@ export function hoursToSeconds(value){
  if(seconds%denominator||seconds/denominator>BigInt(Number.MAX_SAFE_INTEGER)||seconds<=0n)throw fail('小时数必须精确对应正整数秒');
  return Number(seconds/denominator);
 }
-export function createOffsetService({db,clock=Date.now,hasPermission,canViewPerson,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled,listPeople=()=>[],allowLegacySettlement=false,monthClose=null,listApproverIds=()=>db.prepare("select id from users where status='active'").all().map(r=>r.id)}){
+export function createOffsetService({db,clock=Date.now,hasPermission,actionScopeAllows,loadUser,readDays,writesEnabled=false,existingActionsEnabled=writesEnabled,listPeople=()=>[],allowLegacySettlement=false,monthClose=null,listApproverIds=()=>db.prepare("select id from users where status='active'").all().map(r=>r.id)}){
  const register=createOffsetRegister({db,clock});
  installAccumulation(db);
  db.exec(fs.readFileSync(new URL('./migrations/037_attendance_offset_routes.sql',import.meta.url),'utf8'));
@@ -237,7 +237,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
  function ruleValues(user,body){
   const seconds=hoursToSeconds(body.hours);
   if(seconds>2147483647||body.count>2147483647||body.cap>2147483647)throw fail('参数超出当前数据库整数范围');
-  if(!Number.isSafeInteger(body.count)||body.count<=0||!Number.isSafeInteger(body.cap)||body.cap<0||!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!canViewPerson(user,id)))throw fail('次数、上限或人员范围无效');
+  if(!Number.isSafeInteger(body.count)||body.count<=0||!Number.isSafeInteger(body.cap)||body.cap<0||!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!actionScopeAllows(user,'attendance.offset.rules.manage',id)))throw fail('次数、上限或人员范围无效');
   return {threshold_seconds:seconds,unit_count:body.count,monthly_cap:body.cap,people_json:JSON.stringify([...body.personIds].sort())};
  }
  function fixedInitialization(){
@@ -248,7 +248,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
  function legacyInitialization(){const row=db.prepare("select * from attendance_offset_audit where action='initialize' order by created_at limit 1").get();return row?{...row,config:JSON.parse(row.detail_json)}:null;}
  function initializationProgress(user){
   const fixed=fixedInitialization(),legacy=legacyInitialization(),row=fixed||legacy;if(!row)return {status:'not_configured'};
-  const saved=row.config,people=saved.personIds.filter(id=>canViewPerson(user,id));
+  const saved=row.config,people=saved.personIds.filter(id=>actionScopeAllows(user,'attendance.read',id));
   return {status:fixed?'configured':'requires_fixed_revision',mode:fixed?'fixed_initial':'legacy_earned',fixedCount:fixed?2:null,sourceMonth:saved.sourceMonth,usageMonth:saved.usageMonth,configuredAt:row.created_at,total:people.length,personIds:people,people:people.map(personId=>{const a=account(personId,saved.usageMonth);return {personId,status:a?.status||(fixed?'queued':'requires_fixed_revision'),granted:a?.granted??null,coverage:null};})};
  }
 
@@ -256,7 +256,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   tasks,register,
   routingIssues(user){
    requirePermission(user,'attendance.offset.responsibility.manage');
-   return db.prepare("select id,person_id,assignee_user_id,version,created_at,status from attendance_offset_requests where status='pending' order by created_at,id").all().filter(row=>canViewPerson(user,row.person_id)&&!assigneeAllowed(loadUser(row.assignee_user_id),row)).map(row=>({...row,reason:'原受派账号不可用、无审批权限或存在本人审批冲突；需要明确授权转办'}));
+   return db.prepare("select id,person_id,assignee_user_id,version,created_at,status from attendance_offset_requests where status='pending' order by created_at,id").all().filter(row=>actionScopeAllows(user,'attendance.offset.responsibility.manage',row.person_id)&&!assigneeAllowed(loadUser(row.assignee_user_id),row)).map(row=>({...row,reason:'原受派账号不可用、无审批权限或存在本人审批冲突；需要明确授权转办'}));
   },
   approvalCandidates(user){
    requirePermission(user,'attendance.offset.submit');
@@ -295,7 +295,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   monthlyRules(user){requirePermission(user,'attendance.offset.rules.manage');return db.prepare('select * from attendance_monthly_exchange_rules order by source_month desc,created_at desc,id desc').all();},
   responsibilityCandidates(user){
    requirePermission(user,'attendance.offset.responsibility.manage');
-   return db.prepare("select id from users where status='active' and person_id is not null").all().map(row=>loadUser(row.id)).filter(u=>u&&canViewPerson(user,u.personId)&&hasPermission(u,'attendance.offset.approve')).map(({id,personId,name,employeeNo})=>({id,personId,name,employeeNo}));
+   return db.prepare("select id from users where status='active' and person_id is not null").all().map(row=>loadUser(row.id)).filter(u=>u&&actionScopeAllows(user,'attendance.offset.responsibility.manage',u.personId)&&hasPermission(u,'attendance.offset.approve')).map(({id,personId,name,employeeNo})=>({id,personId,name,employeeNo}));
   },
   state(user){
    requirePermission(user,'attendance.offset.rules.manage');
@@ -391,7 +391,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   transfer(user,id,body,key){
    requirePermission(user,'attendance.offset.responsibility.manage');existingWritable();
    return op(user,'transfer',key,{id,...body},()=>{
-    const row=requestForUpdate(id);if(!row||!canViewPerson(user,row.person_id))throw fail('无权转办',403);
+    const row=requestForUpdate(id);if(!row||!actionScopeAllows(user,'attendance.offset.responsibility.manage',row.person_id))throw fail('无权转办',403);
     if(row.status!=='pending'||row.version!==body.version||!body.reason?.trim())throw fail('申请已变化或缺少转办依据',409);
     // B4（V1.1 §6.4）：审批人转交被禁止；此处仅允许"原审批责任失效后的事实纠正性重路由"。
     const route=routeOf(row);
@@ -424,7 +424,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   versions(){return Object.fromEntries(db.prepare('select id,version from attendance_offset_state order by id').all().map(r=>[r.id,r.version]));},
   confirmResponsibility(user,body,key){
    requirePermission(user,'attendance.offset.responsibility.manage');writable();
-   if(!canViewPerson(user,body.personId)||!body.team?.trim()||!body.evidence?.trim()||body.evidence.length>4000)throw fail('责任核实范围或证据无效',403);
+   if(!actionScopeAllows(user,'attendance.offset.responsibility.manage',body.personId)||!body.team?.trim()||!body.evidence?.trim()||body.evidence.length>4000)throw fail('责任核实范围或证据无效',403);
    monthDates(String(body.workDate).slice(0,7));if(!monthDates(body.workDate.slice(0,7)).includes(body.workDate))throw fail('日期无效');
    verifyLeader({assignee_user_id:body.assigneeUserId,leader_person_id:body.leaderPersonId},body.personId);
    return op(user,'responsibility',key,body,()=>{
@@ -437,7 +437,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   initializationPreview(user,body){
    requirePermission(user,'attendance.offset.rules.manage');const usageMonth=dayOf(clock()).slice(0,7);
    if(body.sourceMonth!==undefined||body.usageMonth&&body.usageMonth!==usageMonth||body.count!==undefined&&body.count!==2||body.hours!==undefined||body.cap!==undefined)throw fail('首期固定每人2次，不按累计换算');
-   if(!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!canViewPerson(user,id)))throw fail('人员范围无效',403);
+   if(!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!actionScopeAllows(user,'attendance.offset.rules.manage',id)))throw fail('人员范围无效',403);
    const personIds=[...body.personIds].sort(),legacy=legacyInitialization(),fixed=fixedInitialization();
    const data={mode:'fixed_initial',fixedCount:2,sourceMonth:usageMonth,usageMonth,personIds,legacyRuleId:legacy?.reference_id||null,people:personIds.map(personId=>({personId,status:'ready',earned:2,coverage:null,existingAccount:!!account(personId,usageMonth)}))};return {...data,previewHash:hash(data),alreadyInitialized:!!fixed};
   },
@@ -455,7 +455,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   },
   supplementInitialFixed(user,body,key){
    requirePermission(user,'attendance.offset.rules.manage');writable();
-   if(!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!canViewPerson(user,id))||!body.reason?.trim()||body.reason.length>4000)throw fail('补充范围或依据无效',403);
+   if(!Array.isArray(body.personIds)||!body.personIds.length||new Set(body.personIds).size!==body.personIds.length||body.personIds.some(id=>typeof id!=='string'||!actionScopeAllows(user,'attendance.offset.rules.manage',id))||!body.reason?.trim()||body.reason.length>4000)throw fail('补充范围或依据无效',403);
    return op(user,'initial_scope',key,body,()=>{
     if(db.kind==='postgres')db.prepare('select pg_advisory_xact_lock(?)').get(864031032);
     const initial=fixedInitialization();if(!initial||initial.config.usageMonth!==dayOf(clock()).slice(0,7))throw fail('仅可补充当前首期月份的固定2次范围',409);
@@ -467,7 +467,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   },
   issueInitialFixed(user,personId,key){
    requirePermission(user,'attendance.offset.rules.manage');writable();return op(user,'initial_issue',key,{personId},()=>{
-    const initial=fixedInitialization();if(!initial||!initial.config.personIds.includes(personId)||!canViewPerson(user,personId))throw fail('人员不在已确认首期范围',403);
+    const initial=fixedInitialization();if(!initial||!initial.config.personIds.includes(personId)||!actionScopeAllows(user,'attendance.offset.rules.manage',personId))throw fail('人员不在已确认首期范围',403);
     const month=initial.config.usageMonth,marker='initial-fixed:'+initial.reference_id,old=account(personId,month);if(old){if(old.rule_id!==marker)throw fail('已有其他额度，禁止覆盖',409);return {status:old.status,unchanged:true};}
     db.prepare("insert into attendance_offset_accounts(person_id,usage_month,source_month,rule_id,source_seconds,source_version,status,granted) values(?,?,?,?,0,?,'issued',2)").run(personId,month,month,marker,initial.config.previewHash);
     ledger(personId,month,'grant',2,personId+'|'+month);audit(user,'issue_initial_fixed',personId,{usageMonth:month,granted:2,initializationId:initial.reference_id});return {status:'issued',granted:2,sourceKind:'initial_fixed'};
@@ -482,7 +482,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    });
   },
   trial(user,{personId,sourceMonth},{lock=false,ruleOverride=null}={}){
-   requirePermission(user,'attendance.offset.rules.manage');if(!canViewPerson(user,personId))throw fail('人员不在数据范围',403);
+   requirePermission(user,'attendance.offset.rules.manage');if(!actionScopeAllows(user,'attendance.offset.rules.manage',personId))throw fail('人员不在数据范围',403);
    const dates=monthDates(sourceMonth),days=readDays(personId,dates[0],dates.at(-1),{lock});
    const rule=ruleOverride||monthlyRule(sourceMonth)||db.prepare('select * from attendance_offset_rules where source_month=?').get(sourceMonth);
    const coverage=accumulatedCoverage(days,clock(),{expectedDates:dates,accumulationRule:rule});
@@ -581,7 +581,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
   },
   detail(user,id){
    if(!user?.id)throw fail('请先登录',401);const row=request(id);
-   if(!row||!(row.person_id===user.personId||row.assignee_user_id===user.id&&hasPermission(user,'attendance.offset.approve')||routeOf(row)==='cadre_pool'&&!!db.prepare('select 1 from attendance_offset_candidates where request_id=? and user_id=?').get(row.id,user.id)&&hasPermission(user,'attendance.offset.approve')||hasPermission(user,'attendance.offset.responsibility.manage')&&canViewPerson(user,row.person_id)))throw fail('无权读取该申请',403);
+   if(!row||!(row.person_id===user.personId||row.assignee_user_id===user.id&&hasPermission(user,'attendance.offset.approve')||routeOf(row)==='cadre_pool'&&!!db.prepare('select 1 from attendance_offset_candidates where request_id=? and user_id=?').get(row.id,user.id)&&hasPermission(user,'attendance.offset.approve')||hasPermission(user,'attendance.offset.responsibility.manage')&&actionScopeAllows(user,'attendance.offset.responsibility.manage',row.person_id)))throw fail('无权读取该申请',403);
    const requestItems=items(id);
    const history=db.prepare('select actor_id,action,detail_json,created_at from attendance_offset_audit where reference_id=? order by created_at,id').all(id);
    const submitted=history.find(entry=>entry.action==='submit');
@@ -620,7 +620,7 @@ export function createOffsetService({db,clock=Date.now,hasPermission,canViewPers
    });
   },
   reconcile(user,personId,date,key){
-   requirePermission(user,'attendance.offset.responsibility.manage');existingWritable();if(!canViewPerson(user,personId))throw fail('人员不在范围',403);
+   requirePermission(user,'attendance.offset.responsibility.manage');existingWritable();if(!actionScopeAllows(user,'attendance.offset.responsibility.manage',personId))throw fail('人员不在范围',403);
    return op(user,'reconcile',key,{personId,date},()=>{
     const related=db.prepare('select distinct r.id from attendance_offset_requests r join attendance_offset_items i on i.request_id=r.id join attendance_offset_events e on e.id=i.event_id where e.person_id=? and e.work_date=? and (i.decision=\'pending\' or i.effective=1) order by r.id').all(personId,date);
     for(const row of related)requestForUpdate(row.id);

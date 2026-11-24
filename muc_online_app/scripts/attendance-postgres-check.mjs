@@ -11,7 +11,7 @@ try{
  db.exec("create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text);create table settings(key text primary key,value text,updated_at text);insert into personnel values('p1','54000001','模拟人员','测试部门','一组','active')");
  const config={...configuration({}),approvalPlansEnabled:true,startDate:'2026-10-01',appKey:'test',appSecret:'test',operatorId:'test',rootDepartmentId:'1'};
  let time=Date.parse('2026-10-28T12:00:00+08:00');
- const deps={db,config,clock:()=>time,hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},personnelAccess:{predicate:()=>({sql:'1=1',params:[]}),hasAll:()=>true,requirePerson:()=>{}}};
+ const deps={db,config,clock:()=>time,hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},actionScopePredicate:()=>({sql:'1=1',params:[]}),actionScopeHasAll:()=>true,requireActionScope:()=>{}};
  const s=createAttendanceService(deps);db.prepare('insert into attendance_people(user_id,person_id,employee_no,department_ids,seen_at) values(?,?,?,?,?)').run('u1','p1','54000001','[]','2026-10-28T00:00:00Z');
  // A second notification must increment the stored generation, not the
  // excluded row's default. PostgreSQL rejects an unqualified RHS here.

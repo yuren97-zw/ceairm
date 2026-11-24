@@ -97,8 +97,6 @@ const existing = [
   ["maintenance.hours.confirm", "确认工时架次", "maintenance"],
   ["maintenance.export", "导出维修数据", "maintenance"],
   ["fixed.read", "查看固化项目", "fixed"], ["fixed.manage", "维护固化项目", "fixed"],
-  ["hours.read", "查看工时统计", "hours"], ["hours.detail.read", "查看工时明细", "hours"],
-  ["hours.adjust", "调整工时数据", "hours"], ["hours.confirm", "确认工时数据", "hours"], ["hours.export", "导出工时数据", "hours"],
   ["attendance.read", "查看考勤", "attendance"], ["attendance.record.manage", "维护考勤记录", "attendance"],
   ["attendance.exception.manage", "处理考勤异常", "attendance"], ["attendance.stats.read", "查看考勤统计", "attendance"],
   ["attendance.export", "导出考勤数据", "attendance"],
@@ -194,12 +192,6 @@ export const ACTION_SCOPE_BINDINGS = {
   "attendance.offset.approve": { scopeModule: "attendance", resource: "offset_claim" },
   "attendance.offset.rules.manage": { scopeModule: "attendance", resource: "offset_rule" },
   "attendance.offset.responsibility.manage": { scopeModule: "attendance", resource: "offset_claim" },
-  // ---- hours（工时统计：运行时复用 maintenance 范围） ----
-  "hours.read": { scopeModule: "maintenance", resource: "hour_result", note: "hours 模块无运行时检查点，实际复用 maintenance 范围" },
-  "hours.detail.read": { scopeModule: "maintenance", resource: "hour_result", note: "hours 模块无运行时检查点，实际复用 maintenance 范围" },
-  "hours.adjust": { scopeModule: "maintenance", resource: "hour_result", note: "hours 模块无运行时检查点，实际复用 maintenance 范围" },
-  "hours.confirm": { scopeModule: "maintenance", resource: "hour_result", note: "hours 模块无运行时检查点，实际复用 maintenance 范围" },
-  "hours.export": { scopeModule: "maintenance", resource: "hour_result", note: "hours 模块无运行时检查点，实际复用 maintenance 范围" },
   // ---- maintenance（维修管控） ----
   "maintenance.view": { scopeModule: "maintenance", resource: "flight" },
   "maintenance.dispatch.view": { scopeModule: "maintenance", resource: "flight" },
@@ -299,9 +291,9 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
   "roles.manage": ["roles.read"]
 };
 
-const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "hours.read", "attendance.read", "attendance.offset.submit"];
+const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "attendance.read", "attendance.offset.submit"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "hours.detail.read", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
+const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),
@@ -338,7 +330,7 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_account_role_manage: ["personnel.list.view", "accounts.read", "accounts.create", "accounts.update", "accounts.disable", "accounts.password.reset", "accounts.bulk_open", "accounts.roles.assign", "accounts.scopes.assign", "roles.read", "roles.manage"],
   addon_offset_approver: ["attendance.offset.submit", "attendance.offset.approve"],
   addon_offset_admin: ["attendance.offset.rules.manage", "attendance.offset.responsibility.manage"],
-  addon_hours_manage: ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"],
+  addon_hours_manage: ["maintenance.view", "maintenance.dispatch.view", "maintenance.hours.adjust", "maintenance.stats.manage.view", "maintenance.export"],
   addon_attendance_manage: ["attendance.read", "attendance.record.manage", "attendance.exception.manage", "attendance.stats.read", "attendance.export"],
   addon_system_settings: ["settings.manage"]
 };
@@ -461,7 +453,7 @@ export const NAVIGATION_NODES = [
     { id: "authorization", anyOf: ["personnel.list.view", "personnel.qualification.view"], label: "人员授权" },
     { id: "master", anyOf: ["personnel.organization.manage", "personnel.qualification.manage"], label: "主数据管理" }
   ]},
-  { id: "hoursPage", anyOf: ["hours.read"] },
+  { id: "hoursPage", anyOf: ["maintenance.stats.self.view", "maintenance.stats.manage.view"] },
   { id: "attendancePage", anyOf: ["attendance.read"] },
   { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage", "audit.read"], children: [
     { id: "accountsTab", anyOf: ["accounts.read"], label: "登录账户" },

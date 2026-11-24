@@ -13,7 +13,7 @@ function fixture(){
  const leader={id:'leader',personId:'l',permissions:['attendance.offset.approve']};
  const admin={id:'admin',personId:'admin',permissions:perms};const users=[employee,leader,admin];const sources=new Map();
  const day=date=>sources.get(date)||{date,input:{date,covered:true,rest:true,points:[],punches:[],approvals:[]},sourceReadAt:Date.parse(date+'T23:59:00+08:00')};
- const deps={db,allowLegacySettlement:true,clock:()=>now,hasPermission:(u,p)=>u.permissions.includes(p),canViewPerson:()=>true,loadUser:id=>users.find(u=>u.id===id),listApproverIds:()=>users.map(u=>u.id),readDays:(p,from,to)=>datesBetween(from,to).map(day),writesEnabled:true};
+ const deps={db,allowLegacySettlement:true,clock:()=>now,hasPermission:(u,p)=>u.permissions.includes(p),actionScopeAllows:()=>true,loadUser:id=>users.find(u=>u.id===id),listApproverIds:()=>users.map(u=>u.id),readDays:(p,from,to)=>datesBetween(from,to).map(day),writesEnabled:true};
  const service=createOffsetService(deps);
  const at=(date,time)=>Date.parse(`${date}T${time}+08:00`);
  function abnormal(date='2026-11-09'){
@@ -216,7 +216,7 @@ test('fixed initialization rejects stale scope, other periods, missing permissio
 });
 test('fixed initialization handles year boundary, write switch and actor scope',()=>{
  const f=fixture();f.setNow(Date.parse('2027-01-02T12:00:00+08:00'));const body={personIds:['p']},p=f.service.initializationPreview(f.admin,body);assert.equal(p.sourceMonth,'2027-01');assert.equal(p.usageMonth,'2027-01');assert.equal(p.people[0].earned,2);
- const disabled=createOffsetService({...f.deps,writesEnabled:false});assert.throws(()=>disabled.initializationConfirm(f.admin,{...body,previewHash:p.previewHash},'disabled'),{status:409});const scoped=createOffsetService({...f.deps,canViewPerson:()=>false});assert.throws(()=>scoped.initializationPreview(f.admin,body));f.db.close();
+ const disabled=createOffsetService({...f.deps,writesEnabled:false});assert.throws(()=>disabled.initializationConfirm(f.admin,{...body,previewHash:p.previewHash},'disabled'),{status:409});const scoped=createOffsetService({...f.deps,actionScopeAllows:()=>false});assert.throws(()=>scoped.initializationPreview(f.admin,body));f.db.close();
 });
 test('SQLite independent connections serialize fixed initialization confirmations',async()=>{
  const f=fixture();f.setNow(Date.parse('2026-11-20T12:00:00+08:00'));const values={personIds:['p']},preview=f.service.initializationPreview(f.admin,values),directory=mkdtempSync(path.join(tmpdir(),'offset-initial-race-')),file=path.join(directory,'test.sqlite');f.db.prepare('vacuum into ?').run(file);const workers=[];

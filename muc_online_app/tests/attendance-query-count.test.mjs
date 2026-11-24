@@ -31,7 +31,7 @@ test('summary and status query counts stay bounded as people and approvals grow'
  const db=countingDatabase(raw);
  const clock=()=>Date.parse('2026-10-22T22:00:00+08:00');
  const config={...configuration({}),approvalPlansEnabled:true,workerEnabled:false,eventsEnabled:false};
- const service=createAttendanceService({db,clock,config,client:{},personnelAccess:{predicate:()=>({sql:'1=1',params:[]}),hasAll:()=>true,requirePerson(){}},hasRbac:()=>true,isAdmin:()=>true,audit:()=>{}});
+ const service=createAttendanceService({db,clock,config,client:{},actionScopePredicate:()=>({sql:'1=1',params:[]}),actionScopeHasAll:()=>true,requireActionScope(){},hasRbac:()=>true,isAdmin:()=>true,audit:()=>{}});
  for(let i=1;i<=30;i++){
   const id='p'+i,no='5400'+String(i).padStart(4,'0');
   raw.prepare('insert into personnel values(?,?,?,?,?,?)').run(id,no,'人员'+i,'航线','一组','active');

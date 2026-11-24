@@ -163,7 +163,8 @@ const retiredRbacPermissionCodes = [
   "info.update", "info.delete", "info.void", "info.remind", "scopes.manage",
   "capability.read", "capability.allocate", "capability.export",
   "personnel.read", "personnel.create", "personnel.sensitive.read", "personnel.sensitive.view", "personnel.import", "personnel.update", "personnel.qualification.read", "personnel.audit.read",
-  "maintenance.read", "maintenance.execute", "maintenance.dispatch", "maintenance.review", "maintenance.stats.read"
+  "maintenance.read", "maintenance.execute", "maintenance.dispatch", "maintenance.review", "maintenance.stats.read",
+  "hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"
 ];
 const retiredRbacRoleCodes = ["info_publisher", "employee", "maintenance_manager", "personnel_manager", "account_manager", "hours_manager", "attendance_manager", "display_readonly"];
 const rbacRoleDefinitions = RBAC_ROLE_DEFINITIONS;
@@ -13087,7 +13088,7 @@ db.exec(IMPORT_WORKSPACE_SCHEMA);
 capabilityService.init();
 installInfoSync(db);
 let lastOffsetMaintenance=0;
-const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<5000)return;lastOffsetMaintenance=Date.now();for(const action of ['settleDue','drain','repairTasks']){try{offsetService[action](offsetSystemActor);}catch(error){console.warn('考勤抵消后台任务将重试',action,error.code||error.name);}}}, db, personnelAccess, hasRbac, audit, onSourceSaved:(personId,date)=>offsetService.markDirty(personId,date), isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
+const attendanceService = createAttendanceService({ onLocalMaintenance:()=>{if(Date.now()-lastOffsetMaintenance<5000)return;lastOffsetMaintenance=Date.now();for(const action of ['settleDue','drain','repairTasks']){try{offsetService[action](offsetSystemActor);}catch(error){console.warn('考勤抵消后台任务将重试',action,error.code||error.name);}}}, db, actionScopePredicate, actionScopeHasAll, requireActionScope, hasRbac, audit, onSourceSaved:(personId,date)=>offsetService.markDirty(personId,date), isAdmin: user => user?.id===SUPER_ACCOUNT_ID || rbacSnapshot(user?.id).roles.some(role=>role.code==='system_admin') });
 const offsetSystemActor={id:'system-attendance-offset'};
 function currentOffsetActor(user){
  if(user===offsetSystemActor)return user;
@@ -13100,7 +13101,7 @@ const offsetService=createOffsetService({db,monthClose:{
  enabled:()=>attendanceService.config.enabled&&attendanceService.config.workerEnabled&&!attendanceService.config.manualOnly&&!attendanceService.config.validation?.enabled,
  enqueue:options=>attendanceService.enqueue(options),
  verified:runId=>!!db.prepare("select 1 from attendance_tasks t where t.status='done' and (t.run_id=? or exists(select 1 from attendance_task_links l where l.run_id=? and l.task_id=t.id)) limit 1").get(runId,runId)||!!attendanceService.hybrid.state('runStats:'+runId)?.freshReused
-},listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),canViewPerson:(user,id)=>user===offsetSystemActor||!!currentOffsetActor(user)&&personnelAccess.allows(currentOffsetActor(user),'attendance',id),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
+},listPeople:()=>db.prepare("select id from personnel where coalesce(data_status,'active')<>'deleted'").all().map(p=>p.id),hasPermission:(user,permission)=>user===offsetSystemActor||hasRbac(currentOffsetActor(user),permission),actionScopeAllows:(user,permission,personId)=>user===offsetSystemActor||actionScopeAllows(user,permission,personId),loadUser:id=>{const row=db.prepare('select * from users where id=?').get(id);return row&&!isDeletedAccountPerson(row)?toUser(row):null;},readDays:(...args)=>attendanceService.offsetSourceDays(...args),writesEnabled:process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true',existingActionsEnabled:process.env.ATTENDANCE_OFFSETS_EXISTING_ACTIONS_ENABLED==='true'||process.env.ATTENDANCE_OFFSETS_WRITES_ENABLED==='true'});
 
 const actionTaskRealtime=createActionTaskRealtime({versions:ids=>offsetService.tasks.revisions(ids),snapshot:user=>offsetService.tasks.fingerprint(user),currentUser,onError:error=>console.error('待处理实时同步检查失败',error.message)});
 
