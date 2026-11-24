@@ -420,11 +420,11 @@
       overflow:auto;
     }
     .admin-user-table{
-      max-height:420px;
+      max-height:min(680px,calc(100dvh - 160px));
       overflow:auto;
     }
     .admin-user-table .admin-user-row{
-      grid-template-columns:.75fr 1fr 1.05fr 1.2fr 1fr .55fr .55fr 1.35fr;
+      grid-template-columns:28px .75fr 1fr 1.05fr 1.2fr 1fr .55fr .55fr 1.35fr;
       min-width:1040px;
     }
     .user-batch-toolbar{
@@ -446,6 +446,7 @@
     .user-toolbar-left select{max-width:150px}
     .user-toolbar-right{justify-content:flex-end;flex-wrap:wrap}
     .batch-apply{
+    .user-batch-toolbar{flex-wrap:wrap}.user-batch-toolbar #userSearch{flex:1 1 180px;width:180px}.user-batch-targets{max-height:120px;overflow:auto;overflow-wrap:anywhere;padding:8px;background:var(--brand-soft);border-radius:6px}
       grid-template-columns:auto minmax(92px,.35fr) minmax(0,1fr)!important;
       align-items:center;
       color:#39404a!important;
@@ -570,7 +571,7 @@
       .metric strong{font-size:21px}
       .settings-grid{gap:10px}
       .people-table{max-height:210px}
-      .admin-user-table{max-height:330px}
+      .admin-user-table{max-height:min(500px,calc(100dvh - 130px))}
       .recipient-tools{gap:6px}
       .dialog-body{padding:14px}
     }
