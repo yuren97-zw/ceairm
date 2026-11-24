@@ -83,10 +83,20 @@ export function migrateIdentity(db, { withinTransaction = false } = {}) {
       const oldScopes = db.prepare("select * from rbac_user_scopes").all();
       db.exec("alter table rbac_user_scopes rename to rbac_user_scopes_legacy_identity_v3");
       // A distinct initial name also avoids PostgreSQL's retained legacy PK/index names.
-      db.exec("create table rbac_user_scopes_v3(id text primary key,user_id text not null,module text not null,scope_type text not null,scope_id text not null default '',valid_from text,valid_to text,created_at text not null,updated_at text not null,unique(user_id,module,scope_type,scope_id))");
-      const insert = db.prepare("insert into rbac_user_scopes_v3 values(?,?,?,?,?,?,?,?,?)");
-      for (const row of oldScopes) for (const module of SCOPE_MODULES) insert.run(`${row.id}-${module}`, row.user_id, module, row.scope_type, row.scope_id || "", row.valid_from || "", row.valid_to || "", row.created_at, row.updated_at);
+      db.exec("create table rbac_user_scopes_v3(id text primary key,user_id text not null,module text not null,resource text not null default '',scope_type text not null,scope_id text not null default '',valid_from text,valid_to text,created_at text not null,updated_at text not null,unique(user_id,module,resource,scope_type,scope_id))");
+      const insert = db.prepare("insert into rbac_user_scopes_v3 values(?,?,?,?,?,?,?,?,?,?)");
+      for (const row of oldScopes) for (const module of SCOPE_MODULES) insert.run(`${row.id}-${module}`, row.user_id, module, "", row.scope_type, row.scope_id || "", row.valid_from || "", row.valid_to || "", row.created_at, row.updated_at);
       db.exec("alter table rbac_user_scopes_v3 rename to rbac_user_scopes");
+    }
+    // S4（V1.1 §4.3 资源级范围）：历史库补 resource 列并重建唯一键
+    // 行级 resource='' 表示模块级范围（兼容存量），非空表示仅该资源类别生效。
+    if (!columns(db, "rbac_user_scopes").includes("resource")) {
+      const oldScopes = db.prepare("select * from rbac_user_scopes").all();
+      db.exec("alter table rbac_user_scopes rename to rbac_user_scopes_pre_resource");
+      db.exec("create table rbac_user_scopes_v4(id text primary key,user_id text not null,module text not null,resource text not null default '',scope_type text not null,scope_id text not null default '',valid_from text,valid_to text,created_at text not null,updated_at text not null,unique(user_id,module,resource,scope_type,scope_id))");
+      const insert = db.prepare("insert into rbac_user_scopes_v4 values(?,?,?,?,?,?,?,?,?,?)");
+      for (const row of oldScopes) insert.run(row.id, row.user_id, row.module, "", row.scope_type, row.scope_id || "", row.valid_from || "", row.valid_to || "", row.created_at, row.updated_at);
+      db.exec("alter table rbac_user_scopes_v4 rename to rbac_user_scopes");
     }
     if (report.tables.length) db.prepare("delete from sessions").run();
     if (!withinTransaction) db.exec("commit");

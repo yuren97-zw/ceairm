@@ -335,6 +335,31 @@ export const RBAC_ROLE_DEFINITIONS = {
   addon_system_settings: ["settings.manage"]
 };
 
+// 资源类别中文标签（S4 资源级数据范围；与 ACTION_SCOPE_BINDINGS.resource 对应）。
+export const RESOURCE_LABELS = {
+  flight: "维修机会",
+  assignment: "派工任务",
+  hour_result: "工时结果",
+  review_case: "非例行评议",
+  standard_version: "非例行标准",
+  rule: "工时规则",
+  hour_period: "工时账期",
+  workflow_task: "流程任务",
+  module_instance: "扩展模块",
+  personnel: "人员档案",
+  capability: "能力档案",
+  account: "登录账户",
+  record: "信息记录",
+  offset_claim: "考勤抵消申请",
+  offset_rule: "考勤抵消规则",
+  attendance_day: "考勤日数据",
+  role: "角色配置",
+  setting: "系统设置",
+  audit_log: "审计日志",
+  fixed_item: "固化项目",
+  handover: "班组交接"
+};
+
 export const RBAC_BASE_ROLE_CODES = ["worker", "dispatcher", "manager"];
 
 // 受控编辑角色（rbacRoleControlledEdit）保留手工授予，但代码基线新增的权限
