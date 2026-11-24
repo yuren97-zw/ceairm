@@ -17,7 +17,7 @@ function fixture() {
   const users = [employee, leader, admin, cadre2];
   const sources = new Map();
   const day = date => sources.get(date) || { date, input: { date, covered: true, rest: true, points: [], punches: [], approvals: [] }, sourceReadAt: Date.parse(date + "T23:59:00+08:00") };
-  const deps = { db, allowLegacySettlement: true, clock: () => now, hasPermission: (u, p) => u.permissions.includes(p), canViewPerson: () => true, loadUser: id => users.find(u => u.id === id), listApproverIds: () => users.map(u => u.id), readDays: (p, from, to) => datesBetween(from, to).map(day), writesEnabled: true };
+  const deps = { db, allowLegacySettlement: true, clock: () => now, hasPermission: (u, p) => u.permissions.includes(p), actionScopeAllows: () => true, loadUser: id => users.find(u => u.id === id), listApproverIds: () => users.map(u => u.id), readDays: (p, from, to) => datesBetween(from, to).map(day), writesEnabled: true };
   const service = createOffsetService(deps);
   const at = (date, time) => Date.parse(`${date}T${time}+08:00`);
   const abnormal = (personId, date) => {

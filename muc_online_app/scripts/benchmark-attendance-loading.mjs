@@ -7,7 +7,7 @@ import {configuration} from '../attendance-dingtalk.mjs';
 const db=new DatabaseSync(':memory:');
 db.exec('create table settings(key text primary key,value text,updated_at text);create table personnel(id text primary key,employee_no text,name text,department text,home_team text,data_status text)');
 const user={id:'synthetic-benchmark',all:true},clock=()=>Date.parse('2026-10-31T23:00:00+08:00');
-const service=createAttendanceService({db,clock,config:{...configuration({}),approvalPlansEnabled:true},hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},personnelAccess:{predicate:()=>({sql:'1=1',params:[]}),hasAll:()=>true}});
+const service=createAttendanceService({db,clock,config:{...configuration({}),approvalPlansEnabled:true},hasRbac:()=>true,isAdmin:()=>true,audit:()=>{},actionScopePredicate:()=>({sql:'1=1',params:[]}),actionScopeHasAll:()=>true,requireActionScope:()=>{}});
 const people=db.prepare('insert into personnel values(?,?,?,?,?,?)'),day=db.prepare('insert into attendance_days(person_id,work_date,input_json,result_json,source_hash,updated_at,run_id) values(?,?,?,?,?,?,?)');
 db.exec('begin');
 for(let i=0;i<200;i++){

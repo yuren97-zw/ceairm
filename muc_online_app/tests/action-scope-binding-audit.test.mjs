@@ -27,8 +27,6 @@ const MODULE_LITERAL = /["'](personnel|accounts|info|maintenance|hours|attendanc
 // 动态范围检查点豁免：无法静态确定权限码的调用点（权限码作为参数/桩注入），必须写明原因。
 // 上限 8 条，防止用豁免清单掩盖新增的未配对检查点。
 const EXEMPT_SITE_MARKERS = {
-  "canViewPerson=(user,id)": "考勤抵消服务注入桩：范围函数由 server 注入（attendance 范围）",
-  "hasPermission:": "考勤抵消服务注入桩：动作权限由服务内部 op() 映射表校验",
   "function dataScopeAllowsUser": "数据范围工具函数定义行，不是调用点",
   'routePath.startsWith("/api/maintenance/")': "路由级通用维修守卫：对任意维修路由做全范围判断，不对应单一动作",
   "Array.isArray(value))return value.filter": "通用 payload 人员过滤辅助函数：多动作共用，动作码在上游路由",
@@ -88,14 +86,11 @@ for (const [name, source] of Object.entries(FILES)) {
     const prefixed = /personnelAccess\.(?:allows|requirePerson|hasAll)\(|dataScopeAllowsUser\(/.test(line);
     // personnel-access.mjs 内部是裸函数调用（allows/requirePerson/hasAll/predicate），无 personnelAccess. 前缀。
     const bare = name === "personnel-access.mjs" && /(?:^|[^.\w])(?:allows|requirePerson|hasAll)\(/.test(line);
-    const isScopeCall = prefixed || bare
-      || (/canViewPerson\(/.test(line) && name === "attendance-offset-service.mjs");
+    const isScopeCall = prefixed || bare;
     if (!isScopeCall) continue;
     if (DELEGATION_MARKERS.some(marker => line.includes(marker))) continue;
     const match = line.match(MODULE_LITERAL);
-    if (match) { sites.push({ line: index + 1, module: match[1], text: line.trim().slice(0, 120) }); continue; }
-    // canViewPerson 按契约固定为 attendance 范围（server 注入的实现用 attendance 模块）。
-    if (line.includes("canViewPerson(") && name === "attendance-offset-service.mjs") sites.push({ line: index + 1, module: "attendance", text: line.trim().slice(0, 120) });
+    if (match) sites.push({ line: index + 1, module: match[1], text: line.trim().slice(0, 120) });
   }
   fileData[name] = { lines, sites };
 }
@@ -113,7 +108,7 @@ function nearbyCodes(fileName, lineIndex, radius = 80) {
   return found;
 }
 
-test("绑定表完整性：116 个权限码全部登记，模块合法，null 必须有原因", () => {
+test(`绑定表完整性：全部 ${codes.length} 个权限码登记，模块合法，null 必须有原因`, () => {
   const problems = [];
   for (const code of codes) {
     const binding = ACTION_SCOPE_BINDINGS[code];
@@ -127,13 +122,12 @@ test("绑定表完整性：116 个权限码全部登记，模块合法，null �
   assert.deepEqual(extras, [], `绑定表包含未定义的权限码：${extras.join(",")}`);
 });
 
-test("hours.* 五码登记为 maintenance/hour_result（运行时复用 maintenance 范围的显式声明）", () => {
+test("hours.* 已退役（S3）：不在权限定义、不在绑定表", () => {
   for (const code of ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"]) {
-    const binding = scopeBindingFor(code);
-    assert.equal(binding?.scopeModule, "maintenance", `${code} 应绑定 maintenance 范围`);
-    assert.equal(binding?.resource, "hour_result", `${code} 资源类别应为 hour_result`);
-    assert.ok(binding?.note, `${code} 应注明 hours 模块无运行时检查点`);
+    assert.equal(codeSet.has(code), false, `${code} 仍在权限定义中`);
+    assert.equal(scopeBindingFor(code), null, `${code} 仍在绑定表`);
   }
+  // 工时页导航由维护统计权限控制（rbac-policy NAVIGATION hoursPage）
 });
 
 test("静态配对：动作性范围检查点必须全部配对（预算 0，通用守卫豁免）", () => {
@@ -176,16 +170,22 @@ test("关键写动作必须与同模块范围检查配对（M1 直接防线）",
   assert.deepEqual(violations, [], `以下关键动作缺少同模块范围配对：\n${violations.join("\n")}`);
 });
 
-test("hours.* 为登记兼容码：代码中零引用（死权限）", () => {
-  // hours 模块名存实亡：权限码仍在定义与角色中，但运行时无任何检查点，工时统计全部复用 maintenance。
-  // 若未来启用 hours 模块独立检查，此测试会失败并提示同步更新绑定与语义表。
-  const referenced = Object.keys(FILES).flatMap(fileName => {
-    const { lines } = fileData[fileName];
-    return ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"]
-      .filter(code => lines.some(line => line.includes(`"${code}"`) || line.includes(`'${code}'`)))
-      .map(code => `${fileName}:${code}`);
-  });
-  assert.deepEqual(referenced, [], `hours.* 出现运行时引用，hours 模块语义已变化，请评审绑定与文档：${referenced.join(",")}`);
+test("hours.* 退役后：扫描文件除退役清单外无遗留引用", () => {
+  // 退役清单（server.mjs retiredRbacPermissionCodes）本身必须包含这五个码——用于播种时清理历史数据。
+  const serverLines = fileData["server.mjs"].lines;
+  const retiredStart = serverLines.findIndex(line => line.includes("const retiredRbacPermissionCodes"));
+  const retiredEnd = retiredStart >= 0 ? serverLines.findIndex((line, index) => index > retiredStart && line.trim() === "];") : -1;
+  const inRetiredList = index => retiredStart >= 0 && index >= retiredStart && (retiredEnd < 0 || index <= retiredEnd);
+  const referenced = [];
+  for (const [fileName, { lines }] of Object.entries(fileData)) {
+    lines.forEach((line, index) => {
+      if (fileName === "server.mjs" && inRetiredList(index)) return;
+      for (const code of ["hours.read", "hours.detail.read", "hours.adjust", "hours.confirm", "hours.export"]) {
+        if (line.includes(`"${code}"`) || line.includes(`'${code}'`)) referenced.push(`${fileName}:${line.trim().slice(0, 80)}`);
+      }
+    });
+  }
+  assert.deepEqual(referenced, [], `hours.* 仍有运行时引用：${referenced.join(",")}`);
 });
 
 test("S2 迁移守卫：核心检查函数必须使用绑定驱动 API，不再手写范围模块", () => {
@@ -217,6 +217,15 @@ test("S2 迁移守卫：核心检查函数必须使用绑定驱动 API，不再�
   assert.deepEqual(violations, [], `以下函数应使用 actionScope*/requireActionScope 绑定驱动 API：\n${violations.join("\n")}`);
   const scopedCalls = (serverSource.match(/\b(?:actionScopeAllows|actionScopeHasAll|actionScopePredicate|requireActionScope)\(/g) || []).length;
   assert.ok(scopedCalls >= 15, `绑定驱动 API 使用量过少（${scopedCalls}），S2 迁移可能被回退`);
+});
+
+test("S3 迁移守卫：考勤两服务使用绑定驱动 API，无遗留注入桩/字面量范围", () => {
+  for (const name of ["attendance-service.mjs", "attendance-offset-service.mjs"]) {
+    const source = FILES[name];
+    assert.ok((source.match(/\bactionScopeAllows|actionScopeHasAll|actionScopePredicate|requireActionScope\(/g) || []).length >= 3, `${name} 的绑定 API 使用量过少`);
+    assert.equal(/personnelAccess\.(?:allows|requirePerson|hasAll|predicate)\([^)]*["']attendance["']/.test(source), false, `${name} 仍手写 attendance 范围字面量`);
+    assert.equal(/canViewPerson\(/.test(source), false, `${name} 仍使用旧注入桩 canViewPerson`);
+  }
 });
 
 test("审计器防退化：字面量范围检查点数量不得骤降", () => {

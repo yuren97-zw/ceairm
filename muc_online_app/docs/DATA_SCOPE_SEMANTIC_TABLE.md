@@ -5,7 +5,7 @@
 ## 总则
 
 - 数据范围绑定 **用户+模块**（运行时执行层）；**动作→范围的绑定声明登记在 `rbac-policy.mjs` 的 `ACTION_SCOPE_BINDINGS`**（S1，2026-11-25）：每个权限码声明其检查的 `scopeModule` 与 `resource`。
-- **S2（2026-11-25）运行时绑定 API**：`actionScopeAllows / actionScopeHasAll / actionScopePredicate / requireActionScope`（server.mjs）——范围模块由绑定表推导，调用点不再手写模块；核心检查函数（评审/变更/派工/更正/跨期/工作流/统计/导出/导入/账户校验）已迁移。未配对动作性检查点预算=0（仅剩通用守卫豁免）。
+- **S2（2026-11-25）运行时绑定 API**：`actionScopeAllows / actionScopeHasAll / actionScopePredicate / requireActionScope`（server.mjs）——范围模块由绑定表推导，调用点不再手写模块；核心检查函数（评审/变更/派工/更正/跨期/工作流/统计/导出/导入/账户校验）已迁移。未配对动作性检查点预算=0（仅剩通用守卫豁免）。S3（2026-11-25）：`hours.*` 五码退役；考勤两服务（attendance-service / attendance-offset-service）迁移到绑定驱动 API，旧注入桩 `canViewPerson` 移除。
 - 同一模块多范围 **OR 合并**（并集），无有效范围时 **fail-closed**（`0=1`）。
 - 缺功能权限 → 403；范围外目标 → 404（不泄露存在性）。
 - 超级账户（54002010）在 `activeScopes` 直接返回 `all`，但业务身份限制（自审禁止、班组长资格、独立终审）**不豁免**（V1.1 §4.2）。
@@ -18,8 +18,8 @@
 | **accounts**（登录账户管理） | `users` 表（通过 `person_id` 关联 personnel） | 同 personnel（账户无独立行级过滤，按关联人员的位置过滤） | 账户停用/密码重置只查权限码，不额外查范围（操作者已在范围内） | 列表接口 `adminUser` 过滤；无导出 |
 | **info**（信息传达） | `records` 表（信息卡片） | 行级维度是**发布者账户**（`created_by`），通过 `dataScopeAllowsUser(user, created_by, 'info')` 判定 | 收件人列表（`record_recipients`）独立于数据范围——收件人可见不等于发布者范围内可见 | 导出接口与列表共用范围判定 |
 | **maintenance**（维修管控） | `maintenance_flights`（机会）+ `maintenance_assignments`（派工）+ `maintenance_hour_results`（工时） | 机会按**派工参与人**过滤（`maintenanceVisibleFlights`）；派工按参与人+管理范围；工时按 `person_id` | 维修 V10.1 增强后：非例行评议/终审有独立参与者范围（`nonroutineReviewCan`），不走 personnel predicate | 导出（xlsx/html）与列表共用范围；工时确认/复核走 `requirePerson(manager, "maintenance", hour.person_id)` |
-| **hours**（工时统计） | `maintenance_hour_results`（汇总视图） | 汇总视图的 `person_id` | **hours 模块当前无运行时范围检查点**（`hours.*` 五码为登记兼容码，代码零引用，见 action-scope-binding-audit 测试）；工时统计实际复用 maintenance 范围 | 导出与列表共用 maintenance 范围 |
-| **attendance**（考勤管理） | `attendance_days` + `attendance_offset_*` | `attendance_days.person_id` 通过 `personnelAccess.predicate(user, "attendance")` | 考勤抵消审批人可见性=申请人范围内+审批待办；考勤导出双重校验（权限+fresh 范围快照） | 导出接口在生成前重新读取当前授权（`watermark()` 三次一致性检查） |
+| **hours**（工时统计） | — | — | **`hours.*` 五码已于 2026-11-25（S3）退役**（代码零引用、模块名存实亡）：权限定义/绑定表已移除，`retiredRbacPermissionCodes` 在播种时清理历史映射；工时页导航改由 `maintenance.stats.self/manage.view` 控制；`addon_hours_manage` 重定位为维护工时统计/调整/导出权限 | 工时数据一律走 maintenance 范围 |
+| **attendance**（考勤管理） | `attendance_days` + `attendance_offset_*` | `attendance_days.person_id` 通过绑定驱动的 `actionScopePredicate(user, attendance.*, ...)`（S3 起，考勤两服务已迁移，注入桩 canViewPerson 已移除） | 考勤抵消审批人可见性=申请人范围内+审批待办；考勤导出双重校验（权限+fresh 范围快照） | 导出接口在生成前重新读取当前授权（`watermark()` 三次一致性检查） |
 
 ## 与角色权限的交互
 

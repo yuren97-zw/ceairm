@@ -2749,7 +2749,7 @@ function visibleNavigationFromPermissions(perms) {
     { id: "maintenancePage", label: "维修管控", anyOf: ["maintenance.view","maintenance.execute.view","maintenance.dispatch.view","maintenance.review.view","maintenance.stats.manage.view"] },
     { id: "fixedPage", label: "固化项目", anyOf: ["fixed.read"] },
     { id: "personnelPage", label: "人员与能力", anyOf: ["capability.overview.view","personnel.list.view"] },
-    { id: "hoursPage", label: "工时统计", anyOf: ["hours.read"] },
+    { id: "hoursPage", label: "工时统计", anyOf: ["maintenance.stats.self.view", "maintenance.stats.manage.view"] },
     { id: "attendancePage", label: "考勤管理", anyOf: ["attendance.read"] },
     { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage","audit.read"] }
   ];

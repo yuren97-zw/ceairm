@@ -220,7 +220,7 @@ try {
   await request(`/admin/roles/${workerRole.id}`, { cookie: admin.cookie, method: "PUT", body: workerDefaults });
   await request(`/admin/roles/${workerRole.id}`, { cookie: admin.cookie, method: "DELETE", expected: 400 });
 
-  assert.ok(rbac.data.permissions.some(permission => permission.code === "hours.read"));
+  assert.ok(rbac.data.permissions.some(permission => permission.code === "maintenance.stats.self.view"));
   assert.ok(rbac.data.permissions.some(permission => permission.code === "attendance.read"));
   const managerRole = rbac.data.roles.find(role => role.code === "manager");
   const availableAccount = await request(`/admin/accounts/availability?personId=${encodeURIComponent(person.id)}&username=70000001`, { cookie: admin.cookie });
