@@ -3081,7 +3081,7 @@ function renderPersonnelDetail() {
   const englishLabel = detail.qualificationVisible ? (detail.englishLevels || []).join("、") || "未提供" : "无查看权限";
   const actualGradeLabel = person.actualGradeMasked ? "***" : (person.actualGrade || "未提供");
   let content = `<div class="personnel-detail-summary"><span><small>职位</small><b>${escapeHtml(person.position || "未设置")}</b>${personnelIdentityBadgeHtml(person)}</span><span><small>英语</small><b>${escapeHtml(englishLabel)}</b></span><span><small>在职状态</small><b>${escapeHtml(person.employmentStatus)}</b></span><span><small>教员</small><b>${person.isInstructor ? "是" : "否"}</b></span><span><small>实际岗级</small><b>${escapeHtml(actualGradeLabel)}</b></span></div>`;
-  if (tab === "changes") content = `<div class="personnel-flat-list">${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
+  if (tab === "changes") content = `<div class="personnel-flat-list">${(state.activePersonnelOrgHistory || []).length ? `<div class="setting-item"><b>📋 组织归属变更</b>${(state.activePersonnelOrgHistory || []).map(h => `<div style="padding:2px 0"><small>${escapeHtml((h.changed_at || "").replace("T", " ").slice(0, 19))}</small> · ${escapeHtml(h.department_name || "—")} / ${escapeHtml(h.group_name || "—")} / ${escapeHtml(h.team_name || "—")}${h.change_reason ? ` · ${escapeHtml(h.change_reason)}` : ""}</div>`).join("")}</div>` : ""}${changes.map(item => `<div class="setting-item"><b>${escapeHtml(item.fieldLabel || item.fieldName || "人员资料")}</b><span>${escapeHtml(item.oldValue || "空")} → ${escapeHtml(item.newValue || "空")} · ${escapeHtml(item.operatorName || "系统")} · ${escapeHtml((item.createdAt || "").replace("T", " ").slice(0, 19))}</span></div>`).join("") || '<div class="status-line">暂无可查看的变更记录。</div>'}</div>`;
   if (tab === "authorizations") content = detail.qualificationVisible ? renderAuthorizationCategoryPanel(detail) : '<div class="status-line">当前账号没有查看授权明细的权限。</div>';
   if (type) {
     if (!detail.qualificationVisible) content = '<div class="status-line">当前账号没有查看执照、授权和培训明细的权限。</div>';
@@ -3188,6 +3188,7 @@ async function reloadActivePersonnelDetail() {
   const personId = state.activePersonnelDetail?.person?.id;
   if (!personId) return;
   state.activePersonnelDetail = await personnelService.detail(personId);
+  try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personId)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
   state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
   const type = qualificationTabType(state.personnelDetailTab);
   if (type && (type !== "authorization" || state.expandedAuthorizationCategory)) await loadPersonnelQualifications(type, { keepFilters: true });
@@ -10268,6 +10269,7 @@ document.addEventListener("click", async event => {
     }
     try {
       state.activePersonnelDetail = await personnelService.detail(personnelDetail.dataset.personnelDetail);
+      try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personnelDetail.dataset.personnelDetail)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
       state.personnelDetailTab = "basic"; state.expandedAuthorizationCategory = ""; resetPersonnelQualifications();
       try { state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personnelDetail.dataset.personnelDetail) : []; }
       catch { state.activePersonnelDetail.changes = []; }
@@ -10883,6 +10885,7 @@ document.addEventListener("submit", event => {
         $("#personnelDialog").close();
         await refreshPersonnel({ keepDetail: true });
         state.activePersonnelDetail = await personnelService.detail(personId);
+  try { state.activePersonnelOrgHistory = (await apiRequest(`/personnel/${encodeURIComponent(personId)}/organization-history`)).history || []; } catch { state.activePersonnelOrgHistory = []; }
         state.activePersonnelDetail.changes = hasRbac("personnel.audit.view") ? await personnelService.changes(personId) : [];
         renderPersonnelPage();
       } catch (error) { alert(error.message); }

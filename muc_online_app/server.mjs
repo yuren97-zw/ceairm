@@ -7790,7 +7790,7 @@ function confirmPersonnelRows(batchId, rows, user = null) {
     const savedPerson = findImportedPerson(employeeNo);
     personnelAccess.saveOrganization(savedPerson.id,org);
     if(!existing||String(existing.department_id||"")!==String(org.department_id||"")||String(existing.personnel_group_id||"")!==String(org.personnel_group_id||"")||String(existing.administrative_team_id||"")!==String(org.administrative_team_id||"")){
-      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,now());
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),savedPerson.id,org.department_id,org.personnel_group_id,org.administrative_team_id,manager.id,"初始创建",now());
       const linked=db.prepare("select id from users where person_id=?").get(savedPerson.id);
       if(linked && linked.id!==SUPER_ACCOUNT_ID)revokeUserSessions(linked.id,{bumpCredentialVersion:true});
     }
@@ -8080,7 +8080,7 @@ function updatePersonnel(person, payload, manager) {
     db.prepare(`update personnel set ${assignments},source_batch_id='manual_override',updated_at=? where id=?`).run(...updates.map(item => item.next), stamp, person.id);}
     if(orgChanged){
       personnelAccess.saveOrganization(person.id,org);
-      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_at) values(?,?,?,?,?,?)").run(randomId("org-history"),person.id,org.department_id,org.personnel_group_id,org.administrative_team_id,stamp);
+      db.prepare("insert into personnel_organization_history(id,person_id,department_id,personnel_group_id,administrative_team_id,changed_by,change_reason,changed_at) values(?,?,?,?,?,?,?,?)").run(randomId("org-history"),person.id,org.department_id,org.personnel_group_id,org.administrative_team_id,manager.id,String(reason||"").slice(0,500),stamp);
     }
     const insertLog = db.prepare("insert into personnel_change_logs(id,person_id,field_name,field_label,old_value,new_value,source_type,source_batch_id,reason,operator_id,operator_name,created_at) values(?,?,?,?,?,?,'manual','',?,?,?,?)");
     const upsertOverride = db.prepare("insert into personnel_field_overrides(person_id,field_name,field_value,reason,updated_by,updated_at) values(?,?,?,?,?,?) on conflict(person_id,field_name) do update set field_value=excluded.field_value,reason=excluded.reason,updated_by=excluded.updated_by,updated_at=excluded.updated_at");
@@ -8561,6 +8561,30 @@ async function routeRequestMain(req, res) {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
       if (!manager) return;
       return send(res, 200, publicPersonnelPage(url.searchParams));
+    }
+    if (method === "GET" && /^\/api\/personnel\/[^/]+\/organization-history$/.test(url.pathname)) {
+      // B7-4 历史组织快照查询（V1.1 §5.4）：返回某人的组织归属变更时间线，
+      // 可选 date 参数返回该日期时的组织归属（按 changed_at <= date 的最新一条）。
+      const seg = url.pathname.split("/").filter(Boolean);
+      const personId = decodeURIComponent(seg[2]);
+      const manager = requireRbacPermission(req, res, "personnel.detail.view");
+      if (!manager) return;
+      const person = db.prepare("select id from personnel where id=? and data_status='active'").get(personId);
+      if (!person) return send(res, 404, { error: "人员不存在" });
+      if (!personnelAccess.allows(manager, "personnel", personId)) return send(res, 403, { error: "该人员不在您的数据范围内" });
+      const rows = db.prepare(`select h.id,h.person_id,h.department_id,h.personnel_group_id,h.administrative_team_id,h.changed_by,h.change_reason,h.changed_at,
+        d.name as department_name,g.name as group_name,t.name as team_name
+        from personnel_organization_history h
+        left join organization_units d on d.id=h.department_id
+        left join organization_units g on g.id=h.personnel_group_id
+        left join organization_units t on t.id=h.administrative_team_id
+        where h.person_id=? order by h.changed_at desc`).all(personId);
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const atDate = rows.filter(r => r.changed_at <= dateParam + "T23:59:59.999Z")[0];
+        return send(res, 200, { personId, date: dateParam, organization: atDate || null, history: rows });
+      }
+      return send(res, 200, { personId, history: rows });
     }
     if (method === "GET" && url.pathname === "/api/personnel/identity-quality") {
       const manager = requireRbacPermission(req, res, "personnel.list.view");
