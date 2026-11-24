@@ -14,7 +14,7 @@ export function attendancePeriods(date){
  const yesterday=shiftDate(date,-1),dow=new Date(date+'T00:00:00Z').getUTCDay();
  const monday=shiftDate(date,-((dow+6)%7));
  const [y,m]=date.split('-').map(Number),prev=new Date(Date.UTC(y,m-2,1)).toISOString().slice(0,10);
- return {daily:{from:yesterday,to:yesterday,minute:750},weekly:{from:shiftDate(monday,-7),to:shiftDate(monday,-1),minute:600,eligible:dow===2},monthly:{from:prev,to:shiftDate(date.slice(0,7)+'-01',-1),minute:690,eligible:date.endsWith('-03')}};
+ return {daily:{from:yesterday,to:yesterday,minute:750},weekly:{from:shiftDate(monday,-7),to:shiftDate(monday,-1),minute:600,eligible:dow===2},monthly:{from:prev,to:shiftDate(date.slice(0,7)+'-01',-1),minute:0,eligible:date.endsWith('-03')}};
 }
 const topics=new Set(['attendance_check_record','attendance_schedule_change','bpms_instance_change','attendance_approve_status_change','user_add_org','user_modify_org','user_leave_org','org_dept_modify','org_dept_create','org_dept_remove']);
 export function sanitizeAttendanceEvent(frame,config={},batchDepth=0){
@@ -201,7 +201,7 @@ export function createHybridCoordinator({db,config,clock,enqueue}){
   const needsInitial=!db.prepare('select id from attendance_runs limit 1').get()&&!db.prepare('select person_id from attendance_days limit 1').get();
   const local=new Date(clock()+8*3600000),minute=local.getUTCHours()*60+local.getUTCMinutes();
   for(const d of attendanceDates(first,date))for(const [source,p] of Object.entries(attendancePeriods(d))){
-   if(p.eligible===false||d===date&&minute<p.minute||p.to<config.startDate)continue;
+   if(source==='monthly'||p.eligible===false||d===date&&minute<p.minute||p.to<config.startDate)continue;
    const from=p.from<config.startDate?config.startDate:p.from;
    enqueue({from,to:p.to,id:`hybrid-${source}-${p.from}-${p.to}`,source,system:true});
   }

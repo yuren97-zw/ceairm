@@ -21,7 +21,7 @@ const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const iso=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
 export function installAttendance(db){for(const file of ['022_attendance.sql','023_attendance_leave_catalog.sql','027_attendance_hybrid.sql','028_attendance_leave_balances.sql'])db.exec(fs.readFileSync(new URL('./migrations/'+file,import.meta.url),'utf8'));if(db.kind==='postgres')db.exec(fs.readFileSync(new URL('./migrations/031_attendance_event_instance_index.sql',import.meta.url),'utf8'));}
-export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now(),onSourceUpdated=()=>{},onLocalMaintenance=()=>{}}){
+export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmin=()=>false,config=configuration(),client:customClient,clock=()=>Date.now(),onSourceUpdated=()=>{},onSourceSaved=()=>{},onLocalMaintenance=()=>{}}){
  installAttendance(db);installAccumulation(db);
  const iso=()=>new Date(clock()).toISOString();
  const owner=uid();let busy=false,timer,lastReapAt=0;
@@ -142,12 +142,12 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    if(!users.length){db.prepare('update attendance_runs set status=?,error=?,updated_at=? where id=?').run('failed','没有工号唯一匹配的人员，请查看身份问题',iso(),run.id);return;}
    const meta=db.prepare('select * from attendance_run_meta where run_id=?').get(run.id),targets=parse(meta?.targets_json),source=meta?.source||'manual';
    const allowed=targets?new Set(targets.map(t=>t.personId+'|'+t.date)):null;
-   let reused=0;
+   let reused=0,freshReused=0;
    for(const date of datesBetween(run.from_date,run.to_date)){
     const pending=users.filter(u=>!allowed||allowed.has(u.personId+'|'+date)).filter(u=>{
      const active=db.prepare("select t.id from attendance_tasks t join attendance_runs r on r.id=t.run_id where t.person_id=? and t.work_date=? and t.status='pending' and r.status='running' limit 1").get(u.personId,date);
      if(active){db.prepare('insert into attendance_task_links(run_id,task_id) values(?,?) on conflict(run_id,task_id) do nothing').run(run.id,active.id);reused++;return false;}
-     if(['daily','weekly','monthly'].includes(source)&&hybrid.fresh(u.personId,date)){reused++;return false;}
+     if(['daily','weekly','monthly'].includes(source)&&hybrid.fresh(u.personId,date)){reused++;freshReused++;return false;}
      hybrid.ensure(u.personId,date);return true;
     });
     for(let i=0;i<pending.length;i+=10){
@@ -156,7 +156,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
      for(const u of batch)db.prepare('insert into attendance_tasks(id,run_id,batch_id,person_id,user_id,work_date,status,next_at) values(?,?,?,?,?,?,?,?)').run(uid(),run.id,batchId,u.personId,u.userId,date,'pending',iso());
     }
    }
-   hybrid.setState('runStats:'+run.id,{reused});
+   hybrid.setState('runStats:'+run.id,{reused,freshReused});
    // 只处理待解决事件；已排除事件仅在通讯录版本变化时抽样复核，且状态变化才写库。
    // 旧实现对全部 1.7 万条 directory_excluded 每次通讯录同步逐条 update，单次事务
    // 发出上万次同步查询并阻塞事件循环数分钟——这才是生产假死/502 的直接触发点。
@@ -242,6 +242,7 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    if(dataChanged||prevStatus&&prevStatus!==newStatus&&(prevStatus==='failed'||prevStatus==='incomplete'||newStatus==='failed'||newStatus==='incomplete'))hybrid.setState('dataVersion',uid());
    db.prepare('update attendance_runs set updated_at=? where id=?').run(at,task.run_id);
    db.prepare('update attendance_tasks set status=?,error=?,attempts=0,updated_at=? where id=?').run(newStatus,complete?null:'审批事由资料未完整覆盖',at,task.id);
+   onSourceSaved(task.person_id,task.work_date);
   });
   onSourceUpdated(task.person_id,task.work_date);
  }
@@ -275,7 +276,8 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
     error=case when (select count(*) from attendance_tasks t where t.run_id=attendance_runs.id and t.status<>'done')>0 then '存在未完整覆盖人员日，请查看同步明细' else error end
     where status='running'
       and not exists(select 1 from attendance_batches b where b.run_id=attendance_runs.id and b.status='pending')
-      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')`).run(at);
+      and not exists(select 1 from attendance_tasks t where t.run_id=attendance_runs.id and t.status='pending')
+      and not exists(select 1 from attendance_task_links l join attendance_tasks t on t.id=l.task_id where l.run_id=attendance_runs.id and t.status='pending')`).run(at);
  }
  function validationRunAllowed(id){
   if(!config.validation?.enabled)return true;
@@ -554,10 +556,10 @@ export function createAttendanceService({db,personnelAccess,hasRbac,audit,isAdmi
    return {date,input,sourceReadAt:r?.queried_at||null,sourceRevision:r?.source_hash||null};
   });
  }
- function selfDetails(user,kind){
+ function selfDetails(user,kind,issueMonth=null){
   permission(user,'attendance.read');if(!user.personId)return {status:'identity_unbound',days:[]};
   personnelAccess.requirePerson(user,'attendance',user.personId);
-  const today=dayOf(clock()),month=today.slice(0,7),dates=kind==='schedule'?datesBetween(new Date(Date.parse(today+'T00:00:00Z')-3*86400000).toISOString().slice(0,10),new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)):monthDates(month);
+  const today=dayOf(clock()),month=kind==='issues'&&issueMonth?issueMonth:today.slice(0,7),dates=kind==='schedule'?datesBetween(new Date(Date.parse(today+'T00:00:00Z')-3*86400000).toISOString().slice(0,10),new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)):monthDates(month);
   const from=new Date(Date.parse(dates[0]+'T00:00:00Z')-3*86400000).toISOString().slice(0,10);
   const sources=offsetSourceDays(user.personId,from,dates.at(-1));
   const days=sources.filter(d=>dates.includes(d.date)).map(d=>({...classifyDay(d.input,clock(),d.sourceReadAt,{previousWorkDays:sources.filter(p=>p.date<d.date&&p.date>=new Date(Date.parse(d.date+'T00:00:00Z')-3*86400000).toISOString().slice(0,10)).map(p=>p.input)}),input:d.input,eligibility:resolveOffsetFacts(user.personId,d.input,{now:clock(),sourceReadAt:d.sourceReadAt})}));
