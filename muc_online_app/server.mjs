@@ -185,7 +185,7 @@ function cosEnabled() {
   return Object.values(cosConfig).every(Boolean);
 }
 
-function cosSignedUrl(method, objectKey, expiresSeconds = 600, query = {}) {
+function cosSignedUrl(method, objectKey, expiresSeconds = 300, query = {}) {
   if (!cosEnabled()) throw new Error("COS 尚未配置");
   cosClient ||= new COS({ SecretId: cosConfig.secretId, SecretKey: cosConfig.secretKey });
   return cosClient.getObjectUrl({
@@ -7294,8 +7294,8 @@ async function createCosUpload(req, res, ownerType, ownerId) {
   return send(res, 200, {
     attachmentId,
     objectKey,
-    uploadUrl: cosSignedUrl("PUT", objectKey, 600),
-    expiresIn: 600,
+    uploadUrl: cosSignedUrl("PUT", objectKey, 300),
+    expiresIn: 300,
     headers: { "Content-Type": safeAttachmentMime(name) }
   });
 }
