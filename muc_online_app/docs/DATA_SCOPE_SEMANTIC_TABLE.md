@@ -4,7 +4,8 @@
 
 ## 总则
 
-- 数据范围绑定 **用户+模块**（运行时执行层）；**动作→范围的绑定声明自 2026-11-25（S1）起登记在 `rbac-policy.mjs` 的 `ACTION_SCOPE_BINDINGS`**：每个权限码声明其检查的 `scopeModule` 与 `resource`，由 `tests/action-scope-binding-audit.test.mjs` 静态审计配对。运行时的逐动作强制（scoped 检查 API + 调用点迁移）是 S2 批次。
+- 数据范围绑定 **用户+模块**（运行时执行层）；**动作→范围的绑定声明登记在 `rbac-policy.mjs` 的 `ACTION_SCOPE_BINDINGS`**（S1，2026-11-25）：每个权限码声明其检查的 `scopeModule` 与 `resource`。
+- **S2（2026-11-25）运行时绑定 API**：`actionScopeAllows / actionScopeHasAll / actionScopePredicate / requireActionScope`（server.mjs）——范围模块由绑定表推导，调用点不再手写模块；核心检查函数（评审/变更/派工/更正/跨期/工作流/统计/导出/导入/账户校验）已迁移。未配对动作性检查点预算=0（仅剩通用守卫豁免）。
 - 同一模块多范围 **OR 合并**（并集），无有效范围时 **fail-closed**（`0=1`）。
 - 缺功能权限 → 403；范围外目标 → 404（不泄露存在性）。
 - 超级账户（54002010）在 `activeScopes` 直接返回 `all`，但业务身份限制（自审禁止、班组长资格、独立终审）**不豁免**（V1.1 §4.2）。
@@ -34,10 +35,10 @@
 
 **"高权限角色借用另一范围"的组合效果**（审计 M1）：权限并集与范围并集分开计算，可能产生"A 路径的动作借 B 路径的范围"。
 
-S1（2026-11-25）处置：
+S1+S2（2026-11-25）处置：
 - 新增 `ACTION_SCOPE_BINDINGS`（116 权限码 → scopeModule/resource，`hours.*` 显式登记为 maintenance，纯系统动作登记 null+原因）；
 - 新增 `tests/action-scope-binding-audit.test.mjs`：完整性/hours 登记/静态配对（未配对预算 12 处，S2 须清零）/关键写动作配对（22 个写操作必须有同模块范围配对）/防退化；
-- 剩余 12 处未配对点为"范围检查在辅助函数、动作码在上游路由"的架构性场景，列入 S2 迁移清单。
+- S2 已把动作性未配对点从 12 处降到 **0**（统计/导出/个人统计/阅读统计/导入校验/账户校验改为绑定驱动 API）；仅剩 4 类通用守卫豁免（路由级守卫、payload 人员过滤、事务后置安全网、工具函数定义行），在审计测试中逐条注明原因。
 
 ## 交叉引用
 
