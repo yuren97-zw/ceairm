@@ -207,6 +207,15 @@ export const RBAC_ROLE_DEFINITIONS = {
 
 export const RBAC_BASE_ROLE_CODES = ["worker", "dispatcher", "manager"];
 
+// 受控编辑角色（rbacRoleControlledEdit）保留手工授予，但代码基线新增的权限
+// 必须在每次播种时补入，否则新功能会对基础角色静默缺失（2026-11-24 生产实证）。
+export function missingBaselineRolePermissions(roleCode, currentCodes = []) {
+  const baseline = RBAC_ROLE_DEFINITIONS[roleCode];
+  if (!baseline) return [];
+  const current = new Set(currentCodes);
+  return baseline.filter(code => !current.has(code));
+}
+
 export const RBAC_ROLE_NAMES = {
   system_admin: "系统管理员", worker: "工作者", dispatcher: "派工人员", manager: "管理者",
   addon_capability_readonly: "附加：能力看板只读", addon_fixed_readonly: "附加：固化项目只读",
