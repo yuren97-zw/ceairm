@@ -6411,3 +6411,85 @@ test("A16 组合权限不串范围：查看权限与复核动作的范围相互�
   const noPermission = await request("/api/maintenance/hours/" + hourId("third") + "/confirm", { method: "POST", cookie: await auth("a16-u-" + tag) });
   assert.equal(noPermission.res.statusCode, 403, "无权限码必须 403");
 });
+
+test('bulk account access preserves untouched fields, validates all targets and invalidates sessions',async()=>{
+  const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+  const template=db.prepare("select * from users where id='54002010'").get();
+  const a=createMaintenanceTestAccount(template,{id:'bulk-access-a',name:'批量甲'}),b=createMaintenanceTestAccount(template,{id:'bulk-access-b',name:'批量乙'});
+  const roles=id=>db.prepare('select r.code from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id where ur.user_id=? order by r.code').all(id).map(r=>r.code);
+  const send=body=>request('/api/admin/accounts/bulk-access',{method:'POST',cookie,body});
+  const scopeBefore=db.prepare('select * from rbac_user_scopes where user_id=?').all(a.id);
+  const addon=db.prepare("select code from rbac_roles where code like 'addon_%' and status='active' order by code limit 1").get().code;
+  let result=await send({accountIds:[a.id,b.id],roleMode:'append',roles:[addon,addon]});
+  assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));assert.deepEqual(roles(a.id).sort(),[addon,'worker'].sort());
+  assert.deepEqual(db.prepare('select * from rbac_user_scopes where user_id=?').all(a.id),scopeBefore);
+  assert.equal((await send({accountIds:[a.id,b.id],roleMode:'append',roles:['missing-role']})).res.statusCode,400);
+  assert.deepEqual(roles(a.id).sort(),[addon,'worker'].sort());
+  for(const invalid of ['54002010','missing-account']){
+    result=await send({accountIds:[a.id,invalid],roleMode:'replace',roles:['manager']});assert.ok(result.res.statusCode>=400);assert.ok(roles(a.id).includes('worker'));
+  }
+  const personBefore=db.prepare('select status,must_change_password,password_hash,person_id from users where id=?').get(a.id);
+  result=await send({accountIds:[a.id,b.id],moduleScopes:{info:[{module:'info',scopeType:'all',grantReason:'批量测试'}]}});
+  assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));
+  assert.deepEqual(db.prepare('select * from rbac_user_scopes where user_id=? and module=?').all(a.id,'maintenance'),scopeBefore);
+  assert.equal(db.prepare("select scope_type from rbac_user_scopes where user_id=? and module='info'").get(a.id).scope_type,'all');
+  assert.deepEqual(db.prepare('select status,must_change_password,password_hash,person_id from users where id=?').get(a.id),personBefore);
+  const removeFailure=installFailureTrigger('bulk_access_rollback','users','update',"new.id='bulk-access-b'",'bulk failure');
+  try { assert.equal((await send({accountIds:[a.id,b.id],roleMode:'replace',roles:['manager']})).res.statusCode,500);assert.ok(roles(a.id).includes('worker')); } finally {removeFailure();}
+  const before=db.prepare('select * from rbac_user_scopes where user_id=?').all(a.id);
+  for(const scope of [{module:'info',scopeType:'all',validFrom:'2026-11-25',validTo:'2026-11-24'},{module:'info',scopeType:'specified_teams',scopeId:'missing'}]){
+    assert.equal((await send({accountIds:[a.id,b.id],moduleScopes:{info:[scope]}})).res.statusCode,400);assert.deepEqual(db.prepare('select * from rbac_user_scopes where user_id=?').all(a.id),before);
+  }
+  db.prepare("update personnel set data_status='deleted' where id=?").run(b.personId);
+  assert.equal((await send({accountIds:[a.id,b.id],roleMode:'replace',roles:['manager']})).res.statusCode,409);assert.ok(roles(a.id).includes('worker'));
+  result=await send({accountIds:[a.id],roleMode:'replace',roles:['dispatcher']});assert.equal(result.res.statusCode,200);assert.deepEqual(roles(a.id),['dispatcher']);
+  assert.ok(db.prepare('select credential_version from users where id=?').get(a.id).credential_version>template.credential_version);
+  const workerLogin=await request('/api/login',{method:'POST',body:{username:a.username,password:'muc2026'}}),workerCookie=String(workerLogin.res.headers['Set-Cookie']).split(';')[0];
+  assert.equal((await request('/api/admin/accounts/bulk-access',{method:'POST',cookie:workerCookie,body:{accountIds:[a.id],roleMode:'replace',roles:['manager']}})).res.statusCode,403);
+});
+
+test('login audit endpoints enforce independent permissions and export filtered complete records with audit trail',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),admin=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const actor=createMaintenanceTestAccount(db.prepare("select * from users where id='54002010'").get(),{id:'login-audit-reader',name:'审计测试员'});
+ const signed=await request('/api/login',{method:'POST',body:{username:actor.username,password:'muc2026'}}),cookie=String(signed.res.headers['Set-Cookie']).split(';')[0];
+ const base='/api/admin/audit/logins',filter='?from=2020-01-01&to=2099-12-31&q='+encodeURIComponent(actor.name);
+ assert.equal((await request(base)).res.statusCode,401);
+ assert.equal((await request(base,{cookie})).res.statusCode,403);
+ const role='test-login-audit-role',stamp=new Date().toISOString();
+ db.prepare("insert into rbac_roles(id,code,name,description,system_role,status,created_at,updated_at) values(?,?,?,'',0,'active',?,?)").run(role,role,'审计测试角色',stamp,stamp);
+ db.prepare('insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)').run(actor.id,role,stamp);
+ const grant=code=>db.prepare('insert into rbac_role_permissions(role_id,permission_id) values(?,?)').run(role,db.prepare('select id from rbac_permissions where code=?').get(code).id);
+ grant('audit.read');
+ const before=Number(db.prepare("select count(*) n from audit_logs where action='login' and user_id=?").get(actor.id).n);
+ assert.equal((await request('/api/me',{cookie})).res.statusCode,200);
+ assert.equal(Number(db.prepare("select count(*) n from audit_logs where action='login' and user_id=?").get(actor.id).n),before);
+ let result=await request(base+filter,{cookie});assert.equal(result.res.statusCode,200);assert.equal(result.payload.total,1);assert.equal(result.payload.rows[0].name,actor.name);
+ assert.equal((await requestRaw(base+'/export'+filter,{cookie})).statusCode,403);
+ grant('audit.export');const out=await requestRaw(base+'/export'+filter,{cookie});assert.equal(out.statusCode,200);assert.equal(out.body.subarray(0,2).toString(),'PK');
+ db.prepare('delete from rbac_role_permissions where role_id=? and permission_id=(select id from rbac_permissions where code=?)').run(role,'audit.read');
+ assert.equal((await requestRaw(base+'/export'+filter,{cookie})).statusCode,403);grant('audit.read');
+ const audit=db.prepare("select * from audit_logs where user_id=? and action='audit_login_export' order by created_at desc").get(actor.id);assert.equal(JSON.parse(audit.detail).count,1);
+ assert.equal((await request(base+'?from=2026-02-30',{cookie:admin})).res.statusCode,400);
+ const again=await request('/api/login',{method:'POST',body:{username:actor.username,password:'muc2026'}});assert.equal(again.res.statusCode,200);
+ result=await request(base+filter,{cookie});assert.equal(result.payload.total,2);
+});
+
+test('bulk account access checks role and scope permissions independently and enforces target scope',async()=>{
+ const template=db.prepare("select * from users where id='54002010'").get();
+ const actor=createMaintenanceTestAccount(template,{id:'bulk-limited',name:'受限管理员'}),peer=createMaintenanceTestAccount(template,{id:'bulk-peer',name:'范围外人员'});
+ const role='bulk-limited-role',stamp=new Date().toISOString();
+ db.prepare("insert into rbac_roles(id,code,name,description,system_role,status,created_at,updated_at) values(?,?,?,'',0,'active',?,?)").run(role,role,'批量测试',stamp,stamp);
+ db.prepare('insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)').run(actor.id,role,stamp);
+ const grant=code=>db.prepare('insert into rbac_role_permissions(role_id,permission_id) select ?,id from rbac_permissions where code=?').run(role,code);
+ grant('accounts.update');grant('accounts.roles.assign');
+ db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,'accounts','self','','','',?,?)").run('bulk-limited-self',actor.id,stamp,stamp);
+ const login=async()=>{const r=await request('/api/login',{method:'POST',body:{username:actor.username,password:'muc2026'}});return String(r.res.headers['Set-Cookie']).split(';')[0]};
+ let cookie=await login();
+ const send=body=>request('/api/admin/accounts/bulk-access',{method:'POST',cookie,body});
+ assert.equal((await send({accountIds:[actor.id],moduleScopes:{info:[{module:'info',scopeType:'all'}]}})).res.statusCode,403);
+ assert.equal((await send({accountIds:[actor.id,peer.id],roleMode:'append',roles:['dispatcher']})).res.statusCode,404);
+ const names=db.prepare('select r.code from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id where user_id=?').all(actor.id).map(r=>r.code);assert.ok(!names.includes('dispatcher'));
+ grant('accounts.scopes.assign');cookie=await login();
+ const result=await send({accountIds:[actor.id],moduleScopes:{info:[{module:'info',scopeType:'self'}]}});assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));
+ assert.equal((await request('/api/me',{cookie})).res.statusCode,401);
+});

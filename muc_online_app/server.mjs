@@ -1,3 +1,4 @@
+import {loginAuditFilters,readLoginAudit,loginAuditXlsx} from './login-audit.mjs';
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
 import {createHandoverService} from './handover-service.mjs';
@@ -8432,6 +8433,19 @@ async function routeRequestMain(req, res) {
         time: new Date().toISOString()
       });
     }
+    if (method === "GET" && ["/api/admin/audit/logins","/api/admin/audit/logins/export"].includes(url.pathname)) {
+      const actor = requireRbacPermission(req,res,"audit.read");
+      if (!actor) return;
+      const exporting=url.pathname.endsWith('/export');
+      if(exporting&&!requireRbacPermission(req,res,"audit.export"))return;
+      let filters;
+      try { filters=loginAuditFilters(url.searchParams); } catch(error){return send(res,400,{error:error.message});}
+      const data=readLoginAudit(db,filters,{all:exporting});
+      if(!exporting)return send(res,200,data);
+      const generatedAt=now(),file=loginAuditXlsx(data,generatedAt);
+      audit(actor,"audit_login_export","audit_logs","login",JSON.stringify({filters,count:data.total}));
+      return sendBinary(res,200,file,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",{"Content-Disposition":`attachment; filename="login-audit-${filters.from}-${filters.to}.xlsx"`,"Cache-Control":"no-store"});
+    }
     if (method === "GET" && url.pathname === "/api/me") {
       const user = currentUser(req);
       if (!user.id) return send(res, 401, { error: "请先登录" });
@@ -10232,6 +10246,66 @@ async function routeRequestMain(req, res) {
       }
       audit(manager, "create_account", "user", userId, JSON.stringify({ username, personId: person.id, roles: access.roleCodes, scopes: access.scopes }));
       return send(res, 201, { account: adminUser(db.prepare("select * from users where id=?").get(userId)) });
+    }
+    if (method === "POST" && url.pathname === "/api/admin/accounts/bulk-access") {
+      const manager = requireRbacPermission(req, res, "accounts.update");
+      if (!manager) return;
+      const payload = await bodyJson(req);
+      const fail = (message, status=400) => { throw Object.assign(new Error(message), {status}); };
+      const ids = Array.isArray(payload.accountIds) ? [...new Set(payload.accountIds)] : [];
+      if (!ids.length || ids.length > 1000 || ids.some(id => typeof id !== "string" || !id)) fail("请选择 1 至 1000 个有效账号");
+      const changeRoles = payload.roles !== undefined, changeScopes = payload.moduleScopes !== undefined;
+      if (!changeRoles && !changeScopes) fail("请至少选择一项修改内容");
+      if (changeRoles && !hasRbac(manager,"accounts.roles.assign")) fail("没有分配角色权限",403);
+      if (changeScopes && !hasRbac(manager,"accounts.scopes.assign")) fail("没有分配数据范围权限",403);
+      if (changeRoles && (!["append","replace"].includes(payload.roleMode) || !Array.isArray(payload.roles) || !payload.roles.length)) fail("请选择角色及有效修改方式");
+      const modules = changeScopes && payload.moduleScopes && typeof payload.moduleScopes === "object" && !Array.isArray(payload.moduleScopes) ? Object.keys(payload.moduleScopes) : [];
+      const allowedModules = ["personnel","accounts","info","maintenance","hours","attendance"];
+      if (changeScopes && (!modules.length || modules.some(module => !allowedModules.includes(module) || !Array.isArray(payload.moduleScopes[module]) || !payload.moduleScopes[module].length || payload.moduleScopes[module].some(scope => scope?.module !== module)))) fail("请选择有效模块并配置至少一项范围");
+      db.exec("begin immediate");
+      try {
+        // Validate the entire batch before writing; retain untouched scope rows and their audit metadata.
+        const updates = ids.map(id => {
+          try {
+            if (id === SUPER_ACCOUNT_ID) fail("唯一超级账号不可修改",403);
+            const existing = db.prepare("select * from users where id=?" + (db.kind === "postgres" ? " for update" : "")).get(id);
+            if (!existing) fail("账号不存在",409);
+            personnelAccess.requirePerson(manager,"accounts",existing.person_id);
+            validateAccountIdentity({},existing);
+            const current = rbacSnapshot(id);
+            let access;
+            if (changeRoles) {
+              const roles = payload.roleMode === "append" ? [...current.roles.map(role=>role.code),...payload.roles] : payload.roles;
+              access = validateAccountAccess({roles,scopes:[]}, existing.person_id);
+            }
+            let scopes=[];
+            if (changeScopes) {
+              const input=modules.flatMap(module=>payload.moduleScopes[module]);
+              scopes=personnelAccess.normalizeScopes(input,existing.person_id).filter(scope=>modules.includes(scope.module));
+              scopes=scopes.map(scope=>({...scope,grantReason:String(input.find(item=>item.module===scope.module && item.scopeType===scope.scopeType && String(item.scopeId||"")===scope.scopeId)?.grantReason||"").slice(0,500)}));
+            }
+            return {id,existing,access,scopes};
+          } catch(error) { error.message=`账号 ${id}：${error.message}`; throw error; }
+        });
+        for (const update of updates) {
+          if (changeRoles) {
+            db.prepare("delete from rbac_user_roles where user_id=?").run(update.id);
+            for (const role of update.access.roleRows) db.prepare("insert into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(update.id,role.id,now());
+          }
+          for (const module of modules) db.prepare("delete from rbac_user_scopes where user_id=? and module=?").run(update.id,module);
+          const hasGrantColumns = Number(db.prepare("select count(*) as n from " + (db.kind === "postgres" ? "(select column_name from information_schema.columns where table_name='rbac_user_scopes' and column_name in ('grant_reason','granted_by'))" : "(select name from pragma_table_info('rbac_user_scopes') where name in ('grant_reason','granted_by'))")).get().n) === 2;
+          for (const scope of update.scopes) {
+            const values=[randomId("scope"),update.id,scope.module,scope.scopeType,scope.scopeId,scope.validFrom,scope.validTo,now(),now()];
+            if(hasGrantColumns) db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at,grant_reason,granted_by) values(?,?,?,?,?,?,?,?,?,?,?)").run(...values,scope.grantReason,manager.id);
+            else db.prepare("insert into rbac_user_scopes(id,user_id,module,scope_type,scope_id,valid_from,valid_to,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)").run(...values);
+          }
+          db.prepare("update users set updated_at=? where id=?").run(now(),update.id);
+          audit(manager,"bulk_update_account_access","user",update.id,JSON.stringify({roleMode:changeRoles?payload.roleMode:null,roles:update.access?.roleCodes,modules,scopes:update.scopes}));
+        }
+        db.exec("commit");
+      } catch(error) { db.exec("rollback"); throw error; }
+      for (const id of ids) revokeUserSessions(id,{bumpCredentialVersion:true});
+      return send(res,200,{ok:true,updated:ids.length});
     }
     const accountRoute = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)$/);
     if (accountRoute && method === "PUT") {

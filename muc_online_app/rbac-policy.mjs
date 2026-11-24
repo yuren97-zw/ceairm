@@ -72,6 +72,8 @@ const maintenanceV2 = [
 ];
 
 const existing = [
+  ["audit.read", "审计查询", "settings"],
+  ["audit.export", "审计导出", "settings"],
   ["attendance.offset.rules.manage", "管理考勤兑换规则与结算", "attendance"],
   ["attendance.offset.submit", "本人申请及撤回考勤抵消", "attendance"],
   ["attendance.offset.approve", "审批受派考勤抵消", "attendance"],
@@ -314,9 +316,10 @@ export const NAVIGATION_NODES = [
   ]},
   { id: "hoursPage", anyOf: ["hours.read"] },
   { id: "attendancePage", anyOf: ["attendance.read"] },
-  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage"], children: [
+  { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage", "audit.read"], children: [
     { id: "accountsTab", anyOf: ["accounts.read"], label: "登录账户" },
     { id: "rolesTab", anyOf: ["roles.read"], label: "角色权限" },
+    { id: "auditTab", anyOf: ["audit.read"], label: "审计" },
     { id: "systemTab", anyOf: ["settings.manage"], label: "系统配置" }
   ]}
 ];
