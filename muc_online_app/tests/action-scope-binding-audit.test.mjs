@@ -28,7 +28,13 @@ const MODULE_LITERAL = /["'](personnel|accounts|info|maintenance|hours|attendanc
 // 上限 8 条，防止用豁免清单掩盖新增的未配对检查点。
 const EXEMPT_SITE_MARKERS = {
   "canViewPerson=(user,id)": "考勤抵消服务注入桩：范围函数由 server 注入（attendance 范围）",
-  "hasPermission:": "考勤抵消服务注入桩：动作权限由服务内部 op() 映射表校验"
+  "hasPermission:": "考勤抵消服务注入桩：动作权限由服务内部 op() 映射表校验",
+  "function dataScopeAllowsUser": "数据范围工具函数定义行，不是调用点",
+  'routePath.startsWith("/api/maintenance/")': "路由级通用维修守卫：对任意维修路由做全范围判断，不对应单一动作",
+  "Array.isArray(value))return value.filter": "通用 payload 人员过滤辅助函数：多动作共用，动作码在上游路由",
+  "value.personId && value.personId!==user.personId": "通用 payload 人员过滤辅助函数：多动作共用",
+  "const before=user && !personnelAccess.hasAll": "维修事务后置安全网：跨动作整笔回滚校验",
+  "row.person_id!==user.personId && !reportAllowed": "维修事务后置安全网：跨动作整笔回滚校验"
 };
 const EXEMPT_SITE_LIMIT = 8;
 // 服务委托：server 侧调用这些入口时，动作+范围配对发生在服务内部，调用点本身不算未配对。
@@ -70,6 +76,13 @@ for (const [name, source] of Object.entries(FILES)) {
     if (name === "maintenance-standard-publication.mjs" && /\bcan\(/.test(line)) {
       // standardPublicationCan（server.mjs:2475）= maintenance.standard.publish + standardPublicationAuthorized(hasAll 'maintenance')
       sites.push({ line: index + 1, module: "maintenance", text: line.trim().slice(0, 120) });
+      continue;
+    }
+    // S2 scoped API：模块由绑定表推导，扫描时按权限码回填模块。
+    const scopedCall = line.match(/\b(?:actionScopeAllows|actionScopeHasAll|actionScopePredicate|requireActionScope)\([^,]*,\s*["']([a-z][a-z0-9]*(?:\.[a-z0-9_]+){1,5})["']/);
+    if (scopedCall) {
+      const binding = scopeBindingFor(scopedCall[1]);
+      if (binding && binding.scopeModule !== null) sites.push({ line: index + 1, module: binding.scopeModule, text: line.trim().slice(0, 120) });
       continue;
     }
     const prefixed = /personnelAccess\.(?:allows|requirePerson|hasAll)\(|dataScopeAllowsUser\(/.test(line);
@@ -123,10 +136,10 @@ test("hours.* 五码登记为 maintenance/hour_result（运行时复用 maintena
   }
 });
 
-test("静态配对：字面量范围检查点的未配对数量不超过 S1 基线预算", () => {
-  // S1 基线：代码中仍有少量范围检查由上游路由权限兜底（stats 过滤、批量校验等辅助函数），
-  // 无法在 ±80 行内看到动作码。S2 运行时强制必须把该数字驱动到 0。
-  const S1_UNPAIRED_BUDGET = 24;
+test("静态配对：动作性范围检查点必须全部配对（预算 0，通用守卫豁免）", () => {
+  // S2：运行时绑定 API 已就位，动作性范围检查点必须全部有同模块动作配对；
+  // 剩余未配对只允许是 EXEMPT_SITE_MARKERS 中的通用守卫（预算 0）。
+  const UNPAIRED_BUDGET = 0;
   const violations = [];
   let exempted = 0;
   for (const [fileName, { sites, lines }] of Object.entries(fileData)) {
@@ -140,8 +153,7 @@ test("静态配对：字面量范围检查点的未配对数量不超过 S1 基�
     }
   }
   assert.ok(Object.keys(EXEMPT_SITE_MARKERS).length <= EXEMPT_SITE_LIMIT, "豁免清单超限，请先评审");
-  assert.ok(violations.length <= S1_UNPAIRED_BUDGET, `未配对范围检查点超预算（${violations.length}/${S1_UNPAIRED_BUDGET}），请评审：\n${violations.join("\n")}`);
-  if (violations.length) console.log(`ℹ S1 未配对基线：${violations.length} 处（S2 须清零）\n${violations.join("\n")}`);
+  assert.equal(violations.length, UNPAIRED_BUDGET, `存在未配对的动件性范围检查点（${violations.length} 处，预算 ${UNPAIRED_BUDGET}）：\n${violations.join("\n")}`);
 });
 
 test("关键写动作必须与同模块范围检查配对（M1 直接防线）", () => {
@@ -174,6 +186,37 @@ test("hours.* 为登记兼容码：代码中零引用（死权限）", () => {
       .map(code => `${fileName}:${code}`);
   });
   assert.deepEqual(referenced, [], `hours.* 出现运行时引用，hours 模块语义已变化，请评审绑定与文档：${referenced.join(",")}`);
+});
+
+test("S2 迁移守卫：核心检查函数必须使用绑定驱动 API，不再手写范围模块", () => {
+  const serverSource = FILES["server.mjs"];
+  const migratedFunctions = [
+    "nonroutineReviewCan",
+    "maintenanceCurrentMutationActor",
+    "maintenanceDispatchMutationContext",
+    "maintenanceCorrectionCan",
+    "maintenanceWorkflowPerson",
+    "maintenanceStats",
+    "maintenancePersonalStats",
+    "maintenanceReportAllowedPersonIds",
+    "readingStats",
+    "validateAccountIdentity",
+    "validatePersonnelImportAccess",
+    "visibleImportBatch"
+  ];
+  const violations = [];
+  for (const name of migratedFunctions) {
+    const start = serverSource.indexOf(`function ${name}`);
+    assert.ok(start >= 0, `迁移守卫：找不到函数 ${name}（重命名后请同步更新本清单）`);
+    const end = serverSource.indexOf("\nfunction ", start + 1);
+    const block = serverSource.slice(start, end > start ? end : undefined);
+    if (/personnelAccess\.(?:allows|requirePerson|hasAll|predicate)\([^)]*["'](?:maintenance|personnel|accounts|info)["']/.test(block)) {
+      violations.push(`${name} 仍手写模块字面量`);
+    }
+  }
+  assert.deepEqual(violations, [], `以下函数应使用 actionScope*/requireActionScope 绑定驱动 API：\n${violations.join("\n")}`);
+  const scopedCalls = (serverSource.match(/\b(?:actionScopeAllows|actionScopeHasAll|actionScopePredicate|requireActionScope)\(/g) || []).length;
+  assert.ok(scopedCalls >= 15, `绑定驱动 API 使用量过少（${scopedCalls}），S2 迁移可能被回退`);
 });
 
 test("审计器防退化：字面量范围检查点数量不得骤降", () => {
