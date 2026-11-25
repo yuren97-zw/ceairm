@@ -51,3 +51,9 @@ S1+S2（2026-11-25）处置：
 - 权限矩阵：`scripts/rbac-permission-matrix-tests.mjs`（114/39）
 - 路由审计：`tests/api-route-permission-audit.test.mjs`（层②兜底网）
 - 组合权限测试：`tests/server.test.mjs` A16 用例
+
+## 数据保留清理定时（D07）
+
+- 工具：`scripts/retention-cleanup.mjs`（策略 `retention-policy.mjs`：审计 3 年 / 考勤工时 5 年 / 人员主数据长期）。
+- 生产定时：systemd `airline-operations-center-retention.timer`（每月 1 日 03:30，Persistent），单元与安装脚本见 `deploy/tencent/`（`install-retention-timer.sh` 含建归档目录与干跑核对）。
+- 归档：`/opt/airline-operations-center/archive/retention`（先归档 JSONL 再删除，可回溯）；运行日志 `/var/log/airline-operations-center/retention.log`。
