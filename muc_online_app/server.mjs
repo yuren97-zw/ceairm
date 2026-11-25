@@ -1857,7 +1857,8 @@ function seedRbac() {
     const existing = db.prepare("select id from rbac_roles where code=?").get(code);
     const id = existing?.id || `role-${code}`;
     if (existing && preserveControlledEdit(code)) {
-      db.prepare("update rbac_roles set system_role=1,status='active',updated_at=? where id=?").run(stamp, id);
+      // 受控编辑保留权限手工调整，但名称/描述属于代码定义（如“派工人员→派工者”改名需随发布生效）。
+      db.prepare("update rbac_roles set name=?,description=?,system_role=1,status='active',updated_at=? where id=?").run(roleNames[code] || code, RBAC_ROLE_DESCRIPTIONS[code] || "系统预置角色", stamp, id);
     } else {
       insertRole.run(id, code, roleNames[code] || code, RBAC_ROLE_DESCRIPTIONS[code] || "系统预置角色", 1, "active", stamp, stamp);
     }

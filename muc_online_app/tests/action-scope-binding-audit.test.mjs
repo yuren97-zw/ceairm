@@ -228,6 +228,14 @@ test("S3 迁移守卫：考勤两服务使用绑定驱动 API，无遗留注入�
   }
 });
 
+test("受控编辑角色也必须同步名称/描述（改名随发布生效）", () => {
+  // 生产事故回归（2026-11-25）：受控角色只更新状态，导致“派工人员→派工者”改名不生效。
+  const server = FILES["server.mjs"];
+  const guarded = /preserveControlledEdit\(code\)\) \{\s*\/\/[^\n]*\n\s*db\.prepare\("update rbac_roles set name=\?,description=\?/.test(server)
+    || /update rbac_roles set name=\?,description=\?,system_role=1,status='active'/.test(server);
+  assert.ok(guarded, "受控编辑分支应同时更新角色名称/描述");
+});
+
 test("依赖完整性：server.mjs 使用的基础角色常量必须已导入", () => {
   // 与 RESOURCE_LABELS 同类的漏导入事故（2026-11-25 两次）：使用前先断言导入存在。
   const server = FILES["server.mjs"];
