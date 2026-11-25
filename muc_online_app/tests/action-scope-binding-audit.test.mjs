@@ -228,6 +228,12 @@ test("S3 迁移守卫：考勤两服务使用绑定驱动 API，无遗留注入�
   }
 });
 
+test("S4 依赖完整性：server.mjs 从 rbac-policy 导入 RESOURCE_LABELS", () => {
+  // 生产事故回归（2026-11-25）：/api/admin/rbac 使用 RESOURCE_LABELS 但漏 import → 500。
+  const server = FILES["server.mjs"];
+  assert.ok(/\n\s{2}RESOURCE_LABELS,/.test(server), "server.mjs 的 rbac-policy import 块缺少 RESOURCE_LABELS");
+});
+
 test("S4 资源级：运行时动作 API 透传绑定资源类别，范围判定支持 resource", () => {
   const server = FILES["server.mjs"];
   assert.ok((server.match(/binding\.resource/g) || []).length >= 4, "actionScope* 应把 binding.resource 传入范围判定");
