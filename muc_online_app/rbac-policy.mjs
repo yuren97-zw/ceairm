@@ -293,7 +293,14 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
 
 const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "attendance.read", "attendance.offset.submit"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
-const teamLeader = [...dispatcher, "maintenance.review.view", "maintenance.review.submit", "handover.history.all", "handover.export"];
+// 班组长 = 生产派工者等效权限（含历史并集合并保留的授予以防迁移后能力回退）+ 交接/复核增强
+const teamLeader = [...dispatcher,
+  "maintenance.review.view", "maintenance.review.submit",
+  "handover.history.all", "handover.export",
+  "attendance.exception.manage", "attendance.offset.approve", "attendance.stats.read",
+  "capability.overview.view", "info.stats.read",
+  "maintenance.opportunity.import", "maintenance.rules.view",
+  "personnel.list.view", "personnel.qualification.view"];
 const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
 
 export const RBAC_ROLE_DEFINITIONS = {

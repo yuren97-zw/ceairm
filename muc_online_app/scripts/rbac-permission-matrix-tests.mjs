@@ -81,8 +81,13 @@ assert.deepEqual(accountRoleCombinationErrors(["system_admin"], { superAccount: 
 // 固化基础角色：工作者 / 派工者 / 班组长 / 管理者（系统管理员超管专用）
 assert.deepEqual(RBAC_BASE_ROLE_CODES, ["worker", "dispatcher", "team_leader", "manager"]);
 assert.ok(RBAC_ROLE_DEFINITIONS.team_leader, "班组长基础角色必须存在");
-for (const permission of ["maintenance.review.view", "maintenance.review.submit", "handover.history.all", "handover.export"])
+for (const permission of ["maintenance.review.view", "maintenance.review.submit", "handover.history.all", "handover.export",
+  "personnel.list.view", "attendance.stats.read", "attendance.offset.approve", "maintenance.opportunity.import"])
   assert(has("team_leader", permission), `班组长缺少 ${permission}`);
+// 迁移防回退：班组长必须覆盖生产派工者的全部手工保留授权（9 项）
+for (const permission of ["attendance.exception.manage", "attendance.offset.approve", "attendance.stats.read", "capability.overview.view",
+  "info.stats.read", "maintenance.opportunity.import", "maintenance.rules.view", "personnel.list.view", "personnel.qualification.view"])
+  assert(has("team_leader", permission), `班组长必须保留原派工者授权 ${permission}`);
 for (const permission of ["maintenance.review.submit", "handover.history.all", "handover.export"])
   assert(!has("dispatcher", permission), `派工者不应拥有 ${permission}`);
 assert([...role("dispatcher")].every(permission => has("team_leader", permission)), "班组长必须包含派工者全部权限");
