@@ -68,6 +68,7 @@ import {
   accountRoleCombinationErrors,
   missingBaselineRolePermissions,
   scopeBindingFor,
+  RESOURCE_LABELS,
   permissionDependencyErrors,
   visibleNavigation,
   visibleNavigationTree
