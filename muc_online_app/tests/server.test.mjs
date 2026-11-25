@@ -6487,8 +6487,8 @@ test('bulk account access checks role and scope permissions independently and en
  let cookie=await login();
  const send=body=>request('/api/admin/accounts/bulk-access',{method:'POST',cookie,body});
  assert.equal((await send({accountIds:[actor.id],moduleScopes:{info:[{module:'info',scopeType:'all'}]}})).res.statusCode,403);
- assert.equal((await send({accountIds:[actor.id,peer.id],roleMode:'append',roles:['dispatcher']})).res.statusCode,404);
- const names=db.prepare('select r.code from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id where user_id=?').all(actor.id).map(r=>r.code);assert.ok(!names.includes('dispatcher'));
+ assert.equal((await send({accountIds:[actor.id,peer.id],roleMode:'append',roles:['addon_fixed_readonly']})).res.statusCode,404);
+ const names=db.prepare('select r.code from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id where user_id=?').all(actor.id).map(r=>r.code);assert.ok(!names.includes('addon_fixed_readonly'));
  grant('accounts.scopes.assign');cookie=await login();
  const result=await send({accountIds:[actor.id],moduleScopes:{info:[{module:'info',scopeType:'self'}]}});assert.equal(result.res.statusCode,200,JSON.stringify(result.payload));
  assert.equal((await request('/api/me',{cookie})).res.statusCode,401);

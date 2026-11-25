@@ -293,11 +293,12 @@ export const RBAC_PERMISSION_DEPENDENCIES = {
 
 const worker = ["info.read", "info.delete.own", "maintenance.view", "maintenance.nonroutine.review.view", "maintenance.execute.view", "maintenance.execute.submit", "maintenance.standard.view", "maintenance.nonroutine.create.own", "maintenance.nonroutine.update.own", "maintenance.nonroutine.delete.own", "maintenance.stats.self.view", "handover.view", "handover.create", "attendance.read", "attendance.offset.submit"];
 const dispatcher = [...worker, "maintenance.dispatch.view", "maintenance.opportunity.create", "maintenance.opportunity.update", "maintenance.content.manage", "maintenance.assignment.manage", "maintenance.hours.adjust", "maintenance.stats.manage.view"];
+const teamLeader = [...dispatcher, "maintenance.review.view", "maintenance.review.submit", "handover.history.all", "handover.export"];
 const manager = [...dispatcher, "maintenance.rules.view", "info.create", "info.update.own", "info.void.own", "info.remind.own", "info.receipt.manage", "info.stats.read", "info.export", "personnel.list.view", "personnel.detail.view", "personnel.profile.update", "personnel.qualification.view", "personnel.quality.view", "personnel.audit.view", "capability.overview.view", "capability.allocation.view", "capability.allocation.simulate", "capability.allocation.submit", "capability.status.view", "capability.status.manage", "capability.history.view", "capability.scenario.view", "capability.scenario.manage", "capability.report.view", "capability.report.export", "handover.history.all", "handover.baseline.manage", "handover.export", "attendance.stats.read", "attendance.export", "personnel.profile.create", "fixed.manage"];
 
 export const RBAC_ROLE_DEFINITIONS = {
   system_admin: RBAC_PERMISSION_DEFINITIONS.map(([code]) => code),
-  worker, dispatcher, manager,
+  worker, dispatcher, team_leader: teamLeader, manager,
   addon_capability_readonly: ["capability.overview.view"],
   addon_fixed_readonly: ["fixed.read"],
   addon_maintenance_review: ["maintenance.review.view", "maintenance.review.submit"],
@@ -360,7 +361,7 @@ export const RESOURCE_LABELS = {
   handover: "班组交接"
 };
 
-export const RBAC_BASE_ROLE_CODES = ["worker", "dispatcher", "manager"];
+export const RBAC_BASE_ROLE_CODES = ["worker", "dispatcher", "team_leader", "manager"];
 
 // 受控编辑角色（rbacRoleControlledEdit）保留手工授予，但代码基线新增的权限
 // 必须在每次播种时补入，否则新功能会对基础角色静默缺失（2026-11-24 生产实证）。
@@ -372,7 +373,7 @@ export function missingBaselineRolePermissions(roleCode, currentCodes = []) {
 }
 
 export const RBAC_ROLE_NAMES = {
-  system_admin: "系统管理员", worker: "工作者", dispatcher: "派工人员", manager: "管理者",
+  system_admin: "系统管理员", worker: "工作者", dispatcher: "派工者", team_leader: "班组长", manager: "管理者",
   addon_capability_readonly: "附加：能力看板只读", addon_fixed_readonly: "附加：固化项目只读",
   addon_maintenance_review: "附加：维修复核", addon_hours_confirm: "附加：工时确认",
   addon_nonroutine_review_cancel: "附加：非例行评议取消负责人",
@@ -406,6 +407,7 @@ export const RBAC_ROLE_DESCRIPTIONS = {
   system_admin: "54002010专用；拥有全部系统权限和全部数据范围，标准正式发布仍要求独立业务授权。",
   worker: "独立可选。信息只读；执行与报工本人任务；维护本人未提交非例行；查看本人统计。",
   dispatcher: "独立可选，包含工作者权限；另可建立和修改未确认维修机会、派工、维护工作内容并调整未确认工时。",
+  team_leader: "独立可选，包含派工者权限；另可查看/导出全部交接历史并复核维修报工（班组长岗位专用基础角色）。",
   manager: "包含工作者和派工人员权限；另可发布信息、维护人员一般资料和进行能力调配。",
   addon_capability_readonly: "可选只读能力看板。",
   addon_fixed_readonly: "查看固化项目。",
@@ -451,9 +453,13 @@ export function accountRoleCombinationErrors(codes, { superAccount = false } = {
   const selected = new Set(codes || []);
   const errors = [];
   if (selected.has("system_admin") && !superAccount) errors.push({ code: "SYSTEM_ADMIN_RESERVED" });
+  if (superAccount) {
+    if (selected.size !== 1 || !selected.has("system_admin")) errors.push({ code: "SUPER_ACCOUNT_ROLE_FIXED" });
+    return errors;
+  }
+  // 基础角色为固化单选（工作者/派工者/班组长/管理者，恰好一个）；附加角色任意多选。
   const baseRoles = RBAC_BASE_ROLE_CODES.filter(code => selected.has(code));
-  // 基础角色已改为独立可选（V1.0 §1），不再限制恰好一个。
-  if (superAccount && (selected.size !== 1 || !selected.has("system_admin"))) errors.push({ code: "SUPER_ACCOUNT_ROLE_FIXED" });
+  if (baseRoles.length !== 1) errors.push({ code: "RBAC_BASE_ROLE_REQUIRED", count: baseRoles.length });
   return errors;
 }
 

@@ -228,6 +228,15 @@ test("S3 迁移守卫：考勤两服务使用绑定驱动 API，无遗留注入�
   }
 });
 
+test("依赖完整性：server.mjs 使用的基础角色常量必须已导入", () => {
+  // 与 RESOURCE_LABELS 同类的漏导入事故（2026-11-25 两次）：使用前先断言导入存在。
+  const server = FILES["server.mjs"];
+  for (const symbol of ["RBAC_BASE_ROLE_CODES"]) {
+    if (!server.includes(symbol)) continue;
+    assert.ok(new RegExp(`\\n\\s{2}${symbol},`).test(server), `server.mjs 的 rbac-policy import 块缺少 ${symbol}`);
+  }
+});
+
 test("S4 依赖完整性：server.mjs 从 rbac-policy 导入 RESOURCE_LABELS", () => {
   // 生产事故回归（2026-11-25）：/api/admin/rbac 使用 RESOURCE_LABELS 但漏 import → 500。
   const server = FILES["server.mjs"];

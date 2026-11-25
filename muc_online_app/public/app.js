@@ -812,7 +812,7 @@ async function showEffectivePermissions(userId, username) {
     }
     // 角色
     if (data.roles?.length) {
-      sections.push(`<div class="perm-section"><h4>角色（${data.roles.length} 个）</h4>${data.roles.map(r => `<span class="perm-role${["worker","dispatcher","manager"].includes(r.code) ? " perm-role-base" : ""}">${escapeHtml(r.name)}（${r.permissionCount} 项权限）</span>`).join("")}</div>`);
+      sections.push(`<div class="perm-section"><h4>角色（${data.roles.length} 个）</h4>${data.roles.map(r => `<span class="perm-role${["worker","dispatcher","team_leader","manager"].includes(r.code) ? " perm-role-base" : ""}">${escapeHtml(r.name)}（${r.permissionCount} 项权限）</span>`).join("")}</div>`);
     }
     if (data.isSuperAccount) sections.push(`<div class="perm-section"><h4>超级账户</h4><p>拥有全部权限与全部数据范围，业务身份限制（自审禁止、班组长资格）不豁免。</p></div>`);
     // 权限按模块分组
@@ -2816,8 +2816,8 @@ function openUserDialog(user = null) {
   if(user && !directoryPersonnel.some(p=>p.personId===user.personId))directoryPersonnel.push({id:user.personId,personId:user.personId,employeeNo:user.employeeNo,name:user.name,department:user.department,team:user.team,accountId:user.id,accountStatus:user.status});
   const selectedRoleCodes = (user?.rbacRoles || []).map(role => role.code || role);
   const assignableRoles = (state.rbacCatalog.roles || []).filter(role => role.code !== "system_admin");
-  const baseRoles = assignableRoles.filter(role => ["worker","dispatcher","manager"].includes(role.code));
-  const supplementalRoles = assignableRoles.filter(role => !["worker","dispatcher","manager"].includes(role.code));
+  const baseRoles = assignableRoles.filter(role => ["worker","dispatcher","team_leader","manager"].includes(role.code));
+  const supplementalRoles = assignableRoles.filter(role => !["worker","dispatcher","team_leader","manager"].includes(role.code));
   const selectedScopeTypes = (user?.dataScopes || []).map(scope => scope.scopeType);
   $("#userDialogBody").innerHTML = `<div class="dialog-head"><h2>${isEdit ? "编辑账号" : "新增账号"}</h2><button class="icon-btn" data-close="userDialog" type="button">×</button></div><form id="userForm" class="entry-grid">
     <input id="userId" type="hidden" value="${escapeHtml(user?.id || "")}">
