@@ -1,3 +1,4 @@
+import {permissionHelp} from './permission-descriptions.mjs';
 import {loginAuditFilters,readLoginAudit,loginAuditXlsx} from './login-audit.mjs';
 import {createActionTaskRealtime} from './action-task-realtime.mjs';
 import { createOffsetService } from './attendance-offset-service.mjs';
@@ -8931,7 +8932,7 @@ async function routeRequestMain(req, res) {
     if (method === "GET" && url.pathname === "/api/admin/rbac") {
       const manager = requireRbacPermission(req, res, "roles.read");
       if (!manager) return;
-      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
+      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all().map(permissionHelp);
       const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
       const scopeResources = SCOPE_MODULES.flatMap(module => moduleResources(module).map(resource => ({ module, resource, label: RESOURCE_LABELS[resource] || resource })));
       return send(res, 200, { roles: rolesOut, permissions, scopeResources });
@@ -11071,7 +11072,7 @@ async function routeRequestMaintenance(req, res) {
     if (method === "GET" && url.pathname === "/api/admin/rbac") {
       const manager = requireRbacPermission(req, res, "roles.read");
       if (!manager) return;
-      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all();
+      const permissions = db.prepare("select code,name,module from rbac_permissions order by module,code").all().map(permissionHelp);
       const rolesOut = db.prepare("select * from rbac_roles where status='active' order by system_role desc,name,code").all().map(publicRbacRole);
       const scopeResources = SCOPE_MODULES.flatMap(module => moduleResources(module).map(resource => ({ module, resource, label: RESOURCE_LABELS[resource] || resource })));
       return send(res, 200, { roles: rolesOut, permissions, scopeResources });

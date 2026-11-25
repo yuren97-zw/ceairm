@@ -453,6 +453,7 @@ async function performLogin() {
   try {
     const user = await authService.login(username, password);
     state.user = user;
+    state.selectedUserIds.clear();
     state.loadedData = new Set();
     persistLoginPreference(username, rememberPassword);
     if (user.mustChangePassword) {
@@ -2714,26 +2715,75 @@ function functionCategoryOptions(selected = "维修") {
   return personnelFunctionCategories().map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("");
 }
 
-function renderUserManagement() {
-  const roleFilterOptions = [["全部", "全部角色"], ...(state.rbacCatalog.roles || []).map(role => [role.code, role.name])];
+function filteredUserAccounts() {
   const query = (state.userSearch || "").trim().toLowerCase();
-  const rows = (state.users || []).filter(user => (state.userRoleFilter === "全部" || (user.rbacRoles || []).some(role => role.code === state.userRoleFilter)) && (!query || [user.name,user.employeeNo].some(value=>String(value||"").toLowerCase().includes(query))));
-  const canBatch = hasRbac("accounts.update") && (hasRbac("accounts.roles.assign") || hasRbac("accounts.scopes.assign"));
-  const selectable = rows.filter(user=>canBatch && user.id!==SUPER_ACCOUNT_ID && !user.personDeleted);
-  const rowIds = new Set(selectable.map(user => user.id));
-  state.selectedUserIds = new Set([...state.selectedUserIds].filter(id => rowIds.has(id)));
-  const selectedCount = state.selectedUserIds.size;
+  return (state.users || []).filter(user => {
+    const matchesRole = state.userRoleFilter === "全部" || (user.rbacRoles || []).some(role => role.code === state.userRoleFilter);
+    const matchesSearch = !query || [user.name, user.employeeNo].some(value => String(value ?? "").toLowerCase().includes(query));
+    return matchesRole && matchesSearch;
+  });
+}
+
+function canBatchUserAccounts() {
+  return hasRbac("accounts.update") && (hasRbac("accounts.roles.assign") || hasRbac("accounts.scopes.assign"));
+}
+
+function isSelectableUserAccount(user) {
+  return user.id !== SUPER_ACCOUNT_ID && !user.personDeleted;
+}
+
+function renderUserAccountRows(rows, canBatch) {
+  const selectable = canBatch ? rows.filter(isSelectableUserAccount) : [];
   const allChecked = selectable.length > 0 && selectable.every(user => state.selectedUserIds.has(user.id));
-  return `<div class="data-panel setting-list user-admin-card"><div class="module-head"><div><strong>登录账户管理</strong><div class="status-line">人员身份只从人员主数据读取；访问能力只由 RBAC 角色和数据范围决定。</div></div>${hasRbac("accounts.create") ? '<button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button>' : ""}</div>
-    ${hasRbac("accounts.bulk_open") ? '<div class="import-box"><label>Excel / CSV 批量开通账户<input id="userImportFile" type="file" accept=".xlsx,.xls,.csv"></label><button id="userImportBtn" class="btn secondary" type="button">校验并批量开通</button><div id="userImportResult" class="status-line">列名：员工工号、登录账号、初始密码、账户状态、角色，以及人员与能力范围、登录账户管理范围、信息传达范围、维修管控范围、工时统计范围、考勤管理范围。范围空白默认本人；指定范围写“指定行政班组:航线维修车间 / 二车间 / 一组”或“指定人员分组:航线维修车间 / 二车间”，多选用“|”。可附加各模块“范围开始日期”“范围结束日期”列，按北京时间 YYYY-MM-DD 解释。只能新开账户，不覆盖已有账户。</div></div>' : ""}
-    <div class="user-batch-toolbar"><label class="status-line user-toolbar-left">角色筛选 <select id="userRoleFilter">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><input id="userSearch" class="search" type="search" placeholder="搜索姓名或工号" aria-label="搜索姓名或工号" value="${escapeHtml(state.userSearch || "")}"><span class="status-line">共 ${state.users.length} 个账号 · 当前筛选 ${rows.length} 个 · <span id="userBatchCount">已选 ${selectedCount} 个</span></span>${canBatch ? `<div class="user-toolbar-right"><button id="clearUserSelectionBtn" class="btn secondary" type="button">取消选择</button><button id="openUserBatchBtn" class="btn" type="button" ${selectedCount?"":"disabled"}>批量设置</button></div>` : ""}</div>
-    <div class="user-table admin-user-table"><div class="user-row admin-user-row head"><span>${canBatch?`<input id="userSelectAll" type="checkbox" aria-label="全选当前筛选账号" ${allChecked?"checked":""} ${selectable.length?"":"disabled"}>`:""}</span><span>账号</span><span>人员</span><span>部门/班组</span><span>RBAC 角色</span><span>数据范围</span><span>状态</span><span>首次改密</span><span>操作</span></div>${rows.map(user => {
+  return `<div class="user-row admin-user-row head"><span>${canBatch?`<input id="userSelectAll" type="checkbox" aria-label="全选当前筛选账号" ${allChecked?"checked":""} ${selectable.length?"":"disabled"}>`:""}</span><span>账号</span><span>人员</span><span>部门/班组</span><span>RBAC 角色</span><span>数据范围</span><span>状态</span><span>首次改密</span><span>操作</span></div>${rows.map(user => {
       const locked = user.id === SUPER_ACCOUNT_ID;
       const roles = (user.rbacRoles || []).map(role => role.name || role.code).join("、") || "未配置";
       const scopes = (user.dataScopes || []).map(scope => `${scopeModuleLabels[scope.module] || ""}：${scopeLabels[scope.scopeType]}${scope.scopeId ? " · "+(state.organizations.find(o=>o.id===scope.scopeId)?.name || "未配置组织") : ""}`).join("；") || "未配置";
       const actions = user.personDeleted ? '<span class="status-line">人员已删除 · 账户停用（保留历史）</span>' : locked ? '<span class="status-line">唯一超级账号（仅本人可改密码）</span>' : `<button class="link-btn" type="button" data-view-perms="${escapeHtml(user.id)}" data-view-perms-name="${escapeHtml(user.username)}">查看权限</button><button class="link-btn" type="button" data-edit-user="${escapeHtml(user.id)}">编辑</button><button class="link-btn" type="button" data-reset-user="${escapeHtml(user.id)}">重置密码</button><button class="link-btn danger-text" type="button" data-delete-user="${escapeHtml(user.id)}">停用</button>`;
       return `<div class="user-row admin-user-row"><span>${canBatch?`<input type="checkbox" data-user-select="${escapeHtml(user.id)}" aria-label="选择 ${escapeHtml(user.name)}" ${locked||user.personDeleted?"disabled":""} ${state.selectedUserIds.has(user.id)?"checked":""}>`:""}</span><span>${escapeHtml(user.username)}</span><span>${escapeHtml(user.name)}<small>${escapeHtml(user.employeeNo || "")}</small></span><span>${escapeHtml(user.department || "未设置")}<small>${escapeHtml(user.team || "未设置")}</small></span><span>${escapeHtml(roles)}</span><span>${escapeHtml(scopes)}</span><span>${escapeHtml(statusLabels[user.status] || user.status)}</span><span>${user.mustChangePassword ? "是" : "否"}</span><span class="user-actions">${actions}</span></div>`;
-    }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}</div></div>`;
+    }).join("") || '<div class="status-line">当前筛选下暂无账号。</div>'}`;
+}
+
+function refreshUserAccountRows() {
+  const table = $("#userAccountTable");
+  if (!table) return;
+  const rows = filteredUserAccounts();
+  table.innerHTML = renderUserAccountRows(rows, canBatchUserAccounts());
+  table.scrollTop = 0;
+  $("#userFilteredCount").textContent = rows.length;
+  syncUserSelectionUi();
+}
+
+function renderUserManagement() {
+  const roleFilterOptions = [["全部", "全部角色"], ...(state.rbacCatalog.roles || []).map(role => [role.code, role.name])];
+  const rows = filteredUserAccounts();
+  const canBatch = canBatchUserAccounts();
+  const eligible = new Set(canBatch ? state.users.filter(isSelectableUserAccount).map(user => user.id) : []);
+  state.selectedUserIds = new Set([...state.selectedUserIds].filter(id => eligible.has(id)));
+  const selectedCount = state.selectedUserIds.size;
+  const hiddenCount = selectedCount - rows.filter(user => state.selectedUserIds.has(user.id)).length;
+  const canImport = hasRbac("accounts.bulk_open");
+  const createButton = hasRbac("accounts.create") ? '<button id="openUserCreateBtn" class="btn secondary" type="button">新增账号</button>' : "";
+  return `<div class="data-panel setting-list user-admin-card">
+    ${canImport ? `<div class="import-box user-account-import">
+      <div class="user-account-import-controls">
+        <span class="user-account-import-title">批量开通</span>
+        <label class="btn secondary user-account-file-picker"><input id="userImportFile" type="file" accept=".xlsx,.xls,.csv" aria-label="选择批量开通账户文件">选择文件</label>
+        <span id="userImportFilename" class="status-line" aria-live="polite"></span>
+        <button id="userImportBtn" class="btn secondary" type="button">校验并开通</button>
+        ${createButton}
+      </div>
+      <div id="userImportResult" class="status-line" role="status"></div>
+    </div>` : createButton ? `<div class="user-account-create">${createButton}</div>` : ""}
+    <div class="user-batch-toolbar">
+      <div class="user-toolbar-controls">
+        <select id="userRoleFilter" aria-label="角色筛选">${roleFilterOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.userRoleFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>
+        <input id="userSearch" class="search" type="search" placeholder="搜索姓名或工号" aria-label="搜索姓名或工号" value="${escapeHtml(state.userSearch || "")}">
+        ${canBatch ? `<button id="openUserBatchBtn" class="btn" type="button" ${selectedCount?"":"disabled"}>批量设置</button>` : ""}
+      </div>
+      <span class="status-line">共 ${state.users.length} 个账号 · 当前筛选 <span id="userFilteredCount">${rows.length}</span> 个 · <span id="userBatchCount">已选 ${selectedCount} 个${hiddenCount ? `（${hiddenCount} 个在筛选外）` : ""}</span></span>
+    </div>
+    <div id="userAccountTable" class="user-table admin-user-table">${renderUserAccountRows(rows, canBatch)}</div></div>`;
 }
 
 // B7-5 菜单预览：根据当前选中的角色实时计算可见页面
@@ -2889,13 +2939,18 @@ function userPayloadFromForm() {
 
 function syncUserSelectionUi() {
   const selectedCount = state.selectedUserIds.size;
+  const boxes = $$("[data-user-select]:not(:disabled)");
+  const visibleSelected = boxes.filter(box => box.checked).length;
+  const hiddenCount = selectedCount - visibleSelected;
   const count = $("#userBatchCount");
-  if (count) count.textContent = `已选 ${selectedCount} 个`;
+  if (count) count.textContent = `已选 ${selectedCount} 个${hiddenCount ? `（${hiddenCount} 个在筛选外）` : ""}`;
   const button = $("#openUserBatchBtn");
   if (button) button.disabled = !selectedCount;
-  const boxes = $$("[data-user-select]:not(:disabled)");
   const all = $("#userSelectAll");
-  if (all) { all.checked = boxes.length > 0 && boxes.every(box => box.checked); all.indeterminate = selectedCount > 0 && !all.checked; }
+  if (all) {
+    all.checked = boxes.length > 0 && visibleSelected === boxes.length;
+    all.indeterminate = visibleSelected > 0 && !all.checked;
+  }
 }
 
 function settingsTabOptions() {
@@ -3585,11 +3640,16 @@ function renderPersonnelImports() {
   </section>`;
 }
 
+function permissionHelpHtml(permission) {
+  const dependencies = (permission.dependencies || []).map(item=>item.name).join("、");
+  return `<span class="permission-help"><strong>${escapeHtml(permission.name)}</strong><small>${escapeHtml(permission.description || "详细说明暂未配置，请核实后再分配。")}</small>${dependencies?`<small>前置权限：${escapeHtml(dependencies)}</small>`:""}<code>${escapeHtml(permission.code)}</code></span>`;
+}
+
 function renderRbacCatalog() {
   const permissionMap = new Map((state.rbacCatalog.permissions || []).map(permission => [permission.code, permission]));
   const canManage = hasRbac("roles.manage");
   const isSuperAdmin = state.user.id === SUPER_ACCOUNT_ID;
-  return `<section class="data-panel setting-list"><div class="module-head"><div><strong>角色与权限</strong><div class="status-line">通过中文权限项组合角色；人员资质不会自动授予系统权限。</div></div>${canManage ? '<button class="btn" type="button" data-create-role>新增角色</button>' : ""}</div><div class="rbac-role-grid">${(state.rbacCatalog.roles || []).map(role => {
+  return `<section class="data-panel setting-list"><div class="module-head"><div><strong>角色与权限</strong><div class="status-line">通过中文权限项组合角色；人员资质不会自动授予系统权限。</div></div>${canManage ? '<button class="btn" type="button" data-create-role>新增角色</button>' : ""}</div><details class="permission-directory"><summary>全部权限说明（${permissionMap.size} 项）</summary><p class="status-line">操作还受数据范围、业务状态及人员资格限制；勾选权限不会绕过这些校验。</p>${[...new Set([...permissionMap.values()].map(item=>item.module))].map(module=>`<section><h3>${escapeHtml(rbacModuleLabels[module] || module)}</h3>${[...permissionMap.values()].filter(item=>item.module===module).map(permission=>`<div class="permission-directory-item">${permissionHelpHtml(permission)}</div>`).join("")}</section>`).join("")}</details><div class="rbac-role-grid">${(state.rbacCatalog.roles || []).map(role => {
     const permissionNames = (role.permissions || []).map(code => permissionMap.get(code)?.name).filter(Boolean);
     const canEdit = canManage && (!role.systemRole || (isSuperAdmin && role.code !== "system_admin"));
     const lockedHint = role.code === "system_admin" ? '<div class="status-line">系统管理员固定拥有全部权限</div>' : "";
@@ -3615,7 +3675,7 @@ function openRoleDialog(role = null) {
     if (!grouped.has(permission.module)) grouped.set(permission.module, []);
     grouped.get(permission.module).push(permission);
   });
-  $("#roleDialogBody").innerHTML = `<div class="dialog-head"><div><h2>${role ? "编辑角色" : "新增角色"}</h2>${role?.systemRole ? `<div class="status-line">仅超级管理员54002010可受控调整；系统编码与角色类型保持不变，且角色不能删除。当前影响 ${role.assignedUserCount || 0} 个账户。</div>` : ""}</div><button class="icon-btn" data-close="roleDialog" type="button">×</button></div><form id="roleForm" class="entry-grid role-form"><input id="roleId" type="hidden" value="${escapeHtml(role?.id || "")}"><label>角色名称<input id="roleName" value="${escapeHtml(role?.name || "")}" maxlength="60" required></label><label>角色说明<textarea id="roleDescription" rows="3" maxlength="300" placeholder="说明该角色的适用对象和职责">${escapeHtml(role?.description || "")}</textarea></label><div><strong>选择权限</strong><div class="status-line">至少选择一项且必须满足权限依赖；保存后受影响账户需重新登录。</div><div class="rbac-permission-groups">${[...grouped.entries()].map(([module, permissions]) => `<fieldset><legend>${escapeHtml(rbacModuleLabels[module] || "其他权限")}</legend><div class="check-grid">${permissions.map(permission => `<label class="check-option"><input type="checkbox" name="rolePermissions" value="${escapeHtml(permission.code)}" ${selected.has(permission.code) ? "checked" : ""}><span>${escapeHtml(permission.name)}</span></label>`).join("")}</div></fieldset>`).join("")}</div></div><div class="form-actions"><button class="btn secondary" type="button" data-close="roleDialog">取消</button><button class="btn" type="submit">保存角色</button></div></form>`;
+  $("#roleDialogBody").innerHTML = `<div class="dialog-head"><div><h2>${role ? "编辑角色" : "新增角色"}</h2>${role?.systemRole ? `<div class="status-line">仅超级管理员54002010可受控调整；系统编码与角色类型保持不变，且角色不能删除。当前影响 ${role.assignedUserCount || 0} 个账户。</div>` : ""}</div><button class="icon-btn" data-close="roleDialog" type="button">×</button></div><form id="roleForm" class="entry-grid role-form"><input id="roleId" type="hidden" value="${escapeHtml(role?.id || "")}"><label>角色名称<input id="roleName" value="${escapeHtml(role?.name || "")}" maxlength="60" required></label><label>角色说明<textarea id="roleDescription" rows="3" maxlength="300" placeholder="说明该角色的适用对象和职责">${escapeHtml(role?.description || "")}</textarea></label><div><strong>选择权限</strong><div class="status-line">至少选择一项且必须满足权限依赖；保存后受影响账户需重新登录。下方说明仅解释操作用途，数据范围、业务状态和人员资格仍独立校验。</div><div class="rbac-permission-groups">${[...grouped.entries()].map(([module, permissions]) => `<fieldset><legend>${escapeHtml(rbacModuleLabels[module] || "其他权限")}</legend><div class="check-grid">${permissions.map(permission => `<label class="check-option"><input type="checkbox" name="rolePermissions" value="${escapeHtml(permission.code)}" ${selected.has(permission.code) ? "checked" : ""}>${permissionHelpHtml(permission)}</label>`).join("")}</div></fieldset>`).join("")}</div></div><div class="form-actions"><button class="btn secondary" type="button" data-close="roleDialog">取消</button><button class="btn" type="submit">保存角色</button></div></form>`;
   $("#roleDialog").showModal();
 }
 
@@ -3634,6 +3694,7 @@ function renderSettings() {
         : state.settingsTab === "roles" ? renderRbacCatalog()
           : state.settingsTab === "audit" ? `<section data-login-audit>正在读取…</section>` : renderGeneralSettings();
   $("#settingsPanel").innerHTML = `<div class="settings-tabs">${tabs.map(([key, label]) => `<button class="chip ${state.settingsTab === key ? "active" : ""}" type="button" data-settings-tab="${key}">${label}</button>`).join("")}</div>${content}`;
+  if (state.settingsTab === "accounts") syncUserSelectionUi();
   if(state.settingsTab === "audit") {
     const root=document.querySelector('[data-login-audit]'),accountId=state.user.id;
     import('./login-audit.mjs').then(({mountLoginAudit})=>{if(root?.isConnected&&state.user.id===accountId)mountLoginAudit({root,api:apiRequest,escapeHtml,canExport:hasRbac('audit.export'),accountId});}).catch(error=>{if(root?.isConnected)root.textContent='审计页面加载失败，请切换页签重试：'+error.message;});
@@ -8972,6 +9033,14 @@ async function importUserFile() {
   }
 }
 
+document.addEventListener("change", event => {
+  if (event.target.id !== "userImportFile") return;
+  const filename = $("#userImportFilename");
+  const name = event.target.files?.[0]?.name || "";
+  filename.textContent = name;
+  filename.title = name;
+});
+
 async function stagePersonnelImport(type) {
   const input = $(`#personnelImportFile-${type}`), result = $(`#personnelImportResult-${type}`), file = input?.files?.[0];
   if (!file) {
@@ -11210,8 +11279,7 @@ document.addEventListener("change", async event => {
   }
   if (event.target.id === "userRoleFilter") {
     state.userRoleFilter = event.target.value;
-    state.selectedUserIds.clear();
-    renderSettings();
+    refreshUserAccountRows();
     return;
   }
   if (event.target.id === "userSelectAll") {
@@ -11370,15 +11438,17 @@ function openUserBatchDialog() {
   $$("#batchScopesPanel fieldset").forEach(fieldset=>{const module=fieldset.querySelector("[data-module-scopes]").dataset.moduleScopes;fieldset.querySelector("legend").insertAdjacentHTML("afterbegin",`<input type="checkbox" data-batch-module="${module}" aria-label="修改此模块"> `);fieldset.querySelectorAll("input:not([data-batch-module]),select,button").forEach(el=>el.disabled=true);});
   dialog.showModal();
 }
-document.addEventListener("input",event=>{
-  if(event.target.id!=="userSearch")return;
-  const value=event.target.value, start=event.target.selectionStart, end=event.target.selectionEnd;
-  state.userSearch=value;state.selectedUserIds.clear();renderSettings();
-  const input=$("#userSearch");input?.focus({preventScroll:true});if(input && start!==null)input.setSelectionRange(start,end);
-});
+function updateUserSearch(event) {
+  const input = event.target;
+  if (input.id !== "userSearch" || event.isComposing || state.userSearch === input.value) return;
+  state.userSearch = input.value;
+  refreshUserAccountRows();
+}
+
+document.addEventListener("input", updateUserSearch);
+document.addEventListener("compositionend", updateUserSearch);
 document.addEventListener("click",event=>{
   if(event.target.closest("#openUserBatchBtn"))openUserBatchDialog();
-  if(event.target.closest("#clearUserSelectionBtn")){state.selectedUserIds.clear();$$("[data-user-select]").forEach(el=>el.checked=false);syncUserSelectionUi();}
 });
 document.addEventListener("change",event=>{
   if(event.target.id==="batchChangeRoles")$("#batchRolesPanel").hidden=!event.target.checked;
