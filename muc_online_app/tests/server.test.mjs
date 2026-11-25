@@ -6521,3 +6521,13 @@ test('personnel import records the confirming account on creation and organizati
     {department_id:departments[1].id,changed_by:'54002010',change_reason:'导入更新组织归属'}
   ]);
 });
+
+test('RBAC catalog includes descriptions and prerequisites without changing authorization',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}}),cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const result=await request('/api/admin/rbac',{cookie});assert.equal(result.res.statusCode,200);
+ const { RBAC_PERMISSION_DEFINITIONS } = await import("../rbac-policy.mjs");
+ assert.ok(result.payload.permissions.length >= RBAC_PERMISSION_DEFINITIONS.length);
+ for(const item of result.payload.permissions){assert.ok(item.description,item.code);assert.ok(Array.isArray(item.dependencies));}
+ const manage=result.payload.permissions.find(item=>item.code==='roles.manage');assert.match(manage.description,/角色/);assert.ok(manage.dependencies.some(item=>item.code==='roles.read'));
+ assert.equal((await request('/api/admin/rbac')).res.statusCode,401);
+});
