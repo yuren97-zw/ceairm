@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly retention cleanup (archive then delete expired data)
+
+[Timer]
+OnCalendar=*-*-01 03:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

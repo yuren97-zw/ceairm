@@ -1,0 +1,16 @@
+[Unit]
+Description=Archive and clean expired data per retention policy (D07)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=airline
+Group=airline
+WorkingDirectory=/opt/airline-operations-center/app/current
+EnvironmentFile=/opt/airline-operations-center/shared/.env
+ExecStart=/usr/bin/node scripts/retention-cleanup.mjs --apply --archive-dir=/opt/airline-operations-center/archive/retention --max-rows=100000
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=append:/var/log/airline-operations-center/retention.log
+StandardError=append:/var/log/airline-operations-center/retention.log
