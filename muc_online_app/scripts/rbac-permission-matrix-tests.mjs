@@ -4,6 +4,8 @@ import {
   RBAC_PERMISSION_DEFINITIONS,
   RBAC_PERMISSION_DEPENDENCIES,
   RBAC_ROLE_DEFINITIONS,
+  RBAC_ROLE_NAMES,
+  RBAC_BASE_ROLE_CODES,
   accountRoleCombinationErrors,
   permissionDependencyErrors,
   visibleNavigation
@@ -69,10 +71,23 @@ assert.deepEqual(visibleNavigation([...role("manager")]), ["infoPage", "maintena
 
 assert.deepEqual(accountRoleCombinationErrors(["worker"]), []);
 assert.deepEqual(accountRoleCombinationErrors(["dispatcher", "addon_maintenance_review"]), []);
-assert.equal(accountRoleCombinationErrors([]).length, 0);
-assert.equal(accountRoleCombinationErrors(["worker", "manager"]).length, 0);
+assert.deepEqual(accountRoleCombinationErrors(["team_leader", "addon_offset_approver"]), []);
+assert.equal(accountRoleCombinationErrors([])[0].code, "RBAC_BASE_ROLE_REQUIRED", "缺少基础角色必须拒绝");
+assert.equal(accountRoleCombinationErrors(["worker", "manager"])[0].code, "RBAC_BASE_ROLE_REQUIRED", "基础角色为固化单选，不允许复选");
+assert.equal(accountRoleCombinationErrors(["worker", "team_leader"])[0].code, "RBAC_BASE_ROLE_REQUIRED");
 assert.equal(accountRoleCombinationErrors(["system_admin"])[0].code, "SYSTEM_ADMIN_RESERVED");
 assert.deepEqual(accountRoleCombinationErrors(["system_admin"], { superAccount: true }), []);
+
+// 固化基础角色：工作者 / 派工者 / 班组长 / 管理者（系统管理员超管专用）
+assert.deepEqual(RBAC_BASE_ROLE_CODES, ["worker", "dispatcher", "team_leader", "manager"]);
+assert.ok(RBAC_ROLE_DEFINITIONS.team_leader, "班组长基础角色必须存在");
+for (const permission of ["maintenance.review.view", "maintenance.review.submit", "handover.history.all", "handover.export"])
+  assert(has("team_leader", permission), `班组长缺少 ${permission}`);
+for (const permission of ["maintenance.review.submit", "handover.history.all", "handover.export"])
+  assert(!has("dispatcher", permission), `派工者不应拥有 ${permission}`);
+assert([...role("dispatcher")].every(permission => has("team_leader", permission)), "班组长必须包含派工者全部权限");
+assert([...role("worker")].every(permission => has("team_leader", permission)), "班组长必须包含工作者全部权限");
+assert.equal(RBAC_ROLE_NAMES.dispatcher, "派工者");
 
 for (const retired of ["capability.read", "capability.allocate", "personnel.read", "personnel.update", "maintenance.read", "maintenance.execute", "maintenance.dispatch", "maintenance.review"])
   assert(!permissionSet.has(retired), `旧粗粒度权限不得继续启用: ${retired}`);

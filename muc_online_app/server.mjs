@@ -63,6 +63,7 @@ import { createCapabilityService } from "./capability-service.mjs";
 import {
   RBAC_PERMISSION_DEFINITIONS,
   RBAC_ROLE_DEFINITIONS,
+  RBAC_BASE_ROLE_CODES,
   RBAC_ROLE_NAMES,
   RBAC_ROLE_DESCRIPTIONS,
   accountRoleCombinationErrors,
@@ -1299,6 +1300,7 @@ insert into maintenance_report_draft_versions(flight_id,report_type,version)
   migrateAuthorizationNine(db,{now,randomId,audit,allowReset:process.env.NODE_ENV==='test'||process.env.MUC_AUTHORIZATION_RESET==='1',backupPath:process.env.MUC_AUTHORIZATION_BACKUP||''});
   authorizationProjects.migrate();
   seedRbac();
+  migrateTeamLeaderBaseRole();
   ensureSuperAccountRbac();
   const legacyAdmin = db.prepare("select id from users where username=?").get("admin");
   if (legacyAdmin) {
@@ -1786,6 +1788,36 @@ function normalizeMaintenanceTowAndPrimaryRole() {
     try { db.exec("rollback"); } catch {}
     throw error;
   }
+}
+
+// 一次性迁移（2026-11-25）：班组长账号的基础角色统一为 team_leader（保留附加角色）。
+// 职位后续变化不自动改基础角色——遵循“职位不自动生成系统权限”，由管理员显式调整。
+function migrateTeamLeaderBaseRole() {
+  if (settingValue("teamLeaderBaseRoleMigrated", false) === true) return;
+  const teamRole = db.prepare("select id from rbac_roles where code='team_leader' and status='active'").get();
+  if (!teamRole) return;
+  const targets = db.prepare(`select u.id from users u join personnel p on p.id=u.person_id
+    where u.status='active' and coalesce(p.data_status,'active')='active' and p.position_code='班组长'`).all();
+  const marks = RBAC_BASE_ROLE_CODES.map(() => "?").join(",");
+  const changed = [];
+  for (const target of targets) {
+    const current = db.prepare(`select r.code from rbac_user_roles ur join rbac_roles r on r.id=ur.role_id where ur.user_id=?`).all(target.id).map(row => row.code);
+    const base = current.filter(code => RBAC_BASE_ROLE_CODES.includes(code));
+    if (base.length === 1 && base[0] === "team_leader") continue;
+    db.exec("begin immediate");
+    try {
+      db.prepare(`delete from rbac_user_roles where user_id=? and role_id in (select id from rbac_roles where code in (${marks}))`).run(target.id, ...RBAC_BASE_ROLE_CODES);
+      db.prepare("insert or ignore into rbac_user_roles(user_id,role_id,created_at) values(?,?,?)").run(target.id, teamRole.id, now());
+      db.exec("commit");
+    } catch (error) {
+      db.exec("rollback");
+      throw error;
+    }
+    revokeUserSessions(target.id, { bumpCredentialVersion: true });
+    changed.push(target.id);
+  }
+  if (changed.length) audit({ id: "system", name: "系统迁移" }, "migrate_team_leader_base_role", "rbac", "team_leader", JSON.stringify({ changed }));
+  setSetting("teamLeaderBaseRoleMigrated", true);
 }
 
 function seedRbac() {
@@ -8237,7 +8269,7 @@ function accountImportScope(value) {
 function validateAccountRoleCombination(roleCodes) {
   const errors = accountRoleCombinationErrors(roleCodes);
   if (errors.some(item => item.code === "SYSTEM_ADMIN_RESERVED")) throw Object.assign(new Error("系统管理员角色仅允许54002010使用"), { status: 403 });
-  if (errors.length) throw Object.assign(new Error("请且只能选择一个基础角色：工作者、派工人员或管理者"), { status: 400, code: "RBAC_BASE_ROLE_REQUIRED" });
+  if (errors.length) throw Object.assign(new Error("请且只能选择一个基础角色：工作者、派工者、班组长或管理者"), { status: 400, code: "RBAC_BASE_ROLE_REQUIRED" });
 }
 
 function validateAccountAccess(payload, personId) {
@@ -10244,7 +10276,7 @@ async function routeRequestMain(req, res) {
         const pending = scope.validFrom && Date.parse(scope.validFrom) > now;
         scopesByModule[scope.module].push({ ...scope, status: expired ? "expired" : pending ? "pending" : "active" });
       }
-      const baseRoles = snapshot.roles.filter(r => ["worker", "dispatcher", "manager"].includes(r.code));
+      const baseRoles = snapshot.roles.filter(r => RBAC_BASE_ROLE_CODES.includes(r.code));
       const baseRoleIssues = baseRoles.length !== 1 && snapshot.roles[0]?.code !== "system_admin" ? ["基础角色数量异常（应为恰好一个）"] : [];
       return send(res, 200, {
         account: { id: target.id, username: target.username, status: target.status, personName: target.name, position: target.position_code },
