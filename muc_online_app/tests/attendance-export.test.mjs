@@ -64,3 +64,27 @@ test('exports separate original classification from the post-offset result and c
  assert.equal(matrix[1][4],'缺卡已抵消');assert.ok(issues.slice(1).some(r=>r[2]===first.date));assert.ok(!issues.slice(1).some(r=>r[2]===second.date));
  assert.match(unzip(exportXlsx(s))['xl/worksheets/sheet1.xml'],/剩余缺卡/);assert.match(exportHtml(s),/抵消缺卡/);assert.equal(JSON.stringify(p.days),before);
 });
+
+test('person summary groups offset counts after review and uses distinct fills only for positive counts',()=>{
+ const s=sample(),p=s.people[0];
+ const labels=['原始缺卡（次）','抵消缺卡（次）','剩余缺卡（次）','全部有效抵消（项）'];
+ s.offsetVersion=1;
+ s.categories.push('待核对','外出','出差','派驻');
+ p.missingPunchCounts={original:3,offset:2,remaining:1};
+ p.offsetTotal=2;
+ p.counts={...p.counts,待核对:1,外出:1,出差:1,派驻:1};
+ s.people.push({...p,personId:'p2',offsetTotal:0,missingPunchCounts:{original:0,offset:0,remaining:null}});
+ const [headers,positive,empty]=exportTables(s)[0][1];
+ const start=headers.indexOf('待核对')+1;
+ assert.deepEqual(headers.slice(start,headers.indexOf('外出')),[...labels,'未同步']);
+ assert.deepEqual(positive.slice(start,start+4),[3,2,1,2]);
+ assert.deepEqual(empty.slice(start,start+4),[0,0,null,0]);
+ const files=unzip(exportXlsx(s)),sheet=files['xl/worksheets/sheet1.xml'],styles=files['xl/styles.xml'];
+ const fillIds=[...styles.match(/<cellXfs[^>]*>(.*?)<\/cellXfs>/s)[1].matchAll(/<xf [^>]*fillId="(\d+)"/g)].map(m=>Number(m[1]));
+ const fills=[...styles.matchAll(/<fill>(.*?)<\/fill>/gs)].map(m=>m[1].match(/fgColor rgb="([^"]+)"/)?.[1]);
+ const rowStyles=n=>[...sheet.match(new RegExp(`<row r="${n}">(.*?)</row>`,'s'))[1].matchAll(/<c r="[A-Z]+\d+" s="(\d+)"/g)].map(m=>Number(m[1]));
+ const positiveStyles=rowStyles(2),positiveFills=[...labels,'待核对','外出','出差','派驻'].map(label=>fills[fillIds[positiveStyles[headers.indexOf(label)]]]);
+ assert.ok(positiveFills.every(Boolean));
+ assert.equal(new Set(positiveFills).size,positiveFills.length);
+ assert.deepEqual(rowStyles(3).slice(start,start+4),[0,0,0,0]);
+});
