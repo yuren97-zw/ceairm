@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {RBAC_PERMISSION_DEFINITIONS,RBAC_PERMISSION_DEPENDENCIES} from '../rbac-policy.mjs';
+import {RBAC_PERMISSION_DEFINITIONS,RBAC_PERMISSION_DEPENDENCIES,visibleNavigationTree} from '../rbac-policy.mjs';
 import {PERMISSION_DESCRIPTIONS,permissionHelp} from '../permission-descriptions.mjs';
 test('every permission has concrete help and dependencies match policy',()=>{
  assert.equal(Object.keys(PERMISSION_DESCRIPTIONS).length,RBAC_PERMISSION_DEFINITIONS.length);
@@ -19,4 +19,20 @@ test('role selector preserves checkbox values while rendering escaped help and f
  assert.match(body.innerHTML,/value="roles.manage" checked/);assert.match(body.innerHTML,/前置权限：查看角色权限/);
  assert.ok(vm.runInContext('renderRbacCatalog()',context).includes(`全部权限说明（${permissions.length} 项）`));
  context.item={code:'<code>',name:'<script>',description:'<img>',dependencies:[]};const html=vm.runInContext('permissionHelpHtml(item)',context);assert.ok(!html.includes('<img>'));assert.match(html,/&lt;script&gt;/);
+});
+
+
+test('performance preview and actual navigation require the same independent permission', () => {
+ const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+ const context = vm.createContext({});
+ const start = source.indexOf('function visibleNavigationFromPermissions(');
+ vm.runInContext(source.slice(start, source.indexOf('const pageLabels', start)), context);
+ for (const codes of [[], ['maintenance.stats.self.view'], ['maintenance.stats.manage.view'], ['performance.view'], ['maintenance.stats.manage.view', 'performance.view']]) {
+   const nav = visibleNavigationTree(codes);
+   const expected = codes.includes('performance.view');
+   assert.equal(nav.some(page => page.id === 'hoursPage'), expected);
+   assert.equal(context.visibleNavigationFromPermissions(new Set(codes)).includes('绩效管理'), expected);
+   assert.equal(nav.some(page => page.children.some(child => child.id === 'hours')), codes.includes('maintenance.stats.manage.view'));
+ }
+ assert.ok(visibleNavigationTree([], true).some(page => page.id === 'hoursPage'));
 });

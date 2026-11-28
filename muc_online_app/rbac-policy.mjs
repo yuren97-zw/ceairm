@@ -72,6 +72,7 @@ const maintenanceV2 = [
 ];
 
 const existing = [
+  ["performance.view", "查看绩效管理", "performance"],
   ["audit.read", "审计查询", "settings"],
   ["audit.export", "审计导出", "settings"],
   ["attendance.offset.rules.manage", "管理考勤兑换规则与结算", "attendance"],
@@ -157,6 +158,7 @@ export const ACTION_SCOPE_BINDINGS = {
   "roles.read": { scopeModule: null, resource: "role", note: "角色定义为全局配置，无按人范围" },
   "roles.manage": { scopeModule: null, resource: "role", note: "角色定义为全局配置，无按人范围" },
   "settings.manage": { scopeModule: null, resource: "setting", note: "系统设置为全局配置，无按人范围" },
+  "performance.view": { scopeModule: null, resource: "performance_page", note: "仅控制预留页面入口，页面没有业务数据" },
   "audit.read": { scopeModule: null, resource: "audit_log", note: "审计日志为全量管理员视图，无按人范围" },
   "audit.export": { scopeModule: null, resource: "audit_log", note: "审计导出为全量管理员视图，无按人范围" },
   "fixed.read": { scopeModule: null, resource: "fixed_item", note: "固化项目为全局主数据，无人员范围" },
@@ -491,7 +493,7 @@ export const NAVIGATION_NODES = [
     { id: "authorization", anyOf: ["personnel.list.view", "personnel.qualification.view"], label: "人员授权" },
     { id: "master", anyOf: ["personnel.organization.manage", "personnel.qualification.manage"], label: "主数据管理" }
   ]},
-  { id: "hoursPage", anyOf: ["maintenance.stats.self.view", "maintenance.stats.manage.view"] },
+  { id: "hoursPage", anyOf: ["performance.view"] },
   { id: "attendancePage", anyOf: ["attendance.read"] },
   { id: "settingsPage", anyOf: ["accounts.read", "roles.read", "settings.manage", "audit.read"], children: [
     { id: "accountsTab", anyOf: ["accounts.read"], label: "登录账户" },

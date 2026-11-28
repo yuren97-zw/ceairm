@@ -82,6 +82,7 @@ accounts.scopes.assign|为账户配置分模块数据范围、指定组织和有
 roles.read|浏览角色目录及各角色包含的权限。
 roles.manage|新增及维护角色权限组合；系统预置角色仍受超级账号保护规则限制。
 settings.manage|修改系统分类、超期门限等通用配置。
+performance.view|打开一级「绩效管理」预留页。维修工时统计仍由维修管控权限单独授权。
 info.read|查看本人有权访问的信息传达列表及详情。
 info.create|发布信息并配置接收范围及信息内容。
 info.update.own|编辑本人发布且允许修改的信息。

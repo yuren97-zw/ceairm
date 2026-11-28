@@ -805,7 +805,7 @@ async function showEffectivePermissions(userId, username) {
   try {
     const data = await userService.effectivePermissions(userId);
     const sections = [];
-    const moduleNames = { info: "信息传达", maintenance: "维修管控", personnel: "人员管理", accounts: "账号角色", attendance: "考勤假期", capability: "能力看板", handover: "班组交接", settings: "系统配置" };
+    const moduleNames = { info: "信息传达", maintenance: "维修管控", personnel: "人员管理", accounts: "账号角色", attendance: "考勤假期", capability: "能力看板", handover: "班组交接", settings: "系统配置", performance: "绩效管理" };
     // 身份
     if (data.identity?.label) {
       sections.push(`<div class="perm-section"><h4>身份分类</h4><p>${escapeHtml(data.identity.label)}（来源：${escapeHtml(data.identity.source || "职位")}）${data.identity.quality !== "matched" ? `<span class="perm-warning">职位值异常（${escapeHtml(data.identity.quality)}）</span>` : ""}</p></div>`);
@@ -2801,13 +2801,13 @@ function visibleNavigationFromPermissions(perms) {
     { id: "maintenancePage", label: "维修管控", anyOf: ["maintenance.view","maintenance.execute.view","maintenance.dispatch.view","maintenance.review.view","maintenance.stats.manage.view"] },
     { id: "fixedPage", label: "固化项目", anyOf: ["fixed.read"] },
     { id: "personnelPage", label: "人员与能力", anyOf: ["capability.overview.view","personnel.list.view"] },
-    { id: "hoursPage", label: "工时统计", anyOf: ["maintenance.stats.self.view", "maintenance.stats.manage.view"] },
+    { id: "hoursPage", label: "绩效管理", anyOf: ["performance.view"] },
     { id: "attendancePage", label: "考勤管理", anyOf: ["attendance.read"] },
     { id: "settingsPage", label: "系统设置", anyOf: ["accounts.read","roles.read","settings.manage","audit.read"] }
   ];
   return NAV.filter(n => [...n.anyOf].some(p => perms.has(p))).map(n => n.label);
 }
-const pageLabels = { infoPage: "信息传达", maintenancePage: "维修管控", fixedPage: "固化项目", personnelPage: "人员与能力", hoursPage: "工时统计", attendancePage: "考勤管理", settingsPage: "系统设置", homePage: "首页" };
+const pageLabels = { infoPage: "信息传达", maintenancePage: "维修管控", fixedPage: "固化项目", personnelPage: "人员与能力", hoursPage: "绩效管理", attendancePage: "考勤管理", settingsPage: "系统设置", homePage: "首页" };
 
 function openUserDialog(user = null) {
   const isEdit = !!user;
@@ -3664,6 +3664,7 @@ const rbacModuleLabels = {
   info: "信息传达",
   maintenance: "维修管控",
   fixed: "固化项目",
+  performance: "绩效管理",
   hours: "工时统计",
   attendance: "考勤管理"
 };
