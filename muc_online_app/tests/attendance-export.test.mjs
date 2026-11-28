@@ -51,11 +51,16 @@ test('24-hour and night shifts each earn one 25 yuan allowance; new private appr
  const s=sample();s.people[0].days[0].category='24小时班';s.people[0].counts={'24小时班':1,'夜班':1,'未同步':28};s.categories=['24小时班','夜班','未同步'];const a={kind:'请假',reason:'PRIVATE-HEALTH-CANARY'};s.people[0].days[0].input.approvals=[a];s.people[0].days[0].input.raw={approvals:[a]};const changes=[{person_id:'p1',before_json:JSON.stringify({approvals:[a]}),after_json:JSON.stringify({raw:{approvals:[a]}})}];assert.equal(exportTables(s).find(t=>t[0]==='夜班值班统计表')[1][1].at(-2),50);const xml=Object.values(unzip(exportXlsx(s,{changes}))).join('');assert.ok(!xml.includes('PRIVATE-HEALTH-CANARY'));assert.ok(exportHtml(s).includes('PRIVATE-HEALTH-CANARY'));
 });
 
-test('V1.4 exports retain original numeric category counts, adjacent item columns and same-cell read-only labels',()=>{
+test('exports separate original classification from the post-offset result and count missing punches individually',()=>{
  const s=sample();s.offsetVersion=1;s.ledgerVersion=2;s.categories.push('缺卡');
- const p=s.people[0];p.days[0].category='缺卡';p.days[0].offset={label:'已抵消',approved:1,pending:0,items:[{eventId:'stable',type:'day_off_missing',effective:1}]};p.counts={'夜班':1,'缺卡':1,'未同步':28};p.offsetCounts={'缺卡':1};p.offsetTotal=1;
- const before=JSON.stringify(p.days[0].input),tables=exportTables(s),summary=tables.find(t=>t[0]==='人员汇总')[1],detail=tables.find(t=>t[0]==='逐日明细')[1],matrix=tables.find(t=>t[0]==='逐日明细（横版）')[1];
- assert.equal(tables.length,11);assert.equal(summary[1][summary[0].indexOf('缺卡')],1);assert.equal(summary[1][summary[0].indexOf('缺卡已抵消（项）')],1);assert.equal(summary[1][summary[0].indexOf('全部有效抵消（项）')],1);
- assert.equal(detail[1][detail[0].indexOf('最终类别')],'缺卡');assert.equal(detail[1][detail[0].indexOf('内部抵消状态')],'已抵消');assert.match(matrix[1][3],/^缺卡\n已抵消/);
- const files=unzip(exportXlsx(s));assert.match(files['xl/worksheets/sheet1.xml'],/缺卡已抵消/);assert.match(exportHtml(s),/已抵消/);assert.equal(JSON.stringify(p.days[0].input),before);
+ const p=s.people[0],first=p.days[0],second=p.days[1];
+ first.category='缺卡';first.missingPunchCounts={original:2,offset:1,remaining:1};first.offset={label:'部分已抵消',approved:1,items:[]};
+ second.category='缺卡';second.missingPunchCounts={original:1,offset:1,remaining:0};second.offset={label:'已抵消',approved:1,items:[]};
+ p.counts={'缺卡':2,'未同步':28};p.missingPunchCounts={original:3,offset:2,remaining:1};p.offsetTotal=2;
+ const before=JSON.stringify(p.days),tables=exportTables(s),summary=tables[0][1],detail=tables[2][1],matrix=tables[1][1],issues=tables[4][1];
+ assert.deepEqual(['原始缺卡（次）','抵消缺卡（次）','剩余缺卡（次）','天数合计'].map(label=>summary[1][summary[0].indexOf(label)]),[3,2,1,p.days.length]);
+ assert.equal(summary[0].includes('缺卡'),false);
+ assert.equal(detail[1][detail[0].indexOf('原始分类')],'缺卡');assert.equal(detail[1][detail[0].indexOf('抵消后结果')],'部分抵消 · 仍有缺卡');
+ assert.equal(matrix[1][4],'缺卡已抵消');assert.ok(issues.slice(1).some(r=>r[2]===first.date));assert.ok(!issues.slice(1).some(r=>r[2]===second.date));
+ assert.match(unzip(exportXlsx(s))['xl/worksheets/sheet1.xml'],/剩余缺卡/);assert.match(exportHtml(s),/抵消缺卡/);assert.equal(JSON.stringify(p.days),before);
 });

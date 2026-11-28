@@ -3,6 +3,17 @@ const planTime=v=>v?new Date(v).toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'
 export const approvalPlanState=p=>p.stale?'更新待核实':p.reconciled?'已复核':p.effect==='punch_correction'&&p.state==='approved'?'补卡已批准，待权威考勤核对':({approved:'已批准，待当天复核',withdrawn:'已撤回／撤销／拒绝',superseded:'已被修改单替代',pending:'审批未生效',unresolved:'资料待核对',unsupported:'表单待适配'})[p.state]||'待核对';
 export const approvalDisplayCount=(p,c)=>p.displayCounts?.[c]??p.counts?.[c]??0;
 export function approvalPlanDot(p,c){return (p.pendingCounts?.[c]||0)>0?'<span class="att-plan-dot" title="含已批准待复核记录" aria-label="含已批准待复核记录">●</span>':'';}
+const planHistoryHtml=history=>(history||[]).map(h=>`<p>${planEsc(planTime(h.changedAt))} · ${planEsc(h.category||'')} · ${planEsc(h.state)}<small>${planEsc((h.dates||[]).join('、'))}</small></p>`).join('');
+export function approvalDayPlansHtml(plans,tripPurposes){
+ if(!plans?.length)return '';
+ const tripsById=new Map((tripPurposes||[]).filter(p=>p.id&&p.reason?.trim()).map(p=>[p.id,p]));
+ return '<h3>当前日期审批</h3>'+plans.map(p=>{
+  const reasonText=p.reason?.trim();
+  const sameTripReason=reasonText&&tripsById.get(p.id)?.reason.trim()===reasonText;
+  const reason=p.effect==='punch_correction'||sameTripReason?'':`<p class="att-approval-text">${planEsc(reasonText||'未取得事由')}</p>`;
+  return `<section class="att-note att-approval-summary"><strong>${planEsc(p.category||p.kind||'类别待核实')}</strong> · ${planEsc(approvalPlanState(p))}${reason}${p.error?`<p class="att-warning">${planEsc(p.error)}</p>`:''}<details><summary>审批详情</summary><small>审批编号 ${planEsc(p.id)} · 最近读取 ${planEsc(planTime(p.updatedAt))}</small>${p.duration?`<p>申请时长 ${planEsc(p.duration.value??'未提供')} ${planEsc(p.duration.unit||'')}</p>`:''}${p.effectReason?`<p>${planEsc(p.effectReason)}</p>`:''}${p.history?.length?`<p><strong>变更记录</strong></p>${planHistoryHtml(p.history)}`:''}</details></section>`;
+ }).join('');
+}
 export function approvalPlansHtml(plans,month){
  if(!plans?.length)return '<p class="att-detail-note">当前统计月无已知相关审批；不代表审批已完整覆盖。</p>';
  const approved=plans.filter(p=>p.effect!=='punch_correction'&&p.state==='approved'&&!p.stale&&!p.error);

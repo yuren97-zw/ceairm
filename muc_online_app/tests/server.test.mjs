@@ -6531,3 +6531,24 @@ test('RBAC catalog includes descriptions and prerequisites without changing auth
  const manage=result.payload.permissions.find(item=>item.code==='roles.manage');assert.match(manage.description,/角色/);assert.ok(manage.dependencies.some(item=>item.code==='roles.read'));
  assert.equal((await request('/api/admin/rbac')).res.statusCode,401);
 });
+
+test('attendance person API returns the confirmed points behind the missing-punch summary',async()=>{
+ const login=await request('/api/login',{method:'POST',body:{username:'54002010',password:'muc2026'}});
+ assert.equal(login.res.statusCode,200);
+ const cookie=String(login.res.headers['Set-Cookie']).split(';')[0];
+ const {id}=db.prepare("select id from personnel where employee_no='54002010'").get();
+ const date='2026-09-03',planned=Date.parse(date+'T08:30:00+08:00');
+ const input={date,covered:true,rest:false,points:[{type:'OnDuty',planned},{type:'OffDuty',planned:planned+8*3600000}],punches:[],approvals:[]};
+ db.prepare('insert into attendance_days values(?,?,?,?,?,?,?)').run(id,date,JSON.stringify(input),'{}','missing-point-api-fixture',date+'T13:00:00Z','missing-point-api-fixture');
+ try{
+  const filters=new URLSearchParams({month:'2026-09',personId:id});
+  const summary=await request('/api/attendance/summary?'+filters+'&view=summary',{cookie});
+  const detail=await request('/api/attendance/person?'+filters,{cookie});
+  assert.equal(summary.res.statusCode,200);assert.equal(detail.res.statusCode,200);
+  const counts=summary.payload.people[0].missingPunchCounts;
+  assert.deepEqual(counts,{original:2,offset:0,remaining:2});
+  const row=detail.payload.people[0].days.find(day=>day.date===date);
+  assert.deepEqual(row.missingPunchCounts,counts);
+  assert.deepEqual(row.missingPunchDetails.map(({type,planned,offset})=>[type,planned,offset]),[['OnDuty',planned,false],['OffDuty',planned+8*3600000,false]]);
+ }finally{db.prepare('delete from attendance_days where person_id=? and work_date=?').run(id,date);}
+});

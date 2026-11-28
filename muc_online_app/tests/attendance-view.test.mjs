@@ -86,6 +86,22 @@ test('day popup only replaces source code with seven-day context, locks backgrou
  await s.listeners.get('click')({target:{dataset:{},hasAttribute:n=>n==='data-close',closest(){return this;}}});assert.equal(s.modal.open,false);assert.equal(s.host.ownerDocument.body.style.position,'');assert.equal(s.host.ownerDocument.defaultView.scrollY,240);
  await s.listeners.get('click')({target:s.button({day:'p|2026-10-01'})});s.modal.close();assert.equal(s.host.ownerDocument.body.style.position,'');await s.listeners.get('click')({target:s.button({day:'p|2026-10-01'})});s.view.destroy();assert.equal(s.host.ownerDocument.body.style.position,'');assert.equal(s.host.ownerDocument.documentElement.style.overflow,'');
 });
+test('day popup summarizes approval and trip information with audit details collapsed',async()=>{
+ const data={...compactSeed(),detailLevel:'full'};
+ const day=data.people[0].days[0],reason='机型实做 <模拟>';
+ const start=Date.parse('2026-10-01T08:00:00+08:00'),end=Date.parse('2026-10-03T18:00:00+08:00');
+ day.approvalPlans=[{id:'trip-1',kind:'出差',state:'approved',reason,history:[{state:'pending'}]}];
+ day.purposes=[{id:'trip-1',category:'培训',status:'ok',keywords:['实做'],reason,start,end},{id:'trip-2',status:'permission_denied'}];
+ const s=setup({data});await s.listeners.get('click')({target:s.button({day:'p|2026-10-01'})});
+ const html=s.modal.innerHTML;
+ assert.match(html,/当前日期审批.*出差.*已批准.*<details><summary>审批详情<\/summary>/s);
+ assert.match(html,/出差事由.*培训.*机型实做 &lt;模拟&gt;.*2026-10-01 08:00:00 至 2026-10-03 18:00:00/s);
+ assert.equal((html.match(/机型实做/g)||[]).length,1);
+ assert.match(html,/<details><summary>判定依据<\/summary><small>审批编号 trip-1 · 命中关键词 实做/);
+ assert.match(html,/事由读取权限不足/);
+ assert.doesNotMatch(html,/有效申请\d+单|读取状态：ok/);
+ s.view.destroy();
+});
 test('calendar context is always seven dates, crosses year boundaries and distinguishes absent snapshot data',async()=>{
  const {attendanceNeighborDays}=await import('../public/attendance-presentation.mjs');
  const days=attendanceNeighborDays({days:[]},'2027-01-01',{offline:true,today:'2027-01-02'});assert.equal(days.length,7);assert.equal(days[0].date,'2026-12-29');assert.equal(days.at(-1).date,'2027-01-04');assert.equal(days[0].category,'快照未包含');assert.equal(days.at(-1).category,'未来日期');
@@ -170,6 +186,37 @@ test('positive headings use all filtered people across pages and reset when the 
  s.input('');t.mock.timers.tick(300);assert.equal(headings(),first);s.view.destroy();
 });
 
+test('summary folds separated zero leave columns into one narrow column and restores original order',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const people=Array.from({length:21},(_,i)=>({personId:String(i),name:'人员'+i,employeeNo:'P'+i,days:[],counts:i===20?{病假:1}:{事假:null},pendingCounts:{陪产假:1},overtimeSeconds:3600}));
+ const names=['调休','公休假','婚假','病假','事假','陪产假','探亲假'];
+ const data={month:'2026-10',dates:[],people,categories:['出差','派驻',...names],leaveTypes:{names}};
+ const s=setup({data});
+ const headings=()=>s.content.innerHTML.match(/<thead>([\s\S]*?)<\/thead>/)[1];
+ assert.match(headings(),/<th>出差<\/th><th>累计时间<\/th><th>派驻<\/th>/);
+ assert.match(s.content.innerHTML,/<td>1小时0分<\/td>/);
+ assert.match(headings(),/<th class="att-folded-leave-column"><button[^>]* aria-expanded="false" aria-label="展开 4 个零值假期列"[^>]*>▸ 4<\/button><\/th>/);
+ assert.equal((headings().match(/data-leave-fold/g)||[]).length,1);
+ assert.match(s.content.innerHTML,/<td class="att-folded-leave-column"><\/td>/);
+ assert.match(headings(),/>病假<\/span>/);
+ assert.doesNotMatch(headings(),/<th>探亲假<\/th>/);
+ assert.match(headings(),/<th>事假<\/th><th>陪产假<\/th>/);
+ await s.listeners.get('click')({target:s.button({leaveFold:''})});
+ assert.match(headings(),/调休<br>.*aria-expanded="true"[^>]*>▾ 收起.*<th>公休假<\/th><th>婚假<\/th>.*病假.*<th>事假<\/th><th>陪产假<\/th><th>探亲假<\/th>/);
+ assert.doesNotMatch(headings(),/att-folded-leave-column/);
+ await s.listeners.get('click')({target:s.button({page:'1'})});
+ assert.match(headings(),/aria-expanded="true"/);
+ const nextMonth=setup({data:{...data,month:'2026-11'},initialState:s.view.getState()});
+ assert.match(nextMonth.content.innerHTML,/aria-expanded="false" aria-label="展开 4 个零值假期列"/);
+ nextMonth.view.destroy();
+ await s.listeners.get('click')({target:s.button({leaveFold:''})});
+ s.input('P0');t.mock.timers.tick(300);
+ assert.match(headings(),/aria-label="展开 5 个零值假期列"[^>]*>▸ 5<\/button>/);
+ assert.doesNotMatch(headings(),/>病假<\//);
+ assert.match(s.content.innerHTML,/<td>—<\/td>/);
+ s.view.destroy();
+});
+
 test('permanently excluded leave cannot return through fixed order, unknown categories, refreshed selections or catalog descriptions',async()=>{const {attendanceFixedCategoryOrder,attendanceOrderedCategories,attendanceRefreshColumns,attendanceLeaveCatalogText}=await import('../public/attendance-presentation.mjs');assert.ok(!attendanceFixedCategoryOrder.includes('新冠关爱假'));assert.deepEqual(attendanceOrderedCategories(['新冠关爱假','外出','跟班','出差']),['外出','跟班','出差']);assert.ok(!attendanceRefreshColumns(['新冠关爱假','婚假'],new Set(),new Set(),true).has('新冠关爱假'));assert.ok(!attendanceLeaveCatalogText({names:['新冠关爱假','婚假'],status:'ready'}).includes('新冠关爱假'));});
 
 test('pending approval count preserves layout, colors and actual total; click splits actual and pending dates',async()=>{
@@ -223,5 +270,45 @@ test('a duplicate punch on two consecutive rest days is visible while the schedu
  assert.match(cells[1],/待核对/);assert.equal(cells[4],'—');
  assert.equal(cells[5],'2026-10-29 08:22:20<small>有效打卡（排班待核对）</small>');
  assert.equal(cells[7],'—<small>无排班</small>');assert.equal(cells[8],'—');
+ s.view.destroy();
+});
+
+test('missing punch columns sit between review and outings and open the matching point details',async()=>{
+ const data=summarySeed();
+ data.categories=['休息','待核对','外出','缺卡'];
+ data.people[0].missingPunchCounts={original:2,offset:1,remaining:1};
+ data.people[0].dayCount=7;
+ const day='2026-10-01',point=(type,hour,offset,approverName)=>({type,planned:Date.parse(day+'T'+hour+':00:00+08:00'),offset,approverName});
+ const morning=point('OnDuty','08',false),evening=point('OffDuty','19',true,'测试审批人');
+ const valid=(type,hour)=>{const punch=point(type,hour,false);return {...punch,actual:punch.planned,status:'有效打卡'};};
+ const full={...data.people[0],days:[{date:day,category:'缺卡',missingPunchDetails:[morning,evening],
+  punchDetails:[morning,valid('OffDuty','12'),valid('OnDuty','13'),evening]}]};
+ let loads=0;
+ const s=setup({data,onLoadPerson:async()=>{loads++;return full;}});
+ const headers=[...s.content.innerHTML.matchAll(/<th>(.*?)<\/th>/g)].map(match=>match[1].replace(/<[^>]+>/g,''));
+ assert.deepEqual(headers.slice(headers.indexOf('待核对'),headers.indexOf('外出')+1),['待核对','原始缺卡（次）','抵消缺卡（次）','剩余缺卡（次）','外出']);
+ assert.match(s.content.innerHTML,/att-table att-compact-identity/);
+ assert.match(s.content.innerHTML,/data-missing-count="p\|original"[^>]*>2<\/button>/);
+ assert.match(s.content.innerHTML,/<td>7<\/td>/);
+ for(const [key,expected,excluded] of [['original',/08:00:00.*12:00:00.*13:00:00.*19:00:00/s,null],['offset',/13:00:00.*有效打卡.*19:00:00.*下班缺卡 · 已抵消.*审批人：测试审批人/s,/08:00:00/],['remaining',/08:00:00.*12:00:00.*有效打卡.*上班缺卡 · 未抵消/s,/19:00:00/]]){
+  await s.listeners.get('click')({target:s.button({missingCount:'p|'+key})});
+  assert.deepEqual([...s.modal.innerHTML.matchAll(/<th>(.*?)<\/th>/g)].map(m=>m[1]),['日期','类别','计划上班','有效实际上班','计划下班','有效实际下班','依据']);
+  assert.match(s.modal.innerHTML,expected);
+  if(excluded)assert.doesNotMatch(s.modal.innerHTML,excluded);
+ }
+ assert.equal(loads,1);
+ s.view.destroy();
+});
+
+test('missing punch dialog distinguishes an older detail response from zero and can retry',async()=>{
+ const data=summarySeed();
+ data.categories.push('缺卡');
+ data.people[0].missingPunchCounts={original:1,offset:0,remaining:1};
+ let reads=0;
+ const s=setup({data,onLoadPerson:async()=>({...data.people[0],days:[{date:'2026-10-01',...(++reads===1?{}:{missingPunchDetails:[{type:'OnDuty',planned:Date.parse('2026-10-01T08:30:00+08:00'),offset:false}]})}]})});
+ await s.listeners.get('click')({target:s.button({missingCount:'p|remaining'})});
+ assert.match(s.modal.innerHTML,/未取得打卡点明细/);assert.doesNotMatch(s.modal.innerHTML,/共 0 次/);
+ await s.listeners.get('click')({target:s.button({missingCount:'p|remaining'})});
+ assert.match(s.modal.innerHTML,/08:30:00/);assert.equal(reads,2);
  s.view.destroy();
 });

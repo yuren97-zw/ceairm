@@ -9,6 +9,24 @@ function trip(reason='培训',detailStatus='ok'){return {id:'approval',kind:'出
 test('trip reason matches only exact specified keywords; missing and unmatched differ',()=>{
  assert.equal(tripPurpose('参加培训').category,'培训');assert.equal(tripPurpose('派驻保障').category,'派驻');assert.equal(tripPurpose('学习驻站').category,'出差');assert.equal(tripPurpose('培训和派驻').status,'conflict');assert.equal(tripPurpose(null).status,'reason_missing');assert.equal(tripPurpose('培训','permission_denied').category,null);
 });
+for (const keyword of ['实作','实做']) test(`${keyword} is a training keyword and only conflicts with a different trip purpose`,()=>{
+ const a=input();
+ a.approvals=[trip(`机型${keyword}`)];
+ const worked=classifyDay(a,now);
+ assert.equal(worked.category,'夜班');
+ assert.equal(worked.purposes[0].category,'培训');
+ assert.deepEqual(worked.purposes[0].keywords,[keyword]);
+ a.punches=[];
+ assert.equal(classifyDay(a,now).category,'培训');
+ a.approvals=[trip(`培训和${keyword}`)];
+ assert.equal(classifyDay(a,now).category,'培训');
+ assert.deepEqual(tripPurpose('培训、实作、实做').keywords,['培训','实作','实做']);
+ a.approvals=[trip(`派驻期间参加${keyword}`)];
+ const conflicting=classifyDay(a,now);
+ assert.equal(conflicting.category,'待核对');
+ assert.equal(conflicting.purposes[0].status,'conflict');
+ assert.deepEqual(conflicting.purposes[0].keywords,[keyword,'派驻']);
+});
 test('night shift priority keeps purpose and exact seconds, never duplicates day',()=>{const a=input();a.approvals=[trip()];const r=classifyDay(a,now);assert.equal(r.category,'夜班');assert.equal(r.purposes[0].category,'培训');assert.equal(r.overtime.seconds,3661);});
 test('purpose conflict does not erase reliable night shift',()=>{const a=input();a.approvals=[trip('派驻培训')];const r=classifyDay(a,now);assert.equal(r.category,'夜班');assert.equal(r.purposes[0].status,'conflict');assert.ok(r.issues.length);});
 test('without punches valid trip explains system missing and determines purpose',()=>{const a=input();a.punches=a.punches.map(p=>({...p,source:'SYSTEM',timeResult:'NotSigned',actual:p.planned}));a.approvals=[trip('派驻')];const r=classifyDay(a,now);assert.equal(r.category,'派驻');assert.equal(r.overtime.seconds,null);});

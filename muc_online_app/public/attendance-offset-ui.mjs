@@ -1,4 +1,4 @@
-import {accumulationExplanation} from './attendance-presentation.mjs';
+import {accumulationExplanation,attendanceOffsetResult} from './attendance-presentation.mjs';
 import {attendanceCategoryAllowed,attendanceCategoryBadge,ensureAttendanceBadgeStyles,legalLeaveCategories,punchSummary,attendanceProcessingCells} from './attendance-presentation.mjs';
 // randomUUID is restricted to secure contexts; LAN-only disposable previews also need safe IDs.
 export function offsetOperationId(random=globalThis.crypto){
@@ -128,7 +128,7 @@ export function exchangeRuleText(rule){
 
 export function homeAttendanceTable(days,kind,{canApply=false}={}){
  const leaves=legalLeaveCategories({people:[{days}]});
- const category=d=>`<button type="button" data-open-day="${esc(d.date)}">${attendanceCategoryBadge(d.category,leaves)}${d.offset?.label?`<small>${esc(d.offset.label)}</small>`:''}</button>${canApply&&kind==='issues'&&availableOffsetItems(d).length?`<button type="button" data-apply="${esc(d.date)}">申请抵消</button>`:''}`;
+ const category=d=>`<button type="button" data-open-day="${esc(d.date)}">${attendanceCategoryBadge(attendanceOffsetResult(d),leaves)}${d.offset?.label?`<small>${esc(d.offset.label)}</small>`:''}</button>${canApply&&kind==='issues'&&availableOffsetItems(d).length?`<button type="button" data-apply="${esc(d.date)}">申请抵消</button>`:''}`;
  const schedule=kind==='schedule'||kind==='accumulation',headers=schedule?['日期','类别','班次','出差用途','有效实际上班','有效实际下班','当日加班']:['日期','类别','原因','问题','处理结果','审批人'];
  const rows=days.map(d=>{const {on,off,multiple}=punchSummary(d),actual=v=>`${v.actual?`<span class="home-punch-date">${esc(time(v.actual).split(' ')[0])}</span><span class="home-punch-time">${esc(time(v.actual).split(' ').slice(1).join(' '))}</span>`:'—'}<small>${esc(v.status)}${multiple?' · 多段':''}</small>`;
  return [esc(d.date),category(d),...(schedule?[esc(d.shift||'—'),esc((d.purposes||[]).map(a=>a.category||a.status).join('；')||'—'),actual(on),actual(off),d.overtime?.seconds==null?`—<small>${esc(d.overtime?.reason||'无法计算')}</small>`:`${Math.floor(d.overtime.seconds/3600)}小时${Math.floor(d.overtime.seconds%3600/60)}分${d.overtime.excessSeconds>0?`<small>${esc(accumulationExplanation(d.overtime))}</small>`:''}`]:[esc(d.reason),esc([...(d.issues||[]),d.syncError].filter(Boolean).join('；')||'—'),...attendanceProcessingCells(d,esc)])];});

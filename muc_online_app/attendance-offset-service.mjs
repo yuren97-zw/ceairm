@@ -382,10 +382,30 @@ export function createOffsetService({db,clock=Date.now,hasPermission,actionScope
    const historyRows=db.prepare(`select e.*,case when c.item_id=i.id then 1 else 0 end as is_claim,r.created_at as request_created,i.decision,i.effective,i.request_id,i.decided_at,r.status as request_status,coalesce(sp.name,su.name) as assignee_name,coalesce(ap.name,au.name) as approver_name,sd.result_json as day_result from attendance_offset_events e left join attendance_days sd on sd.person_id=e.person_id and sd.work_date=e.work_date left join attendance_offset_claims c on c.event_id=e.id left join attendance_offset_items i on i.event_id=e.id left join attendance_offset_requests r on r.id=i.request_id left join users su on su.id=r.assignee_user_id left join personnel sp on sp.id=su.person_id left join users au on au.id=i.decided_by left join personnel ap on ap.id=au.person_id where e.person_id in (${marks}) and e.work_date>=? and e.work_date<=?`).all(...people.map(p=>p.personId),data.dates[0],data.dates.at(-1));
    const grouped=new Map();for(const row of historyRows){if(!grouped.has(row.id))grouped.set(row.id,[]);grouped.get(row.id).push(row);}
    const rows=[...grouped.values()].map(items=>{const claimed=items.find(i=>i.is_claim);if(claimed)return claimed;items.sort((a,b)=>String(b.request_created||'').localeCompare(String(a.request_created||'')));const latest=items[0];return latest.request_id&&items.filter(i=>i.request_created===latest.request_created&&i.request_id).length>1?{...latest,decision:null,effective:0,request_status:'ambiguous',approver_name:null,assignee_name:null}:latest;});
-   return {...data,offsetWritesEnabled:writesEnabled,...this.versions(),people:people.map(p=>({...p,offsetCounts:Object.fromEntries(['缺卡','早退'].map(category=>[category,rows.filter(r=>r.person_id===p.personId&&r.decision==='approved'&&r.effective&&r.active&&r.kind===(category==='缺卡'?'day_off_missing':'day_off_early')&&((p.days||[]).some(d=>d.date===r.work_date&&d.category===category)||!p.days&&JSON.parse(r.day_result||'{}').category===category)).length])),offsetTotal:rows.filter(r=>r.person_id===p.personId&&r.decision==='approved'&&r.effective&&r.active).length,...(p.days?{days:p.days.map(d=>{
+   const covered=new Map();
+   for(const r of rows)if(r.kind==='day_off_missing'&&r.is_claim&&r.active&&r.effective&&r.decision==='approved'){
+    const key=r.person_id+'|'+r.work_date;
+    if(!covered.has(key))covered.set(key,new Set());
+    covered.get(key).add(Number(r.planned));
+   }
+   const missingFor=(personId,date,points)=>{
+    const original=points.length,handled=covered.get(personId+'|'+date);
+    const offset=handled?points.filter(p=>p.type==='OffDuty'&&handled.has(Number(p.planned))).length:0;
+    return {original,offset,remaining:original-offset};
+   };
+   return {...data,offsetWritesEnabled:writesEnabled,...this.versions(),people:people.map(({missingPointsByDate,...p})=>({...p,...(missingPointsByDate?{missingPunchCounts:Object.entries(missingPointsByDate).reduce((sum,[date,points])=>{
+    const c=missingFor(p.personId,date,points);
+    return {original:sum.original+c.original,offset:sum.offset+c.offset,remaining:sum.remaining+c.remaining};
+   },{original:0,offset:0,remaining:0})}:{}),offsetCounts:Object.fromEntries(['缺卡','早退'].map(category=>[category,rows.filter(r=>r.person_id===p.personId&&r.decision==='approved'&&r.effective&&r.active&&r.kind===(category==='缺卡'?'day_off_missing':'day_off_early')&&((p.days||[]).some(d=>d.date===r.work_date&&d.category===category)||!p.days&&JSON.parse(r.day_result||'{}').category===category)).length])),offsetTotal:rows.filter(r=>r.person_id===p.personId&&r.decision==='approved'&&r.effective&&r.active).length,...(p.days?{days:p.days.map(d=>{
     const relevant=rows.filter(r=>r.person_id===p.personId&&r.work_date===d.date&&(r.active||r.request_id));
     const approved=relevant.filter(r=>r.active&&r.decision==='approved'&&r.effective).length,pending=relevant.filter(r=>r.active&&r.decision==='pending'&&r.request_status==='pending').length;
-    return {...d,offset:{approved,pending,label:offsetDayLabel(d,{approved,pending,eligibleCount:relevant.filter(r=>r.active).length}),items:relevant.map(r=>({eventId:r.id,type:r.kind,requestId:r.request_id,decision:r.decision,effective:r.effective,approverName:r.approver_name,decidedAt:r.decided_at,assigneeName:r.assignee_name,requestStatus:r.request_status,active:r.active,planned:r.planned}))}};
+    const {missingPunchPoints,...day}=d;
+    const missingPunchDetails=missingPunchPoints?.map(point=>{
+     const item=point.type==='OffDuty'&&covered.get(p.personId+'|'+d.date)?.has(Number(point.planned))
+      ?relevant.find(r=>r.kind==='day_off_missing'&&r.is_claim&&r.active&&r.effective&&r.decision==='approved'&&Number(r.planned)===Number(point.planned)):null;
+     return {...point,offset:!!item,approverName:item?.approver_name||null};
+    });
+    return {...day,...(missingPunchPoints?{missingPunchCounts:missingFor(p.personId,d.date,missingPunchPoints),missingPunchDetails}:{}),offset:{approved,pending,label:offsetDayLabel(d,{approved,pending,eligibleCount:relevant.filter(r=>r.active).length}),items:relevant.map(r=>({eventId:r.id,type:r.kind,requestId:r.request_id,decision:r.decision,effective:r.effective,approverName:r.approver_name,decidedAt:r.decided_at,assigneeName:r.assignee_name,requestStatus:r.request_status,active:r.active,planned:r.planned}))}};
    })}:{} )}))};
   },
   transfer(user,id,body,key){

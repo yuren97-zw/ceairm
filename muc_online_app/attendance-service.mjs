@@ -487,7 +487,7 @@ export function createAttendanceService({db,actionScopePredicate,actionScopeHasA
    const days=dates.map(date=>capAttendanceDay(makeDay(date),accumulation.forDate(date))),contextDays=contextDates.map(date=>capAttendanceDay(makeDay(date),accumulation.forDate(date)));
    const counts={};for(const d of days)counts[d.category]=(counts[d.category]||0)+1;
    const computed=days.filter(d=>d.overtime.seconds!==null);
-   return {...p,days,contextDays,counts,overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
+   return {...p,days,contextDays,counts,missingPointsByDate:Object.fromEntries(days.filter(d=>d.missingPunchPoints?.length).map(d=>[d.date,d.missingPunchPoints])),overtimeSeconds:computed.length?computed.reduce((n,d)=>n+d.overtime.seconds,0):null,computedDays:computed.length,uncomputableDays:days.filter(d=>d.overtime.status==='无法计算'&&!['未来日期','未同步'].includes(d.category)).length};
   });
   if(config.approvalPlansEnabled&&permissionCode!=='attendance.export')peopleRows=approvalPlans.decorateAll(peopleRows,dates[0].slice(0,7));
   if(process.env.DEBUG_CLASSIFY||performance.now()-rebuildStarted>500)process.stderr.write(JSON.stringify({type:'slow_attendance_rebuild',detailLevel,durationMs:Number((performance.now()-rebuildStarted).toFixed(1)),cells:peopleRows.length})+"\n");
@@ -500,7 +500,7 @@ export function createAttendanceService({db,actionScopePredicate,actionScopeHasA
   const classifiedAt=performance.now();
   const leaveTypes=leaveCatalog(user);
   const settings=displaySettings(user);
-  const categories=attendanceOrderedCategories([...new Set([...peopleRows.flatMap(p=>[...Object.keys(p.counts),...Object.keys(p.pendingCounts||{})]),...leaveTypes.names])]);
+  const categories=attendanceOrderedCategories([...new Set([...peopleRows.flatMap(p=>[...Object.keys(p.counts),...Object.keys(p.pendingCounts||{}),...(Object.keys(p.missingPointsByDate||{}).length?['缺卡']:[])]),...leaveTypes.names])]);
   const visiblePeople=peopleRows.filter(p=>attendanceMatchesCategories(p,filters.categories));
   const visibleIds=new Set(visiblePeople.map(p=>p.personId));
   const last=visiblePeople.map(p=>updatedAtByPerson.get(p.personId)).filter(Boolean).sort().at(-1)||null;
