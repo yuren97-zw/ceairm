@@ -110,6 +110,11 @@ export function accumulationExplanation(o){
 }
 
 export const missingPunchColumns=[['原始缺卡（次）','original'],['抵消缺卡（次）','offset'],['剩余缺卡（次）','remaining']];
+export const missingPunchTones={
+ original:{background:'#F5E7D2',foreground:'#714514',border:'#C39760'},
+ offset:{background:'#E3F1EA',foreground:'#255D48',border:'#79A891'},
+ remaining:{background:'#F6E1DC',foreground:'#853E32',border:'#CB8B7F'},
+};
 export function attendanceOffsetResult(day){
  const c=day.missingPunchCounts;
  if(!c?.offset)return day.category;

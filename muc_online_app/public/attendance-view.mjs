@@ -1,15 +1,10 @@
-import {accumulationExplanation,missingPunchColumns,attendanceOffsetResult,attendanceRemainingIssueDay} from './attendance-presentation.mjs';
+import {accumulationExplanation,missingPunchColumns,missingPunchTones,attendanceOffsetResult,attendanceRemainingIssueDay} from './attendance-presentation.mjs';
 import {approvalDisplayCount,approvalPlanDot,approvalPlansHtml,approvalDayPlansHtml} from './attendance-approval-plan-view.mjs';
 import {attendanceCategoryAllowed,attendanceCategoryBadge,ensureAttendanceBadgeStyles,attendanceIssueDay,attendanceProcessingCells,attendanceTone,attendanceAbnormal,legalLeaveCategories,punchSummary,attendanceRawStatus,attendanceNeighborDays,attendanceCategorySelection,attendanceMatchesCategories,attendanceLeaveCatalogText,attendanceOrderedCategories} from './attendance-presentation.mjs';
 export const attendanceEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const esc=attendanceEscape;
 const time=v=>v?new Date(v).toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'}):'—';
 const duration=s=>s===null||s===undefined?'—':`${Math.floor(s/3600)}小时${Math.floor(s%3600/60)}分`;
-const missingTones={
- original:{background:'#F5E7D2',foreground:'#714514',border:'#C39760'},
- offset:{background:'#E3F1EA',foreground:'#255D48',border:'#79A891'},
- remaining:{background:'#F6E1DC',foreground:'#853E32',border:'#CB8B7F'},
-};
 const toneStyle=t=>`--att-tone-bg:${t.background};--att-tone-fg:${t.foreground};--att-tone-border:${t.border||t.background}`;
 const reasonStatusText={ok:'已读取',empty:'事由为空',field_missing:'未找到指定事由字段',ambiguous:'事由字段不唯一，待核实',unsupported:'事由字段格式待适配',permission_denied:'事由读取权限不足',detail_missing:'事由尚未读取',stale:'保留上次事由，更新未完成'};
 export function attendanceDirectoryExcludedHtml(rows){
@@ -143,7 +138,7 @@ export function mountAttendanceView(host,data,options={}){
    const narrowColumn=leaveColumnsExpanded||!firstZeroLeave?-1:columns.findIndex(column=>column.collapsed)+2;
    const headings=columns.map(({label,key,toggle,collapsed,accumulation})=>{
     if(collapsed)return toggle;
-    const tone=key?missingTones[key]:attendanceTone(label,leaves);
+    const tone=key?missingPunchTones[key]:attendanceTone(label,leaves);
     const title=key||!accumulation&&ps.some(p=>countFor(p,label)>0)?`<span class="att-positive-heading" style="${toneStyle(tone)}">${esc(label)}</span>`:esc(label);
     return toggle?`${title}<br>${toggle}`:title;
    });
@@ -152,12 +147,12 @@ export function mountAttendanceView(host,data,options={}){
     if(accumulation)return duration(p.overtimeSeconds);
     const count=key?p.missingPunchCounts?.[key]:countFor(p,label);
     if(count==null)return '—';
-    return `<button type="button" class="att-link ${count>0?'att-count-positive':''}" style="${toneStyle(key?missingTones[key]:attendanceTone(label,leaves))}" ${key?`data-missing-count="${esc(p.personId)}|${key}" aria-label="${esc(label)}：${count}"`:`data-count="${esc(p.personId)}|${esc(label)}"`}>${count}${key?'':approvalPlanDot(p,label)+(p.offsetCounts?.[label]?`<small>抵${p.offsetCounts[label]}项</small>`:'')}</button>`;
+    return `<button type="button" class="att-link ${count>0?'att-count-positive':''}" style="${toneStyle(key?missingPunchTones[key]:attendanceTone(label,leaves))}" ${key?`data-missing-count="${esc(p.personId)}|${key}" aria-label="${esc(label)}：${count}"`:`data-count="${esc(p.personId)}|${esc(label)}"`}>${count}${key?'':approvalPlanDot(p,label)+(p.offsetCounts?.[label]?`<small>抵${p.offsetCounts[label]}项</small>`:'')}</button>`;
    }),p.dayCount??p.days.length,`${p.computedDays}／${p.uncomputableDays}`]),{compactIdentity:true,narrowColumn});
   }else if(ui.tab==='matrix')content.innerHTML=rowsTable(['姓名／工号',...data.dates.map(d=>`${Number(d.slice(8))}<small>${new Date(d+'T00:00:00Z').toLocaleDateString('zh-CN',{weekday:'short',timeZone:'UTC'})}</small>`)],paged.map(p=>[personButton(p),...p.days.map(d=>detailButton(p,d))]),{compactIdentity:true});
   else if(ui.tab==='person'){
    const p=ps.find(p=>p.personId===ui.personId)||ps[0];
-   content.innerHTML=`<label class="att-person-select"><select data-person-select aria-label="选择人员">${ps.map(v=>`<option value="${esc(v.personId)}" ${v.personId===p?.personId?'selected':''}>${esc(v.name)} / ${esc(v.employeeNo)}</option>`).join('')}</select></label>`+(p?rowsTable(['日期','类别','班次','出差用途','计划上班','有效实际上班','计划下班','有效实际下班','当日加班','计算状态'],p.days.map(d=>[d.date,detailButton(p,d),esc(d.shift||'—'),esc(d.purposes.map(a=>a.category||a.status).join('；')||'—'),...summaryCells(d),duration(d.overtime.seconds),esc(d.overtime.status)])):'<p class="att-empty">暂无人员</p>');
+   content.innerHTML=p?rowsTable(['日期','类别','班次','出差用途','计划上班','有效实际上班','计划下班','有效实际下班','当日加班','计算状态'],p.days.map(d=>[d.date,detailButton(p,d),esc(d.shift||'—'),esc(d.purposes.map(a=>a.category||a.status).join('；')||'—'),...summaryCells(d),duration(d.overtime.seconds),esc(d.overtime.status)])):'<p class="att-empty">暂无人员</p>';
   }else if(ui.tab==='issues')content.innerHTML=`<button type="button" data-toggle-resolved aria-pressed="${ui.showResolved}">${ui.showResolved?'仅看剩余异常':'包括已抵消'}</button>`+rowsTable(['姓名／工号','日期','类别','原因','问题','处理结果','审批人'],issues.slice((ui.page-1)*100,ui.page*100).map(({p,d})=>[personButton(p),d.date,detailButton(p,d),esc(d.reason),esc([...d.issues,d.syncError].filter(Boolean).join('；')),...attendanceProcessingCells(d,esc)]));
   else if(ui.tab==='sync'&&!status)content.innerHTML=`<p role="status">${esc(options.statusError||'正在读取同步状态…')}</p>`;
   else if(ui.tab==='sync'){
@@ -283,7 +278,6 @@ export function mountAttendanceView(host,data,options={}){
   if(el.dataset.filter==='query')return;
   if(el.dataset.filter){ui[el.dataset.filter]=el.value;ui.personId='';ui.page=1;render({resultsOnly:true});return;}
   if(el.dataset.column){el.checked?ui.columns.add(el.dataset.column):ui.columns.delete(el.dataset.column);ui.page=1;render({preserveTableScroll:true});return;}
-  if(el.hasAttribute('data-person-select')){ui.personId=el.value;render();}
  };
  const applyQuery=()=>{clearTimeout(queryTimer);queryTimer=null;if(destroyed||composing)return;const value=ui.queryDraft;if(value===ui.query)return;ui.query=value;ui.personId='';ui.page=1;render({resultsOnly:true});};
  const onInput=event=>{if(event.target.dataset.filter!=='query')return;ui.queryDraft=event.target.value;clearTimeout(queryTimer);if(composing||event.isComposing)return;if(!ui.queryDraft)applyQuery();else queryTimer=setTimeout(applyQuery,300);};

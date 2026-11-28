@@ -2,7 +2,13 @@ import {excelApprovalProjection} from './attendance-approval-reasons.mjs';
 import fs from 'node:fs';
 import {deflateRawSync} from 'node:zlib';
 import {durationText} from './attendance-rules.mjs';
-import {missingPunchColumns,attendanceOffsetResult,attendanceRemainingIssueDay,attendanceTones,attendanceTone,attendanceAbnormal,legalLeaveCategories,punchSummary,attendanceRawStatus,attendanceLeaveCatalogText,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+import {missingPunchColumns,missingPunchTones,attendanceOffsetResult,attendanceRemainingIssueDay,attendanceTones,attendanceTone,attendanceAbnormal,legalLeaveCategories,punchSummary,attendanceRawStatus,attendanceLeaveCatalogText,attendanceOrderedCategories} from './public/attendance-presentation.mjs';
+const offsetTotalLabel='全部有效抵消（项）';
+const missingPunchKeys=new Map(missingPunchColumns);
+const offsetSummaryTones=new Map([
+ ...missingPunchColumns.map(([label,key])=>[label,missingPunchTones[key]]),
+ [offsetTotalLabel,{background:'#E9E1F5',foreground:'#574273'}]
+]);
 const xml=v=>String(v??'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const column=n=>{let s='';for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
 const local=v=>v?new Date(v).toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'}):'';
@@ -17,8 +23,20 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
  const {people,dates}=excelApprovalProjection(snapshot);
  const categories=attendanceOrderedCategories(snapshot.categories);
  const withOffsets=snapshot.offsetVersion!==undefined||people.some(p=>p.days.some(d=>d.offset));
- const summaryColumns=categories.filter(c=>!withOffsets||c!=='缺卡').flatMap(c=>withOffsets&&c==='早退'?[c,c+'已抵消（项）']:[c]);
- const summary=[['姓名','工号','部门','班组',...summaryColumns,...(withOffsets?[...missingPunchColumns.map(([label])=>label),'全部有效抵消（项）']:[]),'天数合计','累计分钟','累计小时','累计时长','已计算天数','无法计算天数'],...people.map(p=>[p.name,p.employeeNo,p.department,p.team,...summaryColumns.map(c=>c.endsWith('已抵消（项）')?p.offsetCounts?.[c.replace('已抵消（项）','')]||0:p.counts[c]||0),...(withOffsets?[...missingPunchColumns.map(([,key])=>p.missingPunchCounts?.[key]??null),p.offsetTotal||0]:[]),p.days.length,p.overtimeSeconds===null?null:p.overtimeSeconds/60,p.overtimeSeconds===null?null:p.overtimeSeconds/3600,{duration:p.overtimeSeconds},p.computedDays,p.uncomputableDays])];
+ const summaryColumns=withOffsets
+  ?attendanceOrderedCategories([...categories,'待核对']).flatMap(c=>{
+   if(c==='缺卡')return [];
+   if(c==='待核对')return [...(categories.includes(c)?[c]:[]),...offsetSummaryTones.keys()];
+   return c==='早退'?[c,c+'已抵消（项）']:[c];
+  })
+  :categories;
+ const summary=[['姓名','工号','部门','班组',...summaryColumns,'天数合计','累计分钟','累计小时','累计时长','已计算天数','无法计算天数'],...people.map(p=>[p.name,p.employeeNo,p.department,p.team,...summaryColumns.map(c=>{
+  const key=missingPunchKeys.get(c);
+  if(key)return p.missingPunchCounts?.[key]??null;
+  if(c===offsetTotalLabel)return p.offsetTotal||0;
+  if(c.endsWith('已抵消（项）'))return p.offsetCounts?.[c.replace('已抵消（项）','')]||0;
+  return p.counts[c]||0;
+ }),p.days.length,p.overtimeSeconds===null?null:p.overtimeSeconds/60,p.overtimeSeconds===null?null:p.overtimeSeconds/3600,{duration:p.overtimeSeconds},p.computedDays,p.uncomputableDays])];
  const matrix=[['姓名','工号','班组',...dates],...people.map(p=>[p.name,p.employeeNo,p.team,...p.days.map(d=>attendanceOffsetResult(d)+(d.offset?.label&&!d.missingPunchCounts?.offset?'\n'+d.offset.label+(d.offset.approved?' '+d.offset.approved+'项':''):''))])];
  const detail=[['姓名','工号','部门','班组','工作日','原始分类',...(withOffsets?['抵消后结果','内部抵消状态','有效抵消项数','抵消事项依据']:[]),'班次','出差用途','出差事由','命中关键词','审批实例ID','审批有效期间','分类依据','问题','源同步时间','规则版本','计划上班','有效实际上班','上班状态','计划下班','有效实际下班','下班状态','全部上下班打卡']];
  const overtime=[['姓名','工号','工作日','计划下班','有效实际下班','秒','分钟','小时','累计格式时长','计算状态','计算依据','计划上班','有效实际上班','上班状态','下班状态','原始差额秒','单次上限秒','超出未计入秒','上限规则版本']];
@@ -43,8 +61,8 @@ export function exportTables(snapshot,{changes=[],runs=[]}={}){
 }
 export function exportXlsx(snapshot,options){
  snapshot={...snapshot,categories:attendanceOrderedCategories(snapshot.categories)};
- const tones=Object.values(attendanceTones),leaves=legalLeaveCategories(snapshot);
- const toneIndex=category=>3+tones.findIndex(t=>t.key===attendanceTone(category,leaves).key);
+ const tones=[...Object.values(attendanceTones),...offsetSummaryTones.values()],leaves=legalLeaveCategories(snapshot);
+ const toneIndex=category=>3+tones.indexOf(attendanceTone(category,leaves));
  const tables=options?.tables||exportTables(snapshot,options),ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main',entries=[];
  entries.push(['[Content_Types].xml',`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${tables.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`]);
  entries.push(['_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>']);
@@ -56,7 +74,11 @@ export function exportXlsx(snapshot,options){
   const cells=rows.map((row,r)=>`<row r="${r+1}"${r===0?' ht="42" customHeight="1"':''}>${row.map((value,c)=>{let v=value,style=r===0?1:0;
     if(r===0&&name==='人员汇总'&&snapshot.categories.includes(String(rows[0][c]))&&attendanceAbnormal.includes(rows[0][c]))style=toneIndex(rows[0][c]);
     if(r>0){
-     if(name==='人员汇总'&&snapshot.categories.includes(String(rows[0][c]))&&Number(v)>0)style=toneIndex(rows[0][c]);
+     if(name==='人员汇总'&&Number(v)>0){
+      const label=rows[0][c],offsetTone=offsetSummaryTones.get(label);
+      if(offsetTone)style=3+tones.indexOf(offsetTone);
+      else if(snapshot.categories.includes(String(label)))style=toneIndex(label);
+     }
      if(name==='逐日明细（横版）'&&c>=3)style=toneIndex(snapshot.people[r-1]?.days[c-3]?attendanceOffsetResult(snapshot.people[r-1].days[c-3]):v);
      if(name==='逐日明细'&&['原始分类','抵消后结果'].includes(rows[0][c])||name==='异常清单'&&rows[0][c]==='类别')style=toneIndex(v);
     }

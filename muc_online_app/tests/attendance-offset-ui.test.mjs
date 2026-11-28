@@ -21,10 +21,19 @@ test('LAN phone preview generates secure operation IDs without randomUUID and fa
  assert.equal(offsetOperationId({randomUUID:()=> 'native-id'}),'native-id');assert.throws(()=>offsetOperationId({}),/缺少安全随机数/);
 });
 
-test('unified table preserves six/seven columns, paired timestamps and employee apply entry',async()=>{
+test('unified table preserves four/seven columns, paired timestamps and employee apply entry',async()=>{
  const {homeAttendanceTable}=await import('../public/attendance-offset-ui.mjs');const d={date:'2026-11-01',category:'缺卡',reason:'原始原因',issues:['问题'],purposes:[{category:'培训'}],shift:'白班',overtime:{seconds:0},eligibility:{items:[{eventId:'x'}]},punchDetails:[{type:'OnDuty',planned:1793493000000,actual:1793493000000,status:'有效打卡'}]};
- const issues=homeAttendanceTable([d],'issues',{canApply:true});assert.equal((issues.match(/<th>/g)||[]).length,6);assert.match(issues,/处理结果/);assert.match(issues,/审批人/);assert.match(issues,/data-apply/);assert.match(issues,/data-open-day="2026-11-01"/);const schedule=homeAttendanceTable([d],'schedule');assert.equal((schedule.match(/<th>/g)||[]).length,7);assert.match(schedule,/有效实际上班/);assert.match(schedule,/0小时0分/);const accumulation=homeAttendanceTable([d],'accumulation');assert.equal((accumulation.match(/<th>/g)||[]).length,7);assert.match(accumulation,/home-att-fit/);assert.match(accumulation,/aria-label="考勤表格"/);assert.doesNotMatch(accumulation,/可横向滚动/);assert.match(schedule,/home-att-fit/);assert.doesNotMatch(schedule,/可横向滚动/);assert.match(accumulation,/data-open-day="2026-11-01"/);assert.match(homeAttendanceTable([],'accumulation'),/本月暂无记录/);
+ const issues=homeAttendanceTable([d],'issues',{canApply:true});assert.equal((issues.match(/<th>/g)||[]).length,4);assert.match(issues,/<th>原始原因<\/th>/);assert.doesNotMatch(issues,/处理结果|审批人/);assert.match(issues,/data-apply/);assert.match(issues,/data-open-day="2026-11-01"/);const schedule=homeAttendanceTable([d],'schedule');assert.equal((schedule.match(/<th>/g)||[]).length,7);assert.match(schedule,/有效实际上班/);assert.match(schedule,/0小时0分/);const accumulation=homeAttendanceTable([d],'accumulation');assert.equal((accumulation.match(/<th>/g)||[]).length,7);assert.match(accumulation,/home-att-fit/);assert.match(accumulation,/aria-label="考勤表格"/);assert.doesNotMatch(accumulation,/可横向滚动/);assert.match(schedule,/home-att-fit/);assert.doesNotMatch(schedule,/可横向滚动/);assert.match(accumulation,/data-open-day="2026-11-01"/);assert.match(homeAttendanceTable([],'accumulation'),/本月暂无记录/);
 });
+test('home exceptions show a resolved missing punch once and keep its original reason',async()=>{
+ const {homeAttendanceTable}=await import('../public/attendance-offset-ui.mjs');
+ const d={date:'2026-11-01',category:'缺卡',reason:'存在未被审批解释的缺卡',missingPunchCounts:{original:1,offset:1,remaining:0},offset:{label:'已抵消',items:[{eventId:'x',decision:'approved',effective:1,approverName:'测试审批人'}]},eligibility:{items:[{eventId:'x'}]}};
+ const html=homeAttendanceTable([d],'issues',{canApply:true});
+ assert.match(html,/>缺卡已抵消<\/span><\/button>/);
+ assert.match(html,/<td>存在未被审批解释的缺卡<\/td>/);
+ assert.doesNotMatch(html,/<small>已抵消<\/small>|测试审批人|data-apply/);
+});
+
 test('unified exception predicate and processing distinguish valid approvals, pending, partial, withdrawal and invalidation',async()=>{
  const {attendanceIssueDay,attendanceProcessingLines}=await import('../public/attendance-presentation.mjs');for(const category of ['迟到','严重迟到','早退','旷工迟到','旷工','缺卡','待核对'])assert.equal(attendanceIssueDay({category}),true);for(const category of ['未来日期','未同步','尚未到下班时间','病假','白班'])assert.equal(attendanceIssueDay({category}),false);
  const item={requestId:'r',decision:'pending',requestStatus:'pending',assigneeName:'负责人'};assert.equal(attendanceProcessingLines({offset:{items:[item]}})[0].approver,'待审批：负责人');assert.equal(attendanceProcessingLines({offset:{items:[{...item,requestStatus:'withdrawn'}]}})[0].result,'已撤回');assert.equal(attendanceProcessingLines({offset:{label:'部分已抵消',items:[{...item,decision:'approved',effective:1,active:1,approverName:'审批人'}]}})[0].result,'部分已抵消');assert.equal(attendanceProcessingLines({offset:{items:[{...item,decision:'approved',effective:0}]}})[0].result,'抵消失效');
