@@ -475,3 +475,25 @@ test('an accounting error rolls back all grants and resumes the same committed s
  assert.equal(service.balance(employee).available,1);
  db.close();
 });
+
+test('confirmed missing punches are deduplicated and only an effective matching down-punch offsets one point',async()=>{
+ const f=fixture(),{service,db,employee,leader}=f,{ids,a}=f.setup();
+ db.exec('create table attendance_days(person_id text,work_date text,result_json text);create table users(id text,person_id text,name text)');
+ const req=service.submit(employee,{events:[ids[0]],note:'核对测试'},'missing-count-submit');
+ const detail=service.detail(leader,req.id);
+ service.decide(leader,req.id,{version:detail.version,decisions:[{id:detail.items[0].id,decision:'approved'}]},'missing-count-approve');
+ const {classifyDay}=await import('../attendance-rules.mjs');
+ const date=a.date,now=Date.parse(date+'T23:59:59+08:00');
+ const input={...a,points:[...a.points.slice(0,2),a.points[0]]};
+ const day=classifyDay(input,now,now);
+ assert.equal(day.missingPunchPoints.length,2);
+ const person={personId:'p',missingPointsByDate:{[date]:day.missingPunchPoints}};
+ const data=service.decorate({dates:[date],people:[{...person,days:[day]}]});
+ assert.deepEqual(data.people[0].missingPunchCounts,{original:2,offset:1,remaining:1});
+ assert.deepEqual(data.people[0].days[0].missingPunchCounts,data.people[0].missingPunchCounts);
+ assert.deepEqual(data.people[0].days[0].missingPunchDetails.map(({type,offset})=>[type,offset]),[['OnDuty',false],['OffDuty',true]]);
+ assert.deepEqual(service.decorate({dates:[date],people:[person]}).people[0].missingPunchCounts,data.people[0].missingPunchCounts);
+ assert.deepEqual(classifyDay(input,now,0).missingPunchPoints,[]);
+ assert.deepEqual(classifyDay({...input,scheduleConflict:true},now,now).missingPunchPoints,[]);
+ db.close();
+});

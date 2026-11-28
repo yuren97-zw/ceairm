@@ -24,6 +24,8 @@ leavePalette.forEach(([foreground,background],i)=>{attendanceTones['leave'+i]={k
 export const attendanceAbnormal=['迟到','严重迟到','早退','旷工迟到','旷工','缺卡','待核对'];
 export function legalLeaveCategories(data){return [...new Set([...(data.leaveTypes?.names||[]),...data.people.flatMap(p=>(p.days||[]).flatMap(d=>(d.input?.approvals||[]).filter(a=>a.kind==='请假'&&a.approved&&!a.revoked).map(a=>a.subType||'请假')))])].filter(attendanceCategoryAllowed);}
 export function attendanceTone(category,leaves=[]){
+ if(category==='缺卡已抵消')return attendanceTone('休息',leaves);
+ if(category==='部分抵消 · 仍有缺卡')return attendanceTone('缺卡',leaves);
  const key=({'白班':'day','夜班':'night','24小时班':'night','休息':'rest','培训':'training','派驻':'deployed','出差':'trip','外出':'outing','跟班':'outing','迟到':'late','严重迟到':'seriousLate','旷工迟到':'absenteeismLate','早退':'early','缺卡':'missing','旷工':'absent','待核对':'review'})[category];
  if(key)return attendanceTones[key];
  if(leaves.includes(category)){let hash=0;for(const c of category)hash=(hash*31+c.codePointAt(0))>>>0;return attendanceTones['leave'+hash%leavePalette.length];}
@@ -74,7 +76,7 @@ export function attendanceCategorySelection(categories,selected){
  return chosen.length&&chosen.length<categories.length?chosen:[];
 }
 export function attendanceMatchesCategories(person,categories=[]){
- return !categories.length||categories.some(c=>((person.counts?.[c]??0)>0||(person.pendingCounts?.[c]??0)>0));
+ return !categories.length||categories.some(c=>((person.counts?.[c]??0)>0||(person.pendingCounts?.[c]??0)>0||(c==='缺卡'&&(person.missingPunchCounts?.original??Object.values(person.missingPointsByDate||{}).reduce((n,points)=>n+points.length,0))>0)));
 }
 
 export function attendanceLeaveCatalogText(catalog){
@@ -106,3 +108,17 @@ export function accumulationExplanation(o){
  const fmt=s=>s==null?'—':`${Math.floor(s/3600)}小时${Math.floor(s%3600/60)}分${s%60}秒`;
  return `原始差额：${fmt(o.rawSeconds)}；计入累计：${fmt(o.seconds)}；适用上限：${fmt(o.capSeconds)}；超出未计入：${fmt(o.excessSeconds)}`;
 }
+
+export const missingPunchColumns=[['原始缺卡（次）','original'],['抵消缺卡（次）','offset'],['剩余缺卡（次）','remaining']];
+export function attendanceOffsetResult(day){
+ const c=day.missingPunchCounts;
+ if(!c?.offset)return day.category;
+ if(c.remaining)return '部分抵消 · 仍有缺卡';
+ if(day.category!=='缺卡')return day.category;
+ const abnormal=new Set((day.punchDetails||[]).filter(p=>p.actual&&p.status==='有效打卡').flatMap(p=>p.rawStatus||[]));
+ const earlyCovered=new Set((day.offset?.items||[]).filter(i=>i.type==='day_off_early'&&i.active&&i.effective&&i.decision==='approved').map(i=>Number(i.planned)));
+ const early=(day.punchDetails||[]).some(p=>p.actual&&p.status==='有效打卡'&&p.rawStatus?.includes('Early')&&(p.type!=='OffDuty'||!earlyCovered.has(Number(p.planned))));
+ const remaining=[...['Late','SeriousLate','Absenteeism'].filter(s=>abnormal.has(s)).map(attendanceRawStatus),...(early?['早退']:[])];
+ return remaining.length?remaining.join('／'):'缺卡已抵消';
+}
+export const attendanceRemainingIssueDay=day=>day.missingPunchCounts?.remaining>0||attendanceIssueDay(day)&&!(attendanceOffsetResult(day)==='缺卡已抵消'&&!day.syncError&&!(day.issues||[]).some(s=>s!=='计划打卡点未被有效打卡或审批解释'));

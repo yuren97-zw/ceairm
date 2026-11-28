@@ -1,6 +1,6 @@
 import {attendanceCategoryAllowed} from './public/attendance-presentation.mjs';
 // Canonical attendance model: timestamps are milliseconds, work dates are Asia/Shanghai.
-export const RULE_VERSION = 'attendance-api-1.5';
+export const RULE_VERSION = 'attendance-api-1.7';
 const workDateFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai'});
 export const dayOf=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'Invalid Date':workDateFormatter.format(date);};
 export const stamp = value => {
@@ -23,8 +23,12 @@ const unique = values => [...new Set(values)];
 export function tripPurpose(reason, detailStatus = 'ok') {
   if (detailStatus !== 'ok') return {category:null, status:detailStatus, keywords:[], reason:reason ?? null};
   if (typeof reason !== 'string' || !reason.trim()) return {category:null,status:'reason_missing',keywords:[],reason:reason??null};
-  const keywords = ['培训','派驻'].filter(k => reason.includes(k));
-  return {category:keywords.length===1?keywords[0]:keywords.length===0?'出差':null, status:keywords.length===2?'conflict':'ok', keywords, reason};
+  const trainingKeywords = ['培训','实作','实做'].filter(k => reason.includes(k));
+  const deployed = reason.includes('派驻');
+  const keywords = deployed ? [...trainingKeywords,'派驻'] : trainingKeywords;
+  const training = trainingKeywords.length > 0;
+  const conflict = training && deployed;
+  return {category:conflict?null:training?'培训':deployed?'派驻':'出差', status:conflict?'conflict':'ok', keywords, reason};
 }
 export function plannedShift(points=[]){
  const on=points.filter(p=>p.type==='OnDuty'&&p.planned),off=points.filter(p=>p.type==='OffDuty'&&p.planned);
@@ -116,6 +120,21 @@ export function classifyDay(input, now=Date.now(), sourceReadAt=null, context={}
       displayed.set(key,row);return [row];
     });
   }
+  const missingPunchPoints=[];
+  if(input.covered&&!input.identityIssue&&!input.scheduleConflict&&!input.rest&&date<=dayOf(now)){
+    const queriedAt=stamp(sourceReadAt),start=Date.parse(date+'T00:00:00+08:00'),end=start+86400000;
+    const excused=approvals.filter(a=>a.approved&&!a.revoked&&['请假','外出','出差'].includes(a.kind)&&a.start&&a.end&&a.start<end&&a.end>start);
+    const pointsByTime=new Map();
+    for(const p of points){
+      if(!['OnDuty','OffDuty'].includes(p.type)||!p.planned||p.planned>now||!queriedAt||p.planned>queriedAt||excused.some(a=>a.start<=p.planned&&a.end>=p.planned))continue;
+      const key=p.type+'|'+p.planned;
+      if(!pointsByTime.has(key))pointsByTime.set(key,{type:p.type,planned:p.planned,unresolved:false});
+      const match=matchPoint(p,punches);
+      if(match.actual||match.conflict)pointsByTime.get(key).unresolved=true;
+    }
+    for(const {type,planned,unresolved} of pointsByTime.values())if(!unresolved)missingPunchPoints.push({type,planned});
+  }
+  result.missingPunchPoints=missingPunchPoints;
   const finish=(category,reason)=>({...result,category:attendanceCategoryAllowed(category)?category:'待核对',reason:attendanceCategoryAllowed(category)?reason:'关联已忽略的假种，不归入该类别；原始依据保留，考勤待核对'});
   if (date>dayOf(now)) return finish('未来日期','日期尚未发生');
   if (!input.covered) return finish('未同步',input.syncError || '接口尚未成功完整覆盖该日');

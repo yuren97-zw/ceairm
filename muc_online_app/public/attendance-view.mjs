@@ -1,10 +1,15 @@
-import {accumulationExplanation} from './attendance-presentation.mjs';
-import {approvalDisplayCount,approvalPlanDot,approvalPlansHtml} from './attendance-approval-plan-view.mjs';
+import {accumulationExplanation,missingPunchColumns,attendanceOffsetResult,attendanceRemainingIssueDay} from './attendance-presentation.mjs';
+import {approvalDisplayCount,approvalPlanDot,approvalPlansHtml,approvalDayPlansHtml} from './attendance-approval-plan-view.mjs';
 import {attendanceCategoryAllowed,attendanceCategoryBadge,ensureAttendanceBadgeStyles,attendanceIssueDay,attendanceProcessingCells,attendanceTone,attendanceAbnormal,legalLeaveCategories,punchSummary,attendanceRawStatus,attendanceNeighborDays,attendanceCategorySelection,attendanceMatchesCategories,attendanceLeaveCatalogText,attendanceOrderedCategories} from './attendance-presentation.mjs';
 export const attendanceEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const esc=attendanceEscape;
 const time=v=>v?new Date(v).toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'}):'—';
 const duration=s=>s===null||s===undefined?'—':`${Math.floor(s/3600)}小时${Math.floor(s%3600/60)}分`;
+const missingTones={
+ original:{background:'#F5E7D2',foreground:'#714514',border:'#C39760'},
+ offset:{background:'#E3F1EA',foreground:'#255D48',border:'#79A891'},
+ remaining:{background:'#F6E1DC',foreground:'#853E32',border:'#CB8B7F'},
+};
 const toneStyle=t=>`--att-tone-bg:${t.background};--att-tone-fg:${t.foreground};--att-tone-border:${t.border||t.background}`;
 const reasonStatusText={ok:'已读取',empty:'事由为空',field_missing:'未找到指定事由字段',ambiguous:'事由字段不唯一，待核实',unsupported:'事由字段格式待适配',permission_denied:'事由读取权限不足',detail_missing:'事由尚未读取',stale:'保留上次事由，更新未完成'};
 export function attendanceDirectoryExcludedHtml(rows){
@@ -17,12 +22,17 @@ export function attendanceApprovalReasonHtml(a){
  const label=a.kind==='外出'&&a.reason?.includes('跟班')?'跟班（外出审批）':a.subType||a.kind;
  return `<div class="att-note"><strong>${esc(label)}</strong> · ${a.revoked?'已撤销':a.approved?'已批准':'未生效'}<small>${esc(time(a.start))} 至 ${esc(time(a.end))}</small><p class="att-pre">${esc(a.reason??'未取得事由')}</p><small>${esc(reasonStatusText[a.reasonStatus]||'事由尚未读取')}</small></div>`;
 }
+function tripPurposeDetailsHtml(purposes,badge){
+ const statuses={conflict:'培训与派驻用途冲突',reason_missing:'事由为空或未找到'};
+ return '<h3>出差事由</h3>'+((purposes||[]).map(p=>`<section class="att-note att-approval-summary">${badge(p.category||'待核对')}${p.status!=='ok'?` <span class="att-warning">${esc(statuses[p.status]||reasonStatusText[p.status]||'事由待核对')}</span>`:''}<p class="att-approval-text">${esc(p.reason?.trim()||'未取得事由')}</p><small>${esc(time(p.start))} 至 ${esc(time(p.end))}</small><details><summary>判定依据</summary><small>审批编号 ${esc(p.id||'—')} · 命中关键词 ${esc(p.keywords?.join('、')||'无')}</small></details></section>`).join('')||'<p class="att-detail-note">无关联有效出差审批</p>');
+}
 export function mountAttendanceView(host,data,options={}){
  ensureAttendanceBadgeStyles(host.ownerDocument);
  host.addEventListener('click',offsetSettingsClick);
  function offsetSettingsClick(event){if(event.target.closest('[data-offset-settings]'))options.onOffsetSettings?.();}
  let savedDisplay=data.displaySettings||{pageSize:20};
- let ui={pageSize:savedDisplay.pageSize,displayMessage:'',tab:options.canStats===false?'matrix':'summary',query:'',department:'',team:'',personId:'',page:1,columns:new Set(data.categories),columnsOpen:false,queryDraft:'',...(options.initialState||{})},destroyed=false,queryTimer=null,composing=false,restoreQuery=options.initialState?.focusQuery||false,scrollLock=null;
+ let ui={pageSize:savedDisplay.pageSize,displayMessage:'',showResolved:false,tab:options.canStats===false?'matrix':'summary',query:'',department:'',team:'',personId:'',page:1,columns:new Set(data.categories),columnsOpen:false,queryDraft:'',...(options.initialState||{})},destroyed=false,queryTimer=null,composing=false,restoreQuery=options.initialState?.focusQuery||false,scrollLock=null;
+ let leaveColumnsExpanded=ui.leaveFoldMonth===data.month&&ui.leaveColumnsExpanded===true;
  delete ui.categoryOrder;delete ui.ordering;
  let leaveView=null,renderedTab=null;
  const guardedDialogs=new WeakSet();
@@ -35,15 +45,35 @@ export function mountAttendanceView(host,data,options={}){
  const badge=c=>attendanceCategoryBadge(c,leaves);
  ui.queryDraft=ui.queryDraft||ui.query;
  const legend='<div class="att-legend" aria-label="考勤颜色说明"><span class="att-legend-normal">正常出勤／休息／合法审批</span><span class="att-legend-abnormal">异常／待核对</span><span class="att-legend-neutral">未同步／无记录／未到时</span></div>';
+ const punchHeaders=['日期','类别','计划上班','有效实际上班','计划下班','有效实际下班','依据'];
  const summaryCells=d=>{const {on,off,multiple}=punchSummary(d);return [esc(time(on.planned)),`${esc(time(on.actual))}<small>${esc(on.status)}</small>`,esc(time(off.planned)),`${esc(time(off.actual))}<small>${esc(off.status)}${multiple?' · 多段，详情查看全部':''}</small>`];};
+ const missingPunchCells=(day,point)=>{
+  const plans=new Map();
+  for(const p of day.punchDetails||[]){
+   if(!p.planned||p.status==='未配对'||!['OnDuty','OffDuty'].includes(p.type))continue;
+   const key=p.type+'|'+p.planned;
+   if(!plans.has(key))plans.set(key,p);
+   else if(plans.get(key).actual!==p.actual)plans.set(key,{...p,actual:null,status:'配对冲突'});
+  }
+  const selected={...point,actual:null,status:'缺卡'};
+  plans.set(point.type+'|'+point.planned,selected);
+  const ordered=[...plans.values()].sort((a,b)=>a.planned-b.planned);
+  const index=ordered.indexOf(selected),isOn=point.type==='OnDuty';
+  const neighbor=ordered[index+(isOn?1:-1)];
+  const paired=neighbor&&neighbor.type!==point.type&&(isOn?neighbor.planned>point.planned:neighbor.planned<point.planned)?neighbor:null;
+  return (isOn?[selected,paired]:[paired,selected]).flatMap(p=>[esc(time(p?.planned)),p?`${esc(time(p.actual))}<small>${esc(p.status)}</small>`:'—']);
+ };
  if(options.canStats===false&&ui.tab==='summary')ui.tab='matrix';
  const activeCategories=()=>ui.tab==='summary'?attendanceCategorySelection(data.categories,ui.columns):[];
  const filtered=()=>data.people.filter(p=>(!ui.query||[p.name,p.employeeNo].some(v=>String(v).toLowerCase().includes(ui.query.toLowerCase())))&&(!ui.department||p.department===ui.department)&&(!ui.team||p.team===ui.team)&&attendanceMatchesCategories(p,activeCategories()));
  const select=(name,items,value,label)=>`<label><span class="att-sr-only">${label}</span><select data-filter="${name}"><option value="">${label}：全部</option>${items.map(v=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(v)}</option>`).join('')}</select></label>`;
- function rowsTable(headers,rows,{rowAttributes=()=>''}={}){return `<div class="att-table"><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map((r,index)=>`<tr${rowAttributes(index)}>${r.map(c=>`<td>${c??''}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}" class="att-empty">当前条件没有数据</td></tr>`}</tbody></table></div>`;}
+ function rowsTable(headers,rows,{rowAttributes=()=>'',compactIdentity=false,narrowColumn=-1}={}){
+  const cellClass=index=>index===narrowColumn?' class="att-folded-leave-column"':'';
+  return `<div class="att-table${compactIdentity?' att-compact-identity':''}"><table><thead><tr>${headers.map((h,index)=>`<th${cellClass(index)}>${h}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map((r,index)=>`<tr${rowAttributes(index)}>${r.map((c,column)=>`<td${cellClass(column)}>${c??''}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}" class="att-empty">当前条件没有数据</td></tr>`}</tbody></table></div>`;
+ }
  function personButton(p){return `<button class="att-link" data-person="${esc(p.personId)}">${esc(p.name)}</button><small>${esc(p.employeeNo)}</small>`;}
- function detailButton(p,d){return `<button class="att-cell" data-day="${esc(p.personId)}|${d.date}" title="${esc(d.reason)}">${badge(d.category)}${d.offset?.label?`<small>${esc(d.offset.label)}${d.offset.approved?`（${d.offset.approved}项）`:""}</small>`:""}${d.pendingCategories?.length?`<small class="att-plan-pending">${esc(d.pendingCategories.join('／'))} · 待当天复核${d.approvalConflict?' · 类别重叠':''}</small>`:''}${d.stale?'<small>保留上次数据</small>':''}</button>`;}
- const issueRows=ps=>ps.flatMap(p=>(p.days||[]).filter(attendanceIssueDay).map(d=>({p,d})));
+ function detailButton(p,d){return `<button class="att-cell" data-day="${esc(p.personId)}|${d.date}" title="${esc(d.reason)}">${badge(attendanceOffsetResult(d))}${d.missingPunchCounts?.offset&&attendanceOffsetResult(d)!=='缺卡已抵消'? '<small>缺卡已抵消 '+d.missingPunchCounts.offset+' 次</small>':d.offset?.label&&!d.missingPunchCounts?.offset?`<small>${esc(d.offset.label)}${d.offset.approved?`（${d.offset.approved}项）`:""}</small>`:""}${d.pendingCategories?.length?`<small class="att-plan-pending">${esc(d.pendingCategories.join('／'))} · 待当天复核${d.approvalConflict?' · 类别重叠':''}</small>`:''}${d.stale?'<small>保留上次数据</small>':''}</button>`;}
+ const issueRows=(ps,all=false)=>ps.flatMap(p=>(p.days||[]).filter(all||ui.showResolved?attendanceIssueDay:attendanceRemainingIssueDay).map(d=>({p,d})));
  async function loadOverview(){
   if(overviewPending||destroyed)return;
   overviewError='';
@@ -73,7 +103,7 @@ export function mountAttendanceView(host,data,options={}){
   const tabs=[...(options.canStats===false?[]:[['summary','人员统计']]),['matrix','逐日总览'],['person','个人明细'],['issues','异常核对'],...(options.onLeaves&&options.canStats!==false?[['leave','假期']]:[]),...(!options.offline?[['sync','同步状态']]:[])];
   // 数据口径与同步说明仅在线上版本的「同步状态」页签展示；只读快照无页签，保持完整可见。
   const showSyncNotes=options.offline||ui.tab==='sync';
-  const cardsMarkup=options.canStats===false?'':`<div class="att-cards"><div><small>当前人员</small><strong>${ps.length}<em>人</em></strong></div><div><small>累计时间<span class="att-metric-context">（下班后）</span></small><strong>${duration(total)}</strong></div><div><small>无法计算</small><strong>${ps.reduce((n,p)=>n+(p.uncomputableDays||0),0)}<em>人日</em></strong></div><div><small>异常核对</small><strong>${data.detailLevel==='summary'?ps.reduce((n,p)=>n+(p.issueCount||0),0):issues.length}<em>人日</em></strong></div></div>`;
+  const cardsMarkup=options.canStats===false?'':`<div class="att-cards"><div><small>当前人员</small><strong>${ps.length}<em>人</em></strong></div><div><small>累计时间<span class="att-metric-context">（下班后）</span></small><strong>${duration(total)}</strong></div><div><small>无法计算</small><strong>${ps.reduce((n,p)=>n+(p.uncomputableDays||0),0)}<em>人日</em></strong></div><div><small>异常核对</small><strong>${data.detailLevel==='summary'?ps.reduce((n,p)=>n+(p.issueCount||0),0):issueRows(ps,true).length}<em>人日</em></strong></div></div>`;
   if(!resultsOnly){
   host.innerHTML=`<div class="att-head"><div class="att-title"><h1>考勤管理</h1><span class="att-month">${esc(data.month)}</span></div><div class="att-actions">${options.offline?'':`<div class="att-period-actions"><label><span class="att-sr-only">统计月份</span><input type="month" min="2026-09" value="${data.month}" data-month></label>${options.canSync?'<button data-sync class="att-primary">同步本月</button>':''}</div>`}<div class="att-export-actions">${options.canExport?'<button data-export="xlsx">导出Excel</button><button data-export="html">只读HTML</button>':''}${options.canOffsetSettings?'<button type="button" data-offset-settings>月兑换规则</button>':''}</div></div></div>
   ${showSyncNotes?`<div class="att-note">${esc(data.historyWarning)}<br>${esc(data.overtimeNote)}<br>最近数据同步：${esc(time(data.lastSyncedAt))}；${options.offline?'快照生成':'本次读取'}：${esc(time(data.generatedAt))}${options.offline?`${data.exportedAt?`；本次导出：${esc(time(data.exportedAt))}`:''}；导出范围：${esc(data.exportScope)}，筛选：${esc(JSON.stringify(data.filters||{}))}`:''}</div>`:''}
@@ -89,13 +119,46 @@ export function mountAttendanceView(host,data,options={}){
   if(needsDetails)content.innerHTML=`<p role="status">${esc(overviewError||'正在读取考勤明细…')}</p>${overviewError?'<button data-retry-details>重试明细</button>':''}`;
   else if(ui.tab==='leave'){content.dataset.leaveRoot='true';leaveView=options.onLeaves(content,{...(ui.leaveState||{}),query:ui.queryDraft,department:ui.department,team:ui.team},state=>{ui.leaveState=state;ui.query=state.query;ui.queryDraft=state.query;ui.department=state.department;ui.team=state.team;const hidden=host.querySelector('[data-filter="query"]');if(hidden)hidden.value=state.query;},dialog);}
   else if(ui.tab==='summary'){
-   const cats=orderedCategories().filter(c=>ui.columns.has(c));
-   content.innerHTML=(data.approvalPlanStatus?.enabled?'<p class="att-detail-note">带圆点的数字含已批准待复核记录；天数合计仍按实际考勤计算。</p>':'')+`<details class="att-columns" ${ui.columnsOpen?'open':''}><summary>选择统计类别列（${cats.length}）</summary><div class="att-columns-actions"><button data-columns-action="all">全选</button><button data-columns-action="none">全不选</button></div><p class="att-detail-note">全选或全不选显示全部人员；部分选择时，任一所选类别数量大于0即显示。</p>${orderedCategories().map(c=>`<label><input type="checkbox" data-column="${esc(c)}" ${ui.columns.has(c)?'checked':''}>${esc(c)}</label>`).join('')}</details>`+rowsTable(['姓名／工号','部门／班组',...cats.map(c=>ps.some(p=>approvalDisplayCount(p,c)>0)?`<span class="att-positive-heading" style="${toneStyle(attendanceTone(c,leaves))}">${esc(c)}</span>`:esc(c)),'天数合计','累计时间','已计算／无法计算'],paged.map(p=>[personButton(p),`${esc(p.department)}<small>${esc(p.team)}</small>`,...cats.map(c=>`<button class="att-link ${approvalDisplayCount(p,c)>0?'att-count-positive':''}" style="${toneStyle(attendanceTone(c,leaves))}" data-count="${esc(p.personId)}|${esc(c)}">${approvalDisplayCount(p,c)}${approvalPlanDot(p,c)}${p.offsetCounts?.[c]?`<small>抵${p.offsetCounts[c]}项</small>`:""}</button>`),p.dayCount??p.days.length,duration(p.overtimeSeconds),`${p.computedDays}／${p.uncomputableDays}`]));
-  }else if(ui.tab==='matrix')content.innerHTML=rowsTable(['姓名／工号',...data.dates.map(d=>`${Number(d.slice(8))}<small>${new Date(d+'T00:00:00Z').toLocaleDateString('zh-CN',{weekday:'short',timeZone:'UTC'})}</small>`)],paged.map(p=>[personButton(p),...p.days.map(d=>detailButton(p,d))]));
+   const pointCounts=data.people.some(p=>p.missingPunchCounts)||data.offsetVersion!==undefined;
+   const cats=orderedCategories().filter(c=>ui.columns.has(c)&&(!pointCounts||c!=='缺卡'));
+   const showMissing=pointCounts&&(ui.columns.has('缺卡')||!orderedCategories().includes('缺卡'));
+   const leaveNames=new Set([...leaves,'请假','调休']);
+   const countFor=(p,label)=>{
+    if(leaveNames.has(label)&&!(p.pendingCounts?.[label]>0)&&(!p.counts||p.counts[label]===null||p.displayCounts?.[label]===null))return null;
+    return approvalDisplayCount(p,label);
+   };
+   const layout=attendanceOrderedCategories([...cats,'待核对','出差']).flatMap(label=>[
+    ...(cats.includes(label)?[{label}]:[]),
+    ...(label==='待核对'&&showMissing?missingPunchColumns.map(([label,key])=>({label,key})):[]),
+    ...(label==='出差'?[{label:'累计时间',accumulation:true}]:[])
+   ]);
+   const zeroLeaves=new Set(layout.filter(({label,key,accumulation})=>!key&&!accumulation&&leaveNames.has(label)&&ps.length>0&&ps.every(p=>countFor(p,label)===0&&!p.pendingCounts?.[label])));
+   const firstZeroLeave=zeroLeaves.values().next().value;
+   const foldLabel=`${leaveColumnsExpanded?'收起':'展开'} ${zeroLeaves.size} 个零值假期列`;
+   const toggle=`<button type="button" class="att-leave-fold" data-leave-fold aria-expanded="${leaveColumnsExpanded}" aria-label="${foldLabel}" title="${foldLabel}">${leaveColumnsExpanded?'▾ 收起':`▸ ${zeroLeaves.size}`}</button>`;
+   const columns=layout.flatMap(column=>{
+    if(column===firstZeroLeave)return [leaveColumnsExpanded?{...column,toggle}:{toggle,collapsed:true}];
+    return leaveColumnsExpanded||!zeroLeaves.has(column)?[column]:[];
+   });
+   const narrowColumn=leaveColumnsExpanded||!firstZeroLeave?-1:columns.findIndex(column=>column.collapsed)+2;
+   const headings=columns.map(({label,key,toggle,collapsed,accumulation})=>{
+    if(collapsed)return toggle;
+    const tone=key?missingTones[key]:attendanceTone(label,leaves);
+    const title=key||!accumulation&&ps.some(p=>countFor(p,label)>0)?`<span class="att-positive-heading" style="${toneStyle(tone)}">${esc(label)}</span>`:esc(label);
+    return toggle?`${title}<br>${toggle}`:title;
+   });
+   content.innerHTML=(data.approvalPlanStatus?.enabled?'<p class="att-detail-note">带圆点的数字含已批准待复核记录；天数合计仍按实际考勤计算。</p>':'')+`<details class="att-columns" ${ui.columnsOpen?'open':''}><summary>选择统计类别列（${cats.length+Number(showMissing&&orderedCategories().includes('缺卡'))}）</summary><div class="att-columns-actions"><button data-columns-action="all">全选</button><button data-columns-action="none">全不选</button></div><p class="att-detail-note">全选或全不选显示全部人员；部分选择时，任一所选类别数量大于0即显示。</p>${orderedCategories().map(c=>`<label><input type="checkbox" data-column="${esc(c)}" ${ui.columns.has(c)?'checked':''}>${esc(c)}</label>`).join('')}</details>`+rowsTable(['姓名／工号','部门／班组',...headings,'天数合计','已计算／无法计算'],paged.map(p=>[personButton(p),`${esc(p.department)}<small>${esc(p.team)}</small>`,...columns.map(({label,key,collapsed,accumulation})=>{
+    if(collapsed)return '';
+    if(accumulation)return duration(p.overtimeSeconds);
+    const count=key?p.missingPunchCounts?.[key]:countFor(p,label);
+    if(count==null)return '—';
+    return `<button type="button" class="att-link ${count>0?'att-count-positive':''}" style="${toneStyle(key?missingTones[key]:attendanceTone(label,leaves))}" ${key?`data-missing-count="${esc(p.personId)}|${key}" aria-label="${esc(label)}：${count}"`:`data-count="${esc(p.personId)}|${esc(label)}"`}>${count}${key?'':approvalPlanDot(p,label)+(p.offsetCounts?.[label]?`<small>抵${p.offsetCounts[label]}项</small>`:'')}</button>`;
+   }),p.dayCount??p.days.length,`${p.computedDays}／${p.uncomputableDays}`]),{compactIdentity:true,narrowColumn});
+  }else if(ui.tab==='matrix')content.innerHTML=rowsTable(['姓名／工号',...data.dates.map(d=>`${Number(d.slice(8))}<small>${new Date(d+'T00:00:00Z').toLocaleDateString('zh-CN',{weekday:'short',timeZone:'UTC'})}</small>`)],paged.map(p=>[personButton(p),...p.days.map(d=>detailButton(p,d))]),{compactIdentity:true});
   else if(ui.tab==='person'){
    const p=ps.find(p=>p.personId===ui.personId)||ps[0];
    content.innerHTML=`<label class="att-person-select"><select data-person-select aria-label="选择人员">${ps.map(v=>`<option value="${esc(v.personId)}" ${v.personId===p?.personId?'selected':''}>${esc(v.name)} / ${esc(v.employeeNo)}</option>`).join('')}</select></label>`+(p?rowsTable(['日期','类别','班次','出差用途','计划上班','有效实际上班','计划下班','有效实际下班','当日加班','计算状态'],p.days.map(d=>[d.date,detailButton(p,d),esc(d.shift||'—'),esc(d.purposes.map(a=>a.category||a.status).join('；')||'—'),...summaryCells(d),duration(d.overtime.seconds),esc(d.overtime.status)])):'<p class="att-empty">暂无人员</p>');
-  }else if(ui.tab==='issues')content.innerHTML=rowsTable(['姓名／工号','日期','类别','原因','问题','处理结果','审批人'],issues.slice((ui.page-1)*100,ui.page*100).map(({p,d})=>[personButton(p),d.date,detailButton(p,d),esc(d.reason),esc([...d.issues,d.syncError].filter(Boolean).join('；')),...attendanceProcessingCells(d,esc)]));
+  }else if(ui.tab==='issues')content.innerHTML=`<button type="button" data-toggle-resolved aria-pressed="${ui.showResolved}">${ui.showResolved?'仅看剩余异常':'包括已抵消'}</button>`+rowsTable(['姓名／工号','日期','类别','原因','问题','处理结果','审批人'],issues.slice((ui.page-1)*100,ui.page*100).map(({p,d})=>[personButton(p),d.date,detailButton(p,d),esc(d.reason),esc([...d.issues,d.syncError].filter(Boolean).join('；')),...attendanceProcessingCells(d,esc)]));
   else if(ui.tab==='sync'&&!status)content.innerHTML=`<p role="status">${esc(options.statusError||'正在读取同步状态…')}</p>`;
   else if(ui.tab==='sync'){
    const names={directory:'正在读取通讯录',running:'同步中',completed:'已完成',partial:'部分未完成',blocked:'额度不足暂停',failed:'失败'};
@@ -154,7 +217,7 @@ export function mountAttendanceView(host,data,options={}){
  }
  function showDay(p,d){
   const o=d.overtime;
-  dialog(`${p.name} / ${p.employeeNo} · ${d.date}`,`<p>${badge(d.category)} 班次：${esc(d.shift||'—')}</p><p>${esc(d.reason)}</p><h3>抵消处理</h3>${rowsTable(['处理结果','审批人'],[attendanceProcessingCells(d,esc)])}${d.issues.length?`<p class="att-warning">${esc(d.issues.join('；'))}</p>`:''}${d.approvalPlans?.length?'<h3>当前日期审批</h3>'+approvalPlansHtml(d.approvalPlans.map(p=>({...p,dates:[d.date]})),data.month):''}${d.approvalConflict?'<p class="att-warning">同日存在不同类别审批，待实际考勤核对。</p>':''}<h3>上下班打卡</h3>${rowsTable(['方向','计划时间','有效实际时间','配对状态','原始状态','说明'],(d.punchDetails||[]).map(v=>[esc(v.type==='OnDuty'?'上班':v.type==='OffDuty'?'下班':v.type||'未知'),esc(time(v.planned)),esc(time(v.actual)),esc(v.status),esc((v.rawStatus||[]).map(attendanceRawStatus).join('；')||'—'),esc(v.reason)]))}<p class="att-detail-note">按归属工作日列出全部计划点；未配对记录不参与首个上班／末次下班摘要。跨夜显示实际日期。</p><h3>加班时间（下班后）</h3><p>计划：${esc(time(o.planned))}<br>实际：${esc(time(o.actual))}<br>${duration(o.seconds)}${o.seconds===null?'':`（${o.seconds}秒）`} · ${esc(o.status)}</p><p>${esc(o.reason)} ${esc(accumulationExplanation(o))}</p><h3>出差事由</h3>${d.purposes.length?d.purposes.map(a=>`<div class="att-note"><p>用途：${esc(a.category||'待核对')}；读取状态：${esc(a.status)}；命中：${esc(a.keywords.join('、')||'无')}</p><p class="att-pre">${esc(a.reason??'未取得事由')}</p><small>审批：${esc(a.id)}<br>${esc(time(a.start))} 至 ${esc(time(a.end))}</small></div>`).join(''):'<p>无关联有效出差审批</p>'}${(d.input?.approvals||[]).some(a=>['外出','请假'].includes(a.kind)&&(a.kind!=='请假'||attendanceCategoryAllowed(a.subType)))?'<h3>外出／请假事由</h3>'+(d.input.approvals||[]).filter(a=>['外出','请假'].includes(a.kind)&&(a.kind!=='请假'||attendanceCategoryAllowed(a.subType))).map(attendanceApprovalReasonHtml).join(''):''}<p>最近成功同步：${esc(time(d.updatedAt))}${d.syncError?`；最新同步问题：${esc(d.syncError)}`:''}</p>${neighborContext(p,d)}`);
+  dialog(`${p.name} / ${p.employeeNo} · ${d.date}`,`<p>${badge(d.category)} 班次：${esc(d.shift||'—')}</p><p>${esc(d.reason)}</p><h3>抵消处理</h3>${rowsTable(['处理结果','审批人'],[attendanceProcessingCells(d,esc)])}${d.issues.length?`<p class="att-warning">${esc(d.issues.join('；'))}</p>`:''}${approvalDayPlansHtml(d.approvalPlans,d.purposes)}${d.approvalConflict?'<p class="att-warning">同日存在不同类别审批，待实际考勤核对。</p>':''}${tripPurposeDetailsHtml(d.purposes,badge)}<h3>上下班打卡</h3>${rowsTable(['方向','计划时间','有效实际时间','配对状态','原始状态','说明'],(d.punchDetails||[]).map(v=>[esc(v.type==='OnDuty'?'上班':v.type==='OffDuty'?'下班':v.type||'未知'),esc(time(v.planned)),esc(time(v.actual)),esc(v.status),esc((v.rawStatus||[]).map(attendanceRawStatus).join('；')||'—'),esc(v.reason)]))}<p class="att-detail-note">按归属工作日列出全部计划点；未配对记录不参与首个上班／末次下班摘要。跨夜显示实际日期。</p><h3>加班时间（下班后）</h3><p>计划：${esc(time(o.planned))}<br>实际：${esc(time(o.actual))}<br>${duration(o.seconds)}${o.seconds===null?'':`（${o.seconds}秒）`} · ${esc(o.status)}</p><p>${esc(o.reason)} ${esc(accumulationExplanation(o))}</p>${(d.input?.approvals||[]).some(a=>['外出','请假'].includes(a.kind)&&(a.kind!=='请假'||attendanceCategoryAllowed(a.subType)))?'<h3>外出／请假事由</h3>'+(d.input.approvals||[]).filter(a=>['外出','请假'].includes(a.kind)&&(a.kind!=='请假'||attendanceCategoryAllowed(a.subType))).map(attendanceApprovalReasonHtml).join(''):''}<p>最近成功同步：${esc(time(d.updatedAt))}${d.syncError?`；最新同步问题：${esc(d.syncError)}`:''}</p>${neighborContext(p,d)}`);
  }
  const onClick=async event=>{
   if(event.target.closest('[data-leave-root]')?.dataset?.leaveRoot==='true')return;
@@ -170,17 +233,37 @@ export function mountAttendanceView(host,data,options={}){
    if(!destroyed){render({preserveTableScroll:true});host.querySelector('[data-save-page-size]')?.focus({preventScroll:true});}return;
   }
   if(b.dataset.columnsAction){ui.columns=new Set(b.dataset.columnsAction==='all'?data.categories:[]);ui.page=1;render({preserveTableScroll:true});return;}
+  if(b.dataset.leaveFold!==undefined){
+   leaveColumnsExpanded=!leaveColumnsExpanded;
+   render({preserveTableScroll:true,resultsOnly:true});
+   host.querySelector('[data-leave-fold]')?.focus({preventScroll:true});
+   return;
+  }
   if(b.hasAttribute('data-close')){closeDialog();return;}
   if(b.hasAttribute('data-retry-details')){await loadOverview();return;}
   if(b.dataset.tab){ui.tab=b.dataset.tab;ui.page=1;render();return;}
   if(b.dataset.person){ui.personId=b.dataset.person;ui.tab='person';render();return;}
   if(b.dataset.page){ui.page=Math.max(1,ui.page+Number(b.dataset.page));render();return;}
   if(b.hasAttribute('data-clear')){clearTimeout(queryTimer);composing=false;ui={...ui,query:'',queryDraft:'',department:'',team:'',personId:'',page:1};const query=host.querySelector('[data-filter="query"]');if(query)query.value='';for(const el of host.querySelectorAll('[data-filter]'))el.value='';render({resultsOnly:true});return;}
-  if(b.dataset.day||b.dataset.count){
-   const [id,value]=(b.dataset.day||b.dataset.count).split('|'),base=data.people.find(p=>p.personId===id);if(!base)return;
+  if(b.dataset.toggleResolved!==undefined){ui.showResolved=!ui.showResolved;ui.page=1;render();return;}
+  if(b.dataset.day||b.dataset.count||b.dataset.missingCount){
+   const [id,value]=(b.dataset.day||b.dataset.count||b.dataset.missingCount).split('|'),base=data.people.find(p=>p.personId===id);if(!base)return;
    const seq=++detailSequence;b.disabled=true;
    try{const p=await fullPerson(base);if(destroyed||seq!==detailSequence)return;
     if(b.dataset.day){const d=p.days.find(d=>d.date===value);if(d)showDay(p,d);}
+    else if(b.dataset.missingCount){
+     const column=missingPunchColumns.find(([,key])=>key===value);if(!column)return;
+     if(!p.days?.some(d=>Array.isArray(d.missingPunchDetails))){
+      personDetails.delete(p.personId);
+      dialog(`${p.name} · ${column[0]}`,'<p role="status">未取得打卡点明细，请刷新页面后重试。本地测试若仍出现此提示，请重启服务。</p>');
+      return;
+     }
+     const rows=p.days.flatMap(d=>(d.missingPunchDetails||[]).filter(point=>value==='original'||point.offset===(value==='offset')).map(point=>[
+      esc(d.date),detailButton(p,d),...missingPunchCells(d,point),
+      `${point.type==='OnDuty'?'上班':'下班'}缺卡 · ${point.offset?'已抵消':'未抵消'}${point.offset&&point.approverName?`<small>审批人：${esc(point.approverName)}</small>`:''}`
+     ]));
+     dialog(`${p.name} · ${column[0]}`,`<p>共 ${rows.length} 次</p>`+rowsTable(punchHeaders,rows));
+    }
     else {const category=value;dialog(`${p.name} · ${category}`,`<h3>已核实／当前考勤结果 ${p.days.filter(d=>d.category===category&&!d.pendingCategories?.includes(category)).length}天</h3>`+rowsTable(['日期','类别','计划上班','有效实际上班','计划下班','有效实际下班','依据'],p.days.filter(d=>d.category===category&&!d.pendingCategories?.includes(category)).map(d=>[d.date,detailButton(p,d),...summaryCells(d),esc(d.reason)]))+((p.pendingCounts?.[category]||0)>0?`<h3>已批准待复核 ${p.pendingCounts[category]}天</h3>`+approvalPlansHtml((p.approvalPlans||[]).filter(a=>a.category===category).map(a=>({...a,dates:a.dates.filter(date=>p.days.some(d=>d.date===date&&d.pendingCategories?.includes(category)))})).filter(a=>a.dates.length),data.month):''));}
    }catch(e){if(!destroyed&&seq===detailSequence){if(e.status===401)options.onAuthExpired?.(e);const message=host.querySelector('.att-message');if(message)message.textContent='明细读取失败：'+e.message;}}
    finally{if(b.isConnected)b.disabled=false;}return;
@@ -209,5 +292,5 @@ export function mountAttendanceView(host,data,options={}){
  const onToggle=event=>{if(event.target.isConnected&&event.target.matches('.att-columns'))ui.columnsOpen=event.target.open;};
  const listeners=[['click',onClick],['change',onChange],['input',onInput],['compositionstart',onCompositionStart],['compositionend',onCompositionEnd],['toggle',onToggle,true]];
  for(const [name,fn,capture] of listeners)host.addEventListener(name,fn,capture);render({preserveTableScroll:true});
- return {async openPersonDay({personId,date}){const seq=++detailSequence,base=data.people.find(p=>p.personId===personId);if(!base)throw Error('人员不在当前可查看范围');const p=data.detailLevel==='full'||!data.detailLevel?base:await fullPerson(base);if(destroyed||seq!==detailSequence)return false;const day=p.days?.find(d=>d.date===date);if(!day)throw Error('对应日期记录未取得，请重试');ui={...ui,tab:'person',personId,query:'',queryDraft:'',department:'',team:'',page:1};render();showDay(p,day);return true;},setStatus(status){if(destroyed)return;options.status=status;if(ui.tab==='sync')render();},setStatusError(message){if(destroyed)return;options.statusError=message;const el=host.querySelector('.att-message');if(el)el.textContent=message;},getState(){const input=host.querySelector('[data-filter="query"]');const table=host.querySelector('.att-table');return {...ui,focusQuery:input===host.ownerDocument.activeElement,querySelection:input?[input.selectionStart,input.selectionEnd]:null,tableScroll:table?{left:table.scrollLeft,top:table.scrollTop}:null,query:input?.value??ui.queryDraft,queryDraft:input?.value??ui.queryDraft,columns:new Set(ui.columns),columnsOpen:host.querySelector('.att-columns')?.open??ui.columnsOpen};},destroy(){host.removeEventListener('click',offsetSettingsClick);leaveView?.destroy();host.classList?.remove('att-leave-active','att-issues-active','att-main-list-active');closeDialog();destroyed=true;personDetails.clear();clearTimeout(queryTimer);for(const [name,fn,capture] of listeners)host.removeEventListener(name,fn,capture);host.innerHTML='';}};
+ return {async openPersonDay({personId,date}){const seq=++detailSequence,base=data.people.find(p=>p.personId===personId);if(!base)throw Error('人员不在当前可查看范围');const p=data.detailLevel==='full'||!data.detailLevel?base:await fullPerson(base);if(destroyed||seq!==detailSequence)return false;const day=p.days?.find(d=>d.date===date);if(!day)throw Error('对应日期记录未取得，请重试');ui={...ui,tab:'person',personId,query:'',queryDraft:'',department:'',team:'',page:1};render();showDay(p,day);return true;},setStatus(status){if(destroyed)return;options.status=status;if(ui.tab==='sync')render();},setStatusError(message){if(destroyed)return;options.statusError=message;const el=host.querySelector('.att-message');if(el)el.textContent=message;},getState(){const input=host.querySelector('[data-filter="query"]');const table=host.querySelector('.att-table');return {...ui,leaveFoldMonth:data.month,leaveColumnsExpanded,focusQuery:input===host.ownerDocument.activeElement,querySelection:input?[input.selectionStart,input.selectionEnd]:null,tableScroll:table?{left:table.scrollLeft,top:table.scrollTop}:null,query:input?.value??ui.queryDraft,queryDraft:input?.value??ui.queryDraft,columns:new Set(ui.columns),columnsOpen:host.querySelector('.att-columns')?.open??ui.columnsOpen};},destroy(){host.removeEventListener('click',offsetSettingsClick);leaveView?.destroy();host.classList?.remove('att-leave-active','att-issues-active','att-main-list-active');closeDialog();destroyed=true;personDetails.clear();clearTimeout(queryTimer);for(const [name,fn,capture] of listeners)host.removeEventListener(name,fn,capture);host.innerHTML='';}};
 }
