@@ -127,7 +127,6 @@ test("hours.* 已退役（S3）：不在权限定义、不在绑定表", () => {
     assert.equal(codeSet.has(code), false, `${code} 仍在权限定义中`);
     assert.equal(scopeBindingFor(code), null, `${code} 仍在绑定表`);
   }
-  // 工时页导航由维护统计权限控制（rbac-policy NAVIGATION hoursPage）
 });
 
 test("静态配对：动作性范围检查点必须全部配对（预算 0，通用守卫豁免）", () => {
